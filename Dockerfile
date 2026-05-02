@@ -15,6 +15,7 @@ COPY experiments/lmstudio_instruct_translation ./experiments/lmstudio_instruct_t
 COPY docs ./docs
 
 RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir marker-pdf==1.10.2 \
     && pip install --no-cache-dir -e .
 
 CMD ["pdf-html-convert-zotero", "--help"]

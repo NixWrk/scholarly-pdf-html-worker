@@ -27,6 +27,12 @@ Runtime requirements outside this package:
 - `marker` and `marker_single` available in `PATH`.
 - LM Studio local server and `lms` CLI for auto-load/unload translation runs.
 
+The Docker image installs `marker-pdf==1.10.2`, which provides `marker` and
+`marker_single`. It does not install the Windows LM Studio `lms` CLI; container
+translation should normally connect to a running LM Studio server through
+`--base-url http://host.docker.internal:1234/v1`. Use `--auto-load` only in an
+image/environment where `lms` is available.
+
 ## Convert Zotero PDFs To EN HTML
 
 ```powershell
@@ -38,6 +44,17 @@ pdf-html-convert-zotero `
 ```
 
 Output HTML stages are saved under each article folder in `_z2m_stages`.
+
+For automation, the converter can be narrowed to one already-resolved PDF:
+
+```powershell
+pdf-html-convert-zotero `
+  --zotero-data-dir "C:\Users\YOU\Zotero" `
+  --collection-key "COLLECTION_KEY" `
+  --output-dir "D:\work\pdf-html-output" `
+  --selected-source-pdf "C:\Users\YOU\Zotero\storage\ABCD1234\paper.pdf" `
+  --export-mode html
+```
 
 ## Translate EN HTML To RU HTML
 
