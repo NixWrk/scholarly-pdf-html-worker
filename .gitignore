@@ -1,0 +1,28 @@
+﻿__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Runtime outputs
+output/
+outputs/
+bench_lmstudio_instruct/
+manual_review*/
+*_runtime_tmp/
+_z2m_runtime_tmp/
+experiments/lmstudio_instruct_translation/out/
+experiments/lmstudio_instruct_translation/out_html/
+
+# Local secrets/config
+webdav_servers.json
+*.local.json

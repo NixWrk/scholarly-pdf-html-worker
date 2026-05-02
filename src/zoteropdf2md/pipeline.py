@@ -1,0 +1,972 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from time import perf_counter
+from typing import Callable
+
+from .attachments import resolve_pdf_attachments
+from .export_modes import ExportMode, get_export_mode_spec, parse_export_mode
+from .history import append_history
+from .html_stages import html_stage_dir_for_html, save_html_stage
+from .llm_bundle import LlmBundleResult, create_llm_bundle
+from .marker_runner import MarkerRunner
+from .models import PipelineSummary, ResolvedAttachment, StagedFile
+from .output_state import detect_existing_results, normalize_source_path
+from .paths import resolve_zotero_data_dir
+from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
+from .single_file_html import drop_repeated_phrases, inline_images_from_html_file
+from .staging import (
+    DEFAULT_MAX_BASE_LEN,
+    FILENAME_MAP_NAME,
+    cleanup_staging_dir,
+    expected_output_artifact_path,
+    stage_resolved_pdfs,
+    write_filename_map,
+)
+from .gemma_html import DEFAULT_GEMMA_MODEL, language_name_for_code, normalize_language_code
+from .webdav_config import DEFAULT_CONFIG_PATH
+from .webdav_pending import (
+    WebDavUploadSummary,
+    retry_pending_webdav_uploads,
+    upload_webdav_with_pending,
+)
+from .zotero import ZoteroRepository
+from .zotero_html_attachment import attach_single_file_html, check_zotero_write_access
+from .zotero_pending import (
+    build_pending_entry,
+    enqueue_pending_attachments,
+    load_pending_attachments,
+    retry_pending_attachments,
+)
+
+
+@dataclass(frozen=True)
+class PipelineOptions:
+    zotero_data_dir: str
+    collection_key: str
+    include_subcollections: bool
+    output_dir: str
+    skip_existing: bool = True
+    use_cuda: bool = True
+    cuda_device_index: int | None = 0
+    model_cache_dir: str | None = None
+    max_base_len: int = DEFAULT_MAX_BASE_LEN
+    disable_batch_multiprocessing: bool = False
+    cleanup_staging: bool = True
+    selected_source_pdf_paths: list[str] | None = None
+    skip_existing_source_pdf_paths: list[str] | None = None
+    # Comma-separated export modes, e.g. "classic" or "classic,llm_bundle".
+    # Multiple modes sharing the same marker_output_format run with one Marker call.
+    export_mode: str = ExportMode.CLASSIC.value
+    translate_html_with_gemma: bool = False
+    translation_target_language_code: str = "ru"
+    translation_source_language: str = "English"
+    translation_backend: str = "lmstudio"
+    translation_model_ref: str = DEFAULT_GEMMA_MODEL
+    translation_hf_token: str | None = None
+    translation_max_input_tokens: int = 1800
+    translation_enable_heading_oov_guard: bool = False
+    translation_context_window_segments: int = 8
+    translation_context_overlap_segments: int = 1
+    translation_context_max_window_chars: int = 40_000
+    translation_enable_en_residual_quality_gate: bool = True
+    translation_en_residual_quality_gate_max_segments: int = 8
+    webdav_upload_enabled: bool = False
+    webdav_config_path: str | None = None
+
+    @property
+    def export_modes_list(self) -> list[ExportMode]:
+        return [parse_export_mode(m.strip()) for m in self.export_mode.split(",") if m.strip()]
+
+
+@dataclass(frozen=True)
+class PdfCandidate:
+    resolved_attachment: ResolvedAttachment
+    already_in_output: bool
+
+
+@dataclass(frozen=True)
+class PdfDiscoveryResult:
+    collection_name: str
+    collection_key: str
+    attachments_total: int
+    unresolved_total: int
+    candidates: list[PdfCandidate]
+
+
+def _log_elapsed(log: Callable[[str], None] | None, stage: str, started_at: float) -> None:
+    if log is None:
+        return
+    log(f"[timer] {stage}: {perf_counter() - started_at:.2f}s")
+
+
+def _webdav_upload_if_configured(
+    file_path: Path,
+    output_dir: Path,
+    log: Callable[[str], None] | None,
+) -> None:
+    """Upload ``file_path`` to every enabled WebDAV server, if configured.
+
+    Looks for ``webdav_config.json`` in the current working directory. When the
+    file is absent, the call is a silent no-op (WebDAV is not configured).
+    Upload errors are logged but never raised — the pipeline must not break
+    if a remote server is down or misconfigured.
+    """
+    config_path = Path("webdav_config.json")
+    if not config_path.is_file():
+        return
+
+    def _emit(message: str) -> None:
+        if log is not None:
+            log(message)
+
+    try:
+        from .webdav_config import WebDavConfig
+        from .webdav_uploader import WebDavUploader
+
+        config = WebDavConfig.load(config_path)
+        enabled = config.get_enabled_servers()
+        if not enabled:
+            return
+
+        uploader = WebDavUploader()
+        try:
+            relative = file_path.relative_to(output_dir).as_posix()
+        except ValueError:
+            # File is not under output_dir — fall back to just the filename.
+            relative = file_path.name
+
+        for server in enabled:
+            try:
+                ok, msg = uploader.upload_file(server, file_path, relative)
+            except Exception as exc:  # noqa: BLE001 — never break pipeline
+                _emit(f"WebDAV upload error: {server.name}: {exc}")
+                continue
+            if ok:
+                _emit(f"WebDAV upload: {server.name} <- {file_path.name}")
+            else:
+                _emit(f"WebDAV upload failed: {server.name}: {msg}")
+    except Exception as exc:  # noqa: BLE001 — never break pipeline
+        _emit(f"WebDAV upload error: {exc}")
+
+
+def _webdav_upload_mirror_if_configured(
+    file_path: Path,
+    output_dir: Path,
+    options: PipelineOptions,
+    log: Callable[[str], None] | None,
+) -> WebDavUploadSummary:
+    """Upload ``file_path`` to enabled WebDAV mirrors without breaking conversion."""
+    queue_path = output_dir / "_webdav_pending_uploads.json"
+    if not options.webdav_upload_enabled:
+        return WebDavUploadSummary(
+            uploaded=0,
+            failed=0,
+            queued=0,
+            pending_total=0,
+            queue_path=queue_path,
+        )
+
+    config_path = (
+        Path(options.webdav_config_path).expanduser().resolve(strict=False)
+        if options.webdav_config_path
+        else DEFAULT_CONFIG_PATH
+    )
+    try:
+        return upload_webdav_with_pending(
+            file_path=file_path,
+            output_dir=output_dir,
+            config_path=config_path,
+            log=log,
+        )
+    except Exception as exc:  # noqa: BLE001 - WebDAV mirror must not break conversion
+        if log is not None:
+            log(f"WebDAV upload error: {exc}")
+        return WebDavUploadSummary(
+            uploaded=0,
+            failed=1,
+            queued=0,
+            pending_total=0,
+            queue_path=queue_path,
+        )
+
+
+def _build_env(options: PipelineOptions) -> dict[str, str]:
+    env = os.environ.copy()
+    if options.use_cuda:
+        env["TORCH_DEVICE"] = "cuda"
+        if options.cuda_device_index is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(options.cuda_device_index)
+
+    if options.model_cache_dir:
+        cache_dir = Path(options.model_cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        env["MODEL_CACHE_DIR"] = str(cache_dir)
+
+    return env
+
+
+def discover_collection_pdfs(
+    zotero_data_dir: str,
+    collection_key: str,
+    include_subcollections: bool,
+    output_dir: str,
+    artifact_extension: str = ".md",
+    temp_root: Path | None = None,
+    log: Callable[[str], None] | None = None,
+) -> PdfDiscoveryResult:
+    discover_started_at = perf_counter()
+
+    started_at = perf_counter()
+    zotero_dir = resolve_zotero_data_dir(zotero_data_dir)
+    out_dir = Path(output_dir).expanduser().resolve()
+    _log_elapsed(log, "discover.resolve_paths", started_at)
+
+    started_at = perf_counter()
+    repo = ZoteroRepository(zotero_dir, snapshot_temp_root=temp_root)
+    _log_elapsed(log, "discover.open_repository", started_at)
+
+    started_at = perf_counter()
+    collection = repo.get_collection_by_key(collection_key)
+    _log_elapsed(log, "discover.get_collection", started_at)
+
+    started_at = perf_counter()
+    collection_ids = repo.get_descendant_collection_ids(collection.collection_id, include_subcollections)
+    _log_elapsed(log, "discover.get_descendant_collection_ids", started_at)
+
+    started_at = perf_counter()
+    attachment_records = repo.get_attachment_records(collection_ids)
+    _log_elapsed(log, "discover.get_attachment_records", started_at)
+
+    started_at = perf_counter()
+    resolved, unresolved = resolve_pdf_attachments(zotero_dir, attachment_records)
+    _log_elapsed(log, "discover.resolve_pdf_attachments", started_at)
+
+    started_at = perf_counter()
+    existing_in_output = detect_existing_results(
+        out_dir,
+        [r.source_pdf_path for r in resolved],
+        artifact_extension=artifact_extension,
+    )
+    _log_elapsed(log, "discover.detect_existing_results", started_at)
+
+    candidates = [
+        PdfCandidate(
+            resolved_attachment=r,
+            already_in_output=(normalize_source_path(r.source_pdf_path) in existing_in_output),
+        )
+        for r in resolved
+    ]
+    _log_elapsed(log, "discover.total", discover_started_at)
+
+    return PdfDiscoveryResult(
+        collection_name=collection.full_name,
+        collection_key=collection.key,
+        attachments_total=len(attachment_records),
+        unresolved_total=len(unresolved),
+        candidates=candidates,
+    )
+
+
+def _clean_md_repeated_phrases(md_path: Path, log: Callable[[str], None]) -> None:
+    """Read an MD file, remove repeated-phrase hallucinations, write back if changed."""
+    try:
+        original = md_path.read_text(encoding="utf-8", errors="replace")
+        cleaned = drop_repeated_phrases(original)
+        if cleaned != original:
+            md_path.write_text(cleaned, encoding="utf-8")
+            log(f"Repetitions removed: {md_path.name} (-{len(original) - len(cleaned)} chars)")
+    except Exception as exc:
+        log(f"Warning: repetition cleanup failed for {md_path.name}: {exc}")
+
+
+def _artifact_signature(path: Path) -> tuple[bool, int, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False, 0, 0
+    return True, int(stat.st_size), int(stat.st_mtime_ns)
+
+
+def _empty_pipeline_summary(
+    *,
+    discovery: PdfDiscoveryResult,
+    output_dir: Path,
+    export_mode: str,
+    skipped_existing: int = 0,
+) -> PipelineSummary:
+    return PipelineSummary(
+        collection_key=discovery.collection_key,
+        collection_name=discovery.collection_name,
+        attachments_total=discovery.attachments_total,
+        pdfs_resolved=len(discovery.candidates),
+        staged_total=0,
+        converted_total=0,
+        skipped_existing=skipped_existing,
+        failed_total=0,
+        output_dir=output_dir,
+        filename_map_path=output_dir / FILENAME_MAP_NAME,
+        export_mode=export_mode,
+    )
+
+
+def run_pipeline(
+    options: PipelineOptions,
+    runner: MarkerRunner,
+    log: Callable[[str], None],
+    is_cancelled: Callable[[], bool],
+) -> PipelineSummary:
+    pipeline_started_at = perf_counter()
+    output_dir = Path(options.output_dir).expanduser().resolve()
+    runtime_tmp_root = runtime_temp_root(output_dir)
+
+    # Support comma-separated multi-mode (e.g. "classic,llm_bundle").
+    # All modes in one pipeline call must share the same marker_output_format.
+    export_modes_list = options.export_modes_list
+    primary_spec = get_export_mode_spec(export_modes_list[0])
+    artifact_extension = primary_spec.artifact_extension
+    marker_output_format = primary_spec.marker_output_format
+
+    zotero_dir_for_mode: Path | None = None
+    zotero_write_lock_detected = False
+
+    try:
+        started_at = perf_counter()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _log_elapsed(log, "pipeline.prepare_output_dir", started_at)
+
+        started_at = perf_counter()
+        discovery = discover_collection_pdfs(
+            zotero_data_dir=options.zotero_data_dir,
+            collection_key=options.collection_key,
+            include_subcollections=options.include_subcollections,
+            output_dir=options.output_dir,
+            artifact_extension=artifact_extension,
+            temp_root=runtime_tmp_root,
+            log=log,
+        )
+        _log_elapsed(log, "pipeline.discover_collection_pdfs", started_at)
+
+        log(f"Selected collection: {discovery.collection_name} ({discovery.collection_key})")
+        log(f"Attachment records in scope: {discovery.attachments_total}")
+        log(f"Resolved PDF attachments: {len(discovery.candidates)}")
+        log(f"Export mode: {options.export_mode}")
+        if discovery.unresolved_total:
+            log(f"Skipped/unresolved attachments: {discovery.unresolved_total}")
+
+        resolved = [c.resolved_attachment for c in discovery.candidates]
+        if not resolved:
+            log("No local PDF attachments found for selected collection. Nothing to process.")
+            return _empty_pipeline_summary(
+                discovery=discovery,
+                output_dir=output_dir,
+                export_mode=options.export_mode,
+            )
+
+        if options.selected_source_pdf_paths:
+            started_at = perf_counter()
+            selected_norm = {
+                normalize_source_path(Path(path))
+                for path in options.selected_source_pdf_paths
+            }
+            available_norm = {
+                normalize_source_path(item.source_pdf_path)
+                for item in resolved
+            }
+            skipped_without_pdf = selected_norm - available_norm
+            if skipped_without_pdf:
+                log(
+                    "Selected entries without local PDF were skipped: "
+                    f"{len(skipped_without_pdf)}"
+                )
+            before = len(resolved)
+            selected_resolved = [
+                item for item in resolved
+                if normalize_source_path(item.source_pdf_path) in selected_norm
+            ]
+            if selected_resolved:
+                resolved = selected_resolved
+            else:
+                log(
+                    "Selection did not include local PDFs. "
+                    "Processing all resolved PDFs from the collection."
+                )
+            _log_elapsed(log, "pipeline.apply_gui_selection_filter", started_at)
+            log(f"Selected in GUI: {len(resolved)} of {before}")
+
+        if not resolved:
+            log("No PDFs selected for processing. Nothing to do.")
+            return _empty_pipeline_summary(
+                discovery=discovery,
+                output_dir=output_dir,
+                export_mode=options.export_mode,
+            )
+
+        skipped_existing = 0
+        started_at = perf_counter()
+        existing_in_output = detect_existing_results(
+            output_dir,
+            [r.source_pdf_path for r in resolved],
+            artifact_extension=artifact_extension,
+        )
+        _log_elapsed(log, "pipeline.detect_existing_results", started_at)
+
+        skip_existing_set: set[str] = set()
+        if options.skip_existing_source_pdf_paths is not None:
+            skip_existing_set = {
+                normalize_source_path(Path(path))
+                for path in options.skip_existing_source_pdf_paths
+            }
+            skip_existing_set &= existing_in_output
+        elif options.skip_existing:
+            skip_existing_set = set(existing_in_output)
+
+        if skip_existing_set:
+            started_at = perf_counter()
+            before = len(resolved)
+            resolved = [
+                item for item in resolved
+                if normalize_source_path(item.source_pdf_path) not in skip_existing_set
+            ]
+            skipped_existing = before - len(resolved)
+            _log_elapsed(log, "pipeline.apply_skip_existing", started_at)
+            if skipped_existing:
+                log(f"Already present in output folder, skipped before run: {skipped_existing}")
+
+        if not resolved:
+            return _empty_pipeline_summary(
+                discovery=discovery,
+                output_dir=output_dir,
+                export_mode=options.export_mode,
+                skipped_existing=skipped_existing,
+            )
+
+        if ExportMode.ZOTERO in export_modes_list:
+            started_at = perf_counter()
+            zotero_dir_for_mode = resolve_zotero_data_dir(options.zotero_data_dir)
+            try:
+                check_zotero_write_access(zotero_dir_for_mode)
+            except RuntimeError as exc:
+                if "locked for writing" in str(exc).lower():
+                    zotero_write_lock_detected = True
+                    log(
+                        "Zotero write lock detected before conversion. "
+                        "HTML results will be queued in output pending file for retry."
+                    )
+                else:
+                    raise
+            _log_elapsed(log, "pipeline.zotero_preflight_write_access", started_at)
+
+        if is_cancelled():
+            raise RuntimeError("Cancelled before staging.")
+
+        started_at = perf_counter()
+        stage = stage_resolved_pdfs(resolved, output_dir, options.max_base_len, temp_root=runtime_tmp_root)
+        _log_elapsed(log, "pipeline.stage_resolved_pdfs", started_at)
+        log(
+            "Staging prepared: "
+            f"requested_max={stage.requested_max_base_len}, "
+            f"max_by_output_path={stage.max_base_len_by_output_path}, "
+            f"effective_max={stage.effective_max_base_len}, "
+            f"files={len(stage.staged_files)}"
+        )
+
+        started_at = perf_counter()
+        filename_map_path = write_filename_map(output_dir, stage.staged_files)
+        _log_elapsed(log, "pipeline.write_filename_map", started_at)
+        log(f"Filename map: {filename_map_path}")
+
+        started_at = perf_counter()
+        env = _build_env(options)
+        _log_elapsed(log, "pipeline.build_env", started_at)
+        if env.get("MODEL_CACHE_DIR"):
+            log(f"MODEL_CACHE_DIR={env['MODEL_CACHE_DIR']}")
+        if env.get("TORCH_DEVICE"):
+            log(f"TORCH_DEVICE={env['TORCH_DEVICE']}")
+        if env.get("CUDA_VISIBLE_DEVICES"):
+            log(f"CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']}")
+        log(
+            "Pipeline mode details: "
+            f"modes={', '.join(m.value for m in export_modes_list)}, "
+            f"marker_output_format={marker_output_format}, "
+            f"artifact_extension={artifact_extension}"
+        )
+        if options.webdav_upload_enabled:
+            config_path = (
+                Path(options.webdav_config_path).expanduser().resolve(strict=False)
+                if options.webdav_config_path
+                else DEFAULT_CONFIG_PATH
+            )
+            log(f"WebDAV mirror: enabled (config={config_path})")
+            if marker_output_format != "html":
+                log("WebDAV mirror: current output group is not HTML; upload skipped.")
+        if options.translate_html_with_gemma:
+            log(
+                "Gemma config: "
+                f"backend={options.translation_backend}, "
+                f"target_language={options.translation_target_language_code}, "
+                f"source_language={options.translation_source_language}, "
+                f"model_ref={options.translation_model_ref}, "
+                f"max_input_tokens={options.translation_max_input_tokens}, "
+                f"context_window_segments={options.translation_context_window_segments}, "
+                f"context_overlap_segments={options.translation_context_overlap_segments}, "
+                f"context_max_window_chars={options.translation_context_max_window_chars}, "
+                f"quality_gate={options.translation_enable_en_residual_quality_gate}, "
+                f"quality_gate_max_segments={options.translation_en_residual_quality_gate_max_segments}"
+            )
+
+        staged_source_bytes = 0
+        for staged_file in stage.staged_files:
+            try:
+                staged_source_bytes += staged_file.source_pdf_path.stat().st_size
+            except OSError:
+                pass
+        hardlinks = sum(1 for sf in stage.staged_files if sf.materialization == "hardlink")
+        copies = sum(1 for sf in stage.staged_files if sf.materialization == "copy")
+        shortened = sum(1 for sf in stage.staged_files if sf.was_shortened)
+        log(
+            "Staging details: "
+            f"total_source_size_mb={staged_source_bytes / (1024 * 1024):.2f}, "
+            f"hardlinks={hardlinks}, copies={copies}, shortened_aliases={shortened}"
+        )
+
+        converted_total = 0
+
+        try:
+            if is_cancelled():
+                raise RuntimeError("Cancelled before conversion.")
+
+            # If skip logic was already resolved per-file in GUI, don't pass --skip_existing
+            # to marker, or it will skip files that user explicitly chose to reprocess.
+            batch_skip_existing = options.skip_existing and options.skip_existing_source_pdf_paths is None
+            log(
+                "Marker run config: "
+                f"files={len(stage.staged_files)}, "
+                f"skip_existing_for_batch={batch_skip_existing}, "
+                f"disable_batch_multiprocessing={options.disable_batch_multiprocessing}"
+            )
+            conversion_started_at = perf_counter()
+            artifact_before = {
+                staged_file.alias_base_name: _artifact_signature(
+                    expected_output_artifact_path(
+                        output_dir, staged_file.alias_base_name, artifact_extension
+                    )
+                )
+                for staged_file in stage.staged_files
+            }
+
+            started_at = perf_counter()
+            batch_result = runner.run_batch(
+                input_dir=stage.staging_dir,
+                output_dir=output_dir,
+                skip_existing=batch_skip_existing,
+                disable_multiprocessing=options.disable_batch_multiprocessing,
+                output_format=marker_output_format,
+                env=env,
+                log=log,
+            )
+            _log_elapsed(log, "pipeline.marker_batch", started_at)
+            log(f"marker batch exit_code={batch_result.exit_code}")
+
+            started_at = perf_counter()
+            pending = []
+            unchanged_existing = 0
+            for staged_file in stage.staged_files:
+                artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, artifact_extension)
+                exists_now, _, _ = _artifact_signature(artifact_path)
+                if exists_now:
+                    before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
+                    if (
+                        before_sig[0]
+                        and not batch_skip_existing
+                        and _artifact_signature(artifact_path) == before_sig
+                    ):
+                        unchanged_existing += 1
+                        pending.append(staged_file)
+                        continue
+                    converted_total += 1
+                    continue
+                pending.append(staged_file)
+            _log_elapsed(log, "pipeline.detect_missing_after_batch", started_at)
+            log(
+                "Batch output check: "
+                f"converted_after_batch={converted_total}, "
+                f"missing_after_batch={len(pending)}, "
+                f"unchanged_existing_after_batch={unchanged_existing}"
+            )
+
+            if pending:
+                log(f"Fallback conversion for missing outputs: {len(pending)}")
+
+            fallback_started_at = perf_counter()
+            for staged_file in pending:
+                if is_cancelled():
+                    raise RuntimeError("Cancelled during fallback conversion.")
+
+                single_started_at = perf_counter()
+                single_result = runner.run_single(
+                    pdf_path=staged_file.alias_pdf_path,
+                    output_dir=output_dir,
+                    output_format=marker_output_format,
+                    env=env,
+                    log=log,
+                )
+                _log_elapsed(log, f"pipeline.marker_single.{staged_file.alias_pdf_path.name}", single_started_at)
+                artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, artifact_extension)
+                if single_result.exit_code == 0 and artifact_path.exists():
+                    converted_total += 1
+            if pending:
+                _log_elapsed(log, "pipeline.fallback_total", fallback_started_at)
+            _log_elapsed(log, "pipeline.conversion_total", conversion_started_at)
+
+            started_at = perf_counter()
+            converted_staged_files = []
+            converted_source_paths: list[Path] = []
+            for staged_file in stage.staged_files:
+                artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, artifact_extension)
+                if not artifact_path.exists():
+                    continue
+                before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
+                if (
+                    before_sig[0]
+                    and not batch_skip_existing
+                    and _artifact_signature(artifact_path) == before_sig
+                ):
+                    log(
+                        "Artifact unchanged after conversion attempts, treated as failed: "
+                        f"{artifact_path.name}"
+                    )
+                    continue
+                if artifact_path.exists():
+                    converted_staged_files.append(staged_file)
+                    converted_source_paths.append(staged_file.source_pdf_path)
+            _log_elapsed(log, "pipeline.collect_converted_results", started_at)
+
+            llm_bundle_result: LlmBundleResult | None = None
+            zotero_html_attached_total = 0
+            zotero_html_failed_total = 0
+            zotero_html_queued_total = 0
+            zotero_pending_total = 0
+            webdav_uploaded_total = 0
+            webdav_failed_total = 0
+            webdav_queued_total = 0
+            webdav_pending_total = 0
+            translated_html_total = 0
+            translated_html_failed_total = 0
+            translated_html_language_code = ""
+            translated_html_language_name = ""
+            translated_html_by_source: dict[str, Path] = {}
+            history_paths = list(converted_source_paths)
+
+            def mirror_webdav_html(html_path: Path) -> None:
+                nonlocal webdav_uploaded_total, webdav_failed_total
+                nonlocal webdav_queued_total, webdav_pending_total
+                result = _webdav_upload_mirror_if_configured(
+                    html_path,
+                    output_dir,
+                    options,
+                    log,
+                )
+                webdav_uploaded_total += result.uploaded
+                webdav_failed_total += result.failed
+                webdav_queued_total += result.queued
+                webdav_pending_total = result.pending_total
+
+            # Level 3: clean repetition hallucinations from markdown outputs.
+            if marker_output_format == "markdown" and converted_staged_files:
+                started_at = perf_counter()
+                for staged_file in converted_staged_files:
+                    md_path = expected_output_artifact_path(
+                        output_dir, staged_file.alias_base_name, ".md"
+                    )
+                    if md_path.is_file():
+                        _clean_md_repeated_phrases(md_path, log)
+                _log_elapsed(log, "pipeline.clean_md_repetitions", started_at)
+
+            if converted_source_paths and ExportMode.LLM in export_modes_list:
+                started_at = perf_counter()
+                llm_bundle_result = create_llm_bundle(
+                    output_dir=output_dir,
+                    collection_name=discovery.collection_name,
+                    staged_files=stage.staged_files,
+                    converted_source_paths=converted_source_paths,
+                )
+                _log_elapsed(log, "pipeline.llm_bundle", started_at)
+                log(
+                    "LLM bundle created: "
+                    f"{llm_bundle_result.bundle_dir} "
+                    f"(md={llm_bundle_result.markdown_files}, images={llm_bundle_result.image_files})"
+                )
+
+            # Level 4: inline images into EN HTML files (before translation).
+            if converted_source_paths and marker_output_format == "html":
+                started_at = perf_counter()
+                inlined_files = 0
+                total_inlined_images = 0
+                for staged_file in converted_staged_files:
+                    html_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
+                    if not html_path.is_file():
+                        continue
+                    try:
+                        stage_dir = html_stage_dir_for_html(html_path)
+                        raw_html = html_path.read_text(encoding="utf-8", errors="replace")
+                        raw_stage = save_html_stage(
+                            stage_dir,
+                            "01.en.raw.html",
+                            raw_html,
+                            "en.raw.marker",
+                            source_path=html_path,
+                            details=(f"source_pdf={staged_file.source_pdf_path.name}",),
+                        )
+                        inline_started_at = perf_counter()
+                        result = inline_images_from_html_file(html_path)
+                        html_path.write_text(result.html, encoding="utf-8")
+                        polish_stage = save_html_stage(
+                            stage_dir,
+                            "02.en.polish.html",
+                            result.html,
+                            "en.polish.inline_images",
+                            source_path=html_path,
+                            details=(
+                                f"inlined_images={result.inlined_images}",
+                                f"elapsed_s={perf_counter() - inline_started_at:.2f}",
+                            ),
+                        )
+                        inlined_files += 1
+                        total_inlined_images += result.inlined_images
+                        log(
+                            "HTML debug stages saved: "
+                            f"{stage_dir} "
+                            f"(raw={raw_stage.path.name}, en_polish={polish_stage.path.name})"
+                        )
+                        # Upload EN HTML to WebDAV if configured.
+                        mirror_webdav_html(html_path)
+                    except Exception as exc:
+                        log(f"Inline images failed for {html_path.name}: {exc}")
+                _log_elapsed(log, "pipeline.inline_en_images", started_at)
+                log(f"Inlined images in EN HTML: files={inlined_files}, images={total_inlined_images}")
+
+            if converted_source_paths and marker_output_format == "html" and options.translate_html_with_gemma:
+                started_at = perf_counter()
+                translated_html_language_code = normalize_language_code(
+                    options.translation_target_language_code
+                )
+                translated_html_language_name = language_name_for_code(
+                    translated_html_language_code
+                )
+                translated_html_failed_total += len(converted_staged_files)
+                log(
+                    "Gemma HTML translation is handled by the LM Studio runner, "
+                    "not by the GUI pipeline. Use "
+                    "experiments/lmstudio_instruct_translation/run_html_probe.py "
+                    "for Gemma translation output."
+                )
+                _log_elapsed(log, "pipeline.gemma_html", started_at)
+            elif options.translate_html_with_gemma and marker_output_format != "html":
+                log(
+                    "Gemma translation enabled, but current group output format is not HTML. "
+                    "Translation skipped for this group."
+                )
+
+            if converted_source_paths and ExportMode.ZOTERO in export_modes_list:
+                started_at = perf_counter()
+                zotero_dir = zotero_dir_for_mode or resolve_zotero_data_dir(options.zotero_data_dir)
+                source_to_resolved = {normalize_source_path(r.source_pdf_path): r for r in resolved}
+                history_paths = []
+
+                def html_artifact_for(item: StagedFile) -> Path:
+                    source_norm = normalize_source_path(item.source_pdf_path)
+                    translated = translated_html_by_source.get(source_norm)
+                    if translated is not None and translated.is_file():
+                        return translated
+                    return expected_output_artifact_path(output_dir, item.alias_base_name, ".html")
+
+                def queue_entries_from(staged_items: list, error_message: str) -> None:
+                    nonlocal zotero_html_queued_total, zotero_pending_total, zotero_html_failed_total
+                    queue_batch = []
+                    for item in staged_items:
+                        source_norm = normalize_source_path(item.source_pdf_path)
+                        resolved_item = source_to_resolved.get(source_norm)
+                        if resolved_item is None:
+                            zotero_html_failed_total += 1
+                            log(f"Zotero queue skipped, source mapping missing: {item.source_pdf_path}")
+                            continue
+                        html_path = html_artifact_for(item)
+                        if not html_path.is_file():
+                            zotero_html_failed_total += 1
+                            log(f"Zotero queue skipped, HTML not found: {html_path}")
+                            continue
+                        parent_item_id = resolved_item.attachment.parent_item_id or resolved_item.attachment.item_id
+                        queue_batch.append(
+                            build_pending_entry(
+                                source_pdf_path=item.source_pdf_path,
+                                html_path=html_path,
+                                parent_item_id=parent_item_id,
+                                last_error=error_message,
+                            )
+                        )
+                    if queue_batch:
+                        added, total = enqueue_pending_attachments(output_dir, queue_batch)
+                        zotero_html_queued_total += len(queue_batch)
+                        zotero_pending_total = total
+                        log(
+                            "Queued pending Zotero attachments: "
+                            f"queued_now={len(queue_batch)}, "
+                            f"new_unique={added}, pending_total={total}"
+                        )
+
+                if zotero_write_lock_detected:
+                    queue_entries_from(
+                        converted_staged_files,
+                        "Zotero database locked for writing during run",
+                    )
+                else:
+                    for idx, staged_file in enumerate(converted_staged_files):
+                        source_norm = normalize_source_path(staged_file.source_pdf_path)
+                        resolved_item = source_to_resolved.get(source_norm)
+                        if resolved_item is None:
+                            zotero_html_failed_total += 1
+                            log(f"Zotero attach skipped, source mapping missing: {staged_file.source_pdf_path}")
+                            continue
+
+                        html_path = html_artifact_for(staged_file)
+                        if not html_path.is_file():
+                            zotero_html_failed_total += 1
+                            log(f"Zotero attach skipped, HTML not found: {html_path}")
+                            continue
+
+                        try:
+                            inline_result = inline_images_from_html_file(html_path)
+                            parent_item_id = resolved_item.attachment.parent_item_id or resolved_item.attachment.item_id
+                            attach_result = attach_single_file_html(
+                                zotero_data_dir=zotero_dir,
+                                parent_item_id=parent_item_id,
+                                source_pdf_path=staged_file.source_pdf_path,
+                                html_content=inline_result.html,
+                            )
+                            zotero_html_attached_total += 1
+                            history_paths.append(staged_file.source_pdf_path)
+                            log(
+                                "Zotero attachment created: "
+                                f"parent={attach_result.parent_item_id}, "
+                                f"itemID={attach_result.item_id}, "
+                                f"key={attach_result.item_key}, "
+                                f"inlined_images={inline_result.inlined_images}"
+                            )
+                        except RuntimeError as exc:
+                            if "locked for writing" in str(exc).lower():
+                                queue_entries_from(
+                                    converted_staged_files[idx:],
+                                    str(exc),
+                                )
+                                break
+                            zotero_html_failed_total += 1
+                            log(f"Zotero attachment failed for {staged_file.source_pdf_path}: {exc}")
+                        except Exception as exc:
+                            zotero_html_failed_total += 1
+                            log(f"Zotero attachment failed for {staged_file.source_pdf_path}: {exc}")
+
+                _log_elapsed(log, "pipeline.zotero_attach_html", started_at)
+                zotero_pending_total = len(load_pending_attachments(output_dir))
+
+            if history_paths:
+                started_at = perf_counter()
+                history_path = append_history(history_paths, output_dir)
+                _log_elapsed(log, "pipeline.append_history", started_at)
+                log(f"History updated: {history_path}")
+
+            marker_failed_total = len(stage.staged_files) - len(converted_source_paths)
+            failed_total = (
+                marker_failed_total
+                + translated_html_failed_total
+                + zotero_html_failed_total
+            )
+
+            return PipelineSummary(
+                collection_key=discovery.collection_key,
+                collection_name=discovery.collection_name,
+                attachments_total=discovery.attachments_total,
+                pdfs_resolved=len(discovery.candidates),
+                staged_total=len(stage.staged_files),
+                converted_total=len(converted_source_paths),
+                skipped_existing=skipped_existing,
+                failed_total=failed_total,
+                output_dir=output_dir,
+                filename_map_path=filename_map_path,
+                export_mode=options.export_mode,
+                llm_bundle_dir=None if llm_bundle_result is None else llm_bundle_result.bundle_dir,
+                llm_bundle_markdown_files=0 if llm_bundle_result is None else llm_bundle_result.markdown_files,
+                llm_bundle_image_files=0 if llm_bundle_result is None else llm_bundle_result.image_files,
+                zotero_html_attached_total=zotero_html_attached_total,
+                zotero_html_failed_total=zotero_html_failed_total,
+                zotero_html_queued_total=zotero_html_queued_total,
+                zotero_pending_total=zotero_pending_total,
+                translated_html_total=translated_html_total,
+                translated_html_failed_total=translated_html_failed_total,
+                translated_html_language_code=translated_html_language_code,
+                translated_html_language_name=translated_html_language_name,
+                webdav_uploaded_total=webdav_uploaded_total,
+                webdav_failed_total=webdav_failed_total,
+                webdav_queued_total=webdav_queued_total,
+                webdav_pending_total=webdav_pending_total,
+            )
+        finally:
+            cleanup_started_at = perf_counter()
+            cleanup_staging_dir(stage.staging_dir)
+            log("Staging folder cleaned up.")
+            _log_elapsed(log, "pipeline.cleanup_staging", cleanup_started_at)
+    finally:
+        cleanup_runtime_temp_root(runtime_tmp_root)
+        log(f"Runtime temp cleaned: {runtime_tmp_root}")
+        _log_elapsed(log, "pipeline.total", pipeline_started_at)
+
+
+def retry_pending_zotero_exports(
+    zotero_data_dir: str,
+    output_dir: str,
+    log: Callable[[str], None],
+) -> None:
+    summary = retry_pending_attachments(
+        zotero_data_dir=zotero_data_dir,
+        output_dir=output_dir,
+        log=log,
+    )
+    log(
+        "Pending retry summary: "
+        f"attempted={summary.attempted}, "
+        f"attached={summary.attached}, "
+        f"kept_pending={summary.kept_pending}, "
+        f"dropped_missing_html={summary.dropped_missing_html}, "
+        f"failed_non_lock={summary.failed_non_lock}, "
+        f"lock_blocked={summary.lock_blocked}"
+    )
+    log(f"Pending queue file: {summary.queue_path}")
+
+
+def retry_pending_webdav_exports(
+    output_dir: str,
+    webdav_config_path: str | None,
+    log: Callable[[str], None],
+) -> None:
+    config_path = (
+        Path(webdav_config_path).expanduser().resolve(strict=False)
+        if webdav_config_path
+        else DEFAULT_CONFIG_PATH
+    )
+    summary = retry_pending_webdav_uploads(
+        output_dir=output_dir,
+        config_path=config_path,
+        log=log,
+    )
+    log(
+        "Pending WebDAV retry summary: "
+        f"attempted={summary.attempted}, "
+        f"uploaded={summary.uploaded}, "
+        f"kept_pending={summary.kept_pending}, "
+        f"dropped_missing_local={summary.dropped_missing_local}, "
+        f"server_missing={summary.server_missing}, "
+        f"failed={summary.failed}"
+    )
+    log(f"Pending WebDAV queue file: {summary.queue_path}")

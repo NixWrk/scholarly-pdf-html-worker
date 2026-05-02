@@ -1,0 +1,36 @@
+﻿[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-html-translator"
+version = "0.1.0"
+description = "Zotero PDF to polished EN HTML and Gemma LM Studio RU HTML pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "NixWrk" }
+]
+dependencies = [
+  "requests>=2.31",
+  "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+]
+pdf-text-detect = [
+  "pymupdf>=1.24",
+  "pypdf>=4",
+]
+ru-quality = [
+  "pymorphy3>=2.0",
+]
+
+[project.scripts]
+pdf-html-convert-zotero = "pdf_html_translator.cli.convert_zotero:main"
+pdf-html-translate = "pdf_html_translator.cli.translate_html:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

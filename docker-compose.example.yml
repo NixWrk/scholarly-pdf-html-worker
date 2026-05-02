@@ -1,0 +1,12 @@
+﻿services:
+  pdf-html-translator:
+    build: .
+    image: pdf-html-translator:local
+    environment:
+      # Use host.docker.internal when LM Studio runs on the host.
+      LMSTUDIO_BASE_URL: "http://host.docker.internal:1234/v1"
+    volumes:
+      - ./output:/output
+      # Mount Zotero data read-only when running conversion in a container.
+      # - C:/Users/YOU/Zotero:/zotero:ro
+    command: ["pdf-html-convert-zotero", "--help"]
