@@ -26,3 +26,7 @@ experiments/lmstudio_instruct_translation/out_html/
 # Local secrets/config
 webdav_servers.json
 *.local.json
+
+# Imported local review corpora
+review_runs/
+.tmp_local2/
