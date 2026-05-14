@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pdf-html-translator"
 version = "0.1.0"
-description = "Zotero PDF to polished EN HTML and Gemma LM Studio RU HTML pipeline"
+description = "PDF to polished EN HTML and Gemma LM Studio RU HTML pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -29,7 +29,7 @@ ru-quality = [
 ]
 
 [project.scripts]
-pdf-html-convert-zotero = "pdf_html_translator.cli.convert_zotero:main"
+pdf-html-convert = "pdf_html_translator.cli.convert_file:main"
 pdf-html-translate = "pdf_html_translator.cli.translate_html:main"
 
 [tool.setuptools.packages.find]

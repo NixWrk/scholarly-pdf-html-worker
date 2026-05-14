@@ -12,7 +12,7 @@ from .history import append_history
 from .html_stages import html_stage_dir_for_html, save_html_stage
 from .llm_bundle import LlmBundleResult, create_llm_bundle
 from .marker_runner import MarkerRunner
-from .models import PipelineSummary, ResolvedAttachment, StagedFile
+from .models import AttachmentRecord, PipelineSummary, ResolvedAttachment, StagedFile
 from .output_state import detect_existing_results, normalize_source_path
 from .paths import resolve_zotero_data_dir
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
@@ -44,10 +44,10 @@ from .zotero_pending import (
 
 @dataclass(frozen=True)
 class PipelineOptions:
-    zotero_data_dir: str
-    collection_key: str
-    include_subcollections: bool
-    output_dir: str
+    zotero_data_dir: str = ""
+    collection_key: str = ""
+    include_subcollections: bool = False
+    output_dir: str = ""
     skip_existing: bool = True
     use_cuda: bool = True
     cuda_device_index: int | None = 0
@@ -55,6 +55,7 @@ class PipelineOptions:
     max_base_len: int = DEFAULT_MAX_BASE_LEN
     disable_batch_multiprocessing: bool = False
     cleanup_staging: bool = True
+    source_pdf_paths: list[str] | None = None
     selected_source_pdf_paths: list[str] | None = None
     skip_existing_source_pdf_paths: list[str] | None = None
     # Comma-separated export modes, e.g. "classic" or "classic,llm_bundle".
@@ -270,6 +271,68 @@ def discover_collection_pdfs(
     )
 
 
+def discover_source_pdfs(
+    source_pdf_paths: list[str],
+    output_dir: str,
+    artifact_extension: str = ".md",
+    log: Callable[[str], None] | None = None,
+) -> PdfDiscoveryResult:
+    discover_started_at = perf_counter()
+
+    started_at = perf_counter()
+    out_dir = Path(output_dir).expanduser().resolve()
+    _log_elapsed(log, "discover_file.resolve_paths", started_at)
+
+    resolved: list[ResolvedAttachment] = []
+    unresolved_total = 0
+    seen: set[str] = set()
+    for index, raw_path in enumerate(source_pdf_paths, start=1):
+        pdf_path = Path(raw_path).expanduser().resolve(strict=False)
+        normalized = normalize_source_path(pdf_path)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if not pdf_path.is_file() or pdf_path.suffix.lower() != ".pdf":
+            unresolved_total += 1
+            if log is not None:
+                log(f"Skipped non-PDF or missing source: {pdf_path}")
+            continue
+        record = AttachmentRecord(
+            item_id=index,
+            attachment_key=f"direct_pdf_{index:04d}",
+            parent_item_id=None,
+            link_mode=None,
+            path=str(pdf_path),
+            content_type="application/pdf",
+        )
+        resolved.append(ResolvedAttachment(attachment=record, source_pdf_path=pdf_path))
+
+    started_at = perf_counter()
+    existing_in_output = detect_existing_results(
+        out_dir,
+        [r.source_pdf_path for r in resolved],
+        artifact_extension=artifact_extension,
+    )
+    _log_elapsed(log, "discover_file.detect_existing_results", started_at)
+
+    candidates = [
+        PdfCandidate(
+            resolved_attachment=r,
+            already_in_output=(normalize_source_path(r.source_pdf_path) in existing_in_output),
+        )
+        for r in resolved
+    ]
+    _log_elapsed(log, "discover_file.total", discover_started_at)
+
+    return PdfDiscoveryResult(
+        collection_name="direct PDF files",
+        collection_key="direct_pdf",
+        attachments_total=len(seen),
+        unresolved_total=unresolved_total,
+        candidates=candidates,
+    )
+
+
 def _clean_md_repeated_phrases(md_path: Path, log: Callable[[str], None]) -> None:
     """Read an MD file, remove repeated-phrase hallucinations, write back if changed."""
     try:
@@ -328,6 +391,16 @@ def run_pipeline(
     primary_spec = get_export_mode_spec(export_modes_list[0])
     artifact_extension = primary_spec.artifact_extension
     marker_output_format = primary_spec.marker_output_format
+    direct_pdf_mode = bool(options.source_pdf_paths)
+    if direct_pdf_mode and ExportMode.ZOTERO in export_modes_list:
+        raise ValueError(
+            "Direct PDF conversion cannot use Zotero export mode. "
+            "Use export_mode=html and let the caller handle write-back."
+        )
+    if not direct_pdf_mode and (not options.zotero_data_dir or not options.collection_key):
+        raise ValueError(
+            "Either source_pdf_paths or both zotero_data_dir and collection_key must be provided."
+        )
 
     zotero_dir_for_mode: Path | None = None
     zotero_write_lock_detected = False
@@ -338,19 +411,29 @@ def run_pipeline(
         _log_elapsed(log, "pipeline.prepare_output_dir", started_at)
 
         started_at = perf_counter()
-        discovery = discover_collection_pdfs(
-            zotero_data_dir=options.zotero_data_dir,
-            collection_key=options.collection_key,
-            include_subcollections=options.include_subcollections,
-            output_dir=options.output_dir,
-            artifact_extension=artifact_extension,
-            temp_root=runtime_tmp_root,
-            log=log,
-        )
-        _log_elapsed(log, "pipeline.discover_collection_pdfs", started_at)
-
-        log(f"Selected collection: {discovery.collection_name} ({discovery.collection_key})")
-        log(f"Attachment records in scope: {discovery.attachments_total}")
+        if direct_pdf_mode:
+            discovery = discover_source_pdfs(
+                source_pdf_paths=options.source_pdf_paths or [],
+                output_dir=options.output_dir,
+                artifact_extension=artifact_extension,
+                log=log,
+            )
+            _log_elapsed(log, "pipeline.discover_source_pdfs", started_at)
+            log(f"Selected PDF input: {discovery.collection_name}")
+            log(f"PDF files in scope: {discovery.attachments_total}")
+        else:
+            discovery = discover_collection_pdfs(
+                zotero_data_dir=options.zotero_data_dir,
+                collection_key=options.collection_key,
+                include_subcollections=options.include_subcollections,
+                output_dir=options.output_dir,
+                artifact_extension=artifact_extension,
+                temp_root=runtime_tmp_root,
+                log=log,
+            )
+            _log_elapsed(log, "pipeline.discover_collection_pdfs", started_at)
+            log(f"Selected collection: {discovery.collection_name} ({discovery.collection_key})")
+            log(f"Attachment records in scope: {discovery.attachments_total}")
         log(f"Resolved PDF attachments: {len(discovery.candidates)}")
         log(f"Export mode: {options.export_mode}")
         if discovery.unresolved_total:
@@ -358,14 +441,14 @@ def run_pipeline(
 
         resolved = [c.resolved_attachment for c in discovery.candidates]
         if not resolved:
-            log("No local PDF attachments found for selected collection. Nothing to process.")
+            log("No local PDF files found. Nothing to process.")
             return _empty_pipeline_summary(
                 discovery=discovery,
                 output_dir=output_dir,
                 export_mode=options.export_mode,
             )
 
-        if options.selected_source_pdf_paths:
+        if options.selected_source_pdf_paths and not direct_pdf_mode:
             started_at = perf_counter()
             selected_norm = {
                 normalize_source_path(Path(path))

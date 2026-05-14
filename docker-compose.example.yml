@@ -7,6 +7,6 @@
       LMSTUDIO_BASE_URL: "http://host.docker.internal:1234/v1"
     volumes:
       - ./output:/output
-      # Mount Zotero data read-only when running conversion in a container.
-      # - C:/Users/YOU/Zotero:/zotero:ro
-    command: ["pdf-html-convert-zotero", "--help"]
+      # Mount the folder that contains source PDFs when running conversion.
+      # - D:/work/pdfs:/pdfs:ro
+    command: ["pdf-html-convert", "--help"]

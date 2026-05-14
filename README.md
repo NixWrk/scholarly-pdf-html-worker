@@ -1,19 +1,23 @@
 ﻿# pdf-html-translator
 
-A focused extraction of the Zotero PDF -> Marker HTML -> polished EN HTML -> Gemma LM Studio RU HTML pipeline from `ZoteroPDF_2_MD`.
+A focused `PDF -> Marker HTML -> polished EN HTML -> Gemma LM Studio RU HTML`
+pipeline extracted from `ZoteroPDF_2_MD`.
 
 The extraction intentionally excludes the Tkinter GUI and large benchmark/manual-review outputs. It keeps the pipeline modules, Gemma HTML translation engine, LM Studio runners, and a small CLI/container scaffold.
 
+This repository is intentionally Zotero-agnostic at the automation boundary:
+pass it PDF files and output directories; any Zotero lookup, queueing,
+write-back, WebDAV, or Web API work belongs to the caller.
+
 ## Pipeline
 
-1. Read local Zotero data from `zotero.sqlite` and `storage`.
-2. Resolve PDF attachments in a collection.
-3. Stage PDFs with short deterministic aliases for Marker.
-4. Run `marker` batch conversion with `marker_single` fallback.
-5. Save HTML stages:
+1. Receive one or more local PDF paths.
+2. Stage PDFs with short deterministic aliases for Marker.
+3. Run `marker` batch conversion with `marker_single` fallback.
+4. Save HTML stages:
    - `01.en.raw.html`
    - `02.en.polish.html`
-6. Translate `02.en.polish.html` to Russian through LM Studio/Gemma:
+5. Translate `02.en.polish.html` to Russian through LM Studio/Gemma:
    - `03.ru.translate.html`
 
 ## Install
@@ -33,28 +37,29 @@ translation should normally connect to a running LM Studio server through
 `--base-url http://host.docker.internal:1234/v1`. Use `--auto-load` only in an
 image/environment where `lms` is available.
 
-## Convert Zotero PDFs To EN HTML
+## Convert PDF Files To EN HTML
 
 ```powershell
-pdf-html-convert-zotero `
-  --zotero-data-dir "C:\Users\YOU\Zotero" `
-  --collection-key "COLLECTION_KEY" `
+pdf-html-convert `
+  --pdf "D:\work\paper.pdf" `
   --output-dir "D:\work\pdf-html-output" `
-  --include-subcollections
+  --export-mode html
 ```
 
 Output HTML stages are saved under each article folder in `_z2m_stages`.
 
-For automation, the converter can be narrowed to one already-resolved PDF:
+Multiple PDFs can be passed by repeating `--pdf`:
 
 ```powershell
-pdf-html-convert-zotero `
-  --zotero-data-dir "C:\Users\YOU\Zotero" `
-  --collection-key "COLLECTION_KEY" `
+pdf-html-convert `
+  --pdf "D:\work\paper-1.pdf" `
+  --pdf "D:\work\paper-2.pdf" `
   --output-dir "D:\work\pdf-html-output" `
-  --selected-source-pdf "C:\Users\YOU\Zotero\storage\ABCD1234\paper.pdf" `
   --export-mode html
 ```
+
+The installed public converter is `pdf-html-convert`. Zotero lookup and write-back
+are intentionally outside this repository.
 
 ## Translate EN HTML To RU HTML
 
