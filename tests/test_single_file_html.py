@@ -4100,6 +4100,81 @@ def test_polish_html_document_repairs_recent_meine_link_false_positives() -> Non
     assert "that formulas that use the total" in polished
 
 
+def test_polish_html_document_repairs_page_anchor_letter_glued_superscript_citations() -> None:
+    html = (
+        "<html><body>"
+        '<p>from W <a href="#page-9-0">M11</a><a href="#page-10-0">,19</a>. '
+        'More details can be found i <a href="#page-10-1">n20.</a></p>'
+        '<p>We performed a demixed principal components analysis (dPCA '
+        '<a href="#page-10-1">)20</a> to compress the data.</p>'
+        "<h4>References</h4>"
+        "<ul>"
+        + "".join(f"<li>Ref {i}.</li>" for i in range(1, 21))
+        + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert 'href="#page-9-0"' not in polished
+    assert 'href="#page-10-0"' not in polished
+    assert 'href="#page-10-1"' not in polished
+    assert 'WM<sup><a href="#ref-11" class="z2m-ref-link">11</a>' in compact
+    assert '<a href="#ref-19" class="z2m-ref-link">,19</a></sup>' in compact
+    assert 'found in<sup><a href="#ref-20" class="z2m-ref-link">20</a></sup>.' in compact
+    assert '(dPCA)<sup><a href="#ref-20" class="z2m-ref-link">20</a></sup>' in compact
+
+
+def test_polish_html_document_repairs_split_open_bracket_page_citation_range() -> None:
+    html = (
+        "<html><body>"
+        '<p>Patients should be evaluated accordingly <a href="#page-18-0">[26</a>-29].</p>'
+        "<h4>References</h4>"
+        "<ul>"
+        + "".join(f"<li>Ref {i}.</li>" for i in range(1, 30))
+        + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "</a></a>" not in polished
+    assert 'href="#page-18-0"' not in polished
+    assert '[<a href="#ref-26" class="z2m-ref-link">26</a>-<a href="#ref-29" class="z2m-ref-link">29</a>]' in compact
+
+
+def test_polish_html_document_unwraps_decimal_figure_page_link_without_matching_target() -> None:
+    html = (
+        "<html><body>"
+        '<p>One component is not necessarily associated with the others <a href="#page-1-0">(Fig. 6.1</a>).</p>'
+        '<p>The tests are useful for diagnosis (<a href="#page-1-1">Tables 6.1</a> and '
+        '<a href="#page-1-2">6.2)</a>.</p>'
+        "<p>Figure 6. Extracted overview image.</p>"
+        "<p><img src=\"fig6.png\"/></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert 'href="#page-1-0"' not in polished
+    assert 'href="#page-1-1"' not in polished
+    assert 'href="#page-1-2"' not in polished
+    assert "(Fig. 6.1)." in compact
+    assert "(Tables 6.1 and 6.2)." in compact
+
+
+def test_polish_html_document_repairs_known_kuznietsov_surname_split() -> None:
+    html = "<html><body><p>Kuznietso v et al. [24] introduced a semi-supervised approach.</p></body></html>"
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Kuznietsov et al." in polished
+    assert "Kuznietso v" not in polished
+
+
 def test_polish_html_document_repairs_empty_and_nested_reference_anchors() -> None:
     html = (
         "<html><body>"

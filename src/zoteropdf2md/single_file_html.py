@@ -753,6 +753,7 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bchosenasthiswasregardedasthenominal\b", re.IGNORECASE), "chosen as this was regarded as the nominal"),
     (re.compile(r"\bchosenasthiswasregardedasthe\b", re.IGNORECASE), "chosen as this was regarded as the"),
     (re.compile(r"\bVwater\b", re.IGNORECASE), "V water"),
+    (re.compile(r"\bKuznietso\s+v\b", re.IGNORECASE), "Kuznietsov"),
 )
 _MG_KG_H_NEG_PATTERN = re.compile(r"\bmg\s+kg\s+h\s*[-\u2212]\s*1\b", re.IGNORECASE)
 _MG_KG_H_NEG_HTML_PATTERN = re.compile(
@@ -3712,6 +3713,13 @@ def _unwrap_numeric_page_links_for_citation_recovery(html: str) -> str:
     return _NUMERIC_PAGE_ANCHOR_PATTERN.sub(replace, html)
 
 
+def _looks_like_ocr_split_word_join(word: str, letter: str) -> bool:
+    token = f"{word}{letter}"
+    if len(word) >= 3:
+        return (word[-1].islower() and letter.islower()) or (word.isupper() and letter.isupper())
+    return token.lower() in {"in", "on", "of", "to", "as", "is", "it", "if", "by", "or", "we", "wm"} or token.isupper()
+
+
 def _reference_visible_number(body: str) -> int | None:
     match = _VISIBLE_REF_NUM_PATTERN.match(body)
     if match is None:
@@ -3963,8 +3971,14 @@ def _repair_ocr_letter_glued_ref_links(html: str, ref_count: int) -> str:
     if ref_count <= 0 or "z2m-ref-link" not in html:
         return html
 
+    paren_pattern = re.compile(
+        r"(?P<phrase>\([^<>()]{2,80})\s+"
+        r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"][^>]*)>"
+        r"\s*\)\s*(?P<label>\d{1,3})(?P<trail>[\.,;:]*)\s*</a>",
+        re.IGNORECASE,
+    )
     run_pattern = re.compile(
-        r"(?P<word>\b[A-Za-z]{3,})\s+"
+        r"(?P<word>\b[A-Za-z]{1,})\s+"
         r"(?P<run>(?:<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+['\"][^>]*>[\s\S]{0,80}?</a>\s*){1,8})",
         re.IGNORECASE,
     )
@@ -3973,6 +3987,20 @@ def _repair_ocr_letter_glued_ref_links(html: str, ref_count: int) -> str:
         r"(?P<body>[\s\S]*?)</a>",
         re.IGNORECASE,
     )
+
+    def replace_parenthesis(match: re.Match[str]) -> str:
+        try:
+            target = int(match.group("target"))
+            label = int(match.group("label"))
+        except ValueError:
+            return match.group(0)
+        if target != label or not (1 <= label <= ref_count):
+            return match.group(0)
+        return (
+            f"{match.group('phrase')})<sup>"
+            f"<a{match.group('attrs')}>{match.group('label')}</a>"
+            f"</sup>{match.group('trail')}"
+        )
 
     def replace(match: re.Match[str]) -> str:
         run = match.group("run")
@@ -3993,8 +4021,10 @@ def _repair_ocr_letter_glued_ref_links(html: str, ref_count: int) -> str:
             return match.group(0)
 
         first_visible = _visible_text(anchors[0].group("body"))
-        first_match = re.fullmatch(r"\s*(?P<letter>[a-z])\s*(?P<body>\d{1,3}[\s\S]{0,40})\s*", first_visible)
+        first_match = re.fullmatch(r"\s*(?P<letter>[A-Za-z])\s*(?P<body>\d{1,3}[\s\S]{0,40})\s*", first_visible)
         if first_match is None:
+            return match.group(0)
+        if not _looks_like_ocr_split_word_join(match.group("word"), first_match.group("letter")):
             return match.group(0)
 
         try:
@@ -4032,7 +4062,91 @@ def _repair_ocr_letter_glued_ref_links(html: str, ref_count: int) -> str:
         repaired_word = f"{match.group('word')}{first_match.group('letter')}"
         return f"{repaired_word}<sup>{''.join(rebuilt)}</sup>{trailing}{post_run_gap}"
 
+    html = paren_pattern.sub(replace_parenthesis, html)
     return run_pattern.sub(replace, html)
+
+
+def _repair_ocr_letter_glued_page_citation_links(html: str, ref_count: int) -> str:
+    """Retarget OCR-split word-final page anchors that carry citation numbers."""
+    if ref_count <= 0 or "#page-" not in html:
+        return html
+
+    paren_pattern = re.compile(
+        r"(?P<phrase>\([^<>()]{2,80})\s+"
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>"
+        r"\s*\)\s*(?P<label>\d{1,3})(?P<trail>[\.,;:]*)\s*</a>",
+        re.IGNORECASE,
+    )
+    page_anchor_pattern = re.compile(
+        r"(?P<word>\b[A-Za-z]{1,})\s+"
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>"
+        r"(?P<body>[\s\S]{0,80}?)</a>"
+        r"(?P<run>(?:\s*<a\b[^>]*\bhref\s*=\s*['\"]#(?:ref-\d+|page-[^'\"]+)['\"][^>]*>[\s\S]{0,80}?</a>){0,8})",
+        re.IGNORECASE,
+    )
+    run_anchor_pattern = re.compile(
+        r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#(?P<target>ref-\d+|page-[^'\"]+)['\"][^>]*)>"
+        r"(?P<body>[\s\S]{0,80}?)</a>",
+        re.IGNORECASE,
+    )
+
+    def replace_parenthesis(match: re.Match[str]) -> str:
+        try:
+            number = int(match.group("label"))
+        except ValueError:
+            return match.group(0)
+        if not (1 <= number <= ref_count):
+            return match.group(0)
+        return (
+            f"{match.group('phrase')})<sup>"
+            f'<a href="#ref-{number}" class="z2m-ref-link">{number}</a>'
+            f"</sup>{match.group('trail')}"
+        )
+
+    def replace(match: re.Match[str]) -> str:
+        body_text = _visible_text(match.group("body"))
+        first_match = re.fullmatch(
+            r"\s*(?P<letter>[A-Za-z])\s*(?P<label>\d{1,3})(?P<trail>[\.,;:]*)\s*",
+            body_text,
+        )
+        if first_match is None:
+            return match.group(0)
+        if not _looks_like_ocr_split_word_join(match.group("word"), first_match.group("letter")):
+            return match.group(0)
+        try:
+            number = int(first_match.group("label"))
+        except ValueError:
+            return match.group(0)
+        if not (1 <= number <= ref_count):
+            return match.group(0)
+        first_anchor = f'<a href="#ref-{number}" class="z2m-ref-link">{number}</a>'
+
+        def retarget_run_anchor(anchor_match: re.Match[str]) -> str:
+            target = anchor_match.group("target")
+            if target.lower().startswith("ref-"):
+                return anchor_match.group(0)
+            visible = _visible_text(anchor_match.group("body"))
+            label_match = re.fullmatch(
+                r"\s*(?P<prefix>[,;\-\u2013\u2014]?)\s*(?P<num>\d{1,3})(?P<trail>[\.,;:]*)\s*",
+                visible,
+            )
+            if label_match is None:
+                return anchor_match.group(0)
+            try:
+                run_number = int(label_match.group("num"))
+            except ValueError:
+                return anchor_match.group(0)
+            if not (1 <= run_number <= ref_count):
+                return anchor_match.group(0)
+            label = f"{label_match.group('prefix')}{run_number}{label_match.group('trail')}"
+            return f'<a href="#ref-{run_number}" class="z2m-ref-link">{label}</a>'
+
+        run = run_anchor_pattern.sub(retarget_run_anchor, match.group("run")).strip()
+        repaired_word = f"{match.group('word')}{first_match.group('letter')}"
+        return f"{repaired_word}<sup>{first_anchor}{run}</sup>{first_match.group('trail')}"
+
+    html = paren_pattern.sub(replace_parenthesis, html)
+    return page_anchor_pattern.sub(replace, html)
 
 
 def _add_reference_ids_and_citation_links(html: str) -> str:
@@ -4058,6 +4172,7 @@ def _add_reference_ids_and_citation_links(html: str) -> str:
     page_to_ref = _reference_page_anchor_map(references_with_ids)
     before_references = _rewrite_page_linked_bracket_citations(before_references, ref_index)
     before_references = _rewrite_page_links_to_reference_targets(before_references, page_to_ref)
+    before_references = _repair_ocr_letter_glued_page_citation_links(before_references, ref_index)
 
     if not re.search(r"<ol\b", references_with_ids, re.IGNORECASE):
         def ensure_visible_ref_number(match: re.Match[str]) -> str:
@@ -4181,6 +4296,7 @@ def _add_reference_ids_and_citation_links(html: str) -> str:
     before_with_citation_links = _repair_ocr_letter_glued_ref_links(before_with_citation_links, ref_index)
     linked_document = before_with_citation_links + references_with_ids
     linked_document = _rewrite_page_links_to_reference_targets(linked_document, page_to_ref)
+    linked_document = _repair_ocr_letter_glued_page_citation_links(linked_document, ref_index)
     linked_document = _repair_ocr_letter_glued_ref_links(linked_document, ref_index)
     return linked_document
 
@@ -5356,19 +5472,28 @@ def _unwrap_unresolved_semantic_page_links(
         left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
 
         fig_number: str | None = None
+        fig_decimal_direct = re.match(
+            r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
+            r"\.?\s*(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$",
+            body_text,
+            re.IGNORECASE,
+        )
+        if fig_decimal_direct is not None:
+            fig_number = fig_decimal_direct.group(1).lower().replace(".", "-")
+
         fig_direct = re.match(
             r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
             rf"\.?\s*(\d+){fig_tail}[\(\)\]\.,;:]*$",
             body_text,
             re.IGNORECASE,
         )
-        if fig_direct is not None:
+        if fig_number is None and fig_direct is not None:
             fig_number = fig_direct.group(1)
         else:
             fig_num_only = re.match(rf"^(\d+){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
-            if fig_num_only is not None and re.search(fig_left_context, left_text, re.IGNORECASE):
+            if fig_number is None and fig_num_only is not None and re.search(fig_left_context, left_text, re.IGNORECASE):
                 fig_number = fig_num_only.group(1)
-            elif fig_num_only is not None and re.search(
+            elif fig_number is None and fig_num_only is not None and re.search(
                 r"(?:\b(?:image|photograph|picture|panel)\s*\(\s*in\s*|\b(?:image|photograph|picture|panel|in)\s*)$",
                 left_text,
                 re.IGNORECASE,
@@ -5378,18 +5503,34 @@ def _unwrap_unresolved_semantic_page_links(
             return body
 
         table_key: str | None = None
+        table_decimal_direct = re.match(
+            r"^[\(\[]*(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$",
+            body_text,
+            re.IGNORECASE,
+        )
+        if table_decimal_direct is not None:
+            table_key = table_decimal_direct.group(1).lower().replace(".", "-")
+
         table_direct = re.match(
             rf"^[\(\[]*(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+({_TABLE_KEY_TOKEN})[\(\)\]\.,;:]*$",
             body_text,
             re.IGNORECASE,
         )
-        if table_direct is not None:
+        if table_key is None and table_direct is not None:
             table_key = _normalize_table_key(table_direct.group(1))
         else:
+            table_decimal_num_only = re.match(r"^(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            if table_key is None and table_decimal_num_only is not None and re.search(
+                r"(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+\d+\.\d+[a-z]?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
+                left_text,
+                re.IGNORECASE,
+            ):
+                table_key = table_decimal_num_only.group(1).lower().replace(".", "-")
+
             table_num_only = re.match(rf"^({_TABLE_KEY_TOKEN})[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
-            if table_num_only is not None and re.search(table_left_context, left_text, re.IGNORECASE):
+            if table_key is None and table_num_only is not None and re.search(table_left_context, left_text, re.IGNORECASE):
                 table_key = _normalize_table_key(table_num_only.group(1))
-            elif table_num_only is None:
+            elif table_key is None and table_num_only is None:
                 table_range_tail = re.match(
                     rf"^\s*[-\u2010\u2011\u2012\u2013\u2014]\s*({_TABLE_KEY_TOKEN})[\)\]\.,;:]*$",
                     body_text,
@@ -5758,12 +5899,17 @@ def _repair_nested_reference_links(html: str) -> str:
         r'\s*</a>',
         re.IGNORECASE,
     )
+    double_closed_ref = re.compile(
+        r'(?P<anchor><a\b[^>]*\bhref\s*=\s*["\']#ref-\d+["\'][^>]*>[\s\S]{0,80}?</a>)\s*</a>',
+        re.IGNORECASE,
+    )
     previous = None
     current = html
     while previous != current:
         previous = current
         current = dangling_outer_linked_bracket.sub("", current)
         current = linked_bracket_inside_anchor.sub(lambda m: m.group("body"), current)
+        current = double_closed_ref.sub(lambda m: m.group("anchor"), current)
         current = empty_anchor.sub("", current)
     return current
 

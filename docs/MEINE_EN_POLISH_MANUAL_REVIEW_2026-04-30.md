@@ -2991,3 +2991,98 @@ Regression:
   -> `292 passed`.
 - Both runs still emit the existing `.pytest_cache` access-denied warning on
   this machine.
+
+## Continuation Analysis 076-082 - 2026-05-14
+
+Batch:
+
+- The current Meine EN-gated review index contains `82` articles total, so after
+  position `075` only positions `076-082` remained for this pass, not a full
+  30-article block.
+- Reviewed roots:
+  `meine_0129_09858ae6b9`, `meine_0132_b3e2cea77b`,
+  `meine_0133_b3bf023ca8`, `meine_0134_edd06dc6d2`,
+  `meine_0138_686dec2e12`, `meine_0139_765be5625a`,
+  `meine_0140_7b0ca9bc57`.
+- Local `00.source.pdf` files were absent beside these stages, so manual
+  classification used raw HTML plus polished HTML.
+
+Initial automatic reports:
+
+- Repolish:
+  `.tmp_local2\analysis\repolish_meine_076_082_current_2026-05-14.json`
+  -> `articles=7`, `changed=7`, `inlined_images=195`, `missing_images=0`.
+- Language audit:
+  `.tmp_local2\analysis\language_audit_meine_076_082_current_2026-05-14.json`
+  -> `en=7`, `skipped=0`, `unknown=0`.
+- Raw audit:
+  `.tmp_local2\analysis\raw_audit_meine_076_082_current_2026-05-14.json`
+  -> `raw_sentinels=0`, `page_headers=0`, defects
+  `R05=1`, `R08=1`, `R11=3`, `R13=2`.
+- Initial pair audit:
+  `.tmp_local2\analysis\pair_audit_meine_076_082_current_2026-05-14.json`
+  -> `raw_img=195`, `polish_img=195`, `missing_img=0`, `bad_chars=106`,
+  `page_links=16`; checks `P05=1`, `P22=1`, `P33=2`, `P34=1`, `P35=1`,
+  `P37=1`, `P39=1`, `P45=1`, `P50=1`, `P62=1`.
+
+Manual findings and fixes:
+
+- `meine_0129_09858ae6b9`: raw/polish showed OCR page-anchor citation glue:
+  `W <a>M11</a><a>,19</a>`, `i <a>n20.</a>`, and `(dPCA <a>)20</a>`.
+  EN polish now joins the split word/abbreviation and retargets the citation
+  numbers to `#ref-*` inside superscripts.
+- `meine_0138_686dec2e12`: raw/polish showed a split bracket citation
+  `[26-29]` leaving an extra closing `</a>`. EN polish now removes double-closed
+  reference anchors after citation reconstruction.
+- `meine_0138_686dec2e12`: page anchors around decimal semantic references such
+  as `Fig. 6.1` and `Tables 6.1 and 6.2` were stale PDF navigation, not valid
+  semantic targets. EN polish now unwraps decimal figure/table page links when
+  no matching `fig-6-1` or `table-6-1` style target exists.
+- `meine_0140_7b0ca9bc57`: raw/polish showed the OCR surname split
+  `Kuznietso v`. Added a conservative known-word repair to restore
+  `Kuznietsov`.
+- Audit precision was tightened:
+  `P05` no longer treats a truncated `phase` window as `pH`;
+  `P22` ignores numbered `section-*` headings after a references block; and
+  `P50` ignores OCR-spaced years such as `et al . 1 978`.
+
+Final automatic reports:
+
+- Repolish:
+  `.tmp_local2\analysis\repolish_meine_076_082_after_decimal_table_tail_fix_2026-05-14.json`
+  -> `articles=7`, final pass `changed=1`, `inlined_images=195`,
+  `missing_images=0`.
+- Language audit:
+  `.tmp_local2\analysis\language_audit_meine_076_082_final_2026-05-14.json`
+  -> `en=7`, `skipped=0`, `unknown=0`.
+- Raw audit:
+  `.tmp_local2\analysis\raw_audit_meine_076_082_final_2026-05-14.json`
+  -> unchanged raw defects `R05=1`, `R08=1`, `R11=3`, `R13=2`.
+- Pair audit:
+  `.tmp_local2\analysis\pair_audit_meine_076_082_after_decimal_table_tail_fix_2026-05-14.json`
+  -> `raw_img=195`, `polish_img=195`, `missing_img=0`, `ref_links=537`,
+  `fig_links=162`, `table_links=66`, `page_links=0`, `bad_chars=106`.
+- Remaining checks after this pass:
+  `P35=1`, `P39=1`, `P62=1`.
+- Checks removed from this batch by code/audit changes:
+  `P05`, `P22`, `P33`, `P34`, `P37`, `P45`, and `P50`.
+- `meine_0129_09858ae6b9`, `meine_0132_b3e2cea77b`,
+  `meine_0134_edd06dc6d2`, `meine_0139_765be5625a`, and
+  `meine_0140_7b0ca9bc57` are now clean in the final pair audit.
+
+Remaining workstreams:
+
+- `meine_0133_b3bf023ca8`: old book OCR quality remains poor, with visible
+  replacement characters (`P35`) and decimal figure-series wrapping around
+  `Fig. 8.x` (`P39`). This should be handled as a larger raw/OCR plus decimal
+  figure-target workstream, not a manual HTML edit.
+- `meine_0138_686dec2e12`: `P62` remains because the polished HTML explicitly
+  reports a missing extracted `Figure 6` image. Classify against source PDF when
+  available.
+
+Regression:
+
+- Targeted citation/page-link/audit regressions passed during the pass.
+- `python -m pytest -q` -> `298 passed`.
+- The run still emits the existing `.pytest_cache` access-denied warning on
+  this machine.

@@ -229,7 +229,7 @@ AUTHOR_YEAR_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 FLATTENED_SUP_CITATION_RE = re.compile(
-    r"\b(?:et\s+al\.?\s*|[A-Za-z]{5,}\.)(?P<num>\d{1,3})(?=[\s,.;)])",
+    r"\b(?:et\s+al\.?\s*|[A-Za-z]{5,}\.)(?P<num>\d{1,3})(?!\s*\d)(?=[\s,.;)])",
     re.IGNORECASE,
 )
 COMMA_DECIMAL_REF_RE = re.compile(
@@ -560,7 +560,7 @@ def _is_handled_missing_figure_block(block: Block) -> bool:
 
 def _linked_ref_near_non_citation_context(block: Block) -> bool:
     for match in REF_LINK_RE.finditer(block.raw):
-        window_raw = block.raw[max(0, match.start() - 32): match.end() + 32]
+        window_raw = block.raw[max(0, match.start() - 48): match.end() + 80]
         window_text = _strip_tags(window_raw)
         if NONCITATION_CONTEXT_RE.search(window_text) or ML_PER_SECOND_CONTEXT_RE.search(window_text):
             return True
@@ -1058,6 +1058,8 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
         if not _is_references_block(block, references_started):
             continue
         if not block.id and DOI_ONLY_METADATA_RE.match(block.text):
+            continue
+        if block.id.startswith("section-"):
             continue
 
         visible_match = VISIBLE_REF_NUM_RE.match(block.text)
