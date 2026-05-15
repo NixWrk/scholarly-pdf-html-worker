@@ -1,7 +1,7 @@
 ﻿# pdf-html-translator
 
-A focused `PDF -> Marker HTML -> polished EN HTML -> Gemma LM Studio RU HTML`
-pipeline extracted from `ZoteroPDF_2_MD`.
+A focused `PDF -> Marker HTML -> polished source HTML -> optional Gemma LM
+Studio RU HTML` pipeline extracted from `ZoteroPDF_2_MD`.
 
 The extraction intentionally excludes the Tkinter GUI and large benchmark/manual-review outputs. It keeps the pipeline modules, Gemma HTML translation engine, LM Studio runners, and a small CLI/container scaffold.
 
@@ -17,8 +17,15 @@ write-back, WebDAV, or Web API work belongs to the caller.
 4. Save HTML stages:
    - `01.en.raw.html`
    - `02.en.polish.html`
-5. Translate `02.en.polish.html` to Russian through LM Studio/Gemma:
+5. Detect source language from the polished HTML/text.
+6. Translate English `02.en.polish.html` to Russian through LM Studio/Gemma:
    - `03.ru.translate.html`
+
+Source language detection currently recognizes `en`, `ru`, `de`, `fr`, `es`,
+`it`, `pt`, `nl`, `pl`, `ja`, `zh`, plus `mixed` and `unknown`. The automation
+caller uses this as a language gate: English is translated to Russian;
+non-English, mixed, and unknown documents are not sent to the English-to-Russian
+translation runner.
 
 ## Install
 
