@@ -188,7 +188,13 @@ LOST_FF_WORD_RE = re.compile(
     r"\b(?:afective|coeficient|diference|diferential|efect(?:s|ive|ively)?|"
     r"eficacy|eficient(?:ly)?|ofice|oficer|suficient(?:ly)?|tradeofs|"
     r"fexible|ultrafexible|fbers|flms?|fbroin|biofuid|difusion|coefcient|"
-    r"defcits|scafolds|feld-efect|fnger|galss)\b",
+    r"defcits|scafolds|feld-efect|fnger|galss)\b|"
+    r"\b(?:specifi|Specifi|signifi|Signifi|defi|Defi|diffi|Diffi|profi|Profi|"
+    r"confi|Confi|benefi|Benefi|identi?fi|Identi?fi|Offi|offi|Griffi|"
+    r"fl|Fl|urofl|Urofl|outfl|Outfl|refl|Refl|infl|Infl)\s+"
+    r"(?:c|cally|cant(?:ly)?|ned|ne|nition|ciency|cult(?:y|ies)?|le(?:s|ometry)?|"
+    r"dence|cial|es|ce|ths|oor|ow(?:s|metry|meter|rate)?|uid|ll(?:ing)?|"
+    r"uoroscopy|uoroscopic|uorescent|ux|uence)\b",
     re.IGNORECASE,
 )
 KNOWN_JOINED_WORD_RE = re.compile(
@@ -202,8 +208,11 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"MBVurgency|Qmaxnormal|residualnormal|ofdepression|inIndian|"
     r"asmeasured|symptomscore|withlower|tractfunction|benignprostatic|"
     r"urineflow|AcceptableBladder|suggestiveof|distentionon|healthyyoung|"
-    r"Theeffect)\b|"
-    r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b",
+    r"Theeffect|mattecollodion|Nineteenthcentury|darkbrown|nearinfrared|"
+    r"selfcontrolled|99Tcmcolloids|nonneoadjuvant|vanderVorst|populationbased|"
+    r"Positionrelated)\b|"
+    r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
+    r"\bAl\s+Omari1\b",
     re.IGNORECASE,
 )
 FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
@@ -243,7 +252,13 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\bparameter\s+a'\s+is\s+Eq\.\s*\(1\)\b|\bD_\{eve\}\b|"
     r"\bD'_\{\\rm\s+eve\}\b|\bb5223\b|\bDl5660620\b|\b2u560\b|"
     r"\bDl50\.4\b|\b9\s+m\s+m\b|\bF\s+1\s+8\b|"
-    r"\bflow\s+flow\s+flow\s+flow\b|\bLiverposl\b|\bcomparision\b",
+    r"\bflow\s+flow\s+flow\s+flow\b|\bLiverposl\b|\bcomparision\b|"
+    r"\bObject\s+Eden260V\b|\bWothlytype\b|\b20th-\s+and\s+21\s+st-century\b|"
+    r"\belectromyograhic\b|\binvolunatary\b|\bclincal\b|\bsymphisis\b|"
+    r"\bAmerican\s+Society\s+of\s+Clinical\s+Ncology\b|\bFlorescence\s+Technique\b|"
+    r"\bTQma\s+x\b|\bVoiding\s+positing\b|\bsignificate\s+statistical\b|"
+    r"\b0000-0003-4044-\s+0927\b|"
+    r"\b(?:5\.22|4\.21|5\.13)\s+\\pm\s+2,\s+(?:38|36|40)\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -300,7 +315,13 @@ SUSPICIOUS_EMAIL_DOMAIN_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@unfi\.it\b",
     re.IGNORECASE,
 )
-BODY_PAGE_HEADER_RE = re.compile(r"\b[A-Z][A-Z]+(?:\s+ET\s+AL\.)?\s*\|\s*\d{3,5}\b")
+BODY_PAGE_HEADER_RE = re.compile(
+    r"\b[A-Z][A-Z]+(?:\s+ET\s+AL\.)?\s*\|\s*\d{3,5}\b|"
+    r"\bJin\s+et\s+al\.\s+Combined\s+Imaging\s+in\s+Breast\s+Cancer\b|"
+    r"\bAlrabadi\s+et\s+al\.\s+\d+\b|"
+    r"\bThe\s+Getty\s+Conservation\s+Institute,\s+©\s+2013\s+J\.\s+Paul\s+Getty\s+Trust\b",
+    re.IGNORECASE,
+)
 TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bTABLE\s+\d[\s\S]{0,1400}\bnales\s+5\s+ted\s+Q\s+a\s+rates\b|"
     r"\bQn\s+Flow\s+i\s+[^\s]{1,4}ax\s+ndexes\b|"
@@ -309,7 +330,8 @@ TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bYour\s+general\s+ii\s+mpressio\s+n\b|"
     r"\bHow\s+did\s+you\s+f\s+ind\s+using\s+g\s+the\s+IAC\b|"
     r"\bWhat\s+tee\s+chnology\s+u\s+may\s+tic\s+k\b|"
-    r"\bOrigina\s+al\s+Color\s+Simpl\s+i\s+fication\b",
+    r"\bOrigina\s+al\s+Color\s+Simpl\s+i\s+fication\b|"
+    r"\bCollodion\s+Prints\s+S\s+Process[\s\S]{0,900}\bWothlytype\b",
     re.IGNORECASE,
 )
 FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
@@ -323,10 +345,12 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bTransperineal\s+ultrasound\s+uroflowmetry[\s\S]{0,2600}\bwas\b"
     r"[\s\S]{0,2600}\bcompared\s+with\s+pressure\s+flow\s+studies\b|"
     r"\bselected\s+for\s+the\s+\(B\)\s+1\.\s+Flocked[\s\S]{0,1600}"
-    r"\bfamous\s+enough\s+P\s+to\s+bc[\s\S]{0,600}\bE\s+clarity\b",
+    r"\bfamous\s+enough\s+P\s+to\s+bc[\s\S]{0,600}\bE\s+clarity\b|"
+    r"\bThere\s+is\s+obvious\s+urinary\s+leakage\s+with[\s\S]{0,900}"
+    r"\bminimal\s+increases\s+in\s+intravesical\s+pressure\b",
     re.IGNORECASE,
 )
-ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*\d+\b", re.IGNORECASE)
+ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
 REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
     r"\bETHICS\s+STATEMENT\b[\s\S]{0,1200}\bREFERENCES\b[\s\S]{0,3500}"
     r"\bUniversity\s+of\s+Bath\b[\s\S]{0,1000}\bAUTHOR\s+CONTRIBUTIONS\b",
@@ -370,7 +394,11 @@ SPLIT_URL_DOMAIN_RE = re.compile(
 BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\b20\.\s+20\s+van\s+Tulder\b|"
     r"\b3[34]\.\s+3[23]\s+(?:De\s+Nunzio|G(?:u|Гј)zelsoy)\b|"
-    r"\bmagnetic\s+resonance\s+82\.\s+imaging\s+volume\s+estimation\b",
+    r"\bmagnetic\s+resonance\s+82\.\s+imaging\s+volume\s+estimation\b|"
+    r"\b39\.\s+Sub-committee[\s\S]{0,260}\b39\.\s+Haylen\b|"
+    r"\bMedical\s+management\s+3\.\s+of\s+benign\s+prostatic\s+hyperplasia\b|"
+    r"\bfindings\s+and\s+17\.\s+postvoiding\s+residual\s+urine\b|"
+    r"\bpost-void\s+residual\s+20\.\s+urine\s+volume\b",
     re.IGNORECASE,
 )
 PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
@@ -380,7 +408,8 @@ PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 AFFILIATION_MARKER_RESIDUE_RE = re.compile(
-    r"\bYary\s+Volpe1\b|\b(?:Ilbey|İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b",
+    r"\bYary\s+Volpe1\b|\b(?:Ilbey|İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b|"
+    r"\bLujain\s+Al\s+Omari1\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(

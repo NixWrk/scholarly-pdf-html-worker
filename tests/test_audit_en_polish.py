@@ -1117,6 +1117,57 @@ def test_old_scan_ocr_gibberish_ignores_normal_rising_and_always() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_036_040_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>The selected machine was Object Eden260V for the rapid-prototyping sample.</p>",
+                    "<p>Figure 17a Nineteenthcentury CC-mounted print. The mattecollodion paper had "
+                    "darkbrown tonality and 20th- and 21 st-century substrates.</p>",
+                    "<table>Collodion Prints S Process Surface Coating Paper Fibers Ag Au Other "
+                    "Inorganics Surface/Tonality Wothlytype 8 x x Sr.I.</table>",
+                    "<p>Symptoms may not be specifi c, and testing identifi es diffi culty with fl ow. "
+                    "Urofl owmetry is defi ned by fl uid rate, profi le, fi lling, refl ux, and "
+                    "signifi cant confi dence limits.</p>",
+                    "<p>There is obvious urinary leakage with</p>",
+                    "<p>From Blaivas JG, Olsson CA: Stress incontinence source text.</p>",
+                    "<p>minimal increases in intravesical pressure.</p>",
+                    "<p>Caption residue had electromyograhic tracing, an involunatary contraction, "
+                    "clincal grading, and symphisis pubis.</p>",
+                    "<p>Jin et al. Combined Imaging in Breast Cancer split a paragraph. "
+                    "Alrabadi et al. 3 stayed as a page header.</p>",
+                    "<p>& lt;sup>a Body mass index. & lt;sup>d Sentinel lymph node biopsy.</p>",
+                    "<p>The nearinfrared tracer used a selfcontrolled protocol with 99Tcmcolloids and "
+                    "nonneoadjuvant chemotherapy. American Society of Clinical Ncology and Florescence "
+                    "Technique remained in references. Values included 5.22 \\pm 2, 38.</p>",
+                    "<p>Lujain Al Omari1 was listed as an author. The TQma x column, Voiding positing, "
+                    "and significate statistical differences remained visible.</p>",
+                    "<p>References included Medical management 3. of benign prostatic hyperplasia, "
+                    "findings and 17. postvoiding residual urine, and post-void residual 20. urine volume.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P66", "P67", "P71", "P81", "P82", "P83", "P84", "P90", "P92"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

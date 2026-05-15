@@ -3520,3 +3520,43 @@ Report:
 - Real batch result after scanner expansion: `P67=2`, `P71=4`,
   `P83=1`, `P87=1`, `P91=1`, `P92=2`, plus existing `P04=1`,
   `P59=1`, `P61=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 036-040 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0065`, `meine_0066`, `meine_0067`, `meine_0068`, and
+`meine_0069`; generated HTML was not edited. Raw HTML was spot-checked for
+the recurring residues.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 036 | `meine_0065_4ae2d0d2b0` | `P80` | OCR/model-name residue `Object Eden260V` alongside the already detected Florence e-mail typo. |
+| 037 | `meine_0066_6c8967bd60` | `P14/P39` | Joined/typographic residues (`Nineteenthcentury`, `mattecollodion`, `darkbrown`, `20th- and 21 st-century`), Getty page footer left in body prose, and OCR-scrambled interpretation table (`Collodion Prints S... Wothlytype`). |
+| 038 | `meine_0067_43913dc61b` | `P39/P50` | Mass spaced-ligature residues (`specifi c`, `diffi cult`, `fl ow`, `urofl owmetry`, `defi ned`, `profi le`, `fi lling`, `refl ux`, etc.), OCR typos (`electromyograhic`, `involunatary`, `clincal`, `symphisis`), table/source interruption around `There is obvious urinary leakage with ... minimal increases`, and duplicate bibliography numbering (`39. Sub-committee ... 39. Haylen`). |
+| 039 | `meine_0068_76f918fd36` | `P24/P33` | Joined/malformed biomedical tokens (`nearinfrared`, `selfcontrolled`, `99Tcmcolloids`, `nonneoadjuvant`), page headers (`Jin et al. Combined Imaging in Breast Cancer`), lettered escaped superscripts (`& lt;sup>a` etc.), decimal-comma split in math (`5.22 \pm 2, 38`), and reference OCR (`Clinical Ncology`, `Florescence Technique`). |
+| 040 | `meine_0069_7e5793c56a` | clean | Glued author affiliation (`Lujain Al Omari1`), page headers (`Alrabadi et al. 3/5`), table split `TQma x`, prose typos (`Voiding positing`, `significate statistical`), joined reference terms (`populationbased`, `Positionrelated`), and bibliography numbering inserted into titles (`Medical management 3. of benign...`, `17. postvoiding`, `20. urine volume`). |
+
+Scanner changes:
+
+- `P66` now catches spaced `fi`/`fl` ligature leftovers such as
+  `specifi c`, `fl ow`, `profi le`, and `fi lling`.
+- `P67` and `P71` were extended with the focused joined/OCR tokens from this
+  batch.
+- `P81` now catches titlecase page headers/footers from Frontiers, SAGE, and
+  Getty materials, not only all-caps journal headers.
+- `P82` covers the Getty collodion interpretation table OCR failure.
+- `P83` catches the `0067` table/source interruption.
+- `P84` now catches escaped lettered superscripts as well as numeric ones.
+- `P90` bibliography-numbering residue covers duplicated/shifted reference
+  numbers inside title text.
+- `P92` author-affiliation residue now includes `Lujain Al Omari1`.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_036_040_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P66=1`, `P67=3`,
+  `P71=5`, `P81=3`, `P82=1`, `P83=1`, `P84=1`, `P90=2`, `P92=1`,
+  plus existing `P14=1`, `P24=1`, `P33=1`, `P39=2`, `P50=1`,
+  `P80=1`.
