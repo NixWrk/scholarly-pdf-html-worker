@@ -3911,3 +3911,43 @@ Report:
 - `.tmp_local2/analysis/pair_audit_meine_081_082_fulltext_after_scan_expansion_2026-05-15.json`
 - Real batch result after scanner expansion: `P67=2`, `P71=2`,
   `P76=1`, `P81=1`, `P83=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 083-084 - 2026-05-15
+
+Method: tail language-gate batch after the 82 English-scope documents. The
+automatic pair audit was run first, then the complete polished text and raw
+text were reviewed for both remaining article directories. Generated HTML was
+not edited. The source-language audit identifies both sources as Russian
+(`ru`, confidence `0.99`, gate `detected_ru_not_en`), so the observed residues
+were recorded as language-gated corpus artifacts rather than EN-polish scanner
+training evidence.
+
+Corpus boundary:
+
+- `source_language_audit_2026-04-29.json`: `en=82`, `mixed=1`, `ru=57`,
+  `unknown=1`, `language_skipped_total=59`.
+- `single_loop_progress_2026-04-28.json`: `last_alias_base_name` is
+  `meine_0142_0476329845`.
+
+Articles:
+
+| # | article | language gate | manual result |
+|---|---|---|---|
+| 083 | `meine_0141_8bfb0dca7b` | `ru`, `detected_ru_not_en` | Russian medical-power-supply article. Manual full-text pass found Russian OCR/casing noise, page furniture, ad/table material, and the expected `P01` raw front-matter hit. No EN-polish scanner expansion. |
+| 084 | `meine_0142_0476329845` | `ru`, `detected_ru_not_en` | Russian dissertation. Manual full-text pass covered front matter, TOC, chapters, figure/table regions, bibliography, appendices, and implementation acts. Existing audit already flags the main structural residues (`P01`, `P12`, `P39`, `P45`, `P47`, `P48`). Additional visible noise such as Russian table/appendix OCR, English table garbage like `The second second`, and `AKT`/approval forms is not EN-polish evidence. |
+
+Raw/polish comparison notes:
+
+- `meine_0141`: raw and polish both confirm a Russian source; no English
+  blind spot is hidden by polish cleanup.
+- `meine_0142`: raw check confirms that `Gladyshev`/`Ershov` are split only in
+  polish and are already caught by `P45`; several appendix table garbage
+  strings are already present in raw OCR. The table-caption/wrapper defects are
+  already covered by `P12`, `P47`, and `P48`.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_083_084_fulltext_initial_2026-05-15.json`
+- Real tail result: `P01=2`, `P12=1`, `P39=1`, `P45=1`, `P47=1`, `P48=1`.
+- No code or scanner changes for this batch because both documents are outside
+  the English polish scope.
