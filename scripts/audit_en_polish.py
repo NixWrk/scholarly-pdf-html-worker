@@ -172,6 +172,7 @@ BROKEN_URL_TEXT_RE = re.compile(
     r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*[A-Za-z._~:/?#\[\]@!$&'*+,;=%-])"
     r"[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]+|"
+    r"\bhttps?://\S+\.(?:h\s+tml|xht\s+ml)\b|"
     r"\bdoi\.org/\s+10\.",
     re.IGNORECASE,
 )
@@ -210,7 +211,9 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"urineflow|AcceptableBladder|suggestiveof|distentionon|healthyyoung|"
     r"Theeffect|mattecollodion|Nineteenthcentury|darkbrown|nearinfrared|"
     r"selfcontrolled|99Tcmcolloids|nonneoadjuvant|vanderVorst|populationbased|"
-    r"Positionrelated|intraand|lightbeam|Videobased|handassembled|OpticalTouch)\b|"
+    r"Positionrelated|intraand|lightbeam|Videobased|handassembled|OpticalTouch|"
+    r"airpolluted|vitamin-Ddeficient|watersoluble|asprepared|ecofriendly|"
+    r"explorationSeamless)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
@@ -262,7 +265,17 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\b(?:Schfer|Standarisation|subcomitee|standarization|aformentioned|Cvalli|"
     r"Routeledge)\b|\bPdetQma\s+x\b|\bBOO\s+i\b|\bIPP\s+Grade\s+(?-i:iii)\b|"
     r"\bsimulates\s+the\s+The\s+validation\b|\bto\s+be\s+The\s+topological\s+sort\b|"
-    r"\bDirectX-\s+R\b",
+    r"\bDirectX-\s+R\b|"
+    r"\b(?:MDP\s+i|ISTOR|Appel's\s+Sir\s+i|Build-in\s+sensors|"
+    r"Sem\s+i\s*-\s*structured|Gen-A\s+i|Numbe\s+er|parti\s+cipants|"
+    r"nterview|Ggather|Vorkshop|ocus\s+group|ANACCESSIBLE|TOOTEKO|"
+    r"14\s+C-beled|Shep(?:a|ha)dex|trimetylsilyl|dihydroxyated|"
+    r"defensen|Rgiht|Verebrate|millenium|Foundayion|Naturwissenschaftem|"
+    r"super\s+prescription\s+of\s+H3|secondsmm-2|sequence4|FA\s+330|"
+    r"Ote\s+this:\s+DO|ARTI\s+CLE\s+TYPE|Accepted\s+Manuscrip|"
+    r"room\s+temperation|Enzymelinked|attempeted|detecte|afrer|"
+    r"tranformed|coditions|realtive|occurance|oberved|imlied|"
+    r"speices|Furhtermore|responsed|treaditional|around287\.8)\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -278,14 +291,15 @@ DOI_BODY_PROSE_MERGE_RE = re.compile(
     re.IGNORECASE,
 )
 DETACHED_ACCENT_RE = re.compile(
-    r"\b[A-Za-z]{2,}[\u00a8\u00b4\u02c6\u02c7\u02dc][A-Za-z]{2,}\b|"
+    r"\b[A-Za-z]{2,}[\u00a8\u00b4\u02c6\u02c7\u02dc][A-Za-z]{1,}\b|"
     r"\bOA\u02c6\s+\u02c7SModhrain\b|"
     r"\bB[A-Za-z]+hler,\s*\u02dc\s+and\b|"
     r"\bHeppner,\s*[\u00b4\u02c6]\s+and\b|"
     r"\bC\u00b8\s*\.\s+Varel\b|"
     r"\bSyd\s+\u00a8\s+anheimo\b|"
     r"\bwireless\s+\u00a8\s+intraocular\b|"
-    r"\bBRICENO\S\s*,\s*H\.\s*M\.|\bHOLLERER\s+[^A-Za-z0-9\s,]\s*,\s*T\.",
+    r"\bBRICENO\S\s*,\s*H\.\s*M\.|\bHOLLERER\s+[^A-Za-z0-9\s,]\s*,\s*T\.|"
+    r"\b(?:PogoreliВґc|HuskiВґc|CohadЕѕiВґc|JukiВґc|Л‡\s+Using)\b",
     re.IGNORECASE,
 )
 TABLE_SECTION_ABSORB_RE = re.compile(
@@ -312,6 +326,7 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bGener\s+al\s+digital\b|"
     r"\bBarc\s+elona\b|"
     r"\bthr\s+ee\s+different\b|"
+    r"\bt\s+o\s+the\s+best\s+of\s+our\s+knowledge\b|"
     r"\bhigh\s*\)\s*w\s+ere\b",
     re.IGNORECASE,
 )
@@ -325,7 +340,12 @@ BODY_PAGE_HEADER_RE = re.compile(
     r"\bJin\s+et\s+al\.\s+Combined\s+Imaging\s+in\s+Breast\s+Cancer\b|"
     r"\bAlrabadi\s+et\s+al\.\s+\d+\b|"
     r"\b\d+:\d+\s+.{0,4}\s+A\.\s+Reichinger\s+et\s+al\.(?=\W|$)|"
-    r"\bThe\s+Getty\s+Conservation\s+Institute,\s+©\s+2013\s+J\.\s+Paul\s+Getty\s+Trust\b",
+    r"\bThe\s+Getty\s+Conservation\s+Institute,\s+©\s+2013\s+J\.\s+Paul\s+Getty\s+Trust\b|"
+    r"\bResonance-Compatible\s+Incubator\s+With\s+a\s+Built-in\s+Coil\s+"
+    r"Ultrafast\s+Magnetic\s+Resonance\s+Imaging\s+of\s+the\s+Neonate\s+in\s+a\s+Magnetic\b|"
+    r"\bPEDIATRICS\s+is\s+owned[\s\S]{0,360}\bAmerican\s+Academy\s+of\s+Pediatrics\b|"
+    r"\bJournal\s+of\s+Materials\s+Chemistry\s+B\s+Accepted\s+Manuscrip\b|"
+    r"\bPublished\s+on\s+20\s+July\s+2015\.\s+Downloaded\s+by\s+California\s+State\s+University\s+at\s+Fresno\b",
     re.IGNORECASE,
 )
 TABLE_GIBBERISH_FLOW_RE = re.compile(
@@ -341,7 +361,11 @@ TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bAn\s+Over\s+5\s+Ho\s+6[\s\S]{0,600}\bPac\s+kard\s+Ideal\s+Shutter\b|"
     r"\bCleaning\s+the\s+Autographic\s+Kodak\s+Camera\s+1915-192640[\s\S]{0,600}\bHIMPY\b|"
     r"\bGrafle\s+x\s+Speed\s+Graphic[\s\S]{0,1400}\btopper\s+diago\s+silotoro\b|"
-    r"\bThornton-Pickard\s+Duple\s+x\s+Ruby\s+Refle\s+x[\s\S]{0,1400}\btiems\s+strate\b",
+    r"\bThornton-Pickard\s+Duple\s+x\s+Ruby\s+Refle\s+x[\s\S]{0,1400}\btiems\s+strate\b|"
+    r"\bРўСѓ\s+of\s+ar\s+t\s+bei\s+ng\s+M\s+oda\s+litie\s+s[\s\S]{0,1400}"
+    r"\bEv\s+alu\s+atio\s+n\b|"
+    r"\benclusive\s+app\b[\s\S]{0,1200}\bCavalier\s+i\s+et\s+al\.|"
+    r"\bTrichopoulos\s+et\s+al\.[\s\S]{0,1200}\bV\s+\.\s+v\s+V\b",
     re.IGNORECASE,
 )
 FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
@@ -361,7 +385,9 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bmalignancy\s+or\s+traumatic\s+lesions\.\s+A[\s\S]{0,1000}"
     r"\bjohn\.webster@wisc\.edu\s+major\s+and\s+essential\s+step\b|"
     r"\bmany\s+visual\s+computing\s+algorithms\s+turn[\s\S]{0,1800}"
-    r"\bout\s+to\s+be\s+equally\s+well\s+suited\b",
+    r"\bout\s+to\s+be\s+equally\s+well\s+suited\b|"
+    r"\bsurrounding\s+environment\s+needs\s+to\s+be\s+controlled\s+care-"
+    r"[\s\S]{0,1400}\bfully,\s+because\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -417,7 +443,9 @@ BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\bpost-void\s+residual\s+20\.\s+urine\s+volume\b|"
     r"\bA\s+Comprehensive\s+Review\s+4\.\s+Emphasizing\s+Anatomy\b|"
     r"\bUrethral\s+Stricture\s+Recurrence\s+21\.\s+After\s+Anterior\s+Urethroplasty\b|"
-    r"\bChallenges\s+and\s+Opportunities,\s+Jeddah\s+28\.\s+Khorsheed\b",
+    r"\bChallenges\s+and\s+Opportunities,\s+Jeddah\s+28\.\s+Khorsheed\b|"
+    r"\bProceedings\s+of\s+the\s+2023\s+ACM\s+31\.\s+International\s+Conference\b|"
+    r"\b25\s+5\s+H\.\s+Li\b|\b100\s+39\s+Khokhlov\b|\b105\s+41\s+Y\.\s+Yan\b",
     re.IGNORECASE,
 )
 PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
@@ -429,7 +457,18 @@ PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
 AFFILIATION_MARKER_RESIDUE_RE = re.compile(
     r"\bYary\s+Volpe1\b|\b(?:Ilbey|İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b|"
     r"\bLujain\s+Al\s+Omari1\b|"
-    r"\bS\.V\.\s+Krishna\s+Reddy\s+pa\s+and\s+Ahammad\s+Basha\s+Shaik\s+pb\s+a\s+Department\b",
+    r"\bS\.V\.\s+Krishna\s+Reddy\s+pa\s+and\s+Ahammad\s+Basha\s+Shaik\s+pb\s+a\s+Department\b|"
+    r"\bMingyue\s+Xue,\s+ab\s+Mengbing\s+Zou[\s\S]{0,120}"
+    r"\bZhihua\s+Zhan\s+Ab\s+and\s+Shulin\s+Zhao\s+Zhao\b",
+    re.IGNORECASE,
+)
+PDF_LINE_NUMBER_RESIDUE_RE = re.compile(
+    r"\bJournal\s+of\s+Materials\s+Chemistry\s+B\s+Accepted\s+Manuscrip\b"
+    r"[\s\S]{0,5000}?"
+    r"\b(?:with\s+20\s+the\s+sizes|been\s+25\s+reported|"
+    r"Fresh\s+lychee\s+was\s+purchased|All\s+measurements\s+were\s+performed|"
+    r"_\{75\}\s+incubated|95\s+The\s+morphology|20\s+analytical\s+chemistry|"
+    r"100\s+39\s+Khokhlov|105\s+41\s+Y\.\s+Yan)\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -1245,7 +1284,12 @@ def _frontmatter_defects(raw_blocks: list[Block], polish_blocks: list[Block]) ->
     for block in polish_blocks[:18]:
         ref_count = len(REF_LINK_RE.findall(block.raw))
         name_like_count = len(re.findall(r"\b[A-Z][A-Za-z.-]+\s+[A-Z][A-Za-z.-]+\b", block.text))
-        body_like = re.search(r"\b(?:abstract|introduction|generative artificial intelligence|clinical|methodology)\b", block.text, re.IGNORECASE)
+        body_like = re.search(
+            r"\b(?:abstract|introduction|generative artificial intelligence|clinical|methodology|"
+            r"papers?|studies|review|museum|gallery|visitors?|participants?|technolog(?:y|ies|ical))\b",
+            block.text,
+            re.IGNORECASE,
+        )
         sentence_count = len(re.findall(r"\w\.", block.text))
         if ref_count >= 2 and name_like_count >= 2 and not body_like and sentence_count <= 2:
             defects.append(
@@ -3313,6 +3357,28 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 proposed_fix_layer="EN polish author/affiliation normalization",
                 regression_test="Author residues such as 'Yary Volpe1' and 'İlbey 1 1 2 3 1 1' are reported.",
                 extra={"match": affiliation_marker_residue_match.group(0)},
+            )
+        )
+
+    pdf_line_number_residue_match = PDF_LINE_NUMBER_RESIDUE_RE.search(plain)
+    if pdf_line_number_residue_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P93",
+                cc_class="CC-04/CC-07/CC-13",
+                check="Publisher line numbers remain in body prose",
+                severity="warning",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    pdf_line_number_residue_match.start(),
+                    pdf_line_number_residue_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="PDF line numbers from an accepted manuscript were preserved as ordinary article text.",
+                proposed_fix_layer="EN polish page/line-number cleanup",
+                regression_test="RSC accepted-manuscript line numbers such as 'with 20 the sizes' and '_{75} incubated' are reported.",
+                extra={"match": pdf_line_number_residue_match.group(0)},
             )
         )
 

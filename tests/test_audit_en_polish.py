@@ -1238,6 +1238,59 @@ def test_analyze_pair_reports_fulltext_batch_041_045_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_046_050_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<p>Over the years, numerous papers by Alice Brown and Michael Green investigated '
+                    'museum technologies [<a href="#ref-80" class="z2m-ref-link">80</a>] and '
+                    'gallery visitor practice [<a href="#ref-103" class="z2m-ref-link">103</a>].</p>',
+                    "<p>See http://pediatrics.aappublications.org/content/113/2/e150.full.h tml "
+                    "for the split URL ending.</p>",
+                    "<p>The old city was airpolluted, the diet was vitamin-Ddeficient, and the "
+                    "watersoluble asprepared CDs were described as ecofriendly.</p>",
+                    "<p>Database table tokens included MDP i and ISTOR; another method used "
+                    "14 C-beled vitamin D and a Shepadex column.</p>",
+                    "<p>The urodynamics paper cited Pogoreli\u00b4c and Huski\u00b4c with detached accents. "
+                    "However, t o the best of our knowledge this should be one word.</p>",
+                    "<p>Resonance-Compatible Incubator With a Built-in Coil Ultrafast Magnetic "
+                    "Resonance Imaging of the Neonate in a Magnetic appeared as a running header.</p>",
+                    "<p>Journal of Materials Chemistry B Accepted Manuscrip was followed by RSC line "
+                    "numbers: residues with 20 the sizes below 10 nm and been 25 reported.</p>",
+                    "<p>surrounding environment needs to be controlled care- From the Section of "
+                    "Academic Radiology metadata fully, because they cannot maintain homeostasis.</p>",
+                    "<p>enclusive app output was followed by table damage near Cavalier i et al.</p>",
+                    "<p>References had Proceedings of the 2023 ACM 31. International Conference and "
+                    "25 5 H. Li as shifted numbering.</p>",
+                    "<p>Mingyue Xue, ab Mengbing Zou, Jingjin Zhao, Zhihua Zhan Ab and Shulin Zhao "
+                    "Zhao A green approach was developed.</p>",
+                    "<p>Ote this: DO: 10.1039/c0xx00000x ARTI CLE TYPE attempeted to detecte MB afrer "
+                    "5 minutes with speices responsed selectively.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P67", "P71", "P76", "P78", "P81", "P82", "P83", "P90", "P92", "P93"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+        assert "P03" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

@@ -3600,3 +3600,42 @@ Report:
 - Real batch result after scanner expansion: `P67=3`, `P71=4`,
   `P76=1`, `P81=1`, `P82=1`, `P83=2`, `P86=1`, `P88=1`, `P90=2`,
   `P92=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 046-050 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0077`, `meine_0081`, `meine_0082`, `meine_0083`, and
+`meine_0086`; generated HTML was not edited. The initial `P03` hit on
+`meine_0077` was a false positive on a real museum-accessibility body
+paragraph, so the front-matter author-line heuristic was tightened.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 046 | `meine_0077_689400c133` | false `P03`, `P04` | The `P03` author-line check now ignores citation-rich body prose about museum papers/technologies. New coverage catches joined text (`explorationSeamless`), table/database OCR (`MDP i`, `ISTOR`, `Appel's Sir i`, `Sem i-structured`, `Gen-A i`), scrambled appendix tables (`enclusive app`, split author names), and shifted bibliography numbering (`2023 ACM 31. International Conference`). |
+| 047 | `meine_0081_116f4112ad` | clean | Intra-word spacing `t o the best of our knowledge` and detached acute accents in reference names such as `Pogoreli´c`/`Huski´c`. |
+| 048 | `meine_0082_ea4293c5ba` | `P05` | Joined/OCR residues in the vitamin D article (`airpolluted`, `vitamin-Ddeficient`, `14 C-beled`, `Shepadex/Shephadex`, `trimetylsilyl`, `dihydroxyated`, `defensen`, reference typos such as `Verebrate` and `Foundayion`). The existing `P05` remains valid: vitamin `D2/D3` superscripts are linkified as references. |
+| 049 | `meine_0083_c766fd3388` | clean | Body sentence split by front matter (`controlled care- ... fully`), neonatal MRI OCR/unit residues (`secondsmm-2`, `sequence4`, `FA 330`), and Pediatrics running headers/back-matter page furniture. |
+| 050 | `meine_0086_6ed92a65fa` | `P04` | RSC accepted-manuscript line numbers left in prose (`with 20 the sizes`, `_{75} incubated`), page headers, author-affiliation residue (`Mingyue Xue, ab ... Zhan Ab ... Zhao Zhao`), OCR tokens (`Ote this: DO`, `ARTI CLE TYPE`, `temperation`, `attempeted`, `detecte`, `afrer`, `speices`, etc.), joined `watersoluble/asprepared/ecofriendly`, and shifted reference/line-number runs (`25 5 H. Li`, `100 39 Khokhlov`). |
+
+Scanner changes:
+
+- `P03` now has a broader body-prose guard for early citation-rich paragraphs
+  about papers, studies, museums, visitors, participants, and technologies.
+- `P67`, `P71`, `P76`, and `P78` were extended with focused joined-word,
+  OCR-token, detached-accent, and intra-word spacing residues from this batch.
+- `P81` covers Pediatrics/RSC page furniture and accepted-manuscript headers.
+- `P82` catches the large museum-accessibility appendix table OCR collapse.
+- `P83` catches the Pediatrics body sentence interrupted by front matter.
+- `P90` includes shifted conference/reference numbering from `0077` and RSC
+  reference-line residues from `0086`.
+- `P92` catches the RSC author/affiliation marker residue.
+- `P93`: publisher/RSC line numbers remain in body prose.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_046_050_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=3`, `P71=4`,
+  `P76=1`, `P78=1`, `P81=2`, `P82=1`, `P83=1`, `P90=2`,
+  `P92=1`, `P93=1`, plus existing `P04=2`, `P05=1`.
