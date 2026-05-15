@@ -1,0 +1,332 @@
+from __future__ import annotations
+
+from zoteropdf2md.citation_profile import infer_citation_style_from_text
+from zoteropdf2md.single_file_html import polish_html_document
+
+
+def _refs(count: int) -> str:
+    items = "".join(f"<li>{idx}. Reference {idx}.</li>" for idx in range(1, count + 1))
+    return f"<h1>REFERENCES</h1><p block-type=\"ListGroup\"><ul>{items}</ul></p>"
+
+
+def test_infer_citation_style_detects_parenthetical_numeric_pdf_text() -> None:
+    text = (
+        "Sentinel lymph node biopsy can provide accurate staging (1, 2). "
+        "The method avoids ALND (1, 3, 4). "
+        "Previous studies reported similar results (9, 10). "
+        "Other authors found body mass index effects (3, 13-16). "
+        "Comparable results were obtained previously (12). "
+    )
+
+    style, confidence, paren_count, bracket_count = infer_citation_style_from_text(
+        text,
+        ref_link_count=16,
+    )
+
+    assert style == "paren_numeric"
+    assert confidence == "high"
+    assert paren_count == 5
+    assert bracket_count == 0
+
+
+def test_infer_citation_style_detects_flattened_superscript_numeric_pdf_text() -> None:
+    text = (
+        "NIR imaging has high tissue penetration. 1,2,3,4 However, dyes are limited. "
+        "The dyes have low intensity. 5,6,7 The signal can bleach. "
+        "Tracking remains difficult. 8,9,10 Besides, crosstalk is common. "
+        "The emission overlaps. 11,12,13 Therefore, new dyes are needed. "
+        "FRET pair dyes. 14,15,16,17 FRET is non-radiative. "
+    )
+
+    style, confidence, paren_count, bracket_count = infer_citation_style_from_text(text)
+
+    assert style == "superscript_numeric"
+    assert confidence == "high"
+    assert paren_count == 0
+    assert bracket_count == 0
+
+
+def test_parenthetical_numeric_profile_retargers_page_anchor_citations_without_sup_false_positive() -> None:
+    html = (
+        "<html><body>"
+        "<p>Sentinel lymph node biopsy provides accurate staging "
+        '<a href="#page-6-0">(1,</a> <a href="#page-6-0">2)</a>. '
+        "ALND "
+        '<a href="#page-6-0">(1,</a> 3 , <a href="#page-6-0">4)</a> '
+        "can be avoided. Successful axillary SLNB "
+        '( 3 , 13 - <a href="#page-6-0">16)</a>. '
+        "The mean number was \\(5.22 \\pm <sup>2,38</sup>, p = 0.075\\)."
+        "</p>"
+        f"{_refs(40)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "high"},
+    )
+
+    assert 'href="#ref-1"' in polished
+    assert 'href="#ref-2"' in polished
+    assert 'href="#ref-3"' in polished
+    assert 'href="#ref-4"' in polished
+    assert 'href="#ref-13"' in polished
+    assert 'href="#ref-16"' in polished
+    assert 'href="#ref-38"' not in polished
+    assert "<sup>2,38</sup>" in polished
+    assert "staging (" in polished
+    assert ") can be avoided" in polished
+
+
+def test_parenthetical_numeric_profile_links_plain_text_citations_but_not_percentages_or_years() -> None:
+    html = (
+        "<html><body>"
+        "<p>Ignored either (8). The total was 35 (19.2%) patients, "
+        "the trial was published (2022), and accuracy improved (21-26). "
+        "Deep regions may be missed (5, 34).</p>"
+        f"{_refs(40)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "high"},
+    )
+
+    assert 'href="#ref-8"' in polished
+    assert 'href="#ref-21"' in polished
+    assert 'href="#ref-26"' in polished
+    assert 'href="#ref-5"' in polished
+    assert 'href="#ref-34"' in polished
+    assert "(19.2%)" in polished
+    assert "(2022)" in polished
+
+
+def test_parenthetical_numeric_profile_keeps_low_number_citation_near_data_word() -> None:
+    html = (
+        "<html><body>"
+        "<p>Exploration should be carried out only after opening the axillary fascia; "
+        "blind exploration in the fat tissue must be strictly avoided (5).</p>"
+        "<p>This study has limitations. First, there was no long-term follow-up, "
+        "and so data on postoperative recurrence were not available.</p>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "make this look like an author-year document.</p>"
+        f"{_refs(40)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "high"},
+    )
+
+    assert 'strictly avoided (<a href="#ref-5" class="z2m-ref-link">5</a>).' in polished
+
+
+def test_parenthetical_numeric_profile_uses_annotation_budget_when_available() -> None:
+    html = (
+        "<html><body>"
+        "<p>First cited statement (8). A second plain parenthetical number (8).</p>"
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "paren_numeric",
+            "confidence": "high",
+            "ref_dest_prefix": "B",
+            "annotations": [
+                {"page": 2, "kind": "reference", "dest": "B8", "target": "8", "text": "(8)."}
+            ],
+        },
+    )
+
+    assert polished.count('href="#ref-8"') == 1
+    assert 'number (8).' in polished
+
+
+def test_pdf_annotation_profile_links_author_year_label_without_linking_bare_years() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work (Smith et al., 2020) found the same pattern. "
+        "The study period ran from 2019 to 2020.</p>"
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "author_year",
+            "confidence": "high",
+            "ref_dest_prefix": "B",
+            "annotations": [
+                {
+                    "page": 2,
+                    "kind": "reference",
+                    "dest": "B7",
+                    "target": "7",
+                    "text": "Smith et al., 2020",
+                }
+            ],
+        },
+    )
+
+    assert '(<a href="#ref-7" class="z2m-ref-link">Smith et al., 2020</a>)' in polished
+    assert "from 2019 to 2020" in polished
+
+
+def test_pdf_annotation_profile_retargets_author_year_page_anchor_once_per_annotation() -> None:
+    html = (
+        "<html><body>"
+        '<p><a href="#page-2-0">Smith et al., 2020</a> reported this. '
+        "Smith et al., 2020 was mentioned again as plain prose.</p>"
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "author_year",
+            "confidence": "high",
+            "ref_dest_prefix": "B",
+            "annotations": [
+                {
+                    "page": 2,
+                    "kind": "reference",
+                    "dest": "B7",
+                    "target": "7",
+                    "text": "Smith et al., 2020",
+                }
+            ],
+        },
+    )
+
+    assert '<a href="#ref-7" class="z2m-ref-link">Smith et al., 2020</a> reported this' in polished
+    assert polished.count('href="#ref-7"') == 1
+    assert "mentioned again as plain prose" in polished
+
+
+def test_superscript_numeric_profile_wraps_annotation_backed_ref_runs_only() -> None:
+    html = (
+        "<html><body>"
+        '<p>Blood vasculatures <a href="#ref-1" class="z2m-ref-link">1,</a> '
+        '<a href="#ref-2" class="z2m-ref-link">2</a> and fluorescent agents '
+        '<a href="#ref-4" class="z2m-ref-link">.4,</a> '
+        '<a href="#ref-5" class="z2m-ref-link">5</a>. '
+        "A figure caption mentions phantom 1 and 2.</p>"
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "superscript_numeric",
+            "confidence": "high",
+            "annotations": [
+                {"page": 2, "kind": "reference", "target": "1", "text": "res1,2"},
+                {"page": 2, "kind": "reference", "target": "2", "text": "res1,2"},
+                {"page": 2, "kind": "reference", "target": "4", "text": "agents.4,5"},
+                {"page": 2, "kind": "reference", "target": "5", "text": "agents.4,5"},
+            ],
+        },
+    )
+
+    assert '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a></sup>' in polished
+    assert '<sup><a href="#ref-4" class="z2m-ref-link">4</a>,<a href="#ref-5" class="z2m-ref-link">5</a></sup>' in polished
+    assert "</sup> and fluorescent" in polished
+    assert "phantom 1 and 2" in polished
+
+
+def test_superscript_numeric_profile_links_annotation_backed_tex_sup_range() -> None:
+    html = (
+        "<html><body>"
+        r"<p>Nuclear imaging: \(1^{12-14}\). Real binary range \(2^{16}\).</p>"
+        f"{_refs(20)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "superscript_numeric",
+            "confidence": "high",
+            "annotations": [
+                {"page": 5, "kind": "reference", "target": "12", "text": "12-14"},
+                {"page": 5, "kind": "reference", "target": "14", "text": "12-14"},
+            ],
+        },
+    )
+
+    assert '<sup><a href="#ref-12" class="z2m-ref-link">12</a>-<a href="#ref-14" class="z2m-ref-link">14</a></sup>' in polished
+    assert r"\(2^{16}\)" in polished
+
+
+def test_flattened_superscript_numeric_document_links_groups_without_line_numbers_or_exponents() -> None:
+    html = (
+        "<html><body>"
+        "<p>High tissue penetration. 1,2,3,4 However, dyes remain challenging. "
+        "Limitations remain. 5,6,7 The signal can bleach. "
+        "Physiology tracking is hard. 8,9,10 Besides, crosstalk is common. "
+        "Signals overlap. 11,12,13 Therefore, new dyes are needed. "
+        "FRET pair 30 dyes. 14,15,16,17 FRET is non-radiative. "
+        "Nanoprobes help bioimaging. 18,19 For example, Tan et al. continued. "
+        "The ratio of three dyes.<sup>20,21</sup> Law et al. continued. "
+        "The nanomicelles were incubated with tumor HepG2 cell 20 and monitored. "
+        "Signals were compared with the QDs 30 and MB dye. "
+        "The overlap was 1.39 × 10<sup>-17</sup> M<sup>-1</sup> nm<sup>4</sup>.</p>"
+        f"{_refs(30)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+    )
+
+    assert 'penetration.<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a>,<a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-4" class="z2m-ref-link">4</a></sup> However' in polished
+    assert 'dyes.<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a>,<a href="#ref-16" class="z2m-ref-link">16</a>,<a href="#ref-17" class="z2m-ref-link">17</a></sup> FRET' in polished
+    assert 'three dyes.<sup><a href="#ref-20" class="z2m-ref-link">20</a>,<a href="#ref-21" class="z2m-ref-link">21</a></sup>' in polished
+    assert "cell 20 and" in polished
+    assert "QDs 30 and" in polished
+    assert '10<sup class="z2m-unit-exp">-17</sup>' in polished
+    assert 'nm<sup class="z2m-unit-exp">4</sup>' in polished
+
+
+def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> None:
+    html = (
+        "<html><body>"
+        "<p>A control value 15 The device ignored this. "
+        "Applications include gastrointestinal surgery following i.v. administration of ICG. "
+        "15 The NOVADAQ system was used.</p>"
+        f"{_refs(20)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "superscript_numeric",
+            "confidence": "high",
+            "annotations": [
+                {"page": 5, "kind": "reference", "target": "15", "text": "intestin G.15 Th"},
+            ],
+        },
+    )
+
+    assert "control value 15 The device" in polished
+    assert 'ICG.<sup><a href="#ref-15" class="z2m-ref-link">15</a></sup> The NOVADAQ' in polished
+    assert polished.count('href="#ref-15"') == 1

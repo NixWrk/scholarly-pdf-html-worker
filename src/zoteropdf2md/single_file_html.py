@@ -7,7 +7,7 @@ import re
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from .abbreviations import RU_ABBREV_TO_LATIN
 
@@ -3423,7 +3423,8 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
         attrs = match.group("attrs") or ""
         attrs = _append_class_to_attrs(attrs, "z2m-unit-exp")
         exp = match.group("exp")
-        if match.group("minus"):
+        groups = match.groupdict()
+        if groups.get("minus") or groups.get("inner_minus"):
             exp = f"-{exp}"
         return f"{match.group('base')}<sup{attrs}>{exp}</sup>"
 
@@ -3457,6 +3458,13 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
         lambda m: f'{m.group("unit")}<sup class="z2m-unit-exp">{m.group("exp")}</sup>',
         html,
     )
+    html = re.sub(
+        r"(?<![A-Za-z])(?P<unit>(?:nm|d|s)\s*)"
+        r"<sup\b[^>]*>\s*<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<exp>[1234])['\"][^>]*>\s*(?P=exp)\s*</a>\s*</sup>",
+        lambda m: f'{m.group("unit")}<sup class="z2m-unit-exp">{m.group("exp")}</sup>',
+        html,
+        flags=re.IGNORECASE,
+    )
     html = _LINKED_PLAIN_NEG_UNIT_EXPONENT_REF_PATTERN.sub(
         lambda m: f'{m.group("unit").rstrip()}<sup class="z2m-unit-exp">-{m.group("exp")}</sup>',
         html,
@@ -3468,6 +3476,13 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
     html = _LINKED_DIRECT_UNIT_EXPONENT_REF_PATTERN.sub(
         lambda m: f'{m.group("prefix")}{m.group("unit")}<sup class="z2m-unit-exp">{m.group("exp")}</sup>',
         html,
+    )
+    html = re.sub(
+        r"(?P<base>\b10)\s*<sup\b[^>]*>\s*(?P<inner_minus>[-\u2212\u2013\u2014])\s*"
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<exp>\d{1,2})['\"][^>]*>\s*(?P=exp)\s*</a>\s*</sup>",
+        lambda m: f'{m.group("base")}<sup class="z2m-unit-exp">-{m.group("exp")}</sup>',
+        html,
+        flags=re.IGNORECASE,
     )
     html = _LINKED_BASE10_EXPONENT_SUP_PATTERN.sub(
         lambda m: f'{m.group("base")}<sup class="z2m-unit-exp">{"-" if m.group("minus") else ""}{m.group("exp")}</sup>',
@@ -3485,7 +3500,19 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
         lambda m: f"{m.group('unit')}<sup{_append_class_to_attrs(m.group('attrs') or '', 'z2m-unit-exp')}>-{m.group('exp')}</sup>",
         html,
     )
+    html = re.sub(
+        r"(?P<base>\b10)\s*<sup(?P<attrs>[^>]*)>\s*(?P<inner_minus>[-\u2212\u2013\u2014])\s*(?P<exp>\d{1,2})\s*</sup>",
+        replace_base10_sup,
+        html,
+        flags=re.IGNORECASE,
+    )
     html = _BASE10_EXPONENT_SUP_PATTERN.sub(replace_base10_sup, html)
+    html = re.sub(
+        r"(?<![A-Za-z])(?P<unit>(?:nm|d|s)\s*)<sup(?P<attrs>[^>]*)>\s*(?P<exp>[1234])\s*</sup>",
+        replace_unit_sup,
+        html,
+        flags=re.IGNORECASE,
+    )
     html = _UNIT_EXPONENT_SUP_PATTERN.sub(replace_unit_sup, html)
     return _normalize_unit_symbol_spacing(_MISSING_SPACE_AFTER_UNIT_SUP_PATTERN.sub(r"\1 ", html))
 
@@ -4344,7 +4371,800 @@ def _repair_ocr_letter_glued_page_citation_links(html: str, ref_count: int) -> s
     return page_anchor_pattern.sub(replace, html)
 
 
-def _add_reference_ids_and_citation_links(html: str) -> str:
+def _citation_profile_style(citation_profile: Any | None) -> str:
+    if citation_profile is None:
+        return ""
+    if isinstance(citation_profile, dict):
+        return str(citation_profile.get("style") or "")
+    return str(getattr(citation_profile, "style", "") or "")
+
+
+def _citation_profile_confidence(citation_profile: Any | None) -> str:
+    if citation_profile is None:
+        return ""
+    if isinstance(citation_profile, dict):
+        return str(citation_profile.get("confidence") or "")
+    return str(getattr(citation_profile, "confidence", "") or "")
+
+
+def _citation_profile_is_high_confidence_paren_numeric(citation_profile: Any | None) -> bool:
+    return (
+        _citation_profile_style(citation_profile) == "paren_numeric"
+        and _citation_profile_confidence(citation_profile) == "high"
+    )
+
+
+def _citation_profile_is_high_confidence_superscript_numeric(citation_profile: Any | None) -> bool:
+    return (
+        _citation_profile_style(citation_profile) == "superscript_numeric"
+        and _citation_profile_confidence(citation_profile) == "high"
+    )
+
+
+def _citation_profile_items(citation_profile: Any | None, key: str) -> list[Any]:
+    if citation_profile is None:
+        return []
+    if isinstance(citation_profile, dict):
+        value = citation_profile.get(key)
+    else:
+        value = getattr(citation_profile, key, None)
+    return value if isinstance(value, list) else []
+
+
+def _citation_profile_ref_prefix(citation_profile: Any | None) -> str:
+    if citation_profile is None:
+        return ""
+    if isinstance(citation_profile, dict):
+        return str(citation_profile.get("ref_dest_prefix") or "")
+    return str(getattr(citation_profile, "ref_dest_prefix", "") or "")
+
+
+def _profile_item_value(item: Any, key: str, default: Any = "") -> Any:
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+_PDF_AUTHOR_YEAR_CITATION_LABEL_PATTERN = re.compile(
+    r"\b"
+    r"[A-Z][A-Za-z'’.-]{1,}"
+    r"(?:\s+(?:et\s+al\.?|and\s+[A-Z][A-Za-z'’.-]{1,}|&\s*[A-Z][A-Za-z'’.-]{1,}))?"
+    r"(?:,\s*|\s+)"
+    r"\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
+
+
+def _normalize_pdf_annotation_label(value: str) -> str:
+    return re.sub(r"\s+", " ", _visible_text(value)).strip(" \t\r\n.,;:")
+
+
+_PDF_ANNOTATION_CONTEXT_TRANSLATION = str.maketrans(
+    {
+        "\ufb00": "ff",
+        "\ufb01": "fi",
+        "\ufb02": "fl",
+        "\ufb03": "ffi",
+        "\ufb04": "ffl",
+        "\u2013": "-",
+        "\u2014": "-",
+    }
+)
+
+
+def _normalize_pdf_annotation_context(value: str) -> str:
+    return re.sub(r"\s+", " ", _visible_text(value).translate(_PDF_ANNOTATION_CONTEXT_TRANSLATION)).strip()
+
+
+def _compact_pdf_annotation_context(value: str) -> str:
+    normalized = _normalize_pdf_annotation_context(value).casefold()
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _pdf_annotation_reference_target(item: Any, citation_profile: Any | None, ref_index: int) -> int | None:
+    kind = str(_profile_item_value(item, "kind", "") or "")
+    target_text = str(_profile_item_value(item, "target", "") or "")
+    if kind != "reference":
+        ref_prefix = _citation_profile_ref_prefix(citation_profile)
+        dest = str(_profile_item_value(item, "dest", "") or "")
+        if not ref_prefix or not dest.startswith(ref_prefix):
+            return None
+        match = re.match(rf"{re.escape(ref_prefix)}(\d+)", dest)
+        if match is None:
+            return None
+        target_text = match.group(1)
+    try:
+        target = int(target_text)
+    except ValueError:
+        return None
+    return target if 1 <= target <= ref_index else None
+
+
+def _pdf_annotation_reference_label_candidates(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        return []
+
+    labels: list[str] = []
+    for match in _PDF_AUTHOR_YEAR_CITATION_LABEL_PATTERN.finditer(normalized):
+        label = _normalize_pdf_annotation_label(match.group(0))
+        if not label:
+            continue
+        if not re.search(r"[A-Za-z]", label) or re.search(r"\d{4}", label) is None:
+            continue
+        if len(label) > 120:
+            continue
+        labels.append(label)
+
+    if not labels and re.search(r"[A-Za-z]", normalized) and re.search(r"\d{4}", normalized):
+        label = _normalize_pdf_annotation_label(normalized)
+        if 6 <= len(label) <= 120 and not re.search(r"\b(?:doi|https?|www)\b", label, re.IGNORECASE):
+            labels.append(label)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(label)
+    return deduped
+
+
+def _pdf_annotation_reference_link_budgets(
+    citation_profile: Any | None,
+    ref_index: int,
+) -> dict[tuple[str, int], int]:
+    budgets: dict[tuple[str, int], int] = {}
+    profile_items = _citation_profile_items(citation_profile, "annotations")
+    if not profile_items:
+        profile_items = _citation_profile_items(citation_profile, "samples")
+    for item in profile_items:
+        target = _pdf_annotation_reference_target(item, citation_profile, ref_index)
+        if target is None:
+            continue
+        text = str(_profile_item_value(item, "text", "") or "")
+        for label in _pdf_annotation_reference_label_candidates(text):
+            key = (label.casefold(), target)
+            budgets[key] = budgets.get(key, 0) + 1
+
+    labels_to_targets: dict[str, set[int]] = {}
+    for label_key, target in budgets:
+        labels_to_targets.setdefault(label_key, set()).add(target)
+    ambiguous_labels = {
+        label_key for label_key, targets in labels_to_targets.items()
+        if len(targets) > 1
+    }
+    return {
+        key: count for key, count in budgets.items()
+        if key[0] not in ambiguous_labels
+    }
+
+
+def _pdf_annotation_reference_target_budgets(
+    citation_profile: Any | None,
+    ref_index: int,
+) -> dict[int, int]:
+    budgets: dict[int, int] = {}
+    profile_items = _citation_profile_items(citation_profile, "annotations")
+    if not profile_items:
+        return budgets
+    for item in profile_items:
+        target = _pdf_annotation_reference_target(item, citation_profile, ref_index)
+        if target is None:
+            continue
+        budgets[target] = budgets.get(target, 0) + 1
+    return budgets
+
+
+def _pdf_annotation_reference_label_keys(citation_profile: Any | None) -> set[str]:
+    keys: set[str] = set()
+    profile_items = _citation_profile_items(citation_profile, "annotations")
+    if not profile_items:
+        profile_items = _citation_profile_items(citation_profile, "samples")
+    for item in profile_items:
+        text = str(_profile_item_value(item, "text", "") or "")
+        for label in _pdf_annotation_reference_label_candidates(text):
+            keys.add(label.casefold())
+    return keys
+
+
+def _html_text_label_pattern(label: str) -> re.Pattern[str]:
+    escaped = re.escape(_escape_html_text(label))
+    escaped = re.sub(r"\\\s+", r"\\s+", escaped)
+    return re.compile(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def _link_pdf_annotation_reference_texts_in_safe_blocks(
+    html: str,
+    citation_profile: Any | None,
+    ref_index: int,
+) -> str:
+    """Project concrete PDF reference annotations back onto Marker HTML text."""
+    budgets = _pdf_annotation_reference_link_budgets(citation_profile, ref_index)
+    if not budgets:
+        return html
+
+    labels: dict[str, int] = {
+        label_key: target for (label_key, target), _count in budgets.items()
+    }
+    patterns = [
+        (label_key, labels[label_key], _html_text_label_pattern(label_key))
+        for label_key in sorted(labels, key=len, reverse=True)
+    ]
+
+    def remaining(label_key: str, target: int) -> int:
+        return budgets.get((label_key, target), 0)
+
+    def consume(label_key: str, target: int) -> bool:
+        key = (label_key, target)
+        count = budgets.get(key, 0)
+        if count <= 0:
+            return False
+        budgets[key] = count - 1
+        return True
+
+    def find_label_target(value: str) -> tuple[str, int] | None:
+        normalized = _normalize_pdf_annotation_label(value).casefold()
+        target = labels.get(normalized)
+        if target is None or remaining(normalized, target) <= 0:
+            return None
+        return normalized, target
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+
+        def replace_page_anchor(anchor_match: re.Match[str]) -> str:
+            found = find_label_target(anchor_match.group("body"))
+            if found is None:
+                return anchor_match.group(0)
+            label_key, target = found
+            if not consume(label_key, target):
+                return anchor_match.group(0)
+            attrs = _replace_href_and_link_class(anchor_match.group("attrs"), f"#ref-{target}", "z2m-ref-link")
+            return f'<a{attrs}>{anchor_match.group("body")}</a>'
+
+        current = _PAGE_ANCHOR_PATTERN.sub(replace_page_anchor, raw)
+        parts = _TAG_SPLIT_PATTERN.split(current)
+        out: list[str] = []
+        anchor_depth = 0
+
+        def replace_plain(label_key: str, target: int, text_match: re.Match[str]) -> str:
+            if not consume(label_key, target):
+                return text_match.group(0)
+            return f'<a href="#ref-{target}" class="z2m-ref-link">{text_match.group(0)}</a>'
+
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                close_match = _CLOSE_TAG_PATTERN.match(part)
+                open_match = _OPEN_TAG_PATTERN.match(part)
+                if close_match is not None and close_match.group(1).lower() == "a" and anchor_depth:
+                    anchor_depth -= 1
+                out.append(part)
+                if open_match is not None and open_match.group(1).lower() == "a" and not part.rstrip().endswith("/>"):
+                    anchor_depth += 1
+                continue
+            if anchor_depth:
+                out.append(part)
+                continue
+            linked = part
+            for label_key, target, pattern in patterns:
+                if remaining(label_key, target) <= 0:
+                    continue
+                linked = pattern.sub(lambda m, lk=label_key, tgt=target: replace_plain(lk, tgt, m), linked)
+            out.append(linked)
+        return "".join(out)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+_REF_ANCHOR_RUN_PATTERN = re.compile(
+    r"(?P<run>(?:\s*"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+['\"][^>]*>[\s\S]{0,80}?</a>"
+    r"\s*){1,12})",
+    re.IGNORECASE,
+)
+
+
+def _wrap_pdf_annotation_ref_runs_as_superscripts(
+    html: str,
+    citation_profile: Any | None,
+    ref_index: int,
+) -> str:
+    if "#ref-" not in html:
+        return html
+    target_budgets = _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
+    if not target_budgets:
+        return html
+
+    anchor_pattern = re.compile(
+        r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"][^>]*)>"
+        r"(?P<body>[\s\S]{0,80}?)</a>",
+        re.IGNORECASE,
+    )
+
+    def is_inside_sup(raw: str, position: int) -> bool:
+        left = raw[:position].lower()
+        return left.rfind("<sup") > left.rfind("</sup")
+
+    def label_parts(body: str, target: int, *, first: bool) -> tuple[str, str] | None:
+        visible = _visible_text(body).strip()
+        match = re.search(r"\d{1,3}", visible)
+        if match is None:
+            return None
+        try:
+            label_number = int(match.group(0))
+        except ValueError:
+            return None
+        if label_number != target:
+            return None
+        prefix = visible[:match.start()]
+        suffix = visible[match.end():]
+        separator = ""
+        if prefix and not first:
+            sep_match = re.search(r"[,;\-\u2013\u2014]\s*$", prefix)
+            if sep_match is not None:
+                separator = sep_match.group(0).strip()
+        if not separator and not first:
+            separator = ","
+        if not separator and suffix.strip().startswith((",", ";")):
+            separator = ""
+        return separator, str(label_number)
+
+    def replace_run(match: re.Match[str]) -> str:
+        raw = match.group("run")
+        if is_inside_sup(match.string, match.start()):
+            return raw
+        anchors = list(anchor_pattern.finditer(raw))
+        if not anchors:
+            return raw
+        cursor = 0
+        rebuilt: list[str] = []
+        consumed_targets: list[int] = []
+        for index, anchor in enumerate(anchors):
+            gap = raw[cursor:anchor.start()]
+            if gap.strip():
+                return raw
+            cursor = anchor.end()
+            try:
+                target = int(anchor.group("target"))
+            except ValueError:
+                return raw
+            if target_budgets.get(target, 0) <= 0:
+                return raw
+            parts = label_parts(anchor.group("body"), target, first=index == 0)
+            if parts is None:
+                return raw
+            separator, label = parts
+            if separator:
+                rebuilt.append(separator)
+            attrs = _replace_href_and_link_class(anchor.group("attrs"), f"#ref-{target}", "z2m-ref-link")
+            rebuilt.append(f"<a{attrs}>{label}</a>")
+            consumed_targets.append(target)
+        if raw[cursor:].strip():
+            return raw
+        for target in consumed_targets:
+            target_budgets[target] = target_budgets.get(target, 0) - 1
+        return f"<sup>{''.join(rebuilt)}</sup>"
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        return _REF_ANCHOR_RUN_PATTERN.sub(replace_run, raw)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+_PDF_ANNOTATION_TEX_SUP_CITATION_PATTERN = re.compile(
+    r"\\\(\s*1\^\{(?P<body>\d{1,3}\s*(?:[-\u2013\u2014]\s*\d{1,3}){1,3})\}\s*\\\)"
+)
+
+
+def _link_pdf_annotation_tex_superscript_citations(
+    html: str,
+    citation_profile: Any | None,
+    ref_index: int,
+) -> str:
+    target_budgets = _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
+    if not target_budgets:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        body = match.group("body")
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", body)]
+        if not numbers or any(number < 1 or number > ref_index for number in numbers):
+            return match.group(0)
+        if any(target_budgets.get(number, 0) <= 0 for number in (numbers[0], numbers[-1])):
+            return match.group(0)
+
+        def link_number(num_match: re.Match[str]) -> str:
+            number = int(num_match.group(0))
+            if number not in {numbers[0], numbers[-1]}:
+                return num_match.group(0)
+            target_budgets[number] = target_budgets.get(number, 0) - 1
+            return f'<a href="#ref-{number}" class="z2m-ref-link">{number}</a>'
+
+        linked = re.sub(r"\d{1,3}", link_number, body)
+        return f"<sup>{linked}</sup>"
+
+    return _SENTENCE_NODE_PATTERN.sub(
+        lambda node_match: (
+            node_match.group(0)
+            if _node_protects_citations(node_match.group(0))
+            else _PDF_ANNOTATION_TEX_SUP_CITATION_PATTERN.sub(replace, node_match.group(0))
+        ),
+        html,
+    )
+
+
+def _pdf_annotation_superscript_context_hints(
+    citation_profile: Any | None,
+    ref_index: int,
+) -> dict[int, list[tuple[str, str]]]:
+    hints: dict[int, list[tuple[str, str]]] = {}
+    for item in _citation_profile_items(citation_profile, "annotations"):
+        target = _pdf_annotation_reference_target(item, citation_profile, ref_index)
+        if target is None:
+            continue
+        text = _normalize_pdf_annotation_context(str(_profile_item_value(item, "text", "") or ""))
+        if not text:
+            continue
+        pattern = re.compile(rf"(?<!\d){re.escape(str(target))}(?!\d)")
+        for match in pattern.finditer(text):
+            left_hint = _compact_pdf_annotation_context(text[: match.start()])[-14:]
+            right_hint = _compact_pdf_annotation_context(text[match.end():])[:14]
+            if not left_hint and not right_hint:
+                continue
+            hints.setdefault(target, []).append((left_hint, right_hint))
+    return hints
+
+
+def _ref_link_counts_by_target(html: str) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for match in re.finditer(r'href\s*=\s*["\']#ref-(\d+)["\']', html, re.IGNORECASE):
+        try:
+            target = int(match.group(1))
+        except ValueError:
+            continue
+        counts[target] = counts.get(target, 0) + 1
+    return counts
+
+
+def _pdf_annotation_superscript_context_matches(
+    left: str,
+    right: str,
+    hints: list[tuple[str, str]],
+) -> bool:
+    left_context = _compact_pdf_annotation_context(left[-160:])
+    right_context = _compact_pdf_annotation_context(right[:160])
+    for left_hint, right_hint in hints:
+        left_score = 0
+        right_score = 0
+        for length in (10, 8, 6, 4, 3, 2, 1):
+            if len(left_hint) >= length and left_context.endswith(left_hint[-length:]):
+                left_score = length
+                break
+        for length in (10, 8, 6, 4, 3, 2):
+            if len(right_hint) >= length and right_context.startswith(right_hint[:length]):
+                right_score = length
+                break
+        if left_score >= 4:
+            return True
+        if right_score >= 4 and (not left_hint or left_score >= 1):
+            return True
+        if left_score >= 1 and right_score >= 2:
+            return True
+    return False
+
+
+def _link_pdf_annotation_plain_superscript_citations(
+    html: str,
+    citation_profile: Any | None,
+    ref_index: int,
+) -> str:
+    target_budgets = _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
+    if not target_budgets:
+        return html
+
+    for target, existing_count in _ref_link_counts_by_target(html).items():
+        if target in target_budgets:
+            target_budgets[target] = max(0, target_budgets[target] - existing_count)
+    hints = _pdf_annotation_superscript_context_hints(citation_profile, ref_index)
+    targets = sorted(
+        (target for target, budget in target_budgets.items() if budget > 0 and hints.get(target)),
+        reverse=True,
+    )
+    if not targets:
+        return html
+
+    number_pattern = re.compile(
+        rf"(?P<gap>\s*)(?P<num>{'|'.join(re.escape(str(target)) for target in targets)})(?!\d)"
+    )
+    dash_chars = "-\u2013\u2014"
+
+    def in_inline_math(text: str, position: int) -> bool:
+        left_inline_open = text.rfind(r"\(", 0, position)
+        left_inline_close = text.rfind(r"\)", 0, position)
+        left_display_open = text.rfind(r"\[", 0, position)
+        left_display_close = text.rfind(r"\]", 0, position)
+        return left_inline_open > left_inline_close or left_display_open > left_display_close
+
+    def replace_in_text(part: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            try:
+                target = int(match.group("num"))
+            except ValueError:
+                return match.group(0)
+            if target_budgets.get(target, 0) <= 0:
+                return match.group(0)
+
+            start = match.start("num")
+            end = match.end("num")
+            if start > 0 and part[start - 1].isdigit():
+                return match.group(0)
+            if in_inline_math(part, start):
+                return match.group(0)
+
+            left = part[:start]
+            right = part[end:]
+            left_stripped = left.rstrip()
+            right_stripped = right.lstrip()
+            if left_stripped and left_stripped[-1] in dash_chars:
+                return match.group(0)
+            if right_stripped and right_stripped[0] in dash_chars:
+                return match.group(0)
+            if right_stripped.startswith("%"):
+                return match.group(0)
+            if re.match(r"[A-Za-z]", right_stripped) and not re.match(r"[A-Z]", right_stripped):
+                return match.group(0)
+            if not _pdf_annotation_superscript_context_matches(left, right, hints.get(target, [])):
+                return match.group(0)
+
+            target_budgets[target] = target_budgets.get(target, 0) - 1
+            return f'<sup><a href="#ref-{target}" class="z2m-ref-link">{target}</a></sup>'
+
+        return number_pattern.sub(replace, part)
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        parts = _TAG_SPLIT_PATTERN.split(raw)
+        out: list[str] = []
+        skip_stack: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                _update_citation_skip_stack(part, skip_stack)
+                out.append(part)
+                continue
+            out.append(part if skip_stack else replace_in_text(part))
+        return "".join(out)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+_PLAIN_SUPERSCRIPT_NUMERIC_CITATION_GROUP_PATTERN = re.compile(
+    r"(?P<punct>[.!?])\s+"
+    r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){1,12})"
+    r"(?=\s+[A-Z])"
+)
+_PLAIN_SUPERSCRIPT_NUMERIC_CITATION_ANY_PATTERN = re.compile(
+    r"(?P<punct>[.!?])\s+"
+    r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12})"
+    r"(?=\s+[A-Z])"
+)
+_VISIBLE_FLATTENED_SUPERSCRIPT_NUMERIC_CITATION_PATTERN = re.compile(
+    r"(?<=[.!?])\s+"
+    r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){1,12})"
+    r"(?=\s+[A-Z])"
+)
+
+
+def _looks_like_flattened_superscript_numeric_document(html: str, ref_index: int) -> bool:
+    if ref_index <= 0:
+        return False
+    count = 0
+    text = _visible_text(html)
+    for match in _VISIBLE_FLATTENED_SUPERSCRIPT_NUMERIC_CITATION_PATTERN.finditer(text):
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", match.group("body"))]
+        if numbers and all(1 <= number <= ref_index for number in numbers):
+            count += 1
+    return count >= 5
+
+
+def _link_numeric_superscript_body(body: str, ref_index: int) -> str | None:
+    numbers = [int(value) for value in re.findall(r"\d{1,3}", _visible_text(body))]
+    if not numbers or any(number < 1 or number > ref_index for number in numbers):
+        return None
+    if not re.fullmatch(r"\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*", _visible_text(body)):
+        return None
+
+    def link_number(match: re.Match[str]) -> str:
+        number = int(match.group(0))
+        return f'<a href="#ref-{number}" class="z2m-ref-link">{match.group(0)}</a>'
+
+    return re.sub(r"\d{1,3}", link_number, body)
+
+
+def _link_existing_numeric_superscripts_in_safe_blocks(html: str, ref_index: int) -> str:
+    def replace_sup(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if "z2m-unit-exp" in raw or "z2m-footnote-ref" in raw or "<a " in raw.lower():
+            return raw
+        linked = _link_numeric_superscript_body(match.group(1), ref_index)
+        if linked is None:
+            return raw
+        return f"<sup>{linked}</sup>"
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        return _SUP_PATTERN.sub(replace_sup, raw)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+def _link_plain_superscript_numeric_groups_in_safe_blocks(
+    html: str,
+    ref_index: int,
+    *,
+    allow_single: bool = False,
+) -> str:
+    pattern = (
+        _PLAIN_SUPERSCRIPT_NUMERIC_CITATION_ANY_PATTERN
+        if allow_single
+        else _PLAIN_SUPERSCRIPT_NUMERIC_CITATION_GROUP_PATTERN
+    )
+
+    def replace_group(match: re.Match[str]) -> str:
+        linked = _link_numeric_superscript_body(match.group("body"), ref_index)
+        if linked is None:
+            return match.group(0)
+        return f"{match.group('punct')}<sup>{linked}</sup>"
+
+    def replace_text(part: str) -> str:
+        return pattern.sub(replace_group, part)
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        parts = _TAG_SPLIT_PATTERN.split(raw)
+        out: list[str] = []
+        skip_stack: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                _update_citation_skip_stack(part, skip_stack)
+                out.append(part)
+                continue
+            out.append(part if skip_stack else replace_text(part))
+        return "".join(out)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+_REF_SUP_NO_SPACE_AFTER_PATTERN = re.compile(
+    r"(?P<sup><sup\b[^>]*>[\s\S]{0,400}?\bz2m-ref-link\b[\s\S]{0,400}?</sup>)(?P<next>[A-Za-z])",
+    re.IGNORECASE,
+)
+
+
+def _normalize_spacing_after_ref_superscripts(html: str) -> str:
+    return _REF_SUP_NO_SPACE_AFTER_PATTERN.sub(r"\g<sup> \g<next>", html)
+
+
+_PAGE_ANCHOR_INLINE_NUMERIC_GROUP_PATTERN = re.compile(
+    r"(?P<group>(?:"
+    r"<a\b(?=[^>]*\bhref\s*=\s*['\"]#page-)[^>]*>[\s\d,;\(\)\-\u2013\u2014]*</a>"
+    r"|[\s\d,;\(\)\-\u2013\u2014]"
+    r"){3,600})",
+    re.IGNORECASE,
+)
+_PLAIN_PAREN_NUMERIC_CITATION_PATTERN = re.compile(
+    r"\(\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*\)"
+)
+
+
+def _link_paren_numeric_page_citations_in_safe_blocks(
+    html: str,
+    ref_index: int,
+    citation_profile: Any | None = None,
+) -> str:
+    """Retarget page-anchor numeric citations for parenthetical numeric articles."""
+    target_budgets = _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
+    enforce_target_budgets = bool(target_budgets)
+
+    def render_visible_citation(visible: str) -> str | None:
+        match = re.fullmatch(
+            r"\s*(?P<prefix>[\)\]]?\s*)?"
+            r"(?P<body>\(\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*\))"
+            r"(?P<trail>[.,;:]?)\s*",
+            visible,
+        )
+        if match is None:
+            return None
+
+        prefix = match.group("prefix") or ""
+        body = match.group("body")
+        trail = match.group("trail")
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", body)]
+        if not numbers or any(number < 1 or number > ref_index for number in numbers):
+            return None
+        if enforce_target_budgets and any(target_budgets.get(number, 0) <= 0 for number in numbers):
+            return None
+
+        def link_number(num_match: re.Match[str]) -> str:
+            number_text = num_match.group(0)
+            number = int(number_text)
+            if enforce_target_budgets:
+                target_budgets[number] = target_budgets.get(number, 0) - 1
+            return f'<a href="#ref-{number}" class="z2m-ref-link">{number_text}</a>'
+
+        return prefix + re.sub(r"\d{1,3}", link_number, body) + trail
+
+    def link_plain_parenthetical_citations(raw: str) -> str:
+        parts = _TAG_SPLIT_PATTERN.split(raw)
+        out: list[str] = []
+        link_depth = 0
+
+        def replace_plain(match: re.Match[str]) -> str:
+            rendered = render_visible_citation(match.group(0))
+            return match.group(0) if rendered is None else rendered
+
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                close_match = _CLOSE_TAG_PATTERN.match(part)
+                open_match = _OPEN_TAG_PATTERN.match(part)
+                if close_match is not None and close_match.group(1).lower() == "a" and link_depth:
+                    link_depth -= 1
+                out.append(part)
+                if open_match is not None and open_match.group(1).lower() == "a":
+                    link_depth += 1
+                continue
+            if link_depth:
+                out.append(part)
+            else:
+                out.append(_PLAIN_PAREN_NUMERIC_CITATION_PATTERN.sub(replace_plain, part))
+        return "".join(out)
+
+    def replace_group(match: re.Match[str]) -> str:
+        raw = match.group("group")
+        if "#page-" not in raw:
+            return raw
+        visible = _visible_text(raw)
+        if not visible or re.search(r"[A-Za-z%]", visible):
+            return raw
+        rendered = render_visible_citation(visible)
+        if rendered is None:
+            return raw
+        leading_space = " " if raw[:1].isspace() else ""
+        trailing_space = " " if raw[-1:].isspace() else ""
+        return f"{leading_space}{rendered}{trailing_space}"
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        retargeted = _PAGE_ANCHOR_INLINE_NUMERIC_GROUP_PATTERN.sub(replace_group, raw)
+        return link_plain_parenthetical_citations(retargeted)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | None = None) -> str:
     heading_match = _REFERENCES_HEADING_PATTERN.search(html)
     if heading_match is not None:
         split_at = heading_match.end()
@@ -4364,10 +5184,59 @@ def _add_reference_ids_and_citation_links(html: str) -> str:
     if ref_index == 0:
         return html
 
+    profile_is_paren_numeric = _citation_profile_is_high_confidence_paren_numeric(citation_profile)
+    profile_has_reference_annotations = bool(
+        _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
+    )
+    profile_is_flattened_superscript_numeric = (
+        not profile_is_paren_numeric
+        and not profile_has_reference_annotations
+        and _looks_like_flattened_superscript_numeric_document(before_references, ref_index)
+    )
+    profile_is_superscript_numeric = (
+        _citation_profile_is_high_confidence_superscript_numeric(citation_profile)
+        or profile_is_flattened_superscript_numeric
+    )
+
     page_to_ref = _reference_page_anchor_map(references_with_ids)
-    before_references = _rewrite_page_linked_bracket_citations(before_references, ref_index)
-    before_references = _rewrite_page_links_to_reference_targets(before_references, page_to_ref)
+    if profile_is_paren_numeric:
+        before_references = _link_paren_numeric_page_citations_in_safe_blocks(
+            before_references,
+            ref_index,
+            citation_profile=citation_profile,
+        )
+    else:
+        before_references = _rewrite_page_linked_bracket_citations(before_references, ref_index)
+        before_references = _rewrite_page_links_to_reference_targets(before_references, page_to_ref)
+    before_references = _link_pdf_annotation_reference_texts_in_safe_blocks(
+        before_references,
+        citation_profile,
+        ref_index,
+    )
     before_references = _repair_ocr_letter_glued_page_citation_links(before_references, ref_index)
+    if profile_is_superscript_numeric:
+        before_references = _wrap_pdf_annotation_ref_runs_as_superscripts(
+            before_references,
+            citation_profile,
+            ref_index,
+        )
+        before_references = _link_pdf_annotation_tex_superscript_citations(
+            before_references,
+            citation_profile,
+            ref_index,
+        )
+        before_references = _link_pdf_annotation_plain_superscript_citations(
+            before_references,
+            citation_profile,
+            ref_index,
+        )
+        before_references = _link_existing_numeric_superscripts_in_safe_blocks(before_references, ref_index)
+        before_references = _link_plain_superscript_numeric_groups_in_safe_blocks(
+            before_references,
+            ref_index,
+            allow_single=False,
+        )
+        before_references = _normalize_spacing_after_ref_superscripts(before_references)
 
     if not re.search(r"<ol\b", references_with_ids, re.IGNORECASE):
         def ensure_visible_ref_number(match: re.Match[str]) -> str:
@@ -4472,20 +5341,24 @@ def _add_reference_ids_and_citation_links(html: str) -> str:
 
         return pair_pattern.sub(repl, text)
 
-    # Recover citation superscripts that leaked into TeX unit exponents:
-    # "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}^{24}}\)" -> "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}}\)<sup>24</sup>"
-    before_references = _recover_citations_leaked_into_tex_units(before_references, ref_index)
-    before_references = _unwrap_numeric_page_links_for_citation_recovery(before_references)
+    if not profile_is_paren_numeric and not profile_is_superscript_numeric:
+        # Recover citation superscripts that leaked into TeX unit exponents:
+        # "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}^{24}}\)" -> "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}}\)<sup>24</sup>"
+        before_references = _recover_citations_leaked_into_tex_units(before_references, ref_index)
+        before_references = _unwrap_numeric_page_links_for_citation_recovery(before_references)
 
-    # Recover bare citations: "issues17,68" → "issues<sup>17,68</sup>"
-    before_references = _recover_ocr_citation_artifacts(before_references, ref_index)
-    before_references = _recover_bare_citations(before_references, ref_index)
-    before_references = _rewrite_page_linked_bracket_citations(before_references, ref_index)
-    before_references = _convert_unicode_sup_citations(before_references, ref_index)
+        # Recover bare citations: "issues17,68" → "issues<sup>17,68</sup>"
+        before_references = _recover_ocr_citation_artifacts(before_references, ref_index)
+        before_references = _recover_bare_citations(before_references, ref_index)
+        before_references = _rewrite_page_linked_bracket_citations(before_references, ref_index)
+        before_references = _convert_unicode_sup_citations(before_references, ref_index)
 
     # Link <sup>N</sup> citations first, then [N] bracket-style, then (ref. N).
-    before_with_citation_links = _link_sup_citations_in_safe_blocks(before_references, link_sup)
-    before_with_citation_links = _link_bracket_citations(before_with_citation_links, ref_index)
+    if profile_is_paren_numeric or profile_is_superscript_numeric:
+        before_with_citation_links = before_references
+    else:
+        before_with_citation_links = _link_sup_citations_in_safe_blocks(before_references, link_sup)
+        before_with_citation_links = _link_bracket_citations(before_with_citation_links, ref_index)
     before_with_citation_links = _link_paren_ref_citations(before_with_citation_links, ref_index)
     before_with_citation_links = normalize_linked_ocr_pairs(before_with_citation_links)
     before_with_citation_links = _repair_ocr_letter_glued_ref_links(before_with_citation_links, ref_index)
@@ -4493,6 +5366,13 @@ def _add_reference_ids_and_citation_links(html: str) -> str:
     linked_document = _rewrite_page_links_to_reference_targets(linked_document, page_to_ref)
     linked_document = _repair_ocr_letter_glued_page_citation_links(linked_document, ref_index)
     linked_document = _repair_ocr_letter_glued_ref_links(linked_document, ref_index)
+    if profile_is_superscript_numeric:
+        linked_document = _wrap_pdf_annotation_ref_runs_as_superscripts(
+            linked_document,
+            citation_profile,
+            ref_index,
+        )
+        linked_document = _normalize_spacing_after_ref_superscripts(linked_document)
     return linked_document
 
 
@@ -5853,13 +6733,16 @@ def _repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
     return slash_unit_pattern.sub(_replace_slash_unit, repaired)
 
 
-def _unwrap_author_year_ref_links(html: str) -> str:
+def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None) -> str:
     """Remove low-confidence numeric ref links from author-year citation text."""
     if "#ref-" not in html:
         return html
+    pdf_annotation_labels = _pdf_annotation_reference_label_keys(citation_profile)
 
     def _replace(match: re.Match[str]) -> str:
         label = _visible_text(match.group("body"))
+        if _normalize_pdf_annotation_label(label).casefold() in pdf_annotation_labels:
+            return match.group(0)
         right_text = _visible_text(html[match.end(): match.end() + 140])
         surname_fragment = (
             re.fullmatch(r"[A-Z][A-Za-z'’.-]{3,}", label) is not None
@@ -5984,8 +6867,10 @@ def _looks_author_year_citation_document(html: str) -> bool:
     return author_year_count >= 4 and bracket_count < 4
 
 
-def _repair_author_year_footnote_ref_links(html: str) -> str:
+def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | None = None) -> str:
     """In author-year papers, source/web footnote markers are not numeric refs."""
+    if _citation_profile_is_high_confidence_paren_numeric(citation_profile):
+        return html
     if "#ref-" not in html or not _looks_author_year_citation_document(html):
         return html
     references_heading = _REFERENCES_HEADING_PATTERN.search(html)
@@ -9385,6 +10270,7 @@ def polish_html_document(
     *,
     table_caption_language: str = "ru",
     enable_citation_linkify: bool = True,
+    citation_profile: Any | None = None,
 ) -> str:
     polished = _unwrap_spurious_math_captions(html)  # before all else: free captions from <math>
     polished = _unwrap_nested_fig_links(polished)
@@ -9450,11 +10336,11 @@ def polish_html_document(
     found_figures.update(recovered_figures)
     polished, found_boxes = _add_box_anchors(polished)
     if enable_citation_linkify:
-        polished = _add_reference_ids_and_citation_links(polished)
+        polished = _add_reference_ids_and_citation_links(polished, citation_profile=citation_profile)
         polished = _retarget_mismatched_ref_link_labels(polished)
         polished = _repair_ref_links_absorbed_decimal_or_unit_text(polished)
-        polished = _unwrap_author_year_ref_links(polished)
-        polished = _repair_author_year_footnote_ref_links(polished)
+        polished = _unwrap_author_year_ref_links(polished, citation_profile=citation_profile)
+        polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_acronym_footnote_ref_citations(polished)
         polished = _recover_trailing_citation_after_author_year_ref(polished)
         polished, _ = _repair_citation_prefix_paragraph_continuations(polished)

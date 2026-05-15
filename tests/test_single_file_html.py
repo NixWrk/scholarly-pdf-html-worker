@@ -2201,7 +2201,9 @@ def test_polish_html_document_does_not_link_scientific_numeric_contexts() -> Non
         "<p>The buffer had a pH of 7,4, the stimulus was (D2,4 mA), "
         "monkey 1: 7.5 kg, and recordings ran from week 8 to week 52. "
         "A parameter space ranged from 10\u2212 <sup>10</sup> to 10 <sup>2</sup>, "
-        "and C = 10\u2212 <sup>1</sup>.</p>"
+        "and C = 10\u2212 <sup>1</sup>. "
+        "The overlap integral was around 1.39 \u00d7 10<sup>-17</sup> "
+        "M<sup>-1</sup> cm<sup>-1</sup> nm<sup>4</sup>.</p>"
         "<p>These issues 17,18. Careful handling is required.</p>"
         "<h4>References</h4>"
         "<ul>" + "".join(f"<li>Ref {i}.</li>" for i in range(1, 60)) + "</ul>"
@@ -2213,6 +2215,12 @@ def test_polish_html_document_does_not_link_scientific_numeric_contexts() -> Non
     assert 'href="#ref-' not in science_block
     assert '10<sup class="z2m-unit-exp">-10</sup> to 10<sup class="z2m-unit-exp">2</sup>' in science_block
     assert 'C = 10<sup class="z2m-unit-exp">-1</sup>' in science_block
+    assert (
+        '1.39 \u00d7 10<sup class="z2m-unit-exp">-17</sup> '
+        'M<sup class="z2m-unit-exp">-1</sup> '
+        'cm<sup class="z2m-unit-exp">-1</sup> '
+        'nm<sup class="z2m-unit-exp">4</sup>'
+    ) in science_block
     assert 'href="#ref-17"' in polished
     assert 'href="#ref-18"' in polished
 
