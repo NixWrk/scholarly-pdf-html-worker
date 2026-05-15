@@ -200,7 +200,9 @@ LOST_FF_WORD_RE = re.compile(
     r"certiication|deining|simpliication|irst|inluence|itness|worklow|"
     r"frst|fne|fgurative|defne(?:d)?|profcient|beneft|"
     r"difcult(?:y|ies)?|staf|efort(?:s)?|confrm(?:ed|ing)?|clarifed|"
-    r"infuenced|fndings|feld)\b|"
+    r"infuenced|fndings|feld|rst|ndings)\b|"
+    r"\b(?:suf|insuf)\s+cient\b|\bbene\s+ts\b|\bmagnetic\s+eld\b|"
+    r"\beld\s+strength\b|\bve\s+patients\b|\bOf\s+ce\b|"
     r"\b(?:specifi|Specifi|signifi|Signifi|defi|Defi|diffi|Diffi|profi|Profi|"
     r"confi|Confi|benefi|Benefi|identi?fi|Identi?fi|Offi|offi|Griffi|"
     r"fl|Fl|urofl|Urofl|outfl|Outfl|refl|Refl|infl|Infl)\s+"
@@ -237,7 +239,7 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"hierarchicalsegmentation|webbased|needsto|includesinformation|"
     r"participantssuggested|overallwork|guidelinesfor|issimilarto|"
     r"easierto|spatialcognitive|wassupported|blindaccessible|"
-    r"Key-wordaware)\b|"
+    r"Key-wordaware|CTABassistant)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
@@ -317,7 +319,10 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"Stoimeno\s+v\.|list\s+all\s+the\s+they\s+identified|"
     r"OPRATING\s+PRICIPLE|discription|milivolt|upto|coma\s+separated|"
     r"purposed\s+work|millitres|ghraph|Authers|"
-    r"Electronic\(Cambridge|If\s+inal|best\s+suites)\b|"
+    r"Electronic\(Cambridge|If\s+inal|best\s+suites|Stocks\s+shift|"
+    r"nanomicells|plent|toxity|uroflometer|31\.6\s+8\s+C|35\.9\s+8\s+C|"
+    r"3[67]8C|425\s+cmH2O|460\s+bpm)\b|"
+    r"\bODs/MB\b|"
     r"\bet\s+nl\.|\bHands\s+of!|\bComputer\s+Based\s+Method\s+\?|"
     r"\.oog-inch\b",
     re.IGNORECASE,
@@ -378,7 +383,10 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bt\s+o\s+the\s+best\s+of\s+our\s+knowledge\b|"
     r"\bhigh\s*\)\s*w\s+ere\b|"
     r"\bB\s+rain-computer\b|"
-    r"\bBel\s+humeur\b",
+    r"\bBel\s+humeur\b|"
+    r"\bGroenenda\s+al@|\bWilhel\s+mina\b|\bRUTHERFO\s+RD\b|"
+    r"\benviron\s+ment\b|\bInter\s+national\b|\bdisconti\s+nuation\b|"
+    r"\bIta\s+ly\b",
     re.IGNORECASE,
 )
 AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b[1-9]Department\b")
@@ -397,6 +405,9 @@ BODY_PAGE_HEADER_RE = re.compile(
     r"\bPEDIATRICS\s+is\s+owned[\s\S]{0,360}\bAmerican\s+Academy\s+of\s+Pediatrics\b|"
     r"\bJournal\s+of\s+Materials\s+Chemistry\s+B\s+Accepted\s+Manuscrip\b|"
     r"\bPublished\s+on\s+20\s+July\s+2015\.\s+Downloaded\s+by\s+California\s+State\s+University\s+at\s+Fresno\b|"
+    r"\bPublished\s+on\s+03\s+August\s+2015\.\s+Downloaded\s+by\s+Emory\s+University\b|"
+    r"\bChemComm\s+Accepted\s+Manuscript\b|"
+    r"\b\d{2,3}\s+Y\.\s+Volpe\s+et\s+al\.(?=\s|$)|"
     r"\bCheck\s+for\s+updates\b",
     re.IGNORECASE,
 )
@@ -447,7 +458,14 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bStudies\s+Glossary[\s\S]{0,2500}\brelating\s+timing\b|"
     r"\bThe\s+laser\s+components\s+include\s+The\s+Cartesian[\s\S]{0,1600}\b16\s+a\s+60W\s+CO2\b|"
     r"\busing-artificial-intelligence-to-help-blind-people-see-facebook\s+A\s+novel\s+system\b|"
-    r"\bClearVision\s+project:\s+www\.clearvisionproject\.org\s+In\s+summary\b",
+    r"\bClearVision\s+project:\s+www\.clearvisionproject\.org\s+In\s+summary\b|"
+    r"\bsmall\s+animals\s+imaging\s+In\s+summary\b|"
+    r"\bUrinary\s+flow\s+can\s+also\s+be\s+recorded\s+by\s+voiding\s+on\s+a\s+disk"
+    r"[\s\S]{0,1800}\bwhich\s+rotates\s+at\s+a\s+constant\s+speed\b|"
+    r"\bwho\s+measured\s+the\s+maximum\s+flow\s+by[\s\S]{0,1800}"
+    r"\brecording\s+the\s+volume\s+of\s+air\s+displaced\b|"
+    r"\bFour\s+of\s+these\s+principles\s+were\s+tested[\s\S]{0,1200}"
+    r"\bUF2[\s\S]{0,1200}\bconstant\s+flow\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -512,7 +530,12 @@ BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\b281\.\s+Zhang[\s\S]{0,500}\b282\.\s+Buzs|\bGroupMorrell\s+MJ\b|"
     r"\bSuggestive\s+contours\s+for\s+conveying\s+shape\.\s+5\.\s+ACM\s+Transactions\b|"
     r"\bTouchPen[\s\S]{0,320}\b13\.\s+Cham\b|"
-    r"\bTinne\s+Tuytelaars[\s\S]{0,320}\b36\.\s+Cham\b",
+    r"\bTinne\s+Tuytelaars[\s\S]{0,320}\b36\.\s+Cham\b|"
+    r"\b7\.\s+50\s+7\s+P\.\s+Greenspan\b|"
+    r"\b11\.\s+55\s+10\s+X\.\s+He\b|"
+    r"\b1468\.\s+1469\.\s+20\s+L\.\s+Wang\b|"
+    r"\b1470\.\s+75\s+21\s+X\.\s+Chen\b|"
+    r"\b1476\.\s+We\.\s+Liu\b",
     re.IGNORECASE,
 )
 PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
@@ -540,7 +563,12 @@ PDF_LINE_NUMBER_RESIDUE_RE = re.compile(
     r"\b(?:with\s+20\s+the\s+sizes|been\s+25\s+reported|"
     r"Fresh\s+lychee\s+was\s+purchased|All\s+measurements\s+were\s+performed|"
     r"_\{75\}\s+incubated|95\s+The\s+morphology|20\s+analytical\s+chemistry|"
-    r"100\s+39\s+Khokhlov|105\s+41\s+Y\.\s+Yan)\b",
+    r"100\s+39\s+Khokhlov|105\s+41\s+Y\.\s+Yan)\b|"
+    r"\bAccepted\s+Manuscript\b[\s\S]{0,5000}?"
+    r"\b(?:excellent\s+10\s+contrast|minimal\s+15\s+autofluorescence|"
+    r"20\s+photobleaching|25\s+development|30\s+dyes|35\s+resulting|"
+    r"45\s+developed|60\s+illustrated|75\s+fabricated|85\s+nanomicelles|"
+    r"100\s+As\s+shown|Key\s+25\s+Technologies)\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(

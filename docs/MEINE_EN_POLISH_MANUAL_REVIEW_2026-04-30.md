@@ -3758,3 +3758,45 @@ Report:
   `P67=4`, `P71=4`, `P75=2`, `P76=3`, `P78=1`, `P83=1`,
   `P84=1`, `P90=2`, `P91=1`. The previous `P86` hit on
   `meine_0109` is now suppressed as a false positive.
+
+## Five-at-a-time full-text blind-spot pass, batch 066-070 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0114`, `meine_0117`, `meine_0119`, `meine_0120`, and
+`meine_0121`; generated HTML was not edited. Raw HTML was checked against the
+same documents to separate raw OCR/reading-order defects from polish-stage
+surfacing. The local Zotero PDF map confirmed source PDFs for all five.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 066 | `meine_0114_596913ccaf` | `P13/P39/P59/P67/P71/P77` | Full text confirmed the existing thesis-specific findings: caption/list-of-figures confusion, `twodimensional`, known OCR tokens such as `Examing`, and the large Table 3.1 section absorption. No new rule was needed for this article. |
+| 067 | `meine_0117_a82555f407` | `P05/P61` | Added RSC accepted-manuscript page furniture and line-number residues (`excellent 10 contrast`, `minimal 15 autofluorescence`, `45 developed`, `75 fabricated`), OCR/joining tokens (`Stocks shift`, `CTABassistant`, `nanomicells`, `plent`, `ODs/MB`, `toxity`), shifted reference numbering (`7. 50 7`, `1468. 1469. 20`), and conclusion merge `small animals imaging In summary`. |
+| 068 | `meine_0119_b39521e56d` | `P76` | Added lost-ligature and spacing residues from the neonatal MRI article: `magnetic eld`, `ve patients`, `rst`, `suf cient`, `insuf cient`, `bene ts`, `Of ce`, `Groenenda al@...`, `Wilhel mina`, `RUTHERFO RD`, `environ ment`, `Inter national`, and `disconti nuation`; also added numeric OCR tokens such as `368C`, `425 cmH2O`, and `460 bpm`. |
+| 069 | `meine_0120_132c43321f` | clean | Added detection for reference/body interleaving in the old uroflowmeter article where footnotes 13/18 and the UF2 note split body sentences (`voiding on a disk ... which rotates`, `maximum flow by ... recording the volume`, `Four of these principles ... UF2 ... constant flow`), plus `uroflometer`. |
+| 070 | `meine_0121_bfa6ddf741` | `P14/P59/P61/P71/P91` | Added page-header detection for `92/94/106 Y. Volpe et al.` and intra-word reference residue `Ita ly`; the repository cover page remains covered by `P91`. |
+
+Scanner changes:
+
+- `P66` now catches additional lost-ligature patterns from the neonatal MRI
+  article, including spaced forms such as `suf cient` and `insuf cient`.
+- `P67` catches `CTABassistant`.
+- `P71` covers focused OCR tokens from the RSC, neonatal MRI, and old
+  uroflowmeter documents.
+- `P78` covers newly observed intra-word spaces in names, e-mails, references,
+  and words such as `disconti nuation`.
+- `P81` catches RSC accepted-manuscript page furniture and Volpe page headers.
+- `P83` catches the new conclusion merge and old-article reference/body
+  interleavings.
+- `P90` catches RSC reference numbering polluted by page-line numbers.
+- `P93` now covers RSC accepted-manuscript line-number residues beyond the
+  previous Materials Chemistry B pattern.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_066_070_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P66=1`, `P67=2`,
+  `P71=5`, `P78=2`, `P81=2`, `P83=2`, `P90=1`, `P93=1`,
+  plus existing `P05=1`, `P13=1`, `P14=1`, `P39=1`, `P59=2`,
+  `P61=2`, `P76=1`, `P77=1`, `P91=1`.

@@ -1449,6 +1449,60 @@ def test_analyze_pair_reports_fulltext_batch_061_065_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_066_070_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>ChemComm Accepted Manuscript. Published on 03 August 2015. "
+                    "Downloaded by Emory University on 04/08/2015 04:19:33.</p>",
+                    "<p>The article had excellent 10 contrast, minimal 15 autofluorescence, "
+                    "20 photobleaching thresholds, 25 development of nanoprobes, 30 dyes, "
+                    "35 resulting fluorescence, 45 developed as a nanoprobe, 60 illustrated "
+                    "in Figure 1, 75 fabricated samples, 85 nanomicelles, and 100 As shown "
+                    "in Figure 4A.</p>",
+                    "<p>OCR tokens included Stocks shift, CTABassistant, nanomicells, a plent "
+                    "of serum, ODs/MB nanomicelles, toxity, uroflometer, 31.6 8 C, 35.9 8 C, "
+                    "368C, 378C, 425 cmH2O, and 460 bpm.</p>",
+                    "<p>Lost ligatures included magnetic eld, eld strength, ve patients, rst "
+                    "few days, suf cient, insuf cient, bene ts, ndings, and Of ce.</p>",
+                    "<p>Spaced OCR residues included Groenenda al@wkz.azu.nl, Wilhel mina, "
+                    "RUTHERFO RD, environ ment, Inter national, disconti nuation, and Ita ly.</p>",
+                    "<p>Footnotes interrupted prose: small animals imaging In summary, by doping "
+                    "the QDs/MB pair. Urinary flow can also be recorded by voiding on a disk "
+                    "13 Cardus, D.: Studies on the dynamics of the bladder. which rotates at "
+                    "a constant speed.</p>",
+                    "<p>More reference/body mixing: who measured the maximum flow by 18 Holm, "
+                    "H. H.: A uroflowmeter and a method for combined pressure and flow measurement "
+                    "recording the volume of air displaced by urine.</p>",
+                    "<p>Four of these principles were tested for accuracy * UF2 Physico-Medical "
+                    "Systems Corporation, Montreal constant flow response was measured.</p>",
+                    "<p>References shifted as 7. 50 7 P. Greenspan, 11. 55 10 X. He, "
+                    "1468. 1469. 20 L. Wang, 1470. 75 21 X. Chen, and 1476. We. Liu.</p>",
+                    "<p>92 Y. Volpe et al. and 106 Y. Volpe et al. remained as page headers.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P66", "P67", "P71", "P78", "P81", "P83", "P90", "P93"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_country_period_before_email_for_p86() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
