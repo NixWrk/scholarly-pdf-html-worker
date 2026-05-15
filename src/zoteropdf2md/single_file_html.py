@@ -573,6 +573,22 @@ _FALSE_FIGURE_LABEL_SUP_PATTERN = re.compile(
     r'(?=\s*\.)',
     re.IGNORECASE,
 )
+_FALSE_DIMENSION_LEADING_SUP_REF_PATTERN = re.compile(
+    r'<sup>\s*'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d+)["\'][^>]*\bz2m-ref-link\b[^>]*>'
+    r'\s*(?P<num>\d{1,3})\s*</a>\s*</sup>'
+    r'(?=\s*(?:by|x|\u00d7)\s*\d+(?:\.\d+)?\s*'
+    r'(?:<[^>]+>\s*)*(?:u|µ|μ|Вµ|Ој)?m(?:\s*<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*2\s*</sup>|\s*2\b|\b))',
+    re.IGNORECASE,
+)
+_FALSE_BETWEEN_RANGE_SUP_REF_PATTERN = re.compile(
+    r'(?P<prefix>\b(?:between|from)\s+)'
+    r'<sup>\s*'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d+)["\'][^>]*\bz2m-ref-link\b[^>]*>'
+    r'\s*(?P<num>\d{1,3})\s*</a>\s*</sup>'
+    r'(?=\s+(?:and|to)\s+\d+(?:\.\d+)?\s*(?:degrees?|°|\u00b0)\b)',
+    re.IGNORECASE,
+)
 _FALSE_STAT_SUP_CITATION_PATTERN = re.compile(
     r'(?P<base>\b(?:[Rr]|chi|Chi)\s*|(?:\u03c7|\u03a7)\s*)'
     r'<sup(?P<attrs>[^>]*)>\s*'
@@ -749,12 +765,71 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\b(\d+)year-old\b", re.IGNORECASE), r"\1-year-old"),
     (re.compile(r"\b(\d+)\s+year-old\b", re.IGNORECASE), r"\1-year-old"),
     (re.compile(r"\bforthe\b", re.IGNORECASE), "for the"),
+    (re.compile(r"\bstate-ofthe-art\b", re.IGNORECASE), "state-of-the-art"),
+    (re.compile(r"\boff-theshelf\b", re.IGNORECASE), "off-the-shelf"),
+    (re.compile(r"\bAlessentially\b"), "AI essentially"),
+    (re.compile(r"\bAl(?=\s+(?:techniques|Office|triad|systems|interventions|education|feedback|based)\b)"), "AI"),
+    (re.compile(r"\bAl(?=-(?:driven|generated|based)\b)"), "AI"),
+    (re.compile(r"\bartiicial\b", re.IGNORECASE), "artificial"),
+    (re.compile(r"\binluence\b", re.IGNORECASE), "influence"),
+    (re.compile(r"\birst\b", re.IGNORECASE), "first"),
+    (re.compile(r"\bitness\b", re.IGNORECASE), "fitness"),
+    (re.compile(r"\bworklow\b", re.IGNORECASE), "workflow"),
+    (re.compile(r"\bscientiic\b", re.IGNORECASE), "scientific"),
+    (re.compile(r"\bcertiication\b", re.IGNORECASE), "certification"),
+    (re.compile(r"\bfalsiications\b", re.IGNORECASE), "falsifications"),
+    (re.compile(r"\beicient\b", re.IGNORECASE), "efficient"),
+    (re.compile(r"\beiciency\b", re.IGNORECASE), "efficiency"),
+    (re.compile(r"\beectiveness\b", re.IGNORECASE), "effectiveness"),
+    (re.compile(r"\bine-grained\b", re.IGNORECASE), "fine-grained"),
+    (re.compile(r"\bdeining\b", re.IGNORECASE), "defining"),
+    (re.compile(r"\bsimpliication\b", re.IGNORECASE), "simplification"),
+    (re.compile(r"\buniied\b", re.IGNORECASE), "unified"),
+    (re.compile(r"\bailiations\b", re.IGNORECASE), "affiliations"),
+    (re.compile(r"\bofrealistic\b", re.IGNORECASE), "of realistic"),
+    (re.compile(r"\bofclinical\b", re.IGNORECASE), "of clinical"),
+    (re.compile(r"\bofmedical\b", re.IGNORECASE), "of medical"),
+    (re.compile(r"\bofmachine\b", re.IGNORECASE), "of machine"),
+    (re.compile(r"\bofperspective\b", re.IGNORECASE), "of perspective"),
+    (re.compile(r"\boffactual\b", re.IGNORECASE), "of factual"),
+    (re.compile(r"\boflarge\b", re.IGNORECASE), "of large"),
+    (re.compile(r"\bofthe\b", re.IGNORECASE), "of the"),
+    (re.compile(r"\bof(\d+)\b", re.IGNORECASE), r"of \1"),
+    (re.compile(r"\bGAL(?=\s+such\s+as\b)"), "GAI"),
+    (re.compile(r"\bqualify\s+factor\b", re.IGNORECASE), "quality factor"),
+    (re.compile(r"\bUniverisity\b", re.IGNORECASE), "University"),
+    (re.compile(r"\bMEME\s+sensors\b", re.IGNORECASE), "MEMS sensors"),
+    (re.compile(r"\bessenetial\b", re.IGNORECASE), "essential"),
+    (re.compile(r"\bpathologica\b", re.IGNORECASE), "pathological"),
+    (re.compile(r"\bdeceases\s+as\s+the\s+distance\b", re.IGNORECASE), "decreases as the distance"),
+    (re.compile(r"\blength\s+form\s+ADF4351\b", re.IGNORECASE), "length from ADF4351"),
+    (re.compile(r"\bCompetinginterests\b", re.IGNORECASE), "Competing interests"),
+    (re.compile(r"\bAdditionalinformation\b", re.IGNORECASE), "Additional information"),
+    (re.compile(r"\bandrequests\b", re.IGNORECASE), "and requests"),
+    (re.compile(r"\bandpermissions\b", re.IGNORECASE), "and permissions"),
+    (re.compile(r"\bUSMLE:pPotential\b"), "USMLE: Potential"),
     (re.compile(r"\bforintracorticalstimulation\b", re.IGNORECASE), "for intracortical stimulation"),
     (re.compile(r"\bchosenasthiswasregardedasthenominal\b", re.IGNORECASE), "chosen as this was regarded as the nominal"),
     (re.compile(r"\bchosenasthiswasregardedasthe\b", re.IGNORECASE), "chosen as this was regarded as the"),
     (re.compile(r"\bVwater\b", re.IGNORECASE), "V water"),
     (re.compile(r"\bKuznietso\s+v\b", re.IGNORECASE), "Kuznietsov"),
 )
+_SPLIT_EMAIL_AFTER_AT_PATTERN = re.compile(
+    r"(?P<local>\b[A-Za-z0-9._%+-]{2,})@\s+(?P<domain>[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
+)
+_SPLIT_EMAIL_DOMAIN_DOT_PATTERN = re.compile(
+    r"(?P<local>\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+)\s*\.\s+(?P<tld>[A-Za-z]{2,})\b"
+)
+_DETACHED_ACCENT_AUTHOR_AND_PATTERN = re.compile(r",\s*[\u00b4\u00a8\u02c6]\s+(?=and\b)")
+_DETACHED_CEDILLA_INITIAL_PATTERN = re.compile(r"\bC[\u00b8\u0327]\s*\.\s+(?=Varel\b)")
+_DETACHED_DIAERESIS_SPACE_PATTERN = re.compile(r"\s+[\u00a8]\s+(?=intraocular\b)")
+_DETACHED_DIAERESIS_POWERED_PATTERN = re.compile(r"\s+[\u00a8]\s+(?=powered\b)")
+_DETACHED_SYD_DIAERESIS_PATTERN = re.compile(r"\bSyd\s+[\u00a8]\s+anheimo\b")
+_DETACHED_MOJIBAKE_CEDILLA_INITIAL_PATTERN = re.compile(r"\bC\u0412\u0451\s*\.\s+(?=Varel\b)")
+_DETACHED_MOJIBAKE_DIAERESIS_SPACE_PATTERN = re.compile(r"\s+\u0412\u0401\s+(?=intraocular\b)")
+_DETACHED_MOJIBAKE_DIAERESIS_POWERED_PATTERN = re.compile(r"\s+\u0412\u0401\s+(?=powered\b)")
+_DETACHED_MOJIBAKE_SYD_DIAERESIS_PATTERN = re.compile(r"\bSyd\s+\u0412\u0401\s+anheimo\b")
+_CHECK_FOR_UPDATES_PATTERN = re.compile(r"\s*\bCheck\s+for\s+updates\b\s*", re.IGNORECASE)
 _MG_KG_H_NEG_PATTERN = re.compile(r"\bmg\s+kg\s+h\s*[-\u2212]\s*1\b", re.IGNORECASE)
 _MG_KG_H_NEG_HTML_PATTERN = re.compile(
     r"\bmg\s+kg\s+h\s*(?:<i>\s*)?[-\u2212](?:\s*</i>)?\s*<sup\b[^>]*>\s*1\s*</sup>",
@@ -795,6 +870,13 @@ _LINKED_NEG_UNIT_EXPONENT_SUP_PATTERN = re.compile(
 _LINKED_SPLIT_UNIT_EXPONENT_REF_PATTERN = re.compile(
     r"(?<![A-Za-z])(?P<unit>(?:\u00b5m|\u03bcm|um|mm|cm|nm|m)\s*)"
     r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<exp>[23])['\"][^>]*>\s*(?P=exp)\s*</a>",
+    re.IGNORECASE,
+)
+_LINKED_PLAIN_NEG_UNIT_EXPONENT_REF_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?P<unit>(?:mC\s*cm|\u00b5C\s*cm|\u03bcC\s*cm|uC\s*cm|"
+    r"cd\s*m|nm\s*d|mm\s*s|cm\s*s|m\s*s|cm|mm|nm|m)\s*)"
+    r"[-\u2212]\s*"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<exp>[123])['\"][^>]*>\s*(?P=exp)\s*</a>",
     re.IGNORECASE,
 )
 _PLAIN_NEG_UNIT_EXP_PATTERN = re.compile(
@@ -1850,13 +1932,28 @@ def _looks_front_matter_block(raw: str) -> bool:
         r"competing|conflicts?|data availability|correspondence|e-mail|email)\b",
         lower,
     ):
-        return False
+        long_author_markers = (
+            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible))
+            + len(
+                re.findall(
+                    r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\s+"
+                    r"\d{1,2}\s*(?:[,\.]\s*\d{1,2}){0,5}",
+                    visible,
+                )
+            )
+        )
+        if long_author_markers < 2:
+            return False
 
     front_keywords = (
         "keywords:",
         "e-mail:",
         "email:",
         "correspondence:",
+        "received:",
+        "accepted:",
+        "published online",
+        "check for updates",
         "author to whom",
         "authors contributed equally",
         "open access",
@@ -1881,7 +1978,12 @@ def _looks_front_matter_block(raw: str) -> bool:
         return True
 
     if len(visible) > 260 and len(re.findall(r"[.!?](?:\s|$)", visible)) >= 2:
-        return False
+        has_author_marker_residue = (
+            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible)) >= 2
+            or _unicode_glued_author_marker_count(visible) >= 3
+        )
+        if not has_author_marker_residue:
+            return False
 
     name_like = max(
         len(re.findall(r"\b[A-Z][A-Za-z.'-]+\s+[A-Z][A-Za-z.'-]+\b", visible)),
@@ -1929,10 +2031,10 @@ def _normalize_front_matter_marker_numbers(text: str) -> str:
 
 def _looks_author_marker_ocr_candidate(raw: str) -> bool:
     visible = _visible_text(raw)
-    if not visible or len(visible) > 1200:
+    if not visible or len(visible) > 4000:
         return False
     lower = visible.lower()
-    if re.match(r"^\s*(?:abstract|introduction|received|accepted|published)\b", lower):
+    if re.match(r"^\s*(?:abstract|introduction)\b", lower):
         return False
     name_like = len(re.findall(r"\b[A-Z][A-Za-z.'-]+\s+[A-Z][A-Za-z.'-]+\b", visible))
     glued_author_markers = len(
@@ -1951,12 +2053,15 @@ def _looks_author_marker_ocr_candidate(raw: str) -> bool:
         or re.search(r"(?:\b[A-Z][A-Za-z.'-]+\s+){1,5}\d{1,2}\s+\d{1,2}\b", visible) is not None
         or re.search(r"\b[A-Z][A-Za-z.'-]+\d{1,2}[\*\u2020\u2021]?(?:,|&|$)", visible) is not None
     )
+    if re.match(r"^\s*(?:received|accepted|published)\b", lower) and not marker_like:
+        return False
     return marker_like and (visible.count(",") >= 2 or "&" in visible)
 
 
 def _repair_author_marker_ocr_body(body: str) -> str:
     body = _AUTHOR_MARKER_OCR_SYMBOL_PATTERN.sub(" ", body)
     body = _AUTHOR_EXISTING_SUP_SPACE_PATTERN.sub("", body)
+    body = re.sub(r"(?<=\d)\s*([,.])\s*(?=\d{1,2}\b)", r"\1", body)
 
     def _replace_marker(match: re.Match[str]) -> str:
         numbers = _normalize_front_matter_marker_numbers(match.group("nums"))
@@ -3122,6 +3227,41 @@ def _repair_known_word_glue(html: str) -> str:
     return "".join(out)
 
 
+def _repair_safe_text_artifacts(html: str) -> str:
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    skip_stack: list[str] = []
+
+    def _repair_text(text: str) -> str:
+        repaired = _SPLIT_EMAIL_AFTER_AT_PATTERN.sub(r"\g<local>@\g<domain>", text)
+        repaired = _SPLIT_EMAIL_DOMAIN_DOT_PATTERN.sub(r"\g<local>.\g<tld>", repaired)
+        repaired = _DETACHED_ACCENT_AUTHOR_AND_PATTERN.sub(", ", repaired)
+        repaired = _DETACHED_CEDILLA_INITIAL_PATTERN.sub("C. ", repaired)
+        repaired = _DETACHED_DIAERESIS_SPACE_PATTERN.sub(" ", repaired)
+        repaired = _DETACHED_DIAERESIS_POWERED_PATTERN.sub(" ", repaired)
+        repaired = _DETACHED_SYD_DIAERESIS_PATTERN.sub("Syd\u00e4nheimo", repaired)
+        repaired = _DETACHED_MOJIBAKE_CEDILLA_INITIAL_PATTERN.sub("C. ", repaired)
+        repaired = _DETACHED_MOJIBAKE_DIAERESIS_SPACE_PATTERN.sub(" ", repaired)
+        repaired = _DETACHED_MOJIBAKE_DIAERESIS_POWERED_PATTERN.sub(" ", repaired)
+        repaired = _DETACHED_MOJIBAKE_SYD_DIAERESIS_PATTERN.sub("Syd\u00e4nheimo", repaired)
+        repaired = _CHECK_FOR_UPDATES_PATTERN.sub(" ", repaired)
+        return re.sub(r"(?<=\S) {2,}(?=\S)", " ", repaired)
+
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            _update_skip_stack(part, skip_stack)
+            out.append(part)
+            continue
+        if skip_stack:
+            out.append(part)
+            continue
+        out.append(_repair_text(part))
+
+    return "".join(out)
+
+
 def _normalize_scientific_units(html: str) -> str:
     html = _normalize_split_micro_meter_tokens(html)
     html = _normalize_inline_tex_dimension_prose(html)
@@ -3310,6 +3450,10 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
         lambda m: f'{m.group("unit")}<sup class="z2m-unit-exp">{m.group("exp")}</sup>',
         html,
     )
+    html = _LINKED_PLAIN_NEG_UNIT_EXPONENT_REF_PATTERN.sub(
+        lambda m: f'{m.group("unit").rstrip()}<sup class="z2m-unit-exp">-{m.group("exp")}</sup>',
+        html,
+    )
     html = _PLAIN_NEG_UNIT_EXP_PATTERN.sub(
         lambda m: f'{m.group("unit").rstrip()}<sup class="z2m-unit-exp">-{m.group("exp")}</sup>',
         html,
@@ -3359,6 +3503,21 @@ def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
         fixed,
     )
     return fixed
+
+
+def _repair_numeric_ref_false_positives(html: str) -> str:
+    """Unwrap citation links that are clearly dimensions or numeric ranges."""
+    if "#ref-" not in html:
+        return html
+
+    def _unwrap_if_target_matches(match: re.Match[str]) -> str:
+        if match.group("target") != match.group("num"):
+            return match.group(0)
+        prefix = match.groupdict().get("prefix") or ""
+        return f"{prefix}{match.group('num')}"
+
+    repaired = _FALSE_DIMENSION_LEADING_SUP_REF_PATTERN.sub(_unwrap_if_target_matches, html)
+    return _FALSE_BETWEEN_RANGE_SUP_REF_PATTERN.sub(_unwrap_if_target_matches, repaired)
 
 
 def _fix_nested_autolink_in_escaped_anchor_snippets(html: str) -> str:
@@ -5797,8 +5956,11 @@ def _repair_author_year_footnote_ref_links(html: str) -> str:
     """In author-year papers, source/web footnote markers are not numeric refs."""
     if "#ref-" not in html or not _looks_author_year_citation_document(html):
         return html
+    references_heading = _REFERENCES_HEADING_PATTERN.search(html)
 
     def _replace(match: re.Match[str]) -> str:
+        if references_heading is not None and match.start() > references_heading.start():
+            return match.group(0)
         label = _visible_text(match.group("body"))
         if re.fullmatch(r"\d{1,3}", label) is None:
             return match.group(0)
@@ -5806,13 +5968,18 @@ def _repair_author_year_footnote_ref_links(html: str) -> str:
             number = int(label)
         except ValueError:
             return match.group(0)
-        if number > 3:
+        if number > 5:
             return match.group(0)
         raw_window = html[max(0, match.start() - 80): match.end() + 80].lower()
         text_window = _visible_text(html[max(0, match.start() - 160): match.end() + 160])
+        range_window = _visible_text(html[max(0, match.start() - 24): match.end() + 36])
+        if re.search(r"\d\s*(?:,|[-\u2013\u2014])\s*\d", range_window):
+            return match.group(0)
         if re.search(r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b", text_window, re.IGNORECASE):
             return match.group(0)
         left_text = _visible_text(html[max(0, match.start() - 80): match.start()])
+        if re.search(r"(?:\b[A-Z][a-z][A-Za-z'’.-]{2,}\.?\s*|\bet\s+al\.?\s*)$", left_text):
+            return match.group(0)
         if re.search(r"\b(?:day|used|source|data|platforms?|input|term|efficient)\s*$", left_text, re.IGNORECASE):
             return match.group("body")
         footnote_context = re.search(
@@ -5821,7 +5988,7 @@ def _repair_author_year_footnote_ref_links(html: str) -> str:
             re.IGNORECASE,
         ) is not None
         if "z2m-footnote-ref" not in raw_window and not footnote_context:
-            return match.group(0)
+            return match.group("body")
         return match.group("body")
 
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
@@ -9198,6 +9365,7 @@ def polish_html_document(
     polished = _unescape_inline_sup_sub(polished)
     polished = _normalize_spaced_inline_sup_sub_tags(polished)
     polished = _fix_common_mojibake(polished)
+    polished = _repair_safe_text_artifacts(polished)
     polished = _BYTE_TOKEN_CITATION_PATTERN.sub(r'<sup>\1</sup>', polished)
     polished = _BYTE_TOKEN_ARTIFACT_PATTERN.sub("", polished)
     polished = _cleanup_marker_escape_artifacts(polished)
@@ -9269,6 +9437,7 @@ def polish_html_document(
         polished = _unlink_supplementary_page_refs(polished)
         polished = _unwrap_author_year_page_links(polished)
         polished = _unwrap_plain_prose_page_links(polished)
+        polished = _repair_numeric_ref_false_positives(polished)
         polished = _repair_statistical_ref_false_positives(polished)
         polished = _mark_unit_exponent_superscripts(polished)
         polished = _repair_nested_reference_links(polished)
@@ -9283,6 +9452,7 @@ def polish_html_document(
     polished = _repair_remaining_table_caption_units(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished = _repair_known_word_glue(polished)
+    polished = _repair_safe_text_artifacts(polished)
     polished = _mark_consecutive_float_runs(polished)
     polished, _ = _merge_biorender_caption_fragments(polished)
     if table_caption_language == "ru" and not enable_citation_linkify:

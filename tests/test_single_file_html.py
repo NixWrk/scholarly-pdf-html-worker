@@ -4146,9 +4146,9 @@ def test_polish_html_document_repairs_recent_meine_link_false_positives() -> Non
     assert '<a href="#ref-9" class="z2m-ref-link">9</a>' in polished
     assert 'Agarwal.<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>' in polished
     assert 'Smith et al<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>' in polished
-    assert 'impedance <sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> for recording' in polished
-    assert '(CSC) <sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> and (CIC)' in polished
-    assert '(CIC)<sup><a href="#ref-4" class="z2m-ref-link">4</a></sup> for capacity' in polished
+    assert 'impedance <sup>2</sup> for recording' in polished
+    assert '(CSC) <sup>3</sup> and (CIC)' in polished
+    assert '(CIC)<sup>4</sup> for capacity' in polished
     assert '(CSC) <sup class="z2m-footnote-ref">3</sup> and Merrill' in polished
     assert '2005)</a><sup><a href="#ref-5" class="z2m-ref-link">5</a></sup>.' in polished
     assert 'href="#ref-1" class="z2m-ref-link">Bandettini' not in polished
@@ -4526,6 +4526,136 @@ def test_fix_orphaned_sup_multiple_in_document() -> None:
     assert "<sup>." not in result
     assert "First broken" in result
     assert "Second broken" in result
+
+
+def test_polish_html_document_unlinks_author_year_footnote_markers() -> None:
+    html = (
+        "<html><body>"
+        "<p>Electrode sites should have low electrochemical impedance"
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> for recording, '
+        "high charge storage capacity (CSC)"
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> and high CIC'
+        '<sup><a href="#ref-4" class="z2m-ref-link">4</a></sup> for stimulation '
+        "(Cogan 2008; Larson and Meng 2019; Merrill et al. 2005)"
+        '<sup><a href="#ref-5" class="z2m-ref-link">5</a></sup>.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 6))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#ref-2"' not in polished
+    assert 'href="#ref-3"' not in polished
+    assert 'href="#ref-4"' not in polished
+    assert 'href="#ref-5"' not in polished
+    assert "impedance<sup>2</sup>" in polished
+    assert "(Cogan 2008; Larson and Meng 2019; Merrill et al. 2005)<sup>5</sup>" in polished
+
+
+def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
+    html = (
+        "<html><body>"
+        '<p>Charge density reached 100 \u03bcC cm -<a href="#ref-2" class="z2m-ref-link">2</a> '
+        'and remained below the limit [<a href="#ref-13" class="z2m-ref-link">13</a>].</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 14))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#ref-2"' not in polished
+    assert '\u03bcC cm<sup class="z2m-unit-exp">-2</sup>' in polished
+    assert 'href="#ref-13"' in polished
+
+
+def test_polish_html_document_unlinks_numeric_dimension_and_degree_refs() -> None:
+    html = (
+        "<html><body>"
+        '<p>The <sup><a href="#ref-20" class="z2m-ref-link">20</a></sup> by '
+        '100 \u03bcm<sup class="z2m-unit-exp">2</sup> shafts were coated.</p>'
+        '<p>The wedges ranged between <sup><a href="#ref-20" class="z2m-ref-link">20</a></sup> '
+        "and 45 degrees.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 21))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#ref-20"' not in polished
+    assert "The 20 by 100 \u03bcm<sup class=\"z2m-unit-exp\">2</sup> shafts" in polished
+    assert "between 20 and 45 degrees" in polished
+
+
+def test_polish_html_document_normalizes_safe_control_article_artifacts() -> None:
+    html = (
+        "<html><body>"
+        "<p>The current state-ofthe-art method uses Alessentially medical foundation models. "
+        "Moreover, Al techniques can improve artiicial intelligence. "
+        "The sensor has qualify factor Q, and the worklow stayed stable.</p>"
+        "<p>Clinical documentation had ofclinical and essenetial residues.</p>"
+        "<p>Fudan Univerisity reported a pathologica example that deceases as the distance grows.</p>"
+        "<p>References mentioned eicient tools, eiciency, eectiveness, deining protocols, "
+        "uniied inputs, simpliication, ine-grained evaluation, and ailiations.</p>"
+        "<p>Reprints andpermissions information governs archiving ofthe accepted manuscript.</p>"
+        "<p>P. A. Heppner, \u00b4 and D. M. Budgett reported the device. "
+        "L. Syd \u00a8 anheimo described a wireless \u00a8 intraocular pressure sensor.</p>"
+        "<p>Contact e-mail: iskandar@ neurosurgery.wisc.edu.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "state-of-the-art" in polished
+    assert "AI essentially medical foundation models" in polished
+    assert "AI techniques" in polished
+    assert "artificial intelligence" in polished
+    assert "quality factor Q" in polished
+    assert "workflow stayed stable" in polished
+    assert "of clinical" in polished
+    assert "essential residues" in polished
+    assert "Fudan University" in polished
+    assert "pathological example" in polished
+    assert "decreases as the distance" in polished
+    assert "efficient tools" in polished
+    assert "efficiency" in polished
+    assert "effectiveness" in polished
+    assert "defining protocols" in polished
+    assert "unified inputs" in polished
+    assert "simplification" in polished
+    assert "fine-grained evaluation" in polished
+    assert "affiliations" in polished
+    assert "Reprints and permissions information" in polished
+    assert "of the accepted manuscript" in polished
+    assert "Heppner, and D. M. Budgett" in polished
+    assert "Syd\u00e4nheimo" in polished
+    assert "wireless intraocular" in polished
+    assert "iskandar@neurosurgery.wisc.edu" in polished
+
+
+def test_polish_html_document_repairs_publication_metadata_author_marker_block() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Generative artificial intelligence in medicine</h1>"
+        "<p>Received: 2 April 2025 Accepted: 27 August 2025 Published online: 06 October 2025 "
+        "Check for updates Zhen Ling Teo \u0412\u00a9 1,2,15, "
+        "Arun James Thirunavukarasu \u0412\u00a9 3,15, Kabilan Elangovan 1 , 2 , "
+        "Haoran Cheng 1 , 4 , Prasanth Mooya 1 , 2 &amp; Daniel Shu Wei Ting 1.2.5</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Check for updates" not in polished
+    assert "z2m-front-matter" in polished
+    assert "Zhen Ling Teo<sup>1,2,15</sup>" in polished
+    assert "Arun James Thirunavukarasu<sup>3,15</sup>" in polished
+    assert "Daniel Shu Wei Ting<sup>1,2,5</sup>" in polished
+    assert "Zhen Ling Teo \u0412\u00a9 1" not in polished
 
 
 def test_to_data_url_detects_jpeg_by_signature() -> None:

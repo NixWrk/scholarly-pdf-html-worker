@@ -4005,3 +4005,46 @@ OCR-quality gate added to the pipeline:
   `article_alias_needs_reocr.json`.
 - The conversion may still continue. The quality gate is a re-OCR queue signal,
   not a conversion failure.
+
+## Universal EN-polish implementation - 2026-05-15
+
+Implemented the safe part of the closure decision in `en-polish`; generated
+review HTML was not edited. The changes are limited to deterministic local
+repairs and scanner false-positive reduction:
+
+1. Citation false-positive cleanup now unwraps linked numeric values in clear
+   measurement contexts such as `20 by 100 um^2` shafts and `between 20 and 45
+   degrees`, while preserving real bracket citations.
+2. Unit exponent cleanup now converts linked negative exponents such as
+   `100 uC cm -<a href="#ref-2">2</a>` into unit exponent markup instead of a
+   reference link.
+3. Author-year footnote cleanup now removes low-confidence numeric reference
+   links from source/footnote-style markers without touching references,
+   citation ranges, figure/table/equation mentions, or author-year citations.
+4. Front-matter marker OCR repair now handles long Nature-style metadata and
+   author/affiliation blocks with `Received`, `Accepted`, `Published online`,
+   `Check for updates`, glued copyright markers, and decimal-like affiliation
+   lists.
+5. Safe text cleanup now covers the reviewed lost-ligature and joined-word
+   residues only where the mapping is unambiguous, including `state-ofthe-art`,
+   `Al` -> `AI` in AI contexts, `simpliication`, `eicient`, `deining`,
+   `andpermissions`, `ofthe accepted`, split emails, and detached accent marks.
+6. `P05` audit no longer reports bracket citations after measurement units when
+   the whole visible anchor is `[N]`; those are valid citation links, not unit
+   values.
+
+Control 7-article repolish/audit result:
+
+- Before implementation: `P05=2`, `P59=2`, `P62=1`, `P66=1`, `P67=2`,
+  `P71=2`, `P76=1`, `P81=1`, `P89=1`, `P92=1`.
+- After repolish from raw with the implemented changes: `P62=1` only.
+- The remaining `P62` is Kaiju Figure 1 missing visual content. It stays out of
+  `en-polish` and belongs to package/PDF validation or rerun/re-OCR routing.
+
+Regression coverage:
+
+- `tests/test_single_file_html.py` covers the new unit exponent, numeric
+  non-citation, author-year footnote, front-matter marker, and safe OCR text
+  repairs.
+- `tests/test_audit_en_polish.py` covers the `P05` bracket-citation
+  false-positive guard.

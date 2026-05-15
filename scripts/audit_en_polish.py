@@ -1115,6 +1115,8 @@ def _is_handled_missing_figure_block(block: Block) -> bool:
 
 def _linked_ref_near_non_citation_context(block: Block) -> bool:
     for match in REF_LINK_RE.finditer(block.raw):
+        if _ref_match_inside_bracketed_numeric_citation(block.raw, match.start(), match.end()):
+            continue
         window_raw = block.raw[max(0, match.start() - 48): match.end() + 80]
         window_text = _strip_tags(window_raw)
         if NONCITATION_CONTEXT_RE.search(window_text) or ML_PER_SECOND_CONTEXT_RE.search(window_text):
@@ -1171,6 +1173,31 @@ def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -
     return (
         re.fullmatch(
             r"\[\s*\d{1,4}(?:\s*(?:[,;]|[-\u2013\u2014]|\band\b)\s*\d{1,4})+\s*\]\.?",
+            visible,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _ref_match_inside_bracketed_numeric_citation(raw: str, start: int, end: int) -> bool:
+    ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
+    anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
+    anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
+    if anchor_end >= 0:
+        anchor_visible = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
+        if re.fullmatch(r"\[\s*\d{1,4}\s*\]\s*\.?", anchor_visible, re.IGNORECASE):
+            return True
+    left = raw.rfind("[", max(0, anchor_start - 100), anchor_start)
+    if left < 0:
+        return False
+    right = raw.find("]", end, min(len(raw), end + 160))
+    if right < 0:
+        return False
+    visible = _normalize_ws(_strip_tags(raw[left : right + 1]))
+    return (
+        re.fullmatch(
+            r"\[\s*\d{1,4}(?:\s*(?:[,;]|[-\u2013\u2014]|\band\b)\s*\d{1,4})*\s*\]\s*\.?",
             visible,
             re.IGNORECASE,
         )

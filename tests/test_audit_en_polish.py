@@ -412,6 +412,60 @@ def test_analyze_pair_does_not_flatten_wrapped_table_unit_cells_into_p06() -> No
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p05_for_bracket_citation_after_unit() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Charge density stayed at 100 \u03bcC cm<sup class="z2m-unit-exp">-2</sup> '
+            '[<a href="#ref-13" class="z2m-ref-link">13</a>].</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 14))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_whole_bracket_ref_anchor_after_unit() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Charge density stayed at 100 \u03bcC cm<sup class="z2m-unit-exp">-2</sup> '
+            '<a href="#ref-13" class="z2m-ref-link">[13]</a>.</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 14))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_resolves_stage_images_from_article_folder() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
