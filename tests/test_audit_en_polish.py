@@ -1611,6 +1611,53 @@ def test_analyze_pair_reports_fulltext_batch_076_080_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_081_082_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>II. BEHAVIORALAND NEUROLOGICAL RELATIONS OF MAP USE WITH EMPHASIS "
+                    "ON TACTILE MAP. III. TYPES OFTACTILE MAPS and EVERYDAYACTIVITIES. "
+                    "The choice of rougher texture.Tactile cartography follows.</p>",
+                    "<p>Manuscript received on April 17, 2021. Revised Manuscript received "
+                    "on April 15, 2021. Manuscript published on April 30, 2021.</p>",
+                    "<p>* Correspondence Author participants were asked to complete a test "
+                    "that included different types of graphics.</p>",
+                    "<p>OCR residues include beacause, \u03a4he touch map, \u0399mproving, "
+                    "threfore, eBDetheque, an notate, form eBDtheque, and compliment of "
+                    "the text-area mask.</p>",
+                    "<p>Deblina Bhattacharjee, Martin Everaert, Mathieu Salzmann, "
+                    "Sabine Susstrunk \u00a8 School of Computer and Communication Sciences.</p>",
+                    "<p>The comics article still has featurebased GAN, upprojection method, "
+                    "groundtruth images, shiftinvariant loss, imagedepth pairs, "
+                    "intraobject depth values, state-oftheart I2I method, domaininvariant "
+                    "content space, textdetection module, speechballoon areas, textbased "
+                    "artifacts, contentaware resizing, leftright consistency, "
+                    "Semisupervised learning, imageto-image translation, and realdomain "
+                    "images.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P67", "P71", "P76", "P81", "P83"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_does_not_flag_title_case_tooteko_as_ocr_token() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

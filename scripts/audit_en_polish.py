@@ -259,7 +259,12 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"controlrelated|lowdimensional|topdown|contextdependent|"
     r"finergrained|cuetrials|trialaverage|match-tosample|"
     r"spatiovectors|Qcould|Qto|IPPgrades|metaanalysis|"
-    r"BPHassociated)\b|"
+    r"BPHassociated|BEHAVIORALAND|OFTACTILE|EVERYDAYACTIVITIES|"
+    r"featurebased|upprojection|groundtruth|shiftinvariant|imagedepth|"
+    r"intraobject|state-oftheart|domaininvariant|textdetection|"
+    r"speechballoon|textbased|contentaware|leftright|Semisupervised|"
+    r"imageto-image|realdomain)\b|"
+    r"\btexture\.Tactile\b|"
     r"\bheld\s+inWM\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
@@ -314,6 +319,9 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\b(?:Qrnax|TQrnax|TlOO|Q2sea)\b|\bclassifified\b|"
     r"\bNeurocsi\b|\bHip-pocampus\b|\bIPSS\s+0\s*=\s*10\s+symptoms\b|"
     r"\bDWT\s+values\s+-2\s+mm\b|\bgrade\s+1\u00bc0\b|"
+    r"\bbeacause\b|\b\u03a4he\s+touch\s+map\b|\b\u0399mproving\b|"
+    r"\bthrefore\b|\beBDetheque\b|\ban\s+notate\b|"
+    r"\bform\s+eBDtheque\b|\bcompliment\s+of\s+the\s+text-area\s+mask\b|"
     r"\b0000-0003-4044-\s+0927\b|"
     r"\b(?:5\.22|4\.21|5\.13)\s+\\pm\s+2,\s+(?:38|36|40)\b|"
     r"\b(?:Schfer|Standarisation|subcomitee|standarization|aformentioned|Cvalli|"
@@ -390,6 +398,7 @@ DETACHED_ACCENT_RE = re.compile(
     r"\bwireless\s+\u00a8\s+intraocular\b|"
     r"\bPakenait\s+\u02d9\s*e\u02d9?\b|\bPeter\s+M\s+\u02d9\s+Hall\b|"
     r"\bSpath\s+\u00a8\b|\bSequin\s+\u00b4\s+,|\bwould\s+\u00b4\s+be\b|"
+    r"\b[A-Za-z]{2,}\s+\u00a8\b|\b[A-Za-z]{2,}-?\s+[\u00a8\u00b4]\s+[A-Za-z]{2,}\b|"
     r"\bBRICENO\S\s*,\s*H\.\s*M\.|\bHOLLERER\s+[^A-Za-z0-9\s,]\s*,\s*T\.|"
     r"\b(?:PogoreliВґc|HuskiВґc|CohadЕѕiВґc|JukiВґc|Л‡\s+Using)\b",
     re.IGNORECASE,
@@ -450,6 +459,10 @@ BODY_PAGE_HEADER_RE = re.compile(
     r"\bEgyptian\s+National\s+Sti\.\s+Network\s+\(Enstinet\)\b|"
     r"\bRETURN\s+CIRCULATION\s+DEPARTMENT\b|"
     r"\b\d{2,3}\s+Y\.\s+Volpe\s+et\s+al\.(?=\s|$)|"
+    r"\bManuscript\s+received\s+on\s+April\s+17,\s+2021\b[\s\S]{0,260}"
+    r"\bManuscript\s+published\s+on\s+April\s+30,\s+2021\b|"
+    r"\bBlue\s+Eyes\s+Intelligence\s+Engineering\s+&\s+Sciences\s+Publication\b|"
+    r"\bRetrieval\s+Number:100\.1/ijmh\.E1208015521\b|"
     r"\bCheck\s+for\s+updates\b",
     re.IGNORECASE,
 )
@@ -521,7 +534,8 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bA\s+significantly\s+larger\s+portion\s+of\s+the\s+dPCA\s+gamma\s+components"
     r"[\s\S]{0,1600}\bThe\s+4-array\s+spatial\s+distribution\b|"
     r"\bdifferent\s+spatiovectors\s+extracted\s+from\s+2\s+s[\s\S]{0,1200}"
-    r"\bSource\s+data\s+are\s+provided[\s\S]{0,300}\bPanel\s+a\b",
+    r"\bSource\s+data\s+are\s+provided[\s\S]{0,300}\bPanel\s+a\b|"
+    r"\bCorrespondence\s+Author\s+participants\s+were\s+asked\s+to\s+complete\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)

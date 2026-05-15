@@ -3878,3 +3878,36 @@ Report:
 - Real batch result after scanner expansion: `P36=1`, `P66=2`,
   `P67=4`, `P70=1`, `P71=4`, `P82=1`, `P83=1`, `P87=1`,
   `P91=1`, plus existing `P35=1`, `P39=1`, `P62=1`, `P81=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 081-082 - 2026-05-15
+
+Method: final short batch in the same full-text pass. The complete polished
+text was reviewed for `meine_0139` and `meine_0140`; raw HTML was checked
+around each newly observed residue. Generated HTML was not edited. The local
+Zotero PDF map confirmed source PDFs for both documents.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 081 | `meine_0139_765be5625a` | clean | Added Blue Eyes manuscript/page furniture, `Correspondence Author participants` front-matter/body merge, heading and sentence joins (`BEHAVIORALAND`, `OFTACTILE`, `EVERYDAYACTIVITIES`, `texture.Tactile`), and OCR tokens `beacause`, `Τhe touch map`, and `Ιmproving`. |
+| 082 | `meine_0140_7b0ca9bc57` | `P67` | Added detached author accent `Susstrunk ¨`, joined technical terms (`featurebased`, `upprojection`, `groundtruth`, `shiftinvariant`, `imagedepth`, `intraobject`, `state-oftheart`, `domaininvariant`, `textdetection`, `speechballoon`, `textbased`, `contentaware`, `leftright`, `Semisupervised`, `imageto-image`, `realdomain`), and OCR tokens such as `compliment of the text-area mask`, `eBDetheque`, `an notate`, `threfore`, and `form eBDtheque`. |
+
+Scanner changes:
+
+- `P67` now catches the joined heading, sentence, and technical terms from the
+  final two documents.
+- `P71` catches the focused OCR/substitution residues from the tactile-map and
+  comics-depth papers.
+- `P76` catches a detached diaeresis after a name and detached accent marks
+  separated by spaces.
+- `P81` catches Blue Eyes manuscript/page furniture and retrieval-number
+  residue.
+- `P83` catches the `Correspondence Author participants...` front-matter/body
+  merge.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_081_082_fulltext_after_scan_expansion_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=2`, `P71=2`,
+  `P76=1`, `P81=1`, `P83=1`.
