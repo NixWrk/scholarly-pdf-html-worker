@@ -171,6 +171,44 @@ LOWERCASE_REF_GLUE_RE = re.compile(r"^[a-z][\s\u00a0]*\d{1,4}(?:[\s,\-–\u2013\
 SPLIT_EMAIL_TEXT_RE = re.compile(
     r"\b[A-Za-z][A-Za-z0-9._%+-]{2,}\s+(?:vi|iv|ix|i|v|x)@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
 )
+RUNAWAY_REPEATED_TEXT_RE = re.compile(
+    r"\b(?P<word>[A-Za-z]{3,})\b(?:\s*(?:,|\\,)\s*(?P=word)\b){5,}|"
+    r"(?:moderately\s+slow\s+deactivation\s+kinetics[\s\S]{0,120}?){3,}",
+    re.IGNORECASE,
+)
+LOST_FF_WORD_RE = re.compile(
+    r"\b(?:afective|coeficient|diference|diferential|efect(?:s|ive|ively)?|"
+    r"eficacy|eficient(?:ly)?|ofice|oficer|suficient(?:ly)?|tradeofs)\b",
+    re.IGNORECASE,
+)
+KNOWN_JOINED_WORD_RE = re.compile(
+    r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
+    r"timeconsuming|nervesparing|da\s+Vinci1Si)\b|patients,were|prostatectomy\u0394VV",
+    re.IGNORECASE,
+)
+FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
+    r"For\s+these[\s\S]{200,6000}?reasons,\s+a\s+transdiagnostic|"
+    r"also\s+and\s+the\s+Committee[\s\S]{0,2000}?require\s+evaluation|"
+    r"trigger\s+global\s+projection\s+targets[\s\S]{0,2000}?"
+    r"innate\s+or\s+adaptive\s+immune\s+responses|"
+    r"systemic\s+circulation[\s\S]{0,3000}?\(with\s+some\s+serotypes\s+more\s+likely\s+to\s+leak",
+    re.IGNORECASE,
+)
+CORRUPT_EMAIL_LABEL_RE = re.compile(r"(?:\b[MmSs]e-mail:|[\u25a1\ufffd]\s*S?e-mail:)")
+REFERENCE_ROMAN_SPLIT_RE = re.compile(r"\bBiobeha\s+v\.\s+Rev\.", re.IGNORECASE)
+KNOWN_OCR_TOKEN_RE = re.compile(
+    r"\b(?:iournal\.pone|inital|neabling|Segmentaion|simpification|systometry|"
+    r"urflowmetry|urtheral|validtation|seperable|pngpng|Wherev\s*\d)\b|"
+    r"\bDmax=Dminw1:5\b|\bpv0:\d+\b|\b0:5mLs\{?|\bhealth\s+male\s+volunteer\b|"
+    r"\bwill\s+to\s+help\b|\beffici[^\w\s]{1,3}ency\b|\b0\.999\s+0995\b",
+    re.IGNORECASE,
+)
+TABLE_NOTE_BODY_MERGE_RE = re.compile(
+    r"Positive\s+value\s*=\s*increased\s+symptoms,\s*negative\s+value\s*=\s*"
+    r"decreased\s+symptoms\s+studies\s+to\s+evaluate\b",
+    re.IGNORECASE,
+)
+AUTHOR_MARKER_GLUE_RE = re.compile(r"\b[A-Z][A-Za-z-]{3,}\s+100\s+and\b")
 BOX_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-box-unit\b)[^>]*>(?P<body>.*?)</div>",
     re.IGNORECASE | re.DOTALL,
@@ -2493,6 +2531,164 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 hypothesis="Roman-suffix repair split an email local-part such as simonov into 'simono v@...'.",
                 proposed_fix_layer="EN polish roman-suffix email guard",
                 regression_test="Email addresses like simonov@neuro.nnov.ru remain contiguous after roman-suffix cleanup.",
+            )
+        )
+
+    runaway_match = RUNAWAY_REPEATED_TEXT_RE.search(plain)
+    if runaway_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P65",
+                cc_class="CC-04/CC-13",
+                check="Runaway repeated word or phrase remains in polish text",
+                severity="error",
+                block=None,
+                snippet=_snippet(plain, runaway_match.start(), runaway_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="OCR or sentence-repair cleanup repeated the same token/fragment enough times to corrupt a body paragraph.",
+                proposed_fix_layer="EN polish repeated-fragment collapse audit",
+                regression_test="Runs such as 'slow, slow, slow...' and repeated optogenetic kinetics fragments are reported.",
+            )
+        )
+
+    lost_ff_match = LOST_FF_WORD_RE.search(plain)
+    if lost_ff_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P66",
+                cc_class="CC-04/CC-13",
+                check="Common lost-ff word remains in polish text",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, lost_ff_match.start(), lost_ff_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="OCR or ligature normalization dropped an 'ff' pair in common scientific prose.",
+                proposed_fix_layer="EN polish OCR spelling/ligature cleanup",
+                regression_test="Words such as effect, efficacy, officer, coefficient, and sufficient are not left as lost-ff variants.",
+                extra={"match": lost_ff_match.group(0)},
+            )
+        )
+
+    joined_word_match = KNOWN_JOINED_WORD_RE.search(plain)
+    if joined_word_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P67",
+                cc_class="CC-04/CC-13",
+                check="Known joined word or missing separator remains in polish text",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, joined_word_match.start(), joined_word_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Line-break, marker, or footnote cleanup failed to restore an ordinary word boundary or separator.",
+                proposed_fix_layer="EN polish joined-word and separator cleanup",
+                regression_test="Patterns such as 'considerationsincluding', 'timeconsuming', 'patients,were', and 'prostatectomyDeltaVV' are reported.",
+                extra={"match": joined_word_match.group(0)},
+            )
+        )
+
+    float_interrupt_match = FLOAT_SENTENCE_INTERRUPT_RE.search(plain)
+    if float_interrupt_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P68",
+                cc_class="CC-07/CC-08/CC-13",
+                check="Float material interrupts a body sentence",
+                severity="error",
+                block=None,
+                snippet=_snippet(plain, float_interrupt_match.start(), float_interrupt_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="A box or figure was inserted between two halves of the same body sentence, preserving a bad PDF reading order.",
+                proposed_fix_layer="EN polish float/body reading-order repair",
+                regression_test="Sentences split by Box/Figure blocks, such as 'For these ... reasons' or 'also ... require evaluation', are reported.",
+            )
+        )
+
+    corrupt_email_label_match = CORRUPT_EMAIL_LABEL_RE.search(plain)
+    if corrupt_email_label_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P69",
+                cc_class="CC-04/CC-13",
+                check="E-mail label is corrupted by marker glyphs",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, corrupt_email_label_match.start(), corrupt_email_label_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Front-matter symbol cleanup attached an affiliation/correspondence marker to the e-mail label.",
+                proposed_fix_layer="EN polish front-matter e-mail label cleanup",
+                regression_test="Labels such as 'Me-mail:' and boxed-glyph 'Se-mail:' do not survive in final polish HTML.",
+                extra={"match": corrupt_email_label_match.group(0)},
+            )
+        )
+
+    reference_roman_split_match = REFERENCE_ROMAN_SPLIT_RE.search(plain)
+    if reference_roman_split_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P70",
+                cc_class="CC-04/CC-13",
+                check="Reference journal abbreviation is split before roman-like v",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, reference_roman_split_match.start(), reference_roman_split_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Roman-suffix repair or reference cleanup split a journal abbreviation inside the bibliography.",
+                proposed_fix_layer="EN polish reference roman-suffix guard",
+                regression_test="'Neurosci. Biobehav. Rev.' does not become 'Neurosci. Biobeha v. Rev.' in references.",
+            )
+        )
+
+    known_ocr_match = KNOWN_OCR_TOKEN_RE.search(plain)
+    if known_ocr_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P71",
+                cc_class="CC-04/CC-13",
+                check="Known OCR token or phrase remains in polish text",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, known_ocr_match.start(), known_ocr_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Manual full-text review found recurring OCR token shapes that the broader audit did not classify.",
+                proposed_fix_layer="EN polish OCR residue scanner",
+                regression_test="Tokens such as 'urflowmetry', 'urtheral', 'iournal.pone', 'Wherev 2', and malformed p-values are reported.",
+                extra={"match": known_ocr_match.group(0)},
+            )
+        )
+
+    table_note_body_merge_match = TABLE_NOTE_BODY_MERGE_RE.search(plain)
+    if table_note_body_merge_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P72",
+                cc_class="CC-07/CC-11/CC-13",
+                check="Table note is merged into following body prose",
+                severity="error",
+                block=None,
+                snippet=_snippet(plain, table_note_body_merge_match.start(), table_note_body_merge_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="A table footnote/legend lost its boundary and swallowed the next body paragraph.",
+                proposed_fix_layer="EN polish table-note/body boundary repair",
+                regression_test="Table notes ending with symptom direction do not merge into 'studies to evaluate...' body prose.",
+            )
+        )
+
+    author_marker_glue_match = AUTHOR_MARKER_GLUE_RE.search(plain)
+    if author_marker_glue_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P73",
+                cc_class="CC-01/CC-04/CC-13",
+                check="Author affiliation marker is glued into author line as 100",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, author_marker_glue_match.start(), author_marker_glue_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Front-matter superscript or ORCID marker was converted into a plain numeric token in the author list.",
+                proposed_fix_layer="EN polish front-matter author-marker cleanup",
+                regression_test="Author lines such as 'Mukhiddinov 100 and Soon-Young Kim' are reported as marker glue.",
+                extra={"match": author_marker_glue_match.group(0)},
             )
         )
 

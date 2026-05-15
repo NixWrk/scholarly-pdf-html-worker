@@ -3259,3 +3259,38 @@ Regression:
 - `python -m pytest -q` -> `304 passed`.
 - The run still emits the existing `.pytest_cache` access-denied warning on
   this machine.
+
+## Five-at-a-time full-text blind-spot pass, batch 001-005 - 2026-05-15
+
+Method: read the complete polished text for each article, compare against the
+current audit output, and add scanner rules only for high-confidence defect
+families seen manually. Generated HTML was not edited.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 001 | `meine_0001_3944c69948` | clean | `considerationsincluding`, lost-ff words, corrupted `Me-mail`/boxed e-mail labels, body sentences interrupted by Box/Figures, runaway repeated `slow`/deactivation text, reference `Biobeha v. Rev.`, OCR `neabling`. |
+| 002 | `meine_0003_b9eaf6e854` | clean | `timeconsuming`, `Refreshabletactile`, `displaycan`, reference-title `Segmentaion`, author-marker glue like `100 and`. |
+| 003 | `meine_0004_a4cb70ccef` | clean | `inital`, `simpification`, `patients,were`, `iournal.pone`, malformed p-values / flow-rate notation, `health male volunteer`. |
+| 004 | `meine_0011_33cd7b163e` | `P49/P57` | Added missed OCR/spacing families: `systometry`, `urflowmetry`, `staffmember(s)`, `validtation`, `seperable`, `Wherev 2`, `pngpng`. Existing `P49/P57` still apply. |
+| 005 | `meine_0012_68ff614900` | clean | `timeconsuming`, `da Vinci1Si`, `urtheral`, `nervesparing`, `prostatectomyDeltaVV`, `0.999 0995`, and table-note/body merge after `Positive value = ... decreased symptoms`. |
+
+New audit checks:
+
+- `P65`: runaway repeated word/fragment.
+- `P66`: common lost-ff OCR/ligature words.
+- `P67`: known joined words and missing separators.
+- `P68`: body sentence interrupted by float material.
+- `P69`: corrupted e-mail label marker.
+- `P70`: reference abbreviation split before roman-like `v`.
+- `P71`: known OCR token/phrase residue.
+- `P72`: table note merged into following body prose.
+- `P73`: author-line affiliation/ORCID marker glued as `100`.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_001_005_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P65=1`, `P66=1`,
+  `P67=5`, `P68=1`, `P69=1`, `P70=1`, `P71=5`, `P72=1`,
+  `P73=1`, plus existing `P49=1`, `P57=1`.

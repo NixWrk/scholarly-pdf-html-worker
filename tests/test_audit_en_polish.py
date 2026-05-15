@@ -743,6 +743,24 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
                     '<p class="z2m-missing-figure-warning">Figure 1 image was not extracted into this HTML.</p>',
                     '<p><a href="#page-1-0">[17,18].</a> remained a page citation.</p>',
                     "<p>Contact e-mail: simono v@neuro.nnov.ru remains split.</p>",
+                    "<p>Here, we review relevant considerationsincluding the selection of methods.</p>",
+                    "<p>Common OCR words include efect, eficacy, oficer and coeficient.</p>",
+                    "<p>Currently available tools are neabling moderate illumination.</p>",
+                    "<p>Another corrupted label is Me-mail: author@example.com and \u25a1Se-mail: author@example.com.</p>",
+                    "<p>The method is timeconsuming and displaycan be useful; patients,were included; "
+                    "prostatectomy\u0394VV appears.</p>",
+                    "<p>For these " + ("intervening observations " * 12) + "</p>",
+                    '<div class="z2m-float-unit z2m-figure-unit"><p>Figure 7. Inserted caption text.</p></div>',
+                    "<p>reasons, a transdiagnostic repair is needed.</p>",
+                    "<p>Runaway slow, slow, slow, slow, slow, slow, slow, slow appears in the paragraph.</p>",
+                    "<p>Reference journal Neurosci. Biobeha v. Rev. remains split.</p>",
+                    "<p>Known OCR forms include iournal.pone, Segmentaion, urflowmetry, urtheral, "
+                    "systometry, inital, simpification, validtation, seperable, Wherev 2, Dmax=Dminw1:5, "
+                    "pv0:05, 0:5mLs{, health male volunteer, will to help, effici\u00a8ency, "
+                    "and 0.999 0995.</p>",
+                    "<p>Positive value = increased symptoms, negative value = decreased symptoms studies "
+                    "to evaluate pre- and post-operative LUTS.</p>",
+                    "<p>Mukhriddin Mukhiddinov 100 and Soon-Young Kim retained author-marker glue.</p>",
                     "<h4>References</h4>",
                     "<ul>",
                     *refs,
@@ -780,6 +798,15 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
             "P62",
             "P63",
             "P64",
+            "P65",
+            "P66",
+            "P67",
+            "P68",
+            "P69",
+            "P70",
+            "P71",
+            "P72",
+            "P73",
         }
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
