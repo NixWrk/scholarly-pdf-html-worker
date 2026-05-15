@@ -3335,3 +3335,40 @@ Report:
 - Real batch result after scanner expansion: `P36=1`, `P53=1`,
   `P67=2`, `P71=2`, `P74=1`, `P75=1`, `P76=2`, `P77=1`,
   `P78=1`, plus existing `P13=1`, `P39=1`, `P59=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 011-015 - 2026-05-15
+
+Method: same as previous five-at-a-time passes. The complete polished block
+text was reviewed for `meine_0020`, `meine_0024`, `meine_0027`,
+`meine_0029`, and `meine_0030`; generated HTML was not edited. Scanner
+changes were added only for high-confidence defects visible manually but absent
+from the initial audit.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 011 | `meine_0020_1d46c89d76` | clean | Joined Creative Commons phrase `theCreative`; figure-panel separator residue such as `d)2.5D`. |
+| 012 | `meine_0024_69ad5170a0` | `P76/P78` | No new scanner family beyond existing detached-accent and intra-word spacing checks. |
+| 013 | `meine_0027_4a8785387f` | clean | Front-matter affiliation markers glued to labels (`1Department`, `5Department`) and suspicious institutional e-mail typo `@unfi.it`. |
+| 014 | `meine_0029_ddf58debe6` | clean | Uroflow OCR residues (`premicturtion`, `Qavg and Omax`, `Vol ofmoved`, `Nusssenblatt`), body page headers such as `FRANCO ET AL. | 1915`, and severely scrambled table text such as `nales 5 ted Q a rates`. |
+| 015 | `meine_0030_7ddd815634` | `P05/P06/P53/P54` | German book/OCR material is already correctly gated by non-English and roman-split checks; no German-specific generated-HTML edit or narrow polish fix was added. |
+
+Scanner changes:
+
+- `P67` joined-word/separator coverage now includes `theCreative` and
+  figure-panel residue such as `d)2.5D`.
+- `P71` OCR-token coverage now includes uroflow/table residues such as
+  `premicturtion`, `Qavg and Omax`, `Vol ofmoved`, and `Nusssenblatt`.
+- `P79`: front-matter affiliation number glued to `Department`.
+- `P80`: suspicious institution-specific e-mail domain typo, currently
+  `@unfi.it`.
+- `P81`: PDF page header/footer left as body prose.
+- `P82`: table block with heavily OCR-scrambled column headers/data.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_011_015_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=1`, `P71=1`,
+  `P76=1`, `P78=1`, `P79=1`, `P80=1`, `P81=1`, `P82=1`,
+  plus existing `P05=1`, `P06=1`, `P53=1`, `P54=1`.

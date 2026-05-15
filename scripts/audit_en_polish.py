@@ -191,7 +191,7 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
     r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
     r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional)\b|"
-    r"patients,were|prostatectomy\u0394VV",
+    r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b",
     re.IGNORECASE,
 )
 FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
@@ -208,11 +208,11 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\b(?:iournal\.pone|inital|neabling|Segmentaion|simpification|systometry|"
     r"urflowmetry|urtheral|validtation|seperable|pngpng|Uroflowmetery|"
     r"flowmetery|bootloding|Examing|Parametres|Rewiev|microconroller|"
-    r"Mirocontroller|Wherev\s*\d)\b|"
+    r"Mirocontroller|premicturtion|Nusssenblatt|Wherev\s*\d)\b|"
     r"\bDmax=Dminw1:5\b|\bpv0:\d+\b|\b0:5mLs\{?|\bhealth\s+male\s+volunteer\b|"
     r"\bwill\s+to\s+help\b|\beffici[^\w\s]{1,3}ency\b|\b0\.999\s+0995\b|"
     r"\b(?:effekt|retrospekt|qualitat)\s+iv\b|\bAPPEND\s+ix\b|"
-    r"\bINTEL\s+i\s+LIGENT\b",
+    r"\bINTEL\s+i\s+LIGENT\b|\bQavg\s+and\s+Omax\b|\bVol\s+ofmoved\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -257,6 +257,18 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bBarc\s+elona\b|"
     r"\bthr\s+ee\s+different\b|"
     r"\bhigh\s*\)\s*w\s+ere\b",
+    re.IGNORECASE,
+)
+AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b[1-9]Department\b")
+SUSPICIOUS_EMAIL_DOMAIN_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@unfi\.it\b",
+    re.IGNORECASE,
+)
+BODY_PAGE_HEADER_RE = re.compile(r"\b[A-Z][A-Z]+(?:\s+ET\s+AL\.)?\s*\|\s*\d{3,5}\b")
+TABLE_GIBBERISH_FLOW_RE = re.compile(
+    r"\bTABLE\s+\d[\s\S]{0,1400}\bnales\s+5\s+ted\s+Q\s+a\s+rates\b|"
+    r"\bQn\s+Flow\s+i\s+[^\s]{1,4}ax\s+ndexes\b|"
+    r"\bP\s+Values\s+0\.06\s+0\.00\s+4\s+\.565\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -2654,7 +2666,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 stage=POLISH_STAGE,
                 hypothesis="Line-break, marker, or footnote cleanup failed to restore an ordinary word boundary or separator.",
                 proposed_fix_layer="EN polish joined-word and separator cleanup",
-                regression_test="Patterns such as 'considerationsincluding', 'timeconsuming', 'patients,were', and 'prostatectomyDeltaVV' are reported.",
+                regression_test="Patterns such as 'considerationsincluding', 'timeconsuming', 'theCreative', 'd)2.5D', and 'prostatectomyDeltaVV' are reported.",
                 extra={"match": joined_word_match.group(0)},
             )
         )
@@ -2724,7 +2736,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 stage=POLISH_STAGE,
                 hypothesis="Manual full-text review found recurring OCR token shapes that the broader audit did not classify.",
                 proposed_fix_layer="EN polish OCR residue scanner",
-                regression_test="Tokens such as 'urflowmetry', 'urtheral', 'iournal.pone', 'Wherev 2', and malformed p-values are reported.",
+                regression_test="Tokens such as 'urflowmetry', 'urtheral', 'premicturtion', 'Qavg and Omax', and malformed p-values are reported.",
                 extra={"match": known_ocr_match.group(0)},
             )
         )
@@ -2848,6 +2860,89 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 proposed_fix_layer="EN polish intra-word spacing cleanup",
                 regression_test="Fragments such as 'ob je ct s w ould' and 'safe ty c oncerns' are reported.",
                 extra={"match": intra_word_space_match.group(0)},
+            )
+        )
+
+    affiliation_department_glue_match = AFFILIATION_DEPARTMENT_GLUE_RE.search(plain)
+    if affiliation_department_glue_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P79",
+                cc_class="CC-01/CC-04/CC-13",
+                check="Front-matter affiliation number is glued to Department",
+                severity="warning",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    affiliation_department_glue_match.start(),
+                    affiliation_department_glue_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Superscript affiliation markers were flattened and attached to the following affiliation label.",
+                proposed_fix_layer="EN polish front-matter affiliation spacing cleanup",
+                regression_test="Affiliation labels such as '1Department' and '5Department' are reported.",
+                extra={"match": affiliation_department_glue_match.group(0)},
+            )
+        )
+
+    suspicious_email_domain_match = SUSPICIOUS_EMAIL_DOMAIN_RE.search(plain)
+    if suspicious_email_domain_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P80",
+                cc_class="CC-04/CC-13",
+                check="Institutional email domain looks OCR-truncated",
+                severity="warning",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    suspicious_email_domain_match.start(),
+                    suspicious_email_domain_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Manual review found an institution-specific e-mail typo alongside otherwise consistent domain spellings.",
+                proposed_fix_layer="EN polish front-matter e-mail/domain OCR cleanup",
+                regression_test="Suspicious Florence-domain typo '@unfi.it' is reported.",
+                extra={"match": suspicious_email_domain_match.group(0)},
+            )
+        )
+
+    body_page_header_match = BODY_PAGE_HEADER_RE.search(plain)
+    if body_page_header_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P81",
+                cc_class="CC-07/CC-13",
+                check="Page header or footer remains in body prose",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, body_page_header_match.start(), body_page_header_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="PDF page furniture was preserved as ordinary paragraph text after polish cleanup.",
+                proposed_fix_layer="EN polish page furniture cleanup",
+                regression_test="Headers such as 'FRANCO ET AL. | 1915' are reported.",
+                extra={"match": body_page_header_match.group(0)},
+            )
+        )
+
+    table_gibberish_flow_match = TABLE_GIBBERISH_FLOW_RE.search(plain)
+    if table_gibberish_flow_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P82",
+                cc_class="CC-04/CC-07/CC-11/CC-13",
+                check="Table data has OCR-scrambled column headers",
+                severity="error",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    table_gibberish_flow_match.start(),
+                    table_gibberish_flow_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="A table extraction block lost column structure and preserved heavily scrambled OCR tokens.",
+                proposed_fix_layer="EN polish table OCR/column structure audit",
+                regression_test="Uroflow table fragments such as 'nales 5 ted Q a rates' and malformed P-value runs are reported.",
             )
         )
 

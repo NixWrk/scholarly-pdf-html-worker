@@ -856,6 +856,47 @@ def test_analyze_pair_reports_fulltext_batch_006_010_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_011_015_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>1 Content from this work may be used under the terms of "
+                    "theCreative Commons Attribution 3.0 licence.</p>",
+                    "<div>Figure 6. Digital models: c) relief; d)2.5D model; "
+                    "e) tactile bas-relief.</div>",
+                    "<p>1Department of Industrial Engineering, University of Florence, "
+                    "lapo.governi@unfi.it 2Department of Architecture, "
+                    "luca.puggelli@unifi.it 5Department of Design.</p>",
+                    "<p>The initial premicturtion volume and Qavg and Omax were calculated.</p>",
+                    "<p>FRANCO ET AL. | 1915</p>",
+                    "<div>TABLE 1. Female descriptive statistics. nales 5 ted Q a rates "
+                    "vg avg ndexe s Ca ed Qm rates ax Qn Flow i \u0131ax ndexes "
+                    "an \u00b1sp. P Values 0.06 0.00 4 .565</div>",
+                    "<p>F = force, V = Vol ofmoved; see B Nusssenblatt for a copied name.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P67", "P71", "P79", "P80", "P81", "P82"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
