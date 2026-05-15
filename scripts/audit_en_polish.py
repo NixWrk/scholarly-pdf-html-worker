@@ -210,7 +210,7 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"urineflow|AcceptableBladder|suggestiveof|distentionon|healthyyoung|"
     r"Theeffect|mattecollodion|Nineteenthcentury|darkbrown|nearinfrared|"
     r"selfcontrolled|99Tcmcolloids|nonneoadjuvant|vanderVorst|populationbased|"
-    r"Positionrelated)\b|"
+    r"Positionrelated|intraand|lightbeam|Videobased|handassembled|OpticalTouch)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
@@ -258,7 +258,11 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\bAmerican\s+Society\s+of\s+Clinical\s+Ncology\b|\bFlorescence\s+Technique\b|"
     r"\bTQma\s+x\b|\bVoiding\s+positing\b|\bsignificate\s+statistical\b|"
     r"\b0000-0003-4044-\s+0927\b|"
-    r"\b(?:5\.22|4\.21|5\.13)\s+\\pm\s+2,\s+(?:38|36|40)\b",
+    r"\b(?:5\.22|4\.21|5\.13)\s+\\pm\s+2,\s+(?:38|36|40)\b|"
+    r"\b(?:Schfer|Standarisation|subcomitee|standarization|aformentioned|Cvalli|"
+    r"Routeledge)\b|\bPdetQma\s+x\b|\bBOO\s+i\b|\bIPP\s+Grade\s+(?-i:iii)\b|"
+    r"\bsimulates\s+the\s+The\s+validation\b|\bto\s+be\s+The\s+topological\s+sort\b|"
+    r"\bDirectX-\s+R\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -280,7 +284,8 @@ DETACHED_ACCENT_RE = re.compile(
     r"\bHeppner,\s*[\u00b4\u02c6]\s+and\b|"
     r"\bC\u00b8\s*\.\s+Varel\b|"
     r"\bSyd\s+\u00a8\s+anheimo\b|"
-    r"\bwireless\s+\u00a8\s+intraocular\b",
+    r"\bwireless\s+\u00a8\s+intraocular\b|"
+    r"\bBRICENO\S\s*,\s*H\.\s*M\.|\bHOLLERER\s+[^A-Za-z0-9\s,]\s*,\s*T\.",
     re.IGNORECASE,
 )
 TABLE_SECTION_ABSORB_RE = re.compile(
@@ -319,6 +324,7 @@ BODY_PAGE_HEADER_RE = re.compile(
     r"\b[A-Z][A-Z]+(?:\s+ET\s+AL\.)?\s*\|\s*\d{3,5}\b|"
     r"\bJin\s+et\s+al\.\s+Combined\s+Imaging\s+in\s+Breast\s+Cancer\b|"
     r"\bAlrabadi\s+et\s+al\.\s+\d+\b|"
+    r"\b\d+:\d+\s+.{0,4}\s+A\.\s+Reichinger\s+et\s+al\.(?=\W|$)|"
     r"\bThe\s+Getty\s+Conservation\s+Institute,\s+©\s+2013\s+J\.\s+Paul\s+Getty\s+Trust\b",
     re.IGNORECASE,
 )
@@ -331,7 +337,11 @@ TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bHow\s+did\s+you\s+f\s+ind\s+using\s+g\s+the\s+IAC\b|"
     r"\bWhat\s+tee\s+chnology\s+u\s+may\s+tic\s+k\b|"
     r"\bOrigina\s+al\s+Color\s+Simpl\s+i\s+fication\b|"
-    r"\bCollodion\s+Prints\s+S\s+Process[\s\S]{0,900}\bWothlytype\b",
+    r"\bCollodion\s+Prints\s+S\s+Process[\s\S]{0,900}\bWothlytype\b|"
+    r"\bAn\s+Over\s+5\s+Ho\s+6[\s\S]{0,600}\bPac\s+kard\s+Ideal\s+Shutter\b|"
+    r"\bCleaning\s+the\s+Autographic\s+Kodak\s+Camera\s+1915-192640[\s\S]{0,600}\bHIMPY\b|"
+    r"\bGrafle\s+x\s+Speed\s+Graphic[\s\S]{0,1400}\btopper\s+diago\s+silotoro\b|"
+    r"\bThornton-Pickard\s+Duple\s+x\s+Ruby\s+Refle\s+x[\s\S]{0,1400}\btiems\s+strate\b",
     re.IGNORECASE,
 )
 FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
@@ -347,7 +357,11 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bselected\s+for\s+the\s+\(B\)\s+1\.\s+Flocked[\s\S]{0,1600}"
     r"\bfamous\s+enough\s+P\s+to\s+bc[\s\S]{0,600}\bE\s+clarity\b|"
     r"\bThere\s+is\s+obvious\s+urinary\s+leakage\s+with[\s\S]{0,900}"
-    r"\bminimal\s+increases\s+in\s+intravesical\s+pressure\b",
+    r"\bminimal\s+increases\s+in\s+intravesical\s+pressure\b|"
+    r"\bmalignancy\s+or\s+traumatic\s+lesions\.\s+A[\s\S]{0,1000}"
+    r"\bjohn\.webster@wisc\.edu\s+major\s+and\s+essential\s+step\b|"
+    r"\bmany\s+visual\s+computing\s+algorithms\s+turn[\s\S]{0,1800}"
+    r"\bout\s+to\s+be\s+equally\s+well\s+suited\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -357,7 +371,8 @@ REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
     re.IGNORECASE,
 )
 SPLIT_DOT_EMAIL_RE = re.compile(
-    r"\b[A-Za-z]{2,}\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    r"\b[A-Za-z]{2,}\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|"
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\s*\.\s+|\s+\.\s*)[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
 SPLIT_AT_EMAIL_RE = re.compile(
@@ -388,6 +403,7 @@ OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
 )
 SPLIT_URL_DOMAIN_RE = re.compile(
     r"\bwww\.\s+[A-Za-z]{2,}\s+[A-Za-z](?:\.[A-Za-z]{2,})+\b|"
+    r"\bwww\.[A-Za-z0-9-]+\s+\.\s+[A-Za-z]{2,}\b|"
     r"\bhttps?://[A-Za-z0-9-]+\s+\.\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
@@ -398,7 +414,10 @@ BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\b39\.\s+Sub-committee[\s\S]{0,260}\b39\.\s+Haylen\b|"
     r"\bMedical\s+management\s+3\.\s+of\s+benign\s+prostatic\s+hyperplasia\b|"
     r"\bfindings\s+and\s+17\.\s+postvoiding\s+residual\s+urine\b|"
-    r"\bpost-void\s+residual\s+20\.\s+urine\s+volume\b",
+    r"\bpost-void\s+residual\s+20\.\s+urine\s+volume\b|"
+    r"\bA\s+Comprehensive\s+Review\s+4\.\s+Emphasizing\s+Anatomy\b|"
+    r"\bUrethral\s+Stricture\s+Recurrence\s+21\.\s+After\s+Anterior\s+Urethroplasty\b|"
+    r"\bChallenges\s+and\s+Opportunities,\s+Jeddah\s+28\.\s+Khorsheed\b",
     re.IGNORECASE,
 )
 PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
@@ -409,7 +428,8 @@ PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
 )
 AFFILIATION_MARKER_RESIDUE_RE = re.compile(
     r"\bYary\s+Volpe1\b|\b(?:Ilbey|İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b|"
-    r"\bLujain\s+Al\s+Omari1\b",
+    r"\bLujain\s+Al\s+Omari1\b|"
+    r"\bS\.V\.\s+Krishna\s+Reddy\s+pa\s+and\s+Ahammad\s+Basha\s+Shaik\s+pb\s+a\s+Department\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -1127,6 +1147,13 @@ def _looks_like_copyright_notice(text: str) -> bool:
 def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
     normalized = _normalize_ws(text)
     lowered = normalized.lower()
+    if re.fullmatch(
+        r"printed\s+in\s+the\s+united\s+states\s+of\s+america"
+        r"(?:\s+\d+){3,}\s*",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return True
     month = (
         r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
         r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"

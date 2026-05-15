@@ -3560,3 +3560,43 @@ Report:
   `P71=5`, `P81=3`, `P82=1`, `P83=1`, `P84=1`, `P90=2`, `P92=1`,
   plus existing `P14=1`, `P24=1`, `P33=1`, `P39=2`, `P50=1`,
   `P80=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 041-045 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0071`, `meine_0072`, `meine_0073`, `meine_0074`, and
+`meine_0076`; generated HTML was not edited. `meine_0071` was a very large
+book import, so the full text was read with sectional checks and whole-book
+candidate scans. Its source PDF yielded only minimal text through PyMuPDF.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 041 | `meine_0071_64e1cd9668` | false `P01` on publisher print key | The publisher line `Printed in the United States of America 10 9...` is now ignored as normal metadata. The book TOC/index OCR damage is reported (`An Over 5 Ho 6`, `Restorin g`, `Pac kard`, `Chapter S ix`, `HIMPY`, plus index fragments such as `Grafle x`/`topper diago silotoro`). |
+| 042 | `meine_0072_05920f8331` | clean | Split e-mail domain (`jakub.i.krukowski@gmail. com`), split URL domain (`www.yumpu . com/...`), joined `intraand`, reference/OCR residue (`Schfer`, `Standarisation`, `subcomitee`, `standarization`), and shifted reference number inside title (`A Comprehensive Review 4. Emphasizing Anatomy`). |
+| 043 | `meine_0073_ff16051f77` | clean | Front-matter/contact block inserted into the sentence `malignancy or traumatic lesions. A ... major and essential step`, joined/OCR terms (`lightbeam`, `Videobased`, `aformentioned`, `simulates the The validation`), and shifted reference number (`Jeddah 28. Khorsheed`). |
+| 044 | `meine_0074_de2d3d07e4` | clean | Author affiliation superscripts flattened into names (`S.V. Krishna Reddy pa ... Shaik pb a Department`) and table OCR splits (`PdetQma x`, `BOO i`, lowercase `IPP Grade iii`, `Cvalli`). |
+| 045 | `meine_0076_d26777905f` | `P67/P71` | ACM front matter/page header interrupts body sentence (`many visual computing algorithms turn ... out to be`), page header `5:2 A. Reichinger et al.`, joined/OCR terms (`handassembled`, `OpticalTouch`, `Routeledge`, `DirectX- R`, `to be The topological sort`), and detached accents in references (`BRICENO~`, `HOLLERER ~`). Existing `threedimensional` and `Bolognia` remained valid hits. |
+
+Scanner changes:
+
+- `P01` no longer reports normal publisher print-key lines such as
+  `Printed in the United States of America 10 9 8...`.
+- `P67`, `P71`, and `P76` were extended with the focused joined-word, OCR,
+  and detached-accent residues above.
+- `P81` catches ACM-style title/page headers like `5:2 A. Reichinger et al.`.
+- `P82` now covers book TOC/index OCR blocks, not only article tables.
+- `P83` catches front-matter/metadata blocks inserted into body sentences for
+  the VVD and ACM tactile-painting articles.
+- `P86` covers e-mail domains split after a dot; `P88` covers `www.domain .
+  tld` spacing.
+- `P90` catches the newly observed shifted bibliography numbers.
+- `P92` includes author-affiliation `pa/pb` residue from the BPH article.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_041_045_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=3`, `P71=4`,
+  `P76=1`, `P81=1`, `P82=1`, `P83=2`, `P86=1`, `P88=1`, `P90=2`,
+  `P92=1`.

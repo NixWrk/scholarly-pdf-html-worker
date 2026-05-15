@@ -220,6 +220,28 @@ def test_analyze_pair_ignores_all_rights_reserved_notice_as_frontmatter_ocr() ->
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_publisher_print_key_as_frontmatter_ocr() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text(
+            "<html><body><p>Printed in the United States of America 10 9 8 7 6 5 4 3</p></body></html>",
+            encoding="utf-8",
+        )
+        polish_path.write_text("<html><body><p>Clean body.</p></body></html>", encoding="utf-8")
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P01" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_dates_addresses_and_toc_as_frontmatter_ocr() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -1163,6 +1185,54 @@ def test_analyze_pair_reports_fulltext_batch_036_040_blind_spots() -> None:
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         expected = {"P66", "P67", "P71", "P81", "P82", "P83", "P84", "P90", "P92"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_fulltext_batch_041_045_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>An Over 5 Ho 6 Chapter One _ aries 8 noving Adhesive Tape "
+                    "Restorin g a Camera Stand24 Pac kard Ideal Shutter.</p>",
+                    "<p>Cleaning the Autographic Kodak Camera 1915-192640 Kodak No. 3 l A "
+                    "Folding Brownie48 Chapter S ix Index HIMPY.</p>",
+                    "<p>Contact: jakub.i.krukowski@gmail. com and see www.yumpu . com/en/document.</p>",
+                    "<p>High intraand interobserver reproducibility used a lightbeam method. "
+                    "The Videobased device was handassembled, and OpticalTouch remained joined.</p>",
+                    "<p>A Comprehensive Review 4. Emphasizing Anatomy stayed in references. "
+                    "Urethral Stricture Recurrence 21. After Anterior Urethroplasty also stayed. "
+                    "Challenges and Opportunities, Jeddah 28. Khorsheed was shifted.</p>",
+                    "<p>During LUTS workup, malignancy or traumatic lesions. A present-address block "
+                    "John G. Webster john.webster@wisc.edu major and essential step was inserted.</p>",
+                    "<p>Many visual computing algorithms turn permission metadata and ACM copyright "
+                    "into the middle of the paragraph out to be equally well suited for tactile media.</p>",
+                    "<p>5:2 xx A. Reichinger et al. page header survived in body text.</p>",
+                    "<p>Known OCR residues included Schfer, Standarisation, subcomitee, standarization, "
+                    "aformentioned, Cvalli, Routeledge, PdetQma x, BOO i, IPP Grade iii, "
+                    "simulates the The validation, to be The topological sort, and DirectX- R.</p>",
+                    "<p>Detached accents remained as BRICENO~ , H. M. and HOLLERER ~ , T.</p>",
+                    "<p>S.V. Krishna Reddy pa and Ahammad Basha Shaik pb a Department of Urology.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P67", "P71", "P76", "P81", "P82", "P83", "P86", "P88", "P90", "P92"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
