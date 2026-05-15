@@ -3716,7 +3716,11 @@ def _unwrap_numeric_page_links_for_citation_recovery(html: str) -> str:
 def _looks_like_ocr_split_word_join(word: str, letter: str) -> bool:
     token = f"{word}{letter}"
     if len(word) >= 3:
-        return (word[-1].islower() and letter.islower()) or (word.isupper() and letter.isupper())
+        return (
+            (word[-1].islower() and letter.islower())
+            or (word.isupper() and letter.isupper())
+            or (word.isupper() and letter.lower() == "s")
+        )
     return token.lower() in {"in", "on", "of", "to", "as", "is", "it", "if", "by", "or", "we", "wm"} or token.isupper()
 
 
@@ -6514,6 +6518,21 @@ def _normalize_table_cell_roman_suffixes(html: str) -> str:
 
 def _repair_false_roman_suffix_splits(html: str) -> str:
     """Join ordinary capitalized words/surnames split before i/v/x."""
+    email_pattern = re.compile(
+        r"\b(?P<root>[A-Za-z][A-Za-z0-9._%+-]{2,})\s+(?P<suffix>vi|iv|ix|i|v|x)"
+        r"(?=@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
+    )
+    et_al_surname_v_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v(?=\s+et\s+al\.?\b)"
+    )
+    initial_surname_v_sentence_pattern = re.compile(
+        r"(?P<initials>\b(?:[A-Z]\.\s*){1,4})"
+        r"(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v(?=\.\s+[A-Z])"
+    )
+    reporting_surname_vi_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+vi"
+        r"(?=\s+(?:argues|classifies|notes|observes|proposed|proposes|says|states|suggests|writes)\b)"
+    )
     pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|iv|ix|i|v|x)"
         r"(?=(?:\s*,|\s*\(|\s*&(?:amp;)?\s*|\s+(?:and|or)\b|\s+\d{1,4}\b|\s+(?:le|de|van|von)\b|\s+[A-Z](?:\b|[a-z]{2,}\b)|[.;:]?\s*</p>|[.;:]?\s*$))"
@@ -6543,6 +6562,13 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
                 return match.group(0)
             return f"{match.group('given')}{match.group('root')}{match.group('suffix')}"
 
+        text = email_pattern.sub(lambda match: f"{match.group('root')}{match.group('suffix')}", text)
+        text = et_al_surname_v_pattern.sub(lambda match: f"{match.group('root')}v", text)
+        text = initial_surname_v_sentence_pattern.sub(
+            lambda match: f"{match.group('initials')}{match.group('root')}v",
+            text,
+        )
+        text = reporting_surname_vi_pattern.sub(lambda match: f"{match.group('root')}vi", text)
         text = name_pattern.sub(_replace_name, text)
         text = initial_name_pattern.sub(
             lambda match: (

@@ -168,6 +168,9 @@ BROKEN_URL_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 LOWERCASE_REF_GLUE_RE = re.compile(r"^[a-z][\s\u00a0]*\d{1,4}(?:[\s,\-–\u2013\u2014\d.);]*)?$")
+SPLIT_EMAIL_TEXT_RE = re.compile(
+    r"\b[A-Za-z][A-Za-z0-9._%+-]{2,}\s+(?:vi|iv|ix|i|v|x)@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
 BOX_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-box-unit\b)[^>]*>(?P<body>.*?)</div>",
     re.IGNORECASE | re.DOTALL,
@@ -448,6 +451,71 @@ def _source_pdf_path(raw_path: Path) -> Path:
     return raw_path.parent / PDF_SOURCE_STAGE
 
 
+def _article_name_from_stage(stage_path: Path) -> str:
+    return stage_path.parent.parent.name if stage_path.parent.name == "_z2m_stages" else stage_path.parent.name
+
+
+def _first_path_value(value: Any) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        for key in ("pdf_path", "source_pdf_path", "path"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate:
+                return candidate
+    if isinstance(value, list):
+        for item in value:
+            candidate = _first_path_value(item)
+            if candidate:
+                return candidate
+    return None
+
+
+def _pdf_path_from_map_record(record: Any) -> Path | None:
+    if isinstance(record, str) and record:
+        return Path(record).expanduser()
+    if not isinstance(record, dict):
+        return None
+    for key in ("pdf_path", "source_pdf_path", "path"):
+        candidate = record.get(key)
+        if isinstance(candidate, str) and candidate:
+            return Path(candidate).expanduser()
+    for key in ("exact_matches", "fuzzy_matches", "matches"):
+        candidate = _first_path_value(record.get(key))
+        if candidate:
+            return Path(candidate).expanduser()
+    return None
+
+
+def _load_pdf_map(pdf_map_path: Path) -> dict[str, Path]:
+    data = json.loads(pdf_map_path.read_text(encoding="utf-8-sig"))
+    if isinstance(data, dict) and not any(key in data for key in ("items", "articles", "records")):
+        return {
+            str(article): path
+            for article, value in data.items()
+            if (path := _pdf_path_from_map_record(value)) is not None
+        }
+
+    if isinstance(data, dict):
+        records = data.get("items") or data.get("articles") or data.get("records") or []
+    else:
+        records = data
+
+    pdf_map: dict[str, Path] = {}
+    if not isinstance(records, list):
+        return pdf_map
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        article = record.get("article")
+        if not isinstance(article, str) or not article:
+            continue
+        pdf_path = _pdf_path_from_map_record(record)
+        if pdf_path is not None:
+            pdf_map[article] = pdf_path
+    return pdf_map
+
+
 def _extract_pdf_text(pdf_path: Path) -> tuple[str, str, str | None]:
     if not pdf_path.is_file():
         return "missing", "", None
@@ -482,13 +550,16 @@ def _extract_pdf_text(pdf_path: Path) -> tuple[str, str, str | None]:
 def _load_pdf_diagnostic_text(
     raw_path: Path,
     pdf_text_override: str | None,
+    pdf_path_override: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    pdf_path = _source_pdf_path(raw_path)
+    pdf_path = pdf_path_override or _source_pdf_path(raw_path)
+    pdf_origin = "map" if pdf_path_override is not None else "stage"
     if pdf_text_override is not None:
         return pdf_text_override, {
             "pdf_diagnostics_enabled": True,
             "source_pdf_path": str(pdf_path),
             "source_pdf_present": pdf_path.is_file(),
+            "source_pdf_origin": pdf_origin,
             "pdf_text_status": "override",
             "pdf_text_chars": len(pdf_text_override),
             "pdf_text_error": None,
@@ -499,6 +570,7 @@ def _load_pdf_diagnostic_text(
         "pdf_diagnostics_enabled": True,
         "source_pdf_path": str(pdf_path),
         "source_pdf_present": pdf_path.is_file(),
+        "source_pdf_origin": pdf_origin,
         "pdf_text_status": status,
         "pdf_text_chars": len(text),
         "pdf_text_error": error,
@@ -1902,7 +1974,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         right_text = block.text[split_match.end() : split_match.end() + 12]
         if suffix == "x" and right_text.startswith("-"):
             continue
-        if suffix == "v" and re.match(r"\.\d", right_text):
+        if suffix == "v" and re.match(r"\.\s*\d", right_text):
             continue
         raw_prefix = re.escape(split_match.group("prefix"))
         raw_suffix = re.escape(split_match.group("suffix"))
@@ -2407,6 +2479,23 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         )
         break
 
+    split_email_match = SPLIT_EMAIL_TEXT_RE.search(plain)
+    if split_email_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P64",
+                cc_class="CC-04/CC-13",
+                check="Email local-part is split before a roman-like suffix",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, split_email_match.start(), split_email_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Roman-suffix repair split an email local-part such as simonov into 'simono v@...'.",
+                proposed_fix_layer="EN polish roman-suffix email guard",
+                regression_test="Email addresses like simonov@neuro.nnov.ru remain contiguous after roman-suffix cleanup.",
+            )
+        )
+
     return defects
 
 
@@ -2469,6 +2558,7 @@ def analyze_pair(
     *,
     enable_pdf_diagnostics: bool = False,
     pdf_text_override: str | None = None,
+    pdf_path_override: Path | None = None,
 ) -> dict[str, Any]:
     raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
     polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
@@ -2476,8 +2566,9 @@ def analyze_pair(
     polish_blocks = _parse_blocks(polish_html)
     pdf_summary: dict[str, Any] = {
         "pdf_diagnostics_enabled": enable_pdf_diagnostics,
-        "source_pdf_path": str(_source_pdf_path(raw_path)),
-        "source_pdf_present": _source_pdf_path(raw_path).is_file(),
+        "source_pdf_path": str(pdf_path_override or _source_pdf_path(raw_path)),
+        "source_pdf_present": (pdf_path_override or _source_pdf_path(raw_path)).is_file(),
+        "source_pdf_origin": "map" if pdf_path_override is not None else "stage",
         "pdf_text_status": "disabled",
         "pdf_text_chars": 0,
         "pdf_text_error": None,
@@ -2494,7 +2585,7 @@ def analyze_pair(
     defects.extend(_manual_blind_spot_defects(polish_html, polish_blocks))
     defects.extend(_meine_recent_manual_defects(polish_html, polish_blocks))
     if enable_pdf_diagnostics or pdf_text_override is not None:
-        pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override)
+        pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
         defects.extend(_pdf_text_layer_defects(pdf_text, polish_html, polish_blocks))
 
     missing_images = _missing_local_images(polish_path, polish_html)
@@ -2516,7 +2607,7 @@ def analyze_pair(
         "polish_missing_local_images": len(missing_images),
         **pdf_summary,
     }
-    article = polish_path.parent.parent.name if polish_path.parent.name == "_z2m_stages" else polish_path.parent.name
+    article = _article_name_from_stage(polish_path)
     return {
         "article": article,
         "raw_stage_path": str(raw_path),
@@ -2556,10 +2647,20 @@ def _add_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
-def build_report(roots: list[Path], *, enable_pdf_diagnostics: bool = False) -> dict[str, Any]:
+def build_report(
+    roots: list[Path],
+    *,
+    enable_pdf_diagnostics: bool = False,
+    pdf_map: dict[str, Path] | None = None,
+) -> dict[str, Any]:
     pairs = find_pairs(roots)
     articles = [
-        analyze_pair(raw_path, polish_path, enable_pdf_diagnostics=enable_pdf_diagnostics)
+        analyze_pair(
+            raw_path,
+            polish_path,
+            enable_pdf_diagnostics=enable_pdf_diagnostics,
+            pdf_path_override=(pdf_map or {}).get(_article_name_from_stage(raw_path)),
+        )
         for raw_path, polish_path in pairs
     ]
     defect_counts = _add_corpus_hit_counts(articles)
@@ -2651,12 +2752,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "for low-confidence ordering diagnostics."
         ),
     )
+    parser.add_argument(
+        "--pdf-map",
+        type=Path,
+        help=(
+            "Optional JSON map from article id to external PDF path. Accepts a plain object, "
+            "a list of {article,pdf_path} records, or Zotero candidate records with exact/fuzzy matches."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    report = build_report(args.roots, enable_pdf_diagnostics=args.pdf_diagnostics)
+    pdf_map = _load_pdf_map(args.pdf_map) if args.pdf_map is not None else None
+    report = build_report(args.roots, enable_pdf_diagnostics=args.pdf_diagnostics, pdf_map=pdf_map)
     _print_summary(report)
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -431,6 +431,24 @@ def test_polish_html_document_repairs_ocr_split_page_link_citation_after_referen
     assert 'href="#page-11-11"' not in polished
 
 
+def test_polish_html_document_repairs_acronym_plural_page_link_citation() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 42))
+    html = (
+        "<html><body>"
+        f"<h4>References</h4><ol>{refs}"
+        '<li id="ref-42"><span id="page-12-18"></span>'
+        '<span class="z2m-ref-num">42.</span> Large animal reference.</li></ol>'
+        '<p>Testing in NHP <a href="#page-12-18">s42</a> provides insight.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Testing in NHPs<sup>" in polished
+    assert '<a href="#ref-42" class="z2m-ref-link">42</a></sup> provides insight.' in polished
+    assert ">s42</a>" not in polished
+
+
 def test_polish_html_document_repairs_split_page_linked_bracket_citation_run() -> None:
     refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 12))
     html = (
@@ -925,6 +943,54 @@ def test_polish_html_document_keeps_names_and_variables_from_false_roman_splits(
     assert "Qmax" in polished
     assert "Qma<sup" not in polished
     assert "Flow<sup" not in polished
+
+
+def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sentence() -> None:
+    html = (
+        "<html><body>"
+        "<p>Abdusalomo v et al. proposed a saliency method.</p>"
+        "<h4>References</h4>"
+        "<ul><li>J. A. Gardner and V. Bulato v. Scientific diagrams made easy.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Abdusalomov et al." in polished
+    assert "V. Bulatov. Scientific diagrams" in polished
+    assert "Abdusalomo v" not in polished
+    assert "Bulato v." not in polished
+
+
+def test_polish_html_document_rejoins_vi_surname_before_reporting_verb() -> None:
+    html = (
+        "<html><body>"
+        '<p>Hands-off historians, Hale vi suggests, sometimes speculate. '
+        'Hale vi proposed a distinction. '
+        'Table vi remains a separate appendix marker.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Halevi suggests" in polished
+    assert "Halevi proposed" in polished
+    assert "Hale vi suggests" not in polished
+    assert "Hale vi proposed" not in polished
+    assert "Table vi remains" in polished
+
+
+def test_polish_html_document_rejoins_roman_split_email_local_part() -> None:
+    html = (
+        "<html><body>"
+        "<p>Nizhni Novgorod State University e-mail: simono v@neuro.nnov.ru Received March 10, 2011</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "simonov@neuro.nnov.ru" in polished
+    assert "simono v@" not in polished
 
 
 def test_polish_html_document_repairs_sentence_split_by_image_paragraph() -> None:

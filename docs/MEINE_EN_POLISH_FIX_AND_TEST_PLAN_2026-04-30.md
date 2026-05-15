@@ -1178,3 +1178,57 @@ Verification:
 - `017` now recovers `Figure 4A/Figure 4`; the remaining `Figure 3` target is
   not assigned because the nearby extraction is a `Picture` artifact rather
   than a Marker `Figure` image.
+
+## Full 001-082 Repass PDF-Map And Roman Repairs - 2026-05-15
+
+### Universal Fixes Implemented
+
+- Pair audit can now load a Zotero-derived PDF map with `--pdf-map`, so
+  PDF-aware diagnostics are no longer limited to articles that have a local
+  `00.source.pdf` beside the HTML stages.
+- The audit blind-spot list now includes split e-mail local parts (`P64`), and
+  `P45` ignores valid bibliography volume strings such as `v. 13`.
+- EN polish repairs the repeated roman-suffix false splits found during the
+  full manual pass:
+  `NHP s41`, `Abdusalomo v et al.`, `V. Bulato v. Scientific...`,
+  `Hale vi suggests/proposed`, and `simono v@...`.
+
+### Regression Tests Added Or Extended
+
+- `test_build_report_uses_external_pdf_map_for_pdf_diagnostics`
+- `test_load_pdf_map_accepts_zotero_candidate_records`
+- `test_polish_html_document_repairs_acronym_plural_page_link_citation`
+- `test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sentence`
+- `test_polish_html_document_rejoins_vi_surname_before_reporting_verb`
+- `test_polish_html_document_rejoins_roman_split_email_local_part`
+- `test_audit_recent_manual_blind_spots_are_covered` now covers `P64`.
+- `test_analyze_pair_ignores_known_false_positive_patterns` now covers
+  `American Journal of Photography v. 13`.
+
+### Verification Snapshot
+
+- Targeted tests:
+  `python -m pytest -q tests\test_single_file_html.py tests\test_audit_en_polish.py`
+  -> `287 passed`.
+- Full test suite:
+  `python -m pytest -q` -> `304 passed` with the existing `.pytest_cache`
+  access-denied warning on this machine.
+- Final full-repass repolish:
+  `.tmp_local2\analysis\repolish_meine_001_082_after_roman_email_halevi2_fixes_2026-05-15.json`
+  -> `article_count=82`, final pass `changed_count=1`,
+  `inlined_image_count=1726`, `missing_image_count=0`.
+- Final PDF-aware full-repass pair audit:
+  `.tmp_local2\analysis\pair_audit_meine_001_082_final_pdfmap_2026-05-15.json`
+  -> `article_count=82`, clean `51`, residual `31`,
+  `source_pdf_present=81`, `polish_missing_local_images=0`.
+
+### Updated Residual Patterns
+
+- Fixed by code in this pass:
+  `meine_0001_3944c69948`, `meine_0003_b9eaf6e854`,
+  `meine_0015_be8f26bb9b`, `meine_0090_f9583a0fd3`, and
+  `meine_0134_edd06dc6d2`.
+- Remaining work should focus on figure wrapper/target completeness
+  (`P39/P61/P62`), table/list extraction (`P13/P50`), numeric
+  citation-vs-line-number ambiguity (`P04/P05/P59/P60`), and the PDF
+  end-section order diagnostic (`P24`).

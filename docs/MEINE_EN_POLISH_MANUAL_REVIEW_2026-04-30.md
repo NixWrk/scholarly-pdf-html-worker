@@ -3086,3 +3086,176 @@ Regression:
 - `python -m pytest -q` -> `298 passed`.
 - The run still emits the existing `.pytest_cache` access-denied warning on
   this machine.
+
+## Full 001-082 Repass With Zotero PDFs - 2026-05-15
+
+Scope and method:
+
+- Repeated the pass over all `82` imported Meine articles from
+  `review_runs\imported_from_zoteropdf2md_2026-05-14`.
+- Followed the repository methodology: automatic repolish, language audit, raw
+  audit, pair audit, then manual raw-vs-polish inspection for every article.
+- Used Zotero Meine PDF candidates for PDF-aware diagnostics where available.
+  The final PDF map covered `81/82` articles; only
+  `meine_0133_b3bf023ca8` still has no mapped source PDF.
+- No generated HTML was hand-edited. Fixes were made in polish/audit code and
+  verified by regenerating `_z2m_stages\02.en.polish.html`.
+
+Automatic reports:
+
+- Article list:
+  `.tmp_local2\analysis\meine_001_082_articles_full_repass_2026-05-15.txt`.
+- Manual dossiers:
+  `.tmp_local2\analysis\meine_001_082_full_repass_dossiers_2026-05-15.md`.
+- Zotero PDF map:
+  `.tmp_local2\analysis\meine_001_082_zotero_pdf_map_best_2026-05-15.json`.
+- Final repolish:
+  `.tmp_local2\analysis\repolish_meine_001_082_after_roman_email_halevi2_fixes_2026-05-15.json`
+  -> `article_count=82`, final pass `changed_count=1`,
+  `inlined_image_count=1726`, `missing_image_count=0`.
+- Language audit:
+  `.tmp_local2\analysis\language_audit_meine_001_082_full_repass_current_2026-05-15.json`
+  -> `en=80`, `de=2`, `unknown=0`; the German articles are
+  `meine_0013_a6269b65e9` and `meine_0030_7ddd815634`.
+- Raw audit:
+  `.tmp_local2\analysis\raw_audit_meine_001_082_full_repass_current_2026-05-15.json`
+  -> `bytes=12163282`, `img_tags=1726`, `figure_labels=2293`,
+  `table_labels=625`, `page_headers=0`, `raw_sentinels=0`; article-level
+  raw defect counts `R05=7`, `R08=12`, `R11=43`, `R12=6`, `R13=20`.
+- Final PDF-aware pair audit:
+  `.tmp_local2\analysis\pair_audit_meine_001_082_final_pdfmap_2026-05-15.json`
+  -> `article_count=82`, clean articles `51`, residual articles `31`,
+  `raw_img_tags=1726`, `polish_img_tags=1726`, `polish_ref_links=5428`,
+  `polish_fig_links=1733`, `polish_table_links=336`,
+  `polish_page_links=108`, `polish_replacement_chars=106`,
+  `polish_missing_local_images=0`, `source_pdf_present=81`,
+  `pdf_text_chars=7091634`.
+- Final residual pair checks:
+  `P01=1`, `P03=1`, `P04=3`, `P05=8`, `P06=1`, `P12=1`, `P13=4`,
+  `P14=4`, `P22=3`, `P24=1`, `P33=3`, `P35=1`, `P39=8`, `P40=1`,
+  `P42=1`, `P49=1`, `P50=3`, `P53=1`, `P54=1`, `P57=1`, `P59=6`,
+  `P60=1`, `P61=7`, `P62=5`.
+
+Code and audit changes from this full pass:
+
+- `scripts/audit_en_polish.py` now accepts `--pdf-map` and can attach
+  PDF diagnostics from the Zotero candidate map instead of requiring a local
+  `00.source.pdf` beside every stage.
+- Added `P64` to the recent-manual-defect blind-spot list for split e-mail
+  local parts.
+- Tightened `P45` so bibliography strings like journal volume `v. 13` do not
+  count as broken roman-suffix words.
+- `src/zoteropdf2md/single_file_html.py` now repairs the specific repeated
+  roman-suffix cases found manually:
+  `NHP s41` -> `NHPs<sup>41</sup>`,
+  `Abdusalomo v et al.` -> `Abdusalomov et al.`,
+  `V. Bulato v. Scientific...` -> `V. Bulatov. Scientific...`,
+  `Hale vi suggests/proposed` -> `Halevi suggests/proposed`, and
+  `simono v@...` -> `simonov@...`.
+
+Manual article ledger:
+
+| # | article | verdict | note |
+|---|---|---|---|
+| 001 | `meine_0001_3944c69948` | fixed | `NHP s41` now repairs to `NHPs<sup>41</sup>`. |
+| 002 | `meine_0003_b9eaf6e854` | fixed | `Abdusalomo v et al.` now repairs to `Abdusalomov et al.`. |
+| 003 | `meine_0004_a4cb70ccef` | clean | No manual polish regression found. |
+| 004 | `meine_0011_33cd7b163e` | residual | `P49/P57`: table link plus figure wrapper/target issue. |
+| 005 | `meine_0012_68ff614900` | clean | No manual polish regression found. |
+| 006 | `meine_0013_a6269b65e9` | language gate | German source; do not use as EN polish evidence. |
+| 007 | `meine_0014_10ec76f1a8` | clean | No manual polish regression found. |
+| 008 | `meine_0015_be8f26bb9b` | fixed | `V. Bulato v.` now repairs to `V. Bulatov.`. |
+| 009 | `meine_0016_21f99425d5` | residual | `P13/P39/P59`: thesis list/table/figure extraction. |
+| 010 | `meine_0017_7ef4a4f872` | clean | No manual polish regression found. |
+| 011 | `meine_0020_1d46c89d76` | clean | No manual polish regression found. |
+| 012 | `meine_0024_69ad5170a0` | clean | No manual polish regression found. |
+| 013 | `meine_0027_4a8785387f` | clean | Front-matter roman/affiliation repair still holds. |
+| 014 | `meine_0029_ddf58debe6` | clean | No manual polish regression found. |
+| 015 | `meine_0030_7ddd815634` | language gate | German/OCR book; residuals are not EN-polish evidence. |
+| 016 | `meine_0031_45c7a0c4d9` | residual | `P14`: figure target/caption mismatch. |
+| 017 | `meine_0034_2a6279ac39` | residual | `P61/P62`: missing figure/target warning. |
+| 018 | `meine_0035_520bdb5064` | clean | No manual polish regression found. |
+| 019 | `meine_0036_d04b54116e` | residual | `P05/P13`: figure/citation context remains ambiguous. |
+| 020 | `meine_0039_75458d8a00` | clean | No manual polish regression found. |
+| 021 | `meine_0041_515e781bb6` | clean | No manual polish regression found. |
+| 022 | `meine_0042_05f20a6416` | clean | Older OCR quality, but polish does not worsen it. |
+| 023 | `meine_0043_a848e1004f` | residual | `P05/P12/P14/P22/P62`: raw/Marker/book extraction. |
+| 024 | `meine_0045_567d338f68` | residual | `P61`: figure target recovery still incomplete. |
+| 025 | `meine_0046_17de6ce7f1` | clean | No manual polish regression found. |
+| 026 | `meine_0047_78d5e1f69c` | clean | Watch front-matter/body paragraph classification. |
+| 027 | `meine_0048_a97baaa72b` | residual | `P05/P33/P50/P60`: page/citation/table context. |
+| 028 | `meine_0052_ef1533f1d7` | clean | No manual polish regression found. |
+| 029 | `meine_0054_49ff51e940` | clean | OCR imperfect, but polish does not worsen it. |
+| 030 | `meine_0055_2603fc9fe5` | residual | `P33/P62`: missing figure/page-link context. |
+| 031 | `meine_0057_e9e50c744a` | residual | `P59/P61`: likely dLight false positive plus figure target. |
+| 032 | `meine_0058_940c8b16de` | clean | No manual polish regression found. |
+| 033 | `meine_0059_5c38c8b6f6` | clean | No manual polish regression found. |
+| 034 | `meine_0060_3b1d6c9c17` | residual | `P04`: plain numeric citations remain unlinked. |
+| 035 | `meine_0062_c320053119` | clean | No manual polish regression found. |
+| 036 | `meine_0065_4ae2d0d2b0` | clean | No manual polish regression found. |
+| 037 | `meine_0066_6c8967bd60` | residual | `P14/P39`: figure wrapper/target context. |
+| 038 | `meine_0067_43913dc61b` | residual | `P39/P50`: figure/table extraction context. |
+| 039 | `meine_0068_76f918fd36` | residual | `P24/P33`: PDF end-section order plus page links. |
+| 040 | `meine_0069_7e5793c56a` | clean | No manual polish regression found. |
+| 041 | `meine_0071_64e1cd9668` | residual/audit | `P01`: book print-line boilerplate, likely audit precision. |
+| 042 | `meine_0072_05920f8331` | clean | No manual polish regression found. |
+| 043 | `meine_0073_ff16051f77` | clean | No manual polish regression found. |
+| 044 | `meine_0074_de2d3d07e4` | clean | No manual polish regression found. |
+| 045 | `meine_0076_d26777905f` | clean | No manual polish regression found. |
+| 046 | `meine_0077_689400c133` | residual | `P03/P04`: citation/list density in raw context. |
+| 047 | `meine_0081_116f4112ad` | clean | No manual polish regression found. |
+| 048 | `meine_0082_ea4293c5ba` | residual/audit | `P05`: old numeric phrase context, likely false positive. |
+| 049 | `meine_0083_c766fd3388` | clean | No manual polish regression found. |
+| 050 | `meine_0086_6ed92a65fa` | residual | `P04`: RSC accepted-manuscript line-number/citation context. |
+| 051 | `meine_0088_9ee61053c9` | residual | `P39`: external figure caption/wrapper context. |
+| 052 | `meine_0089_be819c099a` | residual | `P59`: numeric citations in prose remain ambiguous. |
+| 053 | `meine_0090_f9583a0fd3` | partial fixed | `Halevi` repaired; residual thesis/table/list `P05/P22/P13/P40/P50`. |
+| 054 | `meine_0091_38079470c9` | residual | `P39/P61`: patent figure image/run context. |
+| 055 | `meine_0096_44b5fb52f5` | clean | No manual polish regression found. |
+| 056 | `meine_0097_8b3b2a7071` | clean | No manual polish regression found. |
+| 057 | `meine_0098_a0a5ce19d0` | clean | No manual polish regression found. |
+| 058 | `meine_0099_f64b4f7670` | residual | `P05/P42`: citation identity/number context. |
+| 059 | `meine_0101_b335da079c` | clean | No manual polish regression found. |
+| 060 | `meine_0102_d3de54f14d` | clean | No manual polish regression found. |
+| 061 | `meine_0104_4533bbb6f0` | clean | No manual polish regression found. |
+| 062 | `meine_0105_94913746ed` | clean | No manual polish regression found. |
+| 063 | `meine_0107_ca7c762afc` | clean | No manual polish regression found. |
+| 064 | `meine_0109_9d362effa4` | clean | No manual polish regression found. |
+| 065 | `meine_0110_d7da0239e6` | clean | No manual polish regression found. |
+| 066 | `meine_0114_596913ccaf` | residual | `P13/P39/P59`: thesis/list/figure extraction. |
+| 067 | `meine_0117_a82555f407` | residual | `P05/P61`: RSC line numbers plus figure target. |
+| 068 | `meine_0119_b39521e56d` | clean | No manual polish regression found. |
+| 069 | `meine_0120_132c43321f` | clean | No manual polish regression found. |
+| 070 | `meine_0121_bfa6ddf741` | residual | `P14/P59/P61`: citation/figure target context. |
+| 071 | `meine_0122_7dc83f89b2` | residual | `P22/P59/P62`: abstracts collection plus missing Figure 1. |
+| 072 | `meine_0123_7efa824c9f` | clean | No manual polish regression found. |
+| 073 | `meine_0126_88b178ad3d` | clean | No manual polish regression found. |
+| 074 | `meine_0127_8197240fe4` | residual | `P39/P61`: book scan, locked-page boilerplate, figure target. |
+| 075 | `meine_0128_d0a34eaf10` | clean | No manual polish regression found. |
+| 076 | `meine_0129_09858ae6b9` | clean | Prior citation/page-link fixes still hold. |
+| 077 | `meine_0132_b3e2cea77b` | clean | No manual polish regression found. |
+| 078 | `meine_0133_b3bf023ca8` | residual | `P35/P39`: old OCR/book, no mapped source PDF. |
+| 079 | `meine_0134_edd06dc6d2` | fixed | Split e-mail `simono v@...` now repairs to `simonov@...`. |
+| 080 | `meine_0138_686dec2e12` | residual | `P62`: missing extracted Figure 6 warning remains. |
+| 081 | `meine_0139_765be5625a` | clean | No manual polish regression found. |
+| 082 | `meine_0140_7b0ca9bc57` | clean | Prior surname/citation fixes still hold. |
+
+Remaining workstreams after the full repass:
+
+- Figure wrapper and semantic target completeness: `P39/P61/P62`, especially
+  theses, patents, books, and abstract collections.
+- Table/list extraction: `P13/P50`, mostly raw Marker structure rather than
+  polish-only text repair.
+- Numeric citation versus line-number ambiguity: `P04/P05/P59/P60`.
+- PDF section-order diagnostic: `P24` on `meine_0068_76f918fd36`.
+- Raw OCR/language-gate cleanup: `P35` and the two German articles should stay
+  out of normal EN-polish tuning unless a separate OCR/language workflow is
+  started.
+
+Regression:
+
+- `python -m pytest -q tests\test_single_file_html.py tests\test_audit_en_polish.py`
+  -> `287 passed`.
+- `python -m pytest -q` -> `304 passed`.
+- The run still emits the existing `.pytest_cache` access-denied warning on
+  this machine.

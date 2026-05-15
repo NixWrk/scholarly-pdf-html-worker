@@ -513,6 +513,95 @@ def test_analyze_pair_reports_pdf_text_layer_end_section_order_hint() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_build_report_uses_external_pdf_map_for_pdf_diagnostics() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    original_extract = audit._extract_pdf_text
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        external_pdf = tmp_path / "zotero" / "external.pdf"
+        external_pdf.parent.mkdir(parents=True)
+        external_pdf.write_bytes(b"%PDF-1.4\n")
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h3>FUNDING</h3>",
+                    "<p>Support statement.</p>",
+                    "<h3>REFERENCES</h3>",
+                    '<p id="ref-1"><span class="z2m-ref-num">1.</span> Example reference.</p>',
+                    "<h3>SUPPLEMENTARY MATERIAL</h3>",
+                    "<p>The Supplementary Material can be found online.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        map_path = tmp_path / "pdf_map.json"
+        map_path.write_text(
+            json.dumps([{"article": "Article sample", "pdf_path": str(external_pdf)}]),
+            encoding="utf-8",
+        )
+        pdf_text = "FUNDING Support statement. SUPPLEMENTARY MATERIAL online. REFERENCES 1. Example reference."
+
+        def fake_extract(pdf_path: Path):
+            assert pdf_path == external_pdf
+            return "fake", pdf_text, None
+
+        audit._extract_pdf_text = fake_extract
+
+        result = audit.build_report(
+            [tmp_path],
+            enable_pdf_diagnostics=True,
+            pdf_map=audit._load_pdf_map(map_path),
+        )
+
+        article = result["articles"][0]
+        defect_ids = {defect["id"] for defect in article["defects_found"]}
+        assert "P24" in defect_ids
+        assert article["summary"]["source_pdf_path"] == str(external_pdf)
+        assert article["summary"]["source_pdf_origin"] == "map"
+        assert article["summary"]["source_pdf_present"] is True
+        assert article["summary"]["pdf_text_status"] == "fake"
+    finally:
+        audit._extract_pdf_text = original_extract
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_load_pdf_map_accepts_zotero_candidate_records() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        map_path = tmp_path / "candidates.json"
+        map_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "article": "meine_0001_3944c69948",
+                        "exact_matches": [],
+                        "fuzzy_matches": [
+                            {
+                                "score": 10,
+                                "path": str(tmp_path / "storage" / "paper.pdf"),
+                            }
+                        ],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        pdf_map = audit._load_pdf_map(map_path)
+
+        assert pdf_map["meine_0001_3944c69948"] == tmp_path / "storage" / "paper.pdf"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_round25_blind_spots() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -653,6 +742,7 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
                     "<p>The absent semantic target is Figure 9A in the text.</p>",
                     '<p class="z2m-missing-figure-warning">Figure 1 image was not extracted into this HTML.</p>',
                     '<p><a href="#page-1-0">[17,18].</a> remained a page citation.</p>',
+                    "<p>Contact e-mail: simono v@neuro.nnov.ru remains split.</p>",
                     "<h4>References</h4>",
                     "<ul>",
                     *refs,
@@ -689,6 +779,7 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
             "P61",
             "P62",
             "P63",
+            "P64",
         }
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
@@ -714,6 +805,7 @@ def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positi
                     "<html><body>",
                     '<p>The default hyper-parameters of [<a href="#ref-20" class="z2m-ref-link">20</a>] '
                     "were used. During the training phase, the loss was stable.</p>",
+                    "<p>American Journal of Photography v. 13, no. 151, is a volume label.</p>",
                     "<p>Table 2 1. measured quantity author(s) year of publ. Kondo et al . 1 978 + Drake.</p>",
                     "<h4>References</h4>",
                     "<ul>",
@@ -729,6 +821,7 @@ def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positi
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         assert "P05" not in defect_ids
+        assert "P45" not in defect_ids
         assert "P50" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
