@@ -1,0 +1,13 @@
+.git
+.pytest_cache
+.tmp_local2
+review_runs
+__pycache__
+*.py[cod]
+.venv
+venv
+env
+outputs
+screenshots
+bench_*
+manual_review_*
