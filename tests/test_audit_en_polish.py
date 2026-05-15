@@ -1345,6 +1345,58 @@ def test_analyze_pair_reports_fulltext_batch_051_055_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_056_060_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<p>Reference text showed <a href="http://www.annualreviews.org">'
+                    "http:// www.annualreviews.org</a> and www.operativeneuro surgery-online.com.</p>",
+                    "<p>Common ligature losses included specifc identifed fow fxed artifcial "
+                    "refect ofline aferents artiicial scientiic certiication deining "
+                    "eectiveness ailiations irst inluence itness worklow.</p>",
+                    "<p>Joined words included singleneuron crossfrequency inhibitionbased "
+                    "phaselocked Alessentially medicineresistant customdesigned hardwareupdate "
+                    "Competinginterests Additionalinformation andrequests andpermissions "
+                    "ofrealistic ofmedical ofclinical ofperspective offactual of13.</p>",
+                    "<p>Old scan OCR left Avoiraupois, appro ximately, weigh ght, bH scale, "
+                    "F 011 07, .oog-inch, Avo i irdupois, Chroming and Auditor Spring Inc., "
+                    "ERTAINTY, pathologica, essenetial, USMLE:pPotential, GAL such as, "
+                    "Constitutional Al, Al techniques, euromodulation devices, crania l implant, "
+                    "and Bultimore.</p>",
+                    "<p>The comment preserved B rain-computer as spaced OCR residue.</p>",
+                    "<p>Nature page chrome said Check for updates in the body.</p>",
+                    "<p>Hydrometer g 4 &#205; &#247; column tokens scattered across the table "
+                    "until the Hydrometer only note.</p>",
+                    "<p>They organize sequential neuronal events as well as The temporal "
+                    "characteristics of brain oscillations were inserted here.</p>",
+                    "<p>The references read neuroimaging 76. Mondok and RNS System in Epilepsy "
+                    "Study GroupMorrell MJ.</p>",
+                    "<p>Zhen Ling Teo &copy; 1,2,15 and Robert J. T. Morris &copy; 11 were in "
+                    "the author line.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P66", "P67", "P71", "P78", "P81", "P82", "P83", "P88", "P90", "P92"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

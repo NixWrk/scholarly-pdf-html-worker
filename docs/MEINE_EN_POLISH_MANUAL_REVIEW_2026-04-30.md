@@ -3679,3 +3679,42 @@ Report:
   `P75=1`, `P83=1`, `P90=1`, `P91=1`, `P92=1`, plus existing
   `P05=1`, `P13=1`, `P22=1`, `P39=2`, `P40=1`, `P50=1`, `P59=1`,
   `P61=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 056-060 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0097`, `meine_0098`, `meine_0099`, `meine_0101`, and
+`meine_0102`; generated HTML was not edited. Raw HTML was spot-checked around
+the recurring residues, and the local Zotero PDF map confirmed source PDFs for
+all five documents.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 056 | `meine_0097_8b3b2a7071` | clean | Old Kodak booklet OCR/table residues are now reported: `Avoiraupois`, `appro ximately`, `weigh ght`, `bH`, `F 011 07`, `.oog-inch`, `Avo i irdupois`, `Chroming and Auditor Spring Inc.`, `ERTAINTY`, and the hydrometer table collapse. |
+| 057 | `meine_0098_a0a5ce19d0` | clean | Full text remained acceptable; only minor source punctuation/spelling was observed, so no new scanner rule was added for this article. |
+| 058 | `meine_0099_f64b4f7670` | `P05/P42/P66/P70/P89` | Added coverage for visible split URL labels inside anchors (`http:// www...`), lost ligatures (`specifc`, `identifed`, `fow`, `artifcial`, `ofline`, `aferents`, `afiliations`), joined neuroscience terms (`singleneuron`, `crossfrequency`, `inhibitionbased`, `phaselocked`), float/glossary interruptions, and shifted bibliography entries (`neuroimaging 76. Mondok`, `GroupMorrell MJ`, `281...282`). |
+| 059 | `meine_0101_b335da079c` | clean | Nature page chrome (`Check for updates`), author ORCID/copyright marker residue, `AI` OCRed as `Al`/`GAI` as `GAL`, joined back-matter words (`Competinginterests`, `Additionalinformation`, `andrequests`, `andpermissions`), and lost-ligature words such as `artiicial`, `scientiic`, `certiication`, `deining`, `eectiveness`, `inluence`, `itness`, and `worklow`. |
+| 060 | `meine_0102_d3de54f14d` | clean | Neuromodulation OCR/ordering residues are now covered: missing drop-cap `euromodulation devices`, `crania l implant`, `B rain-computer`, `medicineresistant`, `customdesigned`, split domain `www.operativeneuro surgery-online.com`, moved laser-component list material, and `GroupMorrell MJ`. |
+
+Scanner changes:
+
+- `P36` catches malformed visible URL labels inside otherwise valid URL anchors,
+  including `http:// www...`.
+- `P66`, `P67`, `P71`, and `P78` were extended with focused lost-ligature,
+  joined-word, OCR-token, and intra-word spacing residues from this batch.
+- `P81` catches Nature-style `Check for updates` page chrome in body prose.
+- `P82` catches the Kodak hydrometer table OCR collapse.
+- `P83` catches the Nature neuroscience float/glossary interruptions and the
+  cranial-implant laser-component ordering break.
+- `P88`, `P90`, and `P92` cover the new split-domain, shifted-bibliography,
+  and author-marker residues.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_056_060_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P36=1`, `P66=2`,
+  `P67=3`, `P71=3`, `P78=1`, `P81=1`, `P82=1`, `P83=2`,
+  `P88=1`, `P90=2`, `P92=1`, plus existing `P05=1`, `P42=1`,
+  `P70=1`, `P89=1`.
