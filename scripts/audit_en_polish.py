@@ -47,6 +47,11 @@ URL_ANCHOR_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"](?:https?://|www\.)[^'\"]+['\"][^>]*>.*?</a>",
     re.IGNORECASE | re.DOTALL,
 )
+MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*['\"](?:https?://|www\.)[^'\"]+['\"][^>]*>"
+    r"\s*(?:hps|htps|ttps)://[\s\S]{0,300}?</a>",
+    re.IGNORECASE | re.DOTALL,
+)
 REF_ANCHOR_BODY_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<num>\d+)['\"][^>]*>"
     r"(?P<body>.*?)</a>",
@@ -160,6 +165,7 @@ NONCITATION_CONTEXT_RE = re.compile(
 )
 ML_PER_SECOND_CONTEXT_RE = re.compile(r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+\b", re.IGNORECASE)
 BROKEN_URL_TEXT_RE = re.compile(
+    r"\b(?:hps|htps|ttps)://\S+|"
     r"\bhttps?://\s+|"
     r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*[A-Za-z._~:/?#\[\]@!$&'*+,;=%-])"
@@ -183,7 +189,9 @@ LOST_FF_WORD_RE = re.compile(
 )
 KNOWN_JOINED_WORD_RE = re.compile(
     r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
-    r"timeconsuming|nervesparing|da\s+Vinci1Si)\b|patients,were|prostatectomy\u0394VV",
+    r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
+    r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional)\b|"
+    r"patients,were|prostatectomy\u0394VV",
     re.IGNORECASE,
 )
 FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
@@ -198,9 +206,13 @@ CORRUPT_EMAIL_LABEL_RE = re.compile(r"(?:\b[MmSs]e-mail:|[\u25a1\ufffd]\s*S?e-ma
 REFERENCE_ROMAN_SPLIT_RE = re.compile(r"\bBiobeha\s+v\.\s+Rev\.", re.IGNORECASE)
 KNOWN_OCR_TOKEN_RE = re.compile(
     r"\b(?:iournal\.pone|inital|neabling|Segmentaion|simpification|systometry|"
-    r"urflowmetry|urtheral|validtation|seperable|pngpng|Wherev\s*\d)\b|"
+    r"urflowmetry|urtheral|validtation|seperable|pngpng|Uroflowmetery|"
+    r"flowmetery|bootloding|Examing|Parametres|Rewiev|microconroller|"
+    r"Mirocontroller|Wherev\s*\d)\b|"
     r"\bDmax=Dminw1:5\b|\bpv0:\d+\b|\b0:5mLs\{?|\bhealth\s+male\s+volunteer\b|"
-    r"\bwill\s+to\s+help\b|\beffici[^\w\s]{1,3}ency\b|\b0\.999\s+0995\b",
+    r"\bwill\s+to\s+help\b|\beffici[^\w\s]{1,3}ency\b|\b0\.999\s+0995\b|"
+    r"\b(?:effekt|retrospekt|qualitat)\s+iv\b|\bAPPEND\s+ix\b|"
+    r"\bINTEL\s+i\s+LIGENT\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -209,6 +221,44 @@ TABLE_NOTE_BODY_MERGE_RE = re.compile(
     re.IGNORECASE,
 )
 AUTHOR_MARKER_GLUE_RE = re.compile(r"\b[A-Z][A-Za-z-]{3,}\s+100\s+and\b")
+LATEX_MACRO_RUNAWAY_RE = re.compile(r"(?:\\@ifnextchar[\s\S]{0,80}){6,}", re.IGNORECASE)
+DOI_BODY_PROSE_MERGE_RE = re.compile(
+    r"\bDOI:\s*(?:https?://(?:dx\.)?doi\.org/)?10\.[^\s<]+"
+    r"\s+(?:the|this|we|in|as|depicted|generated)\b",
+    re.IGNORECASE,
+)
+DETACHED_ACCENT_RE = re.compile(
+    r"\b[A-Za-z]{2,}[\u00a8\u00b4\u02c6\u02c7\u02dc][A-Za-z]{2,}\b|"
+    r"\bOA\u02c6\s+\u02c7SModhrain\b|"
+    r"\bB[A-Za-z]+hler,\s*\u02dc\s+and\b",
+    re.IGNORECASE,
+)
+TABLE_SECTION_ABSORB_RE = re.compile(
+    r"\bTable\s+3\.1:[\s\S]{0,3000}\b3\.8\.\s+Data\s+Acquisition"
+    r"[\s\S]{0,3000}\b3\.9\.\s+Criteria\s+for\s+Use\s+of\s+Data\b",
+    re.IGNORECASE,
+)
+INTRA_WORD_SPACE_RE = re.compile(
+    r"\bob\s+je\s+ct\s+s\s+w\s+ould\b|"
+    r"\bsafe\s+ty\s+c\s+oncerns\b|"
+    r"\bincl\s+ude\b|"
+    r"\bb\s+e\s+interpreted\b|"
+    r"\bA\s+dd\s+itional\b|"
+    r"\bexpressi\s+ve\s+ness\b|"
+    r"\bT\s+his\s+fact\b|"
+    r"\bCNC-millin\s+g\s+m\s+achines\b|"
+    r"\bsupp\s+ort\s+structures\b|"
+    r"\ba\s+dditive\s+production\b|"
+    r"\balternati\s+ves\b|"
+    r"\bpr\s+inting\s+services\b|"
+    r"\btechnical\s+ly\b|"
+    r"\bstraightfo\s+rw\s+ard\b|"
+    r"\bGener\s+al\s+digital\b|"
+    r"\bBarc\s+elona\b|"
+    r"\bthr\s+ee\s+different\b|"
+    r"\bhigh\s*\)\s*w\s+ere\b",
+    re.IGNORECASE,
+)
 BOX_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-box-unit\b)[^>]*>(?P<body>.*?)</div>",
     re.IGNORECASE | re.DOTALL,
@@ -237,7 +287,8 @@ GERMAN_SOURCE_HINT_RE = re.compile(
     r"\b(?:AUSF|AUSFUEHRLICHES|AUSFUHRLICHES|PHOTOGRAPHIE|KOLLODIUM|"
     r"KOLLODIUMVERFAHREN|DRITTE|AUFLAGE|DRESDEN|WISS|PHOTOGR|INSTITUT|"
     r"TECHNICHE|SHULE|WISSEN|KALI|SALPETER|KUPFERVITRIOL|MASTIX|BORAX|"
-    r"WASSER|VERLAG|KAPITEL|UND|DER|DIE|DAS|MIT)\b",
+    r"WASSER|VERLAG|KAPITEL|LEITTHEMA|DEUTSCHE|LEITLINIEN|DIAGNOSTIK|"
+    r"PROSTATASYNDROMS|ZUSAMMENFASSUNG|UROLOGE|KLINIK|UND|DER|DIE|DAS|MIT)\b",
     re.IGNORECASE,
 )
 ROMAN_WORD_SPLIT_RE = re.compile(r"\b(?P<prefix>[A-Z][A-Za-z]{3,})\s+(?P<suffix>v|i|x|vi|ix)\b")
@@ -1742,19 +1793,27 @@ def _manual_blind_spot_defects(polish_html: str, polish_blocks: list[Block]) -> 
     plain = _plain_text(slim_html)
     url_check_plain = _plain_text(URL_ANCHOR_RE.sub(" URL ", slim_html))
     broken_url_match = BROKEN_URL_TEXT_RE.search(url_check_plain)
-    if broken_url_match is not None:
+    malformed_url_anchor_match = MALFORMED_URL_ANCHOR_BODY_RE.search(slim_html)
+    if broken_url_match is not None or malformed_url_anchor_match is not None:
+        if broken_url_match is not None:
+            snippet = _snippet(url_check_plain, broken_url_match.start(), broken_url_match.end())
+        else:
+            assert malformed_url_anchor_match is not None
+            snippet = _strip_tags(
+                _snippet(slim_html, malformed_url_anchor_match.start(), malformed_url_anchor_match.end())
+            )
         defects.append(
             _defect(
                 defect_id="P36",
                 cc_class="CC-03/CC-13",
-                check="Visible URL or DOI is split by whitespace",
+                check="Visible URL or DOI is split or malformed",
                 severity="warning",
                 block=None,
-                snippet=_snippet(url_check_plain, broken_url_match.start(), broken_url_match.end()),
+                snippet=snippet,
                 stage=POLISH_STAGE,
-                hypothesis="Line/page splitting or autolinking left a visibly broken URL/DOI label.",
+                hypothesis="Line/page splitting, OCR, or autolinking left a visibly broken URL/DOI label.",
                 proposed_fix_layer="EN polish URL/DOI label normalization",
-                regression_test="URLs like 'https:// creativecommons.org' and 'doi.org/ 10...' are joined in visible text and href.",
+                regression_test="URLs like 'https:// creativecommons.org', 'hps://dl.acm.org', and 'doi.org/ 10...' are joined or reported.",
             )
         )
 
@@ -2199,7 +2258,20 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
     german_probe = plain[:20000]
     german_hits = GERMAN_SOURCE_HINT_RE.findall(german_probe)
     german_keys = {hit.upper() for hit in german_hits}
-    if len(german_hits) >= 8 and german_keys & {"PHOTOGRAPHIE", "KOLLODIUM", "KOLLODIUMVERFAHREN", "DRESDEN"}:
+    german_anchor_hints = {
+        "DEUTSCHE",
+        "DRESDEN",
+        "KLINIK",
+        "KOLLODIUM",
+        "KOLLODIUMVERFAHREN",
+        "LEITTHEMA",
+        "LEITLINIEN",
+        "PHOTOGRAPHIE",
+        "PROSTATASYNDROMS",
+        "UROLOGE",
+        "ZUSAMMENFASSUNG",
+    }
+    if len(german_hits) >= 8 and german_keys & german_anchor_hints:
         defects.append(
             _defect(
                 defect_id="P53",
@@ -2689,6 +2761,93 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 proposed_fix_layer="EN polish front-matter author-marker cleanup",
                 regression_test="Author lines such as 'Mukhiddinov 100 and Soon-Young Kim' are reported as marker glue.",
                 extra={"match": author_marker_glue_match.group(0)},
+            )
+        )
+
+    latex_macro_runaway_match = LATEX_MACRO_RUNAWAY_RE.search(plain)
+    if latex_macro_runaway_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P74",
+                cc_class="CC-04/CC-13",
+                check="Runaway LaTeX macro expansion remains in polish text",
+                severity="error",
+                block=None,
+                snippet=_snippet(plain, latex_macro_runaway_match.start(), latex_macro_runaway_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="PDF/HTML import exposed a repeated TeX macro expansion instead of rendered article text.",
+                proposed_fix_layer="EN polish TeX macro residue and web-import cleanup",
+                regression_test="Repeated ACM-style '\\@ifnextchar' macro runs are reported as corrupt body text.",
+            )
+        )
+
+    doi_body_merge_match = DOI_BODY_PROSE_MERGE_RE.search(plain)
+    if doi_body_merge_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P75",
+                cc_class="CC-07/CC-13",
+                check="DOI metadata is merged into following body prose",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, doi_body_merge_match.start(), doi_body_merge_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="A DOI/front-matter metadata line lost its boundary and swallowed the next paragraph.",
+                proposed_fix_layer="EN polish DOI/front-matter boundary repair",
+                regression_test="A DOI line followed by body prose such as 'the plasticity...' is reported.",
+            )
+        )
+
+    detached_accent_match = DETACHED_ACCENT_RE.search(plain)
+    if detached_accent_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P76",
+                cc_class="CC-04/CC-13",
+                check="Detached accent mark remains inside a word or name",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, detached_accent_match.start(), detached_accent_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Unicode accent composition was not normalized, leaving names such as Neumuller/Bezier with standalone accent glyphs.",
+                proposed_fix_layer="EN polish Unicode accent normalization",
+                regression_test="Names like 'Neumuller' and 'Bezier' do not retain detached diaeresis/acute marks.",
+                extra={"match": detached_accent_match.group(0)},
+            )
+        )
+
+    table_section_absorb_match = TABLE_SECTION_ABSORB_RE.search(plain)
+    if table_section_absorb_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P77",
+                cc_class="CC-07/CC-11/CC-13",
+                check="Table block absorbs following sections or figure captions",
+                severity="error",
+                block=None,
+                snippet=_snippet(plain, table_section_absorb_match.start(), table_section_absorb_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="A table/list extraction block kept reading through subsequent section headings and body paragraphs.",
+                proposed_fix_layer="EN polish table/list boundary and reading-order repair",
+                regression_test="Table 3.1 blocks do not swallow '3.8 Data Acquisition' and '3.9 Criteria for Use of Data'.",
+            )
+        )
+
+    intra_word_space_match = INTRA_WORD_SPACE_RE.search(plain)
+    if intra_word_space_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P78",
+                cc_class="CC-04/CC-13",
+                check="Known intra-word spacing residue remains in polish text",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, intra_word_space_match.start(), intra_word_space_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="OCR kept spurious character gaps inside ordinary words after final polish cleanup.",
+                proposed_fix_layer="EN polish intra-word spacing cleanup",
+                regression_test="Fragments such as 'ob je ct s w ould' and 'safe ty c oncerns' are reported.",
+                extra={"match": intra_word_space_match.group(0)},
             )
         )
 

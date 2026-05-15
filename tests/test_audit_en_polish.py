@@ -813,6 +813,49 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_006_010_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Leitthema Deutsche Leitlinien Diagnostik Prostatasyndroms "
+                    "Zusammenfassung Urologe Klinik der die das mit und.</p>",
+                    "<p>Latest updates: hps://dl.acm.org/doi/10.1145/2982142.2982176</p>",
+                    "<p>" + ("\\@ifnextchar{\\@model{\\o}}" * 8) + "</p>",
+                    "<p>DOI: http://dx.doi.org/10.1145/2982142.2982176 the plasticity "
+                    "of the added height makes it easier to recognize by touch.</p>",
+                    "<p>CamIO extended the concept to touchinteraction and realworld "
+                    "testing with off-theshelf cameras and numbergestures.</p>",
+                    "<p>Known OCR splits include APPEND ix, INTEL i LIGENT, qualitat iv, "
+                    "Uroflowmetery, bootloding, Examing, Parametres, and Rewiev.</p>",
+                    "<p>Names include Moritz Neum\u00a8uller and Bezi\u00b4er surfaces.</p>",
+                    "<div>Table 3.1: curve features and thresholds. 3.8. Data Acquisition "
+                    "records were stored. 3.9. Criteria for Use of Data removed invalid cases.</div>",
+                    "<p>While touching the original ob je ct s w ould be best, safe ty c oncerns "
+                    "can remain; we also incl ude expressi ve ness issues.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P53", "P67", "P71", "P74", "P75", "P76", "P77", "P78"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

@@ -3294,3 +3294,44 @@ Report:
 - Real batch result after scanner expansion: `P65=1`, `P66=1`,
   `P67=5`, `P68=1`, `P69=1`, `P70=1`, `P71=5`, `P72=1`,
   `P73=1`, plus existing `P49=1`, `P57=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 006-010 - 2026-05-15
+
+Method: same as batch 001-005. The complete polished block text was reviewed
+for `meine_0013` through `meine_0017`; the scanner was then expanded for
+defect families that were visible manually but absent from the initial report.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 006 | `meine_0013_a6269b65e9` | clean | German article reached the EN-polish pass; lowercase roman-suffix splits such as `effekt iv`, `retrospekt iv`, `qualitat iv`. |
+| 007 | `meine_0014_10ec76f1a8` | clean | No high-confidence conversion defect beyond simple/flat source text. |
+| 008 | `meine_0015_be8f26bb9b` | clean | ACM web/PDF front matter residue, visible malformed URL label `hps://...`, runaway `\@ifnextchar` TeX macro, DOI merged into first body sentence, joined words such as `touchinteraction`, `realworld`, `off-theshelf`, and detached accent names such as `Bezi'er`. |
+| 009 | `meine_0016_21f99425d5` | `P13/P39/P59` | Existing figure/list/citation warnings still apply. Added `twodimensional`, thesis OCR tokens (`Examing`, `Parametres`, `Uroflowmetery`, `APPEND ix`, `INTEL i LIGENT`) and a table/list block that swallows `3.8 Data Acquisition` / `3.9 Criteria for Use of Data`. |
+| 010 | `meine_0017_7ef4a4f872` | clean | Detached accent in `Neumuller`; many intra-word spacing residues such as `ob je ct s w ould`, `safe ty c oncerns`, `incl ude`, `expressi ve ness`, `straightfo rw ard`. |
+
+Scanner changes:
+
+- `P36` now also catches malformed visible URL labels inside otherwise valid
+  URL anchors, e.g. `hps://dl.acm.org/...`.
+- `P53` German-source hints now include the Springer guideline pattern
+  (`Leitthema`, `Deutsche Leitlinien`, `Zusammenfassung`, `Urologe`, etc.).
+- `P67` joined-word coverage now includes the tactile-relief/uroflow batch
+  terms (`touchinteraction`, `realworld`, `off-theshelf`,
+  `state-ofthe-art`, `numbergestures`, `voicecommands`, `twodimensional`).
+- `P71` OCR-token coverage now includes thesis/list residues such as
+  `APPEND ix`, `INTEL i LIGENT`, `Uroflowmetery`, `Examing`,
+  `Parametres`, `Rewiev`, and `qualitat iv`.
+- `P74`: runaway LaTeX macro expansion.
+- `P75`: DOI metadata merged into following body prose.
+- `P76`: detached accent mark inside a word/name.
+- `P77`: table/list block absorbs following section prose.
+- `P78`: known intra-word spacing residues.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_006_010_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P36=1`, `P53=1`,
+  `P67=2`, `P71=2`, `P74=1`, `P75=1`, `P76=2`, `P77=1`,
+  `P78=1`, plus existing `P13=1`, `P39=1`, `P59=1`.
