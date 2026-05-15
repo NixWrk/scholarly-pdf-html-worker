@@ -1045,6 +1045,78 @@ def test_analyze_pair_reports_fulltext_batch_026_030_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_031_035_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Functional Magnetic Resonance Imaging (fMR i) remained split in the contents.</p>",
+                    "<table><tr><td>Additional projects: 3 1 mm female human brain cortex.</td></tr></table>",
+                    "<p>You may also like Become a Multilingual by Means of Artwork in Information Technology "
+                    "and a low-cost ChArUco-based 3D scanner for cultural heritage.</p>",
+                    "<p>Francesco Buonamici, Luca Puggelli, Yary Volpe1.</p>",
+                    "<p>The paintings were selected for the (B) 1. Flocked, raised-line outline drawings "
+                    "included in the audio-tactile package. Four paintings were famous enough P to bc "
+                    "familiar to visitors. E clarity of their design was duplicated.</p>",
+                    "<p>Project partners included Mu&es de la Ville de Paris and Association Valentin Haiiy. "
+                    "The Cruc$xion caption also had thev in body prose.</p>",
+                    "<p>For example, parameter a' is Eq. (1) is a design parameter. The pupil was D_{eve} "
+                    "and D'_{\\rm eve}. The grid had b5223 magnification, Dl5660620 nm, 2u560 degrees, "
+                    "Dl50.4-0.78 m m, 9 m m, and focus F 1 8.</p>",
+                    "<p>Mehmet Zeynel Keskin and Yusuf Ozlem Ilbey 1 1 2 3 1 1.</p>",
+                    "<p>The MBVurgency, Qmaxnormal, and residualnormal values remained joined. "
+                    "A possible indicator ofdepression was cited inIndian rural population and asmeasured "
+                    "by IPSS. The symptomscore and withlower fragments, tractfunction, benignprostatic "
+                    "hypertrophy, urineflow rates, AcceptableBladder Capacity, suggestiveof abnormal "
+                    "uroflow pattern, distentionon voiding, healthyyoung men, and Theeffect of bladder "
+                    "sensation remained.</p>",
+                    "<p>Reference residue: flow flow flow flow and Liverposl nomograms with comparision.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P67", "P71", "P83", "P87", "P91", "P92"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_old_scan_ocr_gibberish_ignores_normal_rising_and_always() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Total compute has been rising exponentially for decades, "
+            "and results are always checked against benchmarks.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P87" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

@@ -3482,3 +3482,41 @@ Report:
   `P78=1`, `P82=1`, `P83=1`, `P87=1`, `P88=1`, `P89=1`, `P90=1`,
   plus existing `P05=1`, `P33=2`, `P36=1`, `P50=1`, `P60=1`,
   `P62=1`, `P67=1`, `P84=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 031-035 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0057`, `meine_0058`, `meine_0059`, `meine_0060`, and
+`meine_0062`; generated HTML was not edited. Raw HTML was spot-checked for
+the new residues. The initial `P87` hit on `meine_0057` was a false positive
+on normal prose (`rising exponentially`), so the OCR-gibberish gate was
+tightened while the real blind spots were added.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 031 | `meine_0057_e9e50c744a` | `P59/P61` plus false `P87` | Split acronym in the table of contents (`fMR i`) and malformed table/dimension residue (`3 1 mm female human brain cortex`). Also fixed the false `P87` trigger on ordinary `rising`/`always`. |
+| 032 | `meine_0058_940c8b16de` | `P67` | Publisher recommendation/sidebar block (`You may also like ... ChArUco-based 3D scanner`) and glued author affiliation marker (`Yary Volpe1`). |
+| 033 | `meine_0059_5c38c8b6f6` | clean | Old-scan/OCR residues (`Mu&es`, `Haiiy`, `Cruc$xion`, `thev`, `P to bc`, `E clarity`) and a body sentence interrupted by an inserted figure caption around `selected for the ... famous enough`. |
+| 034 | `meine_0060_3b1d6c9c17` | `P04` | Optical/math OCR residues such as `parameter a' is Eq. (1)`, `D_{eve}`, `D'_{\rm eve}`, `b5223`, `Dl5660620`, `2u560`, `Dl50.4`, `9 m m`, and `F 1 8`. |
+| 035 | `meine_0062_c320053119` | clean | Author affiliation number run (`İlbey 1 1 2 3 1 1`), uroflow joined terms (`MBVurgency`, `Qmaxnormal`, `residualnormal`), repeated residue (`flow flow flow flow`), and reference OCR/joining (`ofdepression`, `inIndian`, `asmeasured`, `symptomscore`, `withlower`, `tractfunction`, `benignprostatic`, `urineflow`, `AcceptableBladder`, `Liverposl`, `comparision`). |
+
+Scanner changes:
+
+- `P67` joined-word coverage now includes author-marker and uroflow/reference
+  joins from `0058` and `0062`.
+- `P71` OCR-token coverage now includes the focused acronym, table/dimension,
+  old-scan, optical/math, and uroflow/reference residues above.
+- `P83` now catches the `0059` body sentence interrupted by a figure caption.
+- `P87` old-scan OCR coverage includes `0059` scan residues, but no longer
+  treats normal lowercase `rising` or `always` as OCR gibberish.
+- `P91`: publisher recommendation/sidebar chrome remains in article body.
+- `P92`: author affiliation markers are glued or left as a numeric run.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_031_035_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=2`, `P71=4`,
+  `P83=1`, `P87=1`, `P91=1`, `P92=2`, plus existing `P04=1`,
+  `P59=1`, `P61=1`.

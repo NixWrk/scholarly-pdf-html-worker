@@ -198,7 +198,11 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
     r"UFrecorded|SUFestimated|SUFdetermined|MRsafe|MRcompatible|"
     r"lung-tohead|feed-andsleep|readyreckoners|injuryassociated|"
-    r"allin-one|singlefinger|locationspecific|Computeraided)\b|"
+    r"allin-one|singlefinger|locationspecific|Computeraided|Volpe1|"
+    r"MBVurgency|Qmaxnormal|residualnormal|ofdepression|inIndian|"
+    r"asmeasured|symptomscore|withlower|tractfunction|benignprostatic|"
+    r"urineflow|AcceptableBladder|suggestiveof|distentionon|healthyyoung|"
+    r"Theeffect)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b",
     re.IGNORECASE,
 )
@@ -233,7 +237,13 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\bqualify\s+factor\b|\blength\s+form\s+ADF4351\b|"
     r"\bdeceases\s+as\s+the\s+distance\b|\bUniverisity\b|\bMEME\s+sensors\b|"
     r"\bBolognia\b|\b63\s+DPhotoWorks\b|\bBulato\s+v\.\b|"
-    r"\br=0\.9\s+(?:840|526)\b",
+    r"\br=0\.9\s+(?:840|526)\b|\bfMR\s+i\b|"
+    r"\b3\s+1\s+mm\s+female\s+human\s+brain\b|\bMu&es\b|\bHaiiy\b|"
+    r"\bCruc\$xion\b|\bthev\b|\bP\s+to\s+bc\b|\bE\s+clarity\b|"
+    r"\bparameter\s+a'\s+is\s+Eq\.\s*\(1\)\b|\bD_\{eve\}\b|"
+    r"\bD'_\{\\rm\s+eve\}\b|\bb5223\b|\bDl5660620\b|\b2u560\b|"
+    r"\bDl50\.4\b|\b9\s+m\s+m\b|\bF\s+1\s+8\b|"
+    r"\bflow\s+flow\s+flow\s+flow\b|\bLiverposl\b|\bcomparision\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -311,7 +321,9 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"[\s\S]{0,1400}\bwith\s+hypoxic\s+ischaemic\s+encephalopathy\b|"
     r"\breliability\s+remains\s+insufficiently[\s\S]{0,2200}\bresearched\b|"
     r"\bTransperineal\s+ultrasound\s+uroflowmetry[\s\S]{0,2600}\bwas\b"
-    r"[\s\S]{0,2600}\bcompared\s+with\s+pressure\s+flow\s+studies\b",
+    r"[\s\S]{0,2600}\bcompared\s+with\s+pressure\s+flow\s+studies\b|"
+    r"\bselected\s+for\s+the\s+\(B\)\s+1\.\s+Flocked[\s\S]{0,1600}"
+    r"\bfamous\s+enough\s+P\s+to\s+bc[\s\S]{0,600}\bE\s+clarity\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*\d+\b", re.IGNORECASE)
@@ -339,8 +351,9 @@ OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
     r"\bsuiprising\b|\bforiTi\b|\bstimulus\.d/T\./Sz\b|\belTicacy\b|"
     r"\bkcounl/mg\s+prolan\b|\bLndferase\b|\bdetermitied\b|"
     r"\biiiiegfiited\b|\blummesceoce\b|\blinearmotor\s+S~pole\s+aller\b|"
-    r"\bIt\s+isl\b|\baJways\b|\bdemonstrale\b|\benor[\u00b7\s-]+mous\b|"
-    r"\briSing\b|\bproperty\s+center\b|\bcharaCleriza[\u00b7\s-]+lion\b|"
+    r"\bMu&es\b|\bHaiiy\b|\bCruc\$xion\b|\bP\s+to\s+bc\b|"
+    r"\bIt\s+isl\b|\b(?-i:aJways)\b|\bdemonstrale\b|\benor[\u00b7\s-]+mous\b|"
+    r"\b(?-i:riSing)\b|\bproperty\s+center\b|\bcharaCleriza[\u00b7\s-]+lion\b|"
     r"\bLlnhof\s+Master\s+Te<:hnlka\b|\bUnhol\s+Kafdan\s+Mastel\s+TL\b|"
     r"\bI-SlOP\b|\binli\s+nily\b|\bout\s+of\s+locus\b|\bScheimplJug\b|"
     r"\bcompanson\s+ShOIS\b|\bparticularimagedislance\b|"
@@ -358,6 +371,16 @@ BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\b20\.\s+20\s+van\s+Tulder\b|"
     r"\b3[34]\.\s+3[23]\s+(?:De\s+Nunzio|G(?:u|Гј)zelsoy)\b|"
     r"\bmagnetic\s+resonance\s+82\.\s+imaging\s+volume\s+estimation\b",
+    re.IGNORECASE,
+)
+PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
+    r"\bYou\s+may\s+also\s+like\b[\s\S]{0,700}"
+    r"(?:\bBecome\s+a\s+Multilingual\b|\bChArUco-based\s+3D\s+scanner\b|"
+    r"\btolerable\s+impurity\s+concentrations\b)",
+    re.IGNORECASE,
+)
+AFFILIATION_MARKER_RESIDUE_RE = re.compile(
+    r"\bYary\s+Volpe1\b|\b(?:Ilbey|İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -3190,6 +3213,50 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 proposed_fix_layer="EN polish reference numbering cleanup",
                 regression_test="Reference runs such as '20. 20 van Tulder' and '33. 32 De Nunzio' are reported.",
                 extra={"match": bibliography_numbering_residue_match.group(0)},
+            )
+        )
+
+    publisher_recommendation_match = PUBLISHER_RECOMMENDATION_BLOCK_RE.search(plain)
+    if publisher_recommendation_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P91",
+                cc_class="CC-07/CC-13",
+                check="Publisher recommendation sidebar remains in article body",
+                severity="warning",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    publisher_recommendation_match.start(),
+                    publisher_recommendation_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Publisher landing-page recommendations were preserved before the real article body.",
+                proposed_fix_layer="EN polish publisher chrome/sidebar cleanup",
+                regression_test="IOP front matter such as 'You may also like ... ChArUco-based 3D scanner' is reported.",
+                extra={"match": publisher_recommendation_match.group(0)},
+            )
+        )
+
+    affiliation_marker_residue_match = AFFILIATION_MARKER_RESIDUE_RE.search(plain)
+    if affiliation_marker_residue_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P92",
+                cc_class="CC-01/CC-04/CC-13",
+                check="Author affiliation markers are glued or left as a numeric run",
+                severity="warning",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    affiliation_marker_residue_match.start(),
+                    affiliation_marker_residue_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Front-matter cleanup did not separate author names from affiliation markers or compact a leftover affiliation-number run.",
+                proposed_fix_layer="EN polish author/affiliation normalization",
+                regression_test="Author residues such as 'Yary Volpe1' and 'İlbey 1 1 2 3 1 1' are reported.",
+                extra={"match": affiliation_marker_residue_match.group(0)},
             )
         )
 
