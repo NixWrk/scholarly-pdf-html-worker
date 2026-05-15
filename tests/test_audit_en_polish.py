@@ -1559,6 +1559,58 @@ def test_analyze_pair_reports_fulltext_batch_071_075_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_076_080_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<p>Code is available at <a href="https://tinyurl.com/ys7psv5u">'
+                    "https://tinyurl.com/ ys7psv5u</a>.</p>",
+                    "<p>Lost ligatures stayed as Urofowmetry, bladder flling, fuid, "
+                    "fuorescent display, specifcity, signifcant, modifcation, and cutof.</p>",
+                    "<p>Joined residues included pushpull, twoobject, held inWM, itemspecific, "
+                    "controlrelated, lowdimensional, topdown, contextdependent, finergrained, "
+                    "cuetrials, trialaverage, match-tosample, spatiovectors, Qcould, Qto, "
+                    "IPPgrades, metaanalysis, and BPHassociated.</p>",
+                    "<p>A reference retained Curr. Opin. Beha v. Sci. 38, 20-28.</p>",
+                    "<p>OCR tokens included passive senor, Urdynamic tests, urinary track, "
+                    "International continent society, non-invasivly, home urofowmetry, Refrence, "
+                    "FERENCE VALUES, Qrnax, TQrnax, TlOO, Q2sea, classifified, Neurocsi, "
+                    "Hip-pocampus, IPSS 0 = 10 symptoms, DWT values -2 mm, and grade 1¼0.</p>",
+                    "<p>T a bl e 2 1 con t' old scan nue d. HE?LTHY SUBJECT 11 ME?SUREMENT 32 SER.</p>",
+                    "<p>Spatial computing predicts that control-related spiking and LFP activity "
+                    "is spatially distributed. The green (sample 1) and light blue rectangles mark "
+                    "when the samples were shown.</p>",
+                    "<p>Old scan residues included Uroflowrnetry, uroflowrneter, RotCDTleter, "
+                    "PsyahoZogiaaZ, Gra1Jimetry, OVerfLow, prinaip Ze, ResiduaZ, bZood, "
+                    "MuZtiphasicity, estabZishment, variabZes, abiZities, measzu'ing, fww-cion, "
+                    "contin,Ious, A!Jstract, vuiation, measwe, and Druck/Fiow.</p>",
+                    "<p>University of Groningen repository cover. IMPORTANT NOTE: consult the "
+                    "publisher version. Downloaded from the University of Groningen/UMCG research "
+                    "database.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P66", "P67", "P70", "P71", "P82", "P83", "P87", "P91"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_does_not_flag_title_case_tooteko_as_ocr_token() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

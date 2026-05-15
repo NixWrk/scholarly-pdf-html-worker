@@ -49,7 +49,13 @@ URL_ANCHOR_RE = re.compile(
 )
 MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"](?:https?://|www\.)[^'\"]+['\"][^>]*>"
-    r"\s*(?:(?:hps|htps|ttps)://|https?://\s+|\d+www\.)[\s\S]{0,300}?</a>",
+    r"\s*(?:(?:hps|htps|ttps)://|https?://\s+|\d+www\.|"
+    r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
+    r"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+)[\s\S]{0,300}?</a>|"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]https?://[^'\"]+['\"][^>]*>"
+    r"\s*\(?https?://[^<]{1,120}/\s*</a>\s*"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]https?://[^'\"]+['\"][^>]*>"
+    r"\s*[A-Za-z0-9][^<]{0,120}</a>",
     re.IGNORECASE | re.DOTALL,
 )
 REF_ANCHOR_BODY_RE = re.compile(
@@ -210,7 +216,12 @@ LOST_FF_WORD_RE = re.compile(
     r"fl|Fl|urofl|Urofl|outfl|Outfl|refl|Refl|infl|Infl)\s+"
     r"(?:c|cally|cant(?:ly)?|ned|ne|nition|ciency|cult(?:y|ies)?|le(?:s|ometry)?|"
     r"dence|cial|es|ce|ths|oor|ow(?:s|metry|meter|rate)?|uid|ll(?:ing)?|"
-    r"uoroscopy|uoroscopic|uorescent|ux|uence)\b",
+    r"uoroscopy|uoroscopic|uorescent|ux|uence)\b|"
+    r"\b(?:Urofowmet(?:ry|ery)|urofowmet(?:ry|er)|"
+    r"fow(?:s|ing|ed|meter|meters|metry|rate|rates)?|"
+    r"fll(?:ing|ed)?|fuid|fuoroscop(?:y|ic)|fuorescent|"
+    r"modifcations?|modifcation|signifcant(?:ly)?|specifcity|"
+    r"identifes|diferentiating|flter(?:ing)?|cutof)\b",
     re.IGNORECASE,
 )
 KNOWN_JOINED_WORD_RE = re.compile(
@@ -244,7 +255,12 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"hierarchicalsegmentation|webbased|needsto|includesinformation|"
     r"participantssuggested|overallwork|guidelinesfor|issimilarto|"
     r"easierto|spatialcognitive|wassupported|blindaccessible|"
-    r"Key-wordaware|CTABassistant)\b|"
+    r"Key-wordaware|CTABassistant|pushpull|twoobject|itemspecific|"
+    r"controlrelated|lowdimensional|topdown|contextdependent|"
+    r"finergrained|cuetrials|trialaverage|match-tosample|"
+    r"spatiovectors|Qcould|Qto|IPPgrades|metaanalysis|"
+    r"BPHassociated)\b|"
+    r"\bheld\s+inWM\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
@@ -259,7 +275,8 @@ FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
 )
 CORRUPT_EMAIL_LABEL_RE = re.compile(r"(?:\b[MmSs]e-mail:|[\u25a1\ufffd]\s*S?e-mail:)")
 REFERENCE_ROMAN_SPLIT_RE = re.compile(
-    r"\bBiobeha\s+v\.\s+Rev\.|\bBeha\s+v\.\s+Res\.\s+Methods\b",
+    r"\bBiobeha\s+v\.\s+Rev\.|\bBeha\s+v\.\s+Res\.\s+Methods\b|"
+    r"\bBeha\s+v\.\s+Sci\.(?=\W|$)",
     re.IGNORECASE,
 )
 KNOWN_OCR_TOKEN_RE = re.compile(
@@ -291,6 +308,12 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\belectromyograhic\b|\binvolunatary\b|\bclincal\b|\bsymphisis\b|"
     r"\bAmerican\s+Society\s+of\s+Clinical\s+Ncology\b|\bFlorescence\s+Technique\b|"
     r"\bTQma\s+x\b|\bVoiding\s+positing\b|\bsignificate\s+statistical\b|"
+    r"\bpassive\s+senor\b|\bUrdynamic\b|\burinary\s+track\b|"
+    r"\bInternational\s+continent\s+society\b|\bnon-invasivly\b|"
+    r"\bhome\s+urofowmetry\b|\bRefrence\b|\bFERENCE\s+VALUES\b|"
+    r"\b(?:Qrnax|TQrnax|TlOO|Q2sea)\b|\bclassifified\b|"
+    r"\bNeurocsi\b|\bHip-pocampus\b|\bIPSS\s+0\s*=\s*10\s+symptoms\b|"
+    r"\bDWT\s+values\s+-2\s+mm\b|\bgrade\s+1\u00bc0\b|"
     r"\b0000-0003-4044-\s+0927\b|"
     r"\b(?:5\.22|4\.21|5\.13)\s+\\pm\s+2,\s+(?:38|36|40)\b|"
     r"\b(?:Schfer|Standarisation|subcomitee|standarization|aformentioned|Cvalli|"
@@ -451,7 +474,9 @@ TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bEv\s+alu\s+atio\s+n\b|"
     r"\benclusive\s+app\b[\s\S]{0,1200}\bCavalier\s+i\s+et\s+al\.|"
     r"\bTrichopoulos\s+et\s+al\.[\s\S]{0,1200}\bV\s+\.\s+v\s+V\b|"
-    r"\bHydrometer\s+g\s+4[\s\S]{0,180}\bHydrometer\s+only\b",
+    r"\bHydrometer\s+g\s+4[\s\S]{0,180}\bHydrometer\s+only\b|"
+    r"\bT\s+a\s+bl\s+e\s+2\s+1\s+con\s+t'[\s\S]{0,40}nue\s+d\b|"
+    r"\bHE\S?LTHY\s+SUBJECT\s+11\s+ME\S?SUREMENT\s+32\s+SER\b",
     re.IGNORECASE,
 )
 FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
@@ -490,7 +515,13 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bUF2[\s\S]{0,1200}\bconstant\s+flow\b|"
     r"\bPatients\s+with\s+a\s+history\s+of\s+lower\s+urinary\s+system\s+surgery"
     r"[\s\S]{0,700}\bwere\s+ex-[\s\S]{0,1200}\bMain\s+Points\b"
-    r"[\s\S]{0,1200}\bcluded,\s+and\s+a\s+total\s+of\s+83\s+patients\b",
+    r"[\s\S]{0,1200}\bcluded,\s+and\s+a\s+total\s+of\s+83\s+patients\b|"
+    r"\bSpatial\s+computing\s+predicts\s+that\s+control-related[\s\S]{0,1200}"
+    r"\bThe\s+green\s+\(sample\s+1\)[\s\S]{0,800}\brectangles\s+mark\b|"
+    r"\bA\s+significantly\s+larger\s+portion\s+of\s+the\s+dPCA\s+gamma\s+components"
+    r"[\s\S]{0,1600}\bThe\s+4-array\s+spatial\s+distribution\b|"
+    r"\bdifferent\s+spatiovectors\s+extracted\s+from\s+2\s+s[\s\S]{0,1200}"
+    r"\bSource\s+data\s+are\s+provided[\s\S]{0,300}\bPanel\s+a\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -527,7 +558,13 @@ OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
     r"\bcompanson\s+ShOIS\b|\bparticularimagedislance\b|"
     r"\bIndMdual\s+OUlldlngs\b|\bgelloreground\b|\bsubjecl\b|"
     r"\bslreellevel\b|\beleminate\b|\bpocIure\b|\bsufiicient\b|"
-    r"\bmillimelers\b|\bspecificions\b|\baillinhof-supplied\b",
+    r"\bmillimelers\b|\bspecificions\b|\baillinhof-supplied\b|"
+    r"\b(?:Uroflowrnetry|uroflowrneter|RotCDTleter|PsyahoZogiaaZ|"
+    r"Gra1Jimetry|(?-i:OVerfLow)|ResiduaZ|bZood|MuZtiphasicity|"
+    r"estabZishment|variabZes|abiZities|A!Jstract|vuiation|"
+    r"measwe)\b|"
+    r"\bprinaip\s+Ze\b|\bmeaszu'ing\b|\bfww-cion\b|\bcontin,Ious\b|"
+    r"\bDruck/Fiow\b",
     re.IGNORECASE,
 )
 SPLIT_URL_DOMAIN_RE = re.compile(
@@ -570,6 +607,8 @@ PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
     r"\bArticles\s+you\s+may\s+be\s+interested\s+in\b[\s\S]{0,700}"
     r"\bMagnetic\s+resonance-guided\s+near-infrared\s+tomography\s+of\s+the\s+breast\b|"
     r"\bFLORE\s+Repository\s+istituzionale[\s\S]{0,1500}\bArticle\s+begins\s+on\s+next\s+page\b|"
+    r"\bUniversity\s+of\s+Groningen[\s\S]{0,1200}\bIMPORTANT\s+NOTE\b|"
+    r"\bDownloaded\s+from\s+the\s+University\s+of\s+Groningen/UMCG\s+research\s+database\b|"
     r"\bwww\.forgottenbooks\.com\b|"
     r"\bTHIS\s+PAGE\s+IS\s+LOCKED\s+TO\s+FREE\s+MEMBERS\b|"
     r"\bPurchase\s+full\s+membership\s+to\s+immediately\s+unlock\s+this\s+page\b|"

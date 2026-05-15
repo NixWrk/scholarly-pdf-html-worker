@@ -3840,3 +3840,41 @@ Report:
   `P71=5`, `P78=3`, `P79=2`, `P81=2`, `P82=2`, `P83=1`,
   `P91=1`, plus existing `P22=1`, `P39=1`, `P59=1`, `P61=1`,
   `P62=1`, `P76=1`, `P84=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 076-080 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0129`, `meine_0132`, `meine_0133`, `meine_0134`, and
+`meine_0138`; raw HTML was checked around split links, reading-order
+interruptions, and repeated OCR residues. Generated HTML was not edited. The
+local Zotero PDF map confirmed source PDFs for `meine_0129`, `meine_0132`,
+`meine_0134`, and `meine_0138`; `meine_0133` was reviewed from the imported
+HTML/raw pair because it was not present in the map.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 076 | `meine_0129_09858ae6b9` | `P67/P81` | Added detection for the adjacent split `tinyurl` anchor, Nature reference abbreviation residue `Beha v. Sci.`, joined terms such as `pushpull`, `twoobject`, `itemspecific`, `controlrelated`, `topdown`, `cuetrials`, `trialaverage`, `spatiovectors`, and three caption/body interleavings around spatial-computing figures. |
+| 077 | `meine_0132_b3e2cea77b` | `P66` | Added uroflowmetry lost-ligature coverage (`Urofowmetry`, `flling`, `fuid`, `fuorescent`, `fowrate`, `specifcity`, `signifcant`, `modifcation`, `cutof`), OCR terms such as `passive senor`, `Urdynamic`, `urinary track`, `International continent society`, `non-invasivly`, and joined `Qcould`/`Qto`. |
+| 078 | `meine_0133_b3bf023ca8` | `P35/P39/P66/P67/P71` | Added University of Groningen repository cover/chrome, old thesis OCR tokens (`Uroflowrnetry`, `uroflowrneter`, `RotCDTleter`, `PsyahoZogiaaZ`, `Gra1Jimetry`, `Qrnax`, `TQrnax`, `A!Jstract`, `Druck/Fiow`), and old table OCR collapse. |
+| 079 | `meine_0134_edd06dc6d2` | clean | Added focused reference OCR residues `Neurocsi` and `Hip-pocampus`. |
+| 080 | `meine_0138_686dec2e12` | `P62` | Added joined terms `BPHassociated`, `IPPgrades`, and `metaanalysis`, plus wrong IPSS text (`IPSS 0 = 10 symptoms`), `DWT values -2 mm`, and `grade 1¼0`. |
+
+Scanner changes:
+
+- `P36` catches adjacent anchors that split the visible URL body across two
+  links while preserving the same `href`.
+- `P66`, `P67`, `P70`, `P71`, `P82`, `P83`, `P87`, and `P91` were extended
+  with focused lost-ligature, joined-word, reference-abbreviation, OCR-token,
+  table-collapse, reading-order, old-scan, and repository-chrome residues from
+  this batch.
+- The old-scan `OVerfLow` rule is case-sensitive so ordinary CSS `overflow`
+  does not trigger `P87`.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_076_080_fulltext_after_scan_expansion_2026-05-15.json`
+- Real batch result after scanner expansion: `P36=1`, `P66=2`,
+  `P67=4`, `P70=1`, `P71=4`, `P82=1`, `P83=1`, `P87=1`,
+  `P91=1`, plus existing `P35=1`, `P39=1`, `P62=1`, `P81=1`.
