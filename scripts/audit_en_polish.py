@@ -194,7 +194,8 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
     r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional|"
     r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
-    r"UFrecorded|SUFestimated|SUFdetermined)\b|"
+    r"UFrecorded|SUFestimated|SUFdetermined|MRsafe|MRcompatible|"
+    r"lung-tohead|feed-andsleep|readyreckoners|injuryassociated)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b",
     re.IGNORECASE,
 )
@@ -222,7 +223,10 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\b(?:effekt|retrospekt|qualitat)\s+iv\b|\bAPPEND\s+ix\b|"
     r"\bINTEL\s+i\s+LIGENT\b|\bQavg\s+and\s+Omax\b|\bVol\s+ofmoved\b|"
     r"\bcognitive\s+iter\b|\bsys-\s+tem\b|\bI\s+mplantable\b|"
-    r"\bdocuments\s+that\s+that\s+intensity\b",
+    r"\bdocuments\s+that\s+that\s+intensity\b|\baesthesia\b|\bMagr\s+Reson\b|"
+    r"\btelsa\b|\bMata-Analysis\b|\bcorrela\s+ition\b|\bcor\s+relation\b|"
+    r"\braw\s+dat\s+a\b|\bRetinal\s+Nerve\s+Fiber\s+Laver\b|"
+    r"\bAmercian\s+ophthalmological\s+society\b|\bbulbocarnosus\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -285,7 +289,9 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bDespite\s+the\s+intensive\s+investigation\s+of[\s\S]{0,1800}\badults\s+and\s+older\s+children\b|"
     r"\bprinted\s+on\s+swell\s+paper\s+to[\s\S]{0,1600}\bform\s+a\s+tactile\s+rendering\b|"
     r"\bin\s+the\s+\(hypothetic\)[\s\S]{0,1600}\b3D\s+space\b|"
-    r"\bprogrammed\s+pharmacological\s+delivery\s+and\s+mul-[\s\S]{0,2000}\btimodal\s+sensing\b",
+    r"\bprogrammed\s+pharmacological\s+delivery\s+and\s+mul-[\s\S]{0,2000}\btimodal\s+sensing\b|"
+    r"\bMRI\s+is\s+now\s+recommended\s+as\s+the\s+standard\s+of\s+care\s+for\s+term\s+infants"
+    r"[\s\S]{0,1400}\bwith\s+hypoxic\s+ischaemic\s+encephalopathy\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*\d+\b", re.IGNORECASE)
@@ -296,6 +302,23 @@ REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
 )
 SPLIT_DOT_EMAIL_RE = re.compile(
     r"\b[A-Za-z]{2,}\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
+    r"\bLUMBAH\s+I\s+-\s+i\b|"
+    r"\(\s*!I\s+G\s*:\.\s*nosis\b|"
+    r"\blan\.~r\s+tl!\b|\bresult\s+t\s+L\s+'\s+n\b|\bmuschnr\b|"
+    r"\bv&me\b|\bTVRP\b|\bpleak\s+flow\b|\bS\s+-'\b|"
+    r"\btimulus\b|\bmesc\b|\bU-W\s+vertebrae\b|\b4y6-8\b|"
+    r"\bVesicaf\b|\bJ\s+Ural\b|\bsnine\b|\bGvnecol\b|"
+    r"@e3\)|\borolanse\b|\bI\s+Bone\s+Point\s+Sure\b|\bBvadley\b|"
+    r"\bsuiprising\b|\bforiTi\b|\bstimulus\.d/T\./Sz\b|\belTicacy\b|"
+    r"\bkcounl/mg\s+prolan\b|\bLndferase\b|\bdetermitied\b|"
+    r"\biiiiegfiited\b|\blummesceoce\b|\blinearmotor\s+S~pole\s+aller\b",
+    re.IGNORECASE,
+)
+SPLIT_URL_DOMAIN_RE = re.compile(
+    r"\bwww\.\s+[A-Za-z]{2,}\s+[A-Za-z](?:\.[A-Za-z]{2,})+\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -3048,6 +3071,46 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 proposed_fix_layer="EN polish e-mail normalization",
                 regression_test="Visible e-mails such as 'jan. krhut@fno.cz' are reported as split local-parts.",
                 extra={"match": split_dot_email_match.group(0)},
+            )
+        )
+
+    old_scan_ocr_gibberish_match = OLD_SCAN_OCR_GIBBERISH_RE.search(plain)
+    if old_scan_ocr_gibberish_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P87",
+                cc_class="CC-04/CC-13",
+                check="Old-scan OCR gibberish remains in polish text",
+                severity="error",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    old_scan_ocr_gibberish_match.start(),
+                    old_scan_ocr_gibberish_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Manual full-text review found old scanned PDFs with residual OCR tokens and table/caption gibberish that normal article cleanup cannot safely repair.",
+                proposed_fix_layer="EN polish OCR-quality gate / old-scan routing",
+                regression_test="Old-scan residues such as 'LUMBAH I - i', 'The (!I G :. nosis', 'v&me', 'foriTi', and 'kcounl/mg prolan' are reported.",
+                extra={"match": old_scan_ocr_gibberish_match.group(0)},
+            )
+        )
+
+    split_url_domain_match = SPLIT_URL_DOMAIN_RE.search(plain)
+    if split_url_domain_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P88",
+                cc_class="CC-04/CC-13",
+                check="URL domain is split by OCR whitespace",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, split_url_domain_match.start(), split_url_domain_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Reference URL normalization missed whitespace inserted inside a domain name.",
+                proposed_fix_layer="EN polish URL/domain whitespace cleanup",
+                regression_test="Split domains such as 'www. osh a.europa.eu' are reported.",
+                extra={"match": split_url_domain_match.group(0)},
             )
         )
 

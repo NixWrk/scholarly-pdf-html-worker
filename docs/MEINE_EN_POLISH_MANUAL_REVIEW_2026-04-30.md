@@ -3411,3 +3411,39 @@ Report:
 - Real batch result after scanner expansion: `P67=3`, `P70=1`,
   `P71=4`, `P83=4`, `P84=1`, `P85=1`, `P86=1`, plus existing
   `P05=1`, `P13=1`, `P14=1`, `P61=1`, `P62=1`, `P66=1`, `P76=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 021-025 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0041`, `meine_0042`, `meine_0043`, `meine_0045`, and
+`meine_0046`; generated HTML was not edited. `meine_0043` is a long
+book/OCR import, so the new rule treats it as an OCR-quality/routing problem
+rather than a normal article-polish repair.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 021 | `meine_0041_515e781bb6` | clean | Body sentence interrupted by affiliation metadata (`MRI is now recommended...` / `with hypoxic ischaemic encephalopathy`), joined MR/reference terms (`MRsafe`, `MRcompatible`, `lung-tohead`, `feed-andsleep`, `readyreckoners`, `injuryassociated`), OCR residues (`aesthesia`, `Magr Reson`, `telsa`), and split domain `www. osh a.europa.eu`. |
+| 022 | `meine_0042_05f20a6416` | clean | Old-scan OCR gate for title/abstract/table/reference gibberish such as `LUMBAH I - i`, `The (!I G :. nosis`, `v&me`, `TVRP`, `pleak flow`, `timulus`, `Vesicaf`, `snine`, and `Bvadley`. |
+| 023 | `meine_0043_a848e1004f` | `P05/P12/P14/P22/P62` | Confirmed as long book/OCR import; added OCR-quality gate for residual tokens such as `suiprising`, `foriTi`, `stimulus.d/T./Sz`, `elTicacy`, `kcounl/mg prolan`, and `linearmotor S~pole aller`. |
+| 024 | `meine_0045_567d338f68` | `P61/P84` | Added OCR-token coverage for meta-analysis/table/back-matter residues including `Mata-Analysis`, `correla ition`, `Retinal Nerve Fiber Laver`, and `Amercian ophthalmological society`. |
+| 025 | `meine_0046_17de6ce7f1` | clean | Added one visible OCR residue, `bulbocarnosus`, while keeping the rest of the article as a low-noise control. |
+
+Scanner changes:
+
+- `P67` joined-word coverage now includes MR-safety and reference compounds
+  from neonatal MRI material.
+- `P71` OCR-token coverage now includes the focused residues found in
+  `0041`, `0045`, and `0046`.
+- `P83` now catches the neonatal MRI body sentence interrupted by affiliation
+  metadata.
+- `P87`: old-scan OCR gibberish / OCR-quality gate.
+- `P88`: URL domain split by OCR whitespace.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_021_025_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=1`, `P71=3`,
+  `P83=1`, `P87=2`, `P88=1`, plus existing `P05=1`, `P12=1`,
+  `P14=1`, `P22=1`, `P61=1`, `P62=1`, `P84=1`.

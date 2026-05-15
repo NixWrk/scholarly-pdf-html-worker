@@ -951,6 +951,51 @@ def test_analyze_pair_reports_fulltext_batch_016_020_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_021_025_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>MRI is now recommended as the standard of care for term infants</p>",
+                    "<p>Department of Radiology, Hills Road, Cambridge.</p>",
+                    "<p>with hypoxic ischaemic encephalopathy and seizures.</p>",
+                    "<p>Objects labelled NOT MRsafe and an MRcompatible incubator were noted.</p>",
+                    "<p>References contain lung-tohead ratio, feed-andsleep technique, "
+                    "readyreckoners, and injuryassociated cerebral findings.</p>",
+                    "<p>Sedation and aesthesia protocols. J Magr Reson Imaging. "
+                    "A 4 telsa MRI scanner was listed.</p>",
+                    "<p>Available at www. osh a.europa.eu for occupational safety notes.</p>",
+                    "<h2>EARLY DETECTION OF NEUROGENIC BLADDER DYSFUNCTION CAUSED BY PROTRUDED LUMBAH I - i</h2>",
+                    "<p>The (!I G :. nosis was based on abnormal contraction. "
+                    "A table had v&me, TVRP, pleak flow, timulus, and mesc.</p>",
+                    "<p>Later OCR included foriTi 110 and stimulus.d/T./Sz, "
+                    "elTicacy, and Unit: kcounl/mg prolan.</p>",
+                    "<p>A meta-analysis residue kept Mata-Analysis, correla ition, "
+                    "Retinal Nerve Fiber Laver, and an Amercian ophthalmological society thesis.</p>",
+                    "<p>The reflex contracted the bulbocarnosus muscle.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P67", "P71", "P83", "P87", "P88"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
