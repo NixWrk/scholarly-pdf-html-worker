@@ -3279,7 +3279,7 @@ Articles:
 New audit checks:
 
 - `P65`: runaway repeated word/fragment.
-- `P66`: common lost-ff OCR/ligature words.
+- `P66`: common lost-ligature OCR words.
 - `P67`: known joined words and missing separators.
 - `P68`: body sentence interrupted by float material.
 - `P69`: corrupted e-mail label marker.
@@ -3372,3 +3372,42 @@ Report:
 - Real batch result after scanner expansion: `P67=1`, `P71=1`,
   `P76=1`, `P78=1`, `P79=1`, `P80=1`, `P81=1`, `P82=1`,
   plus existing `P05=1`, `P06=1`, `P53=1`, `P54=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 016-020 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0031`, `meine_0034`, `meine_0035`, `meine_0036`, and
+`meine_0039`; generated HTML was not edited. Console mojibake was checked
+against UTF-8 snippets before adding rules.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 016 | `meine_0031_45c7a0c4d9` | `P14/P76` | Sentence/section interruption around `Despite the intensive investigation of ... adults and older children`; line-break/OCR residues such as `sys- tem`, `temprature`, `childrean`. |
+| 017 | `meine_0034_2a6279ac39` | `P61/P62/P67` | Escaped footnote superscripts (`& lt;sup>2`, `& lt;sup>3`), figure/footnote interruption of `printed on swell paper to ... form a tactile rendering`, reference/backmatter interleave, `Beha v. Res. Methods`, and joined reference/copyright residues (`Perceptionof`, `Descriptionsfor`, `openaccess`). |
+| 018 | `meine_0035_520bdb5064` | `P67` | `cognitive iter`, `threedimensional`, `basrelief`, and sentence interruption around `in the (hypothetic)` followed by figure blocks before `3D space`. |
+| 019 | `meine_0036_d04b54116e` | `P05/P13/P66` | Lost-ligature/OCR family expanded for Nature references (`fexible`, `fbers`, `flm`, `biofuid`, `difusion`, `coefcient`, `galss`, etc.); `I mplantable`, `ulimate`, `Three-dimensioanl`; interruption `mul- ... timodal` with page header material. |
+| 020 | `meine_0039_75458d8a00` | clean | Split e-mail local-part `jan. krhut@fno.cz`, joined uroflow terms (`UFrecorded`, `SUFestimated`, `SUFdetermined`), and duplicated phrase `documents that that intensity`. |
+
+Scanner changes:
+
+- `P66` now covers lost `ff`/`fi`/`fl` ligature residue, not only `ff`.
+- `P67` joined-word coverage now includes `Perceptionof`,
+  `Descriptionsfor`, `openaccess`, `basrelief`, `threedimensional`,
+  `UFrecorded`, `SUFestimated`, and `SUFdetermined`.
+- `P70` reference roman-split coverage now includes `Beha v. Res. Methods`.
+- `P71` OCR-token coverage now includes `sys- tem`, `temprature`,
+  `childrean`, `cognitive iter`, `I mplantable`, `ulimate`,
+  `Three-dimensioanl`, and `documents that that intensity`.
+- `P83`: body phrase interrupted by figure, footnote, or journal metadata.
+- `P84`: escaped footnote superscript markup remains visible.
+- `P85`: References interleaved with back-matter sections.
+- `P86`: e-mail local-part split after a dot.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_016_020_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=3`, `P70=1`,
+  `P71=4`, `P83=4`, `P84=1`, `P85=1`, `P86=1`, plus existing
+  `P05=1`, `P13=1`, `P14=1`, `P61=1`, `P62=1`, `P66=1`, `P76=1`.

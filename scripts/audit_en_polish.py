@@ -184,13 +184,17 @@ RUNAWAY_REPEATED_TEXT_RE = re.compile(
 )
 LOST_FF_WORD_RE = re.compile(
     r"\b(?:afective|coeficient|diference|diferential|efect(?:s|ive|ively)?|"
-    r"eficacy|eficient(?:ly)?|ofice|oficer|suficient(?:ly)?|tradeofs)\b",
+    r"eficacy|eficient(?:ly)?|ofice|oficer|suficient(?:ly)?|tradeofs|"
+    r"fexible|ultrafexible|fbers|flms?|fbroin|biofuid|difusion|coefcient|"
+    r"defcits|scafolds|feld-efect|fnger|galss)\b",
     re.IGNORECASE,
 )
 KNOWN_JOINED_WORD_RE = re.compile(
     r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
     r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
-    r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional)\b|"
+    r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional|"
+    r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
+    r"UFrecorded|SUFestimated|SUFdetermined)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b",
     re.IGNORECASE,
 )
@@ -203,16 +207,22 @@ FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
     re.IGNORECASE,
 )
 CORRUPT_EMAIL_LABEL_RE = re.compile(r"(?:\b[MmSs]e-mail:|[\u25a1\ufffd]\s*S?e-mail:)")
-REFERENCE_ROMAN_SPLIT_RE = re.compile(r"\bBiobeha\s+v\.\s+Rev\.", re.IGNORECASE)
+REFERENCE_ROMAN_SPLIT_RE = re.compile(
+    r"\bBiobeha\s+v\.\s+Rev\.|\bBeha\s+v\.\s+Res\.\s+Methods\b",
+    re.IGNORECASE,
+)
 KNOWN_OCR_TOKEN_RE = re.compile(
     r"\b(?:iournal\.pone|inital|neabling|Segmentaion|simpification|systometry|"
     r"urflowmetry|urtheral|validtation|seperable|pngpng|Uroflowmetery|"
     r"flowmetery|bootloding|Examing|Parametres|Rewiev|microconroller|"
-    r"Mirocontroller|premicturtion|Nusssenblatt|Wherev\s*\d)\b|"
+    r"Mirocontroller|premicturtion|Nusssenblatt|temprature|childrean|"
+    r"ulimate|three-dimensioanl|Tree-dimensional|Wherev\s*\d)\b|"
     r"\bDmax=Dminw1:5\b|\bpv0:\d+\b|\b0:5mLs\{?|\bhealth\s+male\s+volunteer\b|"
     r"\bwill\s+to\s+help\b|\beffici[^\w\s]{1,3}ency\b|\b0\.999\s+0995\b|"
     r"\b(?:effekt|retrospekt|qualitat)\s+iv\b|\bAPPEND\s+ix\b|"
-    r"\bINTEL\s+i\s+LIGENT\b|\bQavg\s+and\s+Omax\b|\bVol\s+ofmoved\b",
+    r"\bINTEL\s+i\s+LIGENT\b|\bQavg\s+and\s+Omax\b|\bVol\s+ofmoved\b|"
+    r"\bcognitive\s+iter\b|\bsys-\s+tem\b|\bI\s+mplantable\b|"
+    r"\bdocuments\s+that\s+that\s+intensity\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -269,6 +279,23 @@ TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bTABLE\s+\d[\s\S]{0,1400}\bnales\s+5\s+ted\s+Q\s+a\s+rates\b|"
     r"\bQn\s+Flow\s+i\s+[^\s]{1,4}ax\s+ndexes\b|"
     r"\bP\s+Values\s+0\.06\s+0\.00\s+4\s+\.565\b",
+    re.IGNORECASE,
+)
+FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
+    r"\bDespite\s+the\s+intensive\s+investigation\s+of[\s\S]{0,1800}\badults\s+and\s+older\s+children\b|"
+    r"\bprinted\s+on\s+swell\s+paper\s+to[\s\S]{0,1600}\bform\s+a\s+tactile\s+rendering\b|"
+    r"\bin\s+the\s+\(hypothetic\)[\s\S]{0,1600}\b3D\s+space\b|"
+    r"\bprogrammed\s+pharmacological\s+delivery\s+and\s+mul-[\s\S]{0,2000}\btimodal\s+sensing\b",
+    re.IGNORECASE,
+)
+ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*\d+\b", re.IGNORECASE)
+REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
+    r"\bETHICS\s+STATEMENT\b[\s\S]{0,1200}\bREFERENCES\b[\s\S]{0,3500}"
+    r"\bUniversity\s+of\s+Bath\b[\s\S]{0,1000}\bAUTHOR\s+CONTRIBUTIONS\b",
+    re.IGNORECASE,
+)
+SPLIT_DOT_EMAIL_RE = re.compile(
+    r"\b[A-Za-z]{2,}\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -2641,14 +2668,14 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             _defect(
                 defect_id="P66",
                 cc_class="CC-04/CC-13",
-                check="Common lost-ff word remains in polish text",
+                check="Common lost ligature word remains in polish text",
                 severity="warning",
                 block=None,
                 snippet=_snippet(plain, lost_ff_match.start(), lost_ff_match.end()),
                 stage=POLISH_STAGE,
-                hypothesis="OCR or ligature normalization dropped an 'ff' pair in common scientific prose.",
+                hypothesis="OCR or ligature normalization dropped an 'ff', 'fi', or 'fl' pair in common scientific prose.",
                 proposed_fix_layer="EN polish OCR spelling/ligature cleanup",
-                regression_test="Words such as effect, efficacy, officer, coefficient, and sufficient are not left as lost-ff variants.",
+                regression_test="Words such as effect, efficacy, officer, coefficient, flexible, fibers, and diffusion are not left as lost-ligature variants.",
                 extra={"match": lost_ff_match.group(0)},
             )
         )
@@ -2943,6 +2970,84 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 hypothesis="A table extraction block lost column structure and preserved heavily scrambled OCR tokens.",
                 proposed_fix_layer="EN polish table OCR/column structure audit",
                 regression_test="Uroflow table fragments such as 'nales 5 ted Q a rates' and malformed P-value runs are reported.",
+            )
+        )
+
+    float_or_metadata_interruption_match = FLOAT_OR_METADATA_INTERRUPTION_RE.search(plain)
+    if float_or_metadata_interruption_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P83",
+                cc_class="CC-07/CC-08/CC-13",
+                check="Body phrase is interrupted by float or metadata material",
+                severity="error",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    float_or_metadata_interruption_match.start(),
+                    float_or_metadata_interruption_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="PDF reading order inserted figure, footnote, or journal metadata between two halves of one body phrase.",
+                proposed_fix_layer="EN polish float/body reading-order repair",
+                regression_test="Known splits such as 'printed on swell paper to ... form a tactile rendering' and 'mul- ... timodal sensing' are reported.",
+            )
+        )
+
+    escaped_sup_footnote_match = ESCAPED_SUP_FOOTNOTE_RE.search(plain)
+    if escaped_sup_footnote_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P84",
+                cc_class="CC-01/CC-04/CC-13",
+                check="Escaped footnote superscript markup remains as visible text",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, escaped_sup_footnote_match.start(), escaped_sup_footnote_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="A raw escaped footnote marker was not decoded or converted into a proper footnote marker.",
+                proposed_fix_layer="EN polish escaped-footnote/front-matter cleanup",
+                regression_test="Visible residues such as '& lt;sup>2' and '& lt;sup>3' are reported.",
+                extra={"match": escaped_sup_footnote_match.group(0)},
+            )
+        )
+
+    references_backmatter_interleave_match = REFERENCES_BACKMATTER_INTERLEAVE_RE.search(plain)
+    if references_backmatter_interleave_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P85",
+                cc_class="CC-07/CC-13",
+                check="References are interleaved with back-matter sections",
+                severity="error",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    references_backmatter_interleave_match.start(),
+                    references_backmatter_interleave_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Back-matter continuation text was placed after an early References heading, mixing article metadata with bibliography entries.",
+                proposed_fix_layer="EN polish back-matter/reference ordering repair",
+                regression_test="Frontiers-style back matter split as 'ETHICS STATEMENT ... REFERENCES ... University of Bath ... AUTHOR CONTRIBUTIONS' is reported.",
+            )
+        )
+
+    split_dot_email_match = SPLIT_DOT_EMAIL_RE.search(plain)
+    if split_dot_email_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P86",
+                cc_class="CC-01/CC-04/CC-13",
+                check="Email address is split after a dot",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, split_dot_email_match.start(), split_dot_email_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Line wrapping or sentence cleanup inserted whitespace inside an e-mail local-part.",
+                proposed_fix_layer="EN polish e-mail normalization",
+                regression_test="Visible e-mails such as 'jan. krhut@fno.cz' are reported as split local-parts.",
+                extra={"match": split_dot_email_match.group(0)},
             )
         )
 

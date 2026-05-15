@@ -897,6 +897,60 @@ def test_analyze_pair_reports_fulltext_batch_011_015_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_016_020_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Despite the intensive investigation of</p>",
+                    "<p>The purpose of this study is inserted before the continuation.</p>",
+                    "<p>adults and older children with these techniques, little is known.</p>",
+                    "<p>Our preliminary findings indicate that by using this novel sys- tem, "
+                    "fMRI studies can continue.</p>",
+                    "<p>Reference residue includes temprature and childrean.</p>",
+                    "<p>& lt;sup>2 Living Paintings. & lt;sup>3 World Health Organization.</p>",
+                    "<p>Before leaving the background section The use of non tactile methods "
+                    "that communicate visual images in a non visual form are mentioned.</p>",
+                    "<h2>ETHICS STATEMENT</h2>",
+                    "<p>The studies were approved by Simon Jones, Department of Computer Science,</p>",
+                    "<h2>REFERENCES</h2>",
+                    "<p>Faul et al. Beha v. Res. Methods. Visual Perceptionof Progress. "
+                    "Image Descriptionsfor Blind Users on a Social Network Service,\"in "
+                    "Proceedings. This is an openaccess article.</p>",
+                    "<p>University of Bath, United Kingdom. Participation was voluntary.</p>",
+                    "<h2>AUTHOR CONTRIBUTIONS</h2>",
+                    "<p>A cognitive iter, threedimensional reproductions, basrelief, and "
+                    "realworld images remained.</p>",
+                    "<p>I mplantable systems have ulimate goals and a Three-dimensioanl image "
+                    "with fexible feld-efect transistors.</p>",
+                    "<p>Additional opportunities include programmed pharmacological delivery and mul-</p>",
+                    "<div>Fig. 4 | High-resolution/scalable neural electronic systems.</div>",
+                    "<p>Review Article Nature Materials timodal sensing was resumed after the figure.</p>",
+                    "<p>Email: jan. krhut@fno.cz. The UFrecorded value, SUFestimated parameters, "
+                    "SUFdetermined flow pattern, and documents that that intensity phrase remained.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P66", "P67", "P70", "P71", "P83", "P84", "P85", "P86"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
