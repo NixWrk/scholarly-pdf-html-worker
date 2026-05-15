@@ -12,6 +12,9 @@ TAG_RE = re.compile(r"<[^>]+>")
 SCRIPT_STYLE_RE = re.compile(r"<(script|style|svg|math)\b[\s\S]*?</\1>", re.IGNORECASE)
 COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
+CJK_RE = re.compile(r"[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+HIRAGANA_KATAKANA_RE = re.compile(r"[\u3040-\u30FF]")
+CJK_UNIFIED_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 BLOCK_TAG_RE = re.compile(
     r"</?(?:article|section|div|p|br|h[1-6]|li|ol|ul|table|thead|tbody|tfoot|tr|td|th)\b[^>]*>",
     re.IGNORECASE,
@@ -149,6 +152,197 @@ DE_STOPWORDS = {
     "zur",
 }
 
+FR_STOPWORDS = {
+    "avec",
+    "cette",
+    "dans",
+    "des",
+    "du",
+    "elle",
+    "est",
+    "et",
+    "les",
+    "leur",
+    "mais",
+    "nous",
+    "par",
+    "pas",
+    "pour",
+    "que",
+    "qui",
+    "sont",
+    "sur",
+    "une",
+    "aux",
+    "ces",
+    "comme",
+    "dans",
+    "entre",
+    "être",
+    "chez",
+    "plus",
+    "peut",
+    "étude",
+    "résultats",
+    "méthode",
+    "analyse",
+}
+
+ES_STOPWORDS = {
+    "con",
+    "como",
+    "del",
+    "desde",
+    "dos",
+    "el",
+    "en",
+    "entre",
+    "es",
+    "esta",
+    "este",
+    "estos",
+    "las",
+    "los",
+    "más",
+    "para",
+    "pero",
+    "por",
+    "que",
+    "se",
+    "sin",
+    "son",
+    "sus",
+    "también",
+    "una",
+    "uno",
+    "estudio",
+    "resultados",
+    "método",
+    "análisis",
+}
+
+IT_STOPWORDS = {
+    "che",
+    "con",
+    "dei",
+    "del",
+    "della",
+    "delle",
+    "gli",
+    "il",
+    "in",
+    "la",
+    "le",
+    "lo",
+    "ma",
+    "nel",
+    "nella",
+    "per",
+    "più",
+    "questo",
+    "sono",
+    "sulla",
+    "tra",
+    "uno",
+    "studio",
+    "risultati",
+    "metodo",
+    "analisi",
+}
+
+PT_STOPWORDS = {
+    "com",
+    "como",
+    "das",
+    "dos",
+    "em",
+    "entre",
+    "esta",
+    "este",
+    "foi",
+    "mais",
+    "mas",
+    "não",
+    "os",
+    "para",
+    "por",
+    "que",
+    "são",
+    "se",
+    "sem",
+    "uma",
+    "estudo",
+    "resultados",
+    "método",
+    "análise",
+}
+
+NL_STOPWORDS = {
+    "als",
+    "bij",
+    "dat",
+    "de",
+    "der",
+    "dit",
+    "door",
+    "een",
+    "en",
+    "het",
+    "hun",
+    "in",
+    "is",
+    "met",
+    "niet",
+    "om",
+    "op",
+    "te",
+    "van",
+    "voor",
+    "werden",
+    "zijn",
+    "onderzoek",
+    "resultaten",
+    "methode",
+    "analyse",
+}
+
+PL_STOPWORDS = {
+    "ale",
+    "analiza",
+    "badania",
+    "bez",
+    "dla",
+    "do",
+    "jest",
+    "jako",
+    "które",
+    "lub",
+    "metoda",
+    "na",
+    "nie",
+    "oraz",
+    "po",
+    "przez",
+    "się",
+    "są",
+    "także",
+    "tego",
+    "to",
+    "wyniki",
+    "z",
+    "ze",
+}
+
+EUROPEAN_STOPWORDS = {
+    "de": DE_STOPWORDS,
+    "fr": FR_STOPWORDS,
+    "es": ES_STOPWORDS,
+    "it": IT_STOPWORDS,
+    "pt": PT_STOPWORDS,
+    "nl": NL_STOPWORDS,
+    "pl": PL_STOPWORDS,
+}
+
 
 @dataclass(frozen=True)
 class LanguageDetection:
@@ -208,6 +402,35 @@ def normalize_language_code(value: str | None) -> str:
         "deu": "de",
         "ger": "de",
         "de-de": "de",
+        "french": "fr",
+        "fra": "fr",
+        "fre": "fr",
+        "fr-fr": "fr",
+        "spanish": "es",
+        "spa": "es",
+        "es-es": "es",
+        "italian": "it",
+        "ita": "it",
+        "it-it": "it",
+        "portuguese": "pt",
+        "por": "pt",
+        "pt-br": "pt",
+        "pt-pt": "pt",
+        "dutch": "nl",
+        "nld": "nl",
+        "dut": "nl",
+        "nl-nl": "nl",
+        "polish": "pl",
+        "pol": "pl",
+        "pl-pl": "pl",
+        "japanese": "ja",
+        "jpn": "ja",
+        "ja-jp": "ja",
+        "chinese": "zh",
+        "zho": "zh",
+        "chi": "zh",
+        "zh-cn": "zh",
+        "zh-tw": "zh",
     }
     return aliases.get(normalized, normalized)
 
@@ -473,15 +696,52 @@ def _detect_language_once(
     text = re.sub(r"\s+", " ", text).strip()
     latin_chars = len(LATIN_RE.findall(text))
     cyrillic_chars = len(CYRILLIC_RE.findall(text))
+    cjk_chars = len(CJK_RE.findall(text))
+    kana_chars = len(HIRAGANA_KATAKANA_RE.findall(text))
+    han_chars = len(CJK_UNIFIED_RE.findall(text))
     alpha_chars = latin_chars + cyrillic_chars
+    script_chars = alpha_chars + cjk_chars
     words = [word.lower() for word in WORD_RE.findall(text)]
     english_hits = sum(1 for word in words if word in EN_STOPWORDS)
     russian_hits = sum(1 for word in words if word in RU_STOPWORDS)
-    german_hits = sum(1 for word in words if word in DE_STOPWORDS)
+    european_hits = {
+        code: sum(1 for word in words if word in stopwords)
+        for code, stopwords in EUROPEAN_STOPWORDS.items()
+    }
+    german_hits = european_hits["de"]
     latin_ratio = latin_chars / alpha_chars if alpha_chars else 0.0
     cyrillic_ratio = cyrillic_chars / alpha_chars if alpha_chars else 0.0
 
-    if alpha_chars < min_alpha_chars or len(words) < min_words:
+    if cjk_chars >= min_alpha_chars and kana_chars >= 20:
+        return LanguageDetection(
+            detected_language="ja",
+            confidence=0.96,
+            reason="japanese_kana_cjk",
+            text_chars=len(text),
+            word_count=len(words),
+            latin_chars=latin_chars,
+            cyrillic_chars=cyrillic_chars,
+            latin_ratio=latin_ratio,
+            cyrillic_ratio=cyrillic_ratio,
+            english_stopword_hits=english_hits,
+            russian_stopword_hits=russian_hits,
+        )
+    if han_chars >= min_alpha_chars and kana_chars < 20:
+        return LanguageDetection(
+            detected_language="zh",
+            confidence=0.94,
+            reason="chinese_han_majority",
+            text_chars=len(text),
+            word_count=len(words),
+            latin_chars=latin_chars,
+            cyrillic_chars=cyrillic_chars,
+            latin_ratio=latin_ratio,
+            cyrillic_ratio=cyrillic_ratio,
+            english_stopword_hits=english_hits,
+            russian_stopword_hits=russian_hits,
+        )
+
+    if script_chars < min_alpha_chars or len(words) < min_words:
         return LanguageDetection(
             detected_language="unknown",
             confidence=0.0,
@@ -498,10 +758,11 @@ def _detect_language_once(
 
     english_stop_score = min(english_hits / 35.0, 1.0)
     russian_stop_score = min(russian_hits / 25.0, 1.0)
-    german_stop_score = min(german_hits / 35.0, 1.0)
+    best_euro_code, best_euro_hits = max(european_hits.items(), key=lambda item: item[1])
+    best_euro_stop_score = min(best_euro_hits / 35.0, 1.0)
     english_score = latin_ratio * 0.72 + english_stop_score * 0.28
     russian_score = cyrillic_ratio * 0.78 + russian_stop_score * 0.22
-    german_score = latin_ratio * 0.70 + german_stop_score * 0.30
+    european_score = latin_ratio * 0.70 + best_euro_stop_score * 0.30
 
     if cyrillic_chars >= 200 and cyrillic_ratio >= 0.35:
         confidence = max(0.86, min(0.99, russian_score))
@@ -511,10 +772,14 @@ def _detect_language_once(
         confidence = max(0.8, min(0.98, russian_score))
         detected = "ru"
         reason = "russian_stopwords"
-    elif latin_ratio >= 0.72 and german_hits >= 12 and german_hits >= max(12, int(english_hits * 0.65)):
-        confidence = max(0.78, min(0.98, german_score))
-        detected = "de"
-        reason = "latin_majority_german_stopwords"
+    elif (
+        latin_ratio >= 0.72
+        and best_euro_hits >= 12
+        and best_euro_hits >= max(12, int(english_hits * 0.75))
+    ):
+        confidence = max(0.78, min(0.98, european_score))
+        detected = best_euro_code
+        reason = f"latin_majority_{best_euro_code}_stopwords"
     elif latin_ratio >= 0.72 and english_hits >= 12 and cyrillic_ratio < 0.12:
         confidence = max(0.78, min(0.99, english_score))
         detected = "en"

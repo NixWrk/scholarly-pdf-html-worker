@@ -38,6 +38,59 @@ DE_PARAGRAPH = (
     "und die Beurteilung der Evidenz sollen in der klinischen Praxis helfen. "
 )
 
+FR_PARAGRAPH = (
+    "Cette étude décrit une méthode pour analyser les résultats cliniques chez "
+    "les patients avec des symptômes neurologiques. Les données sont comparées "
+    "avec une analyse statistique, et les résultats montrent une amélioration "
+    "dans plusieurs conditions expérimentales. "
+)
+
+ES_PARAGRAPH = (
+    "Este estudio describe un método para analizar los resultados clínicos en "
+    "los pacientes con síntomas neurológicos. Los datos se comparan con un "
+    "análisis estadístico y los resultados muestran una mejora en varias "
+    "condiciones experimentales. "
+)
+
+IT_PARAGRAPH = (
+    "Questo studio descrive un metodo per analizzare i risultati clinici nei "
+    "pazienti con sintomi neurologici. I dati sono confrontati con una analisi "
+    "statistica e i risultati mostrano un miglioramento in diverse condizioni "
+    "sperimentali. "
+)
+
+PT_PARAGRAPH = (
+    "Este estudo descreve um método para analisar os resultados clínicos em "
+    "pacientes com sintomas neurológicos. Os dados são comparados com uma "
+    "análise estatística e os resultados mostram uma melhoria em várias "
+    "condições experimentais. "
+)
+
+NL_PARAGRAPH = (
+    "Dit onderzoek beschrijft een methode voor de analyse van klinische "
+    "resultaten bij patiënten met neurologische symptomen. De gegevens werden "
+    "vergeleken met een statistische analyse en de resultaten zijn belangrijk "
+    "voor de klinische praktijk. "
+)
+
+PL_PARAGRAPH = (
+    "To badanie opisuje metodę analizy wyników klinicznych u pacjentów z "
+    "objawami neurologicznymi. Dane są porównywane przez analizę statystyczną "
+    "oraz wyniki są ważne dla praktyki klinicznej. "
+)
+
+JA_PARAGRAPH = (
+    "この研究では神経インターフェースの設計と臨床評価について説明する。"
+    "患者の測定結果と実験条件を比較し、方法、結果、考察を詳しく示す。"
+    "複数の条件で安定した反応が観察され、解析は有効である。"
+)
+
+ZH_PARAGRAPH = (
+    "本研究描述神经接口的设计和临床评估方法。研究比较患者测量结果和"
+    "实验条件，并详细说明方法、结果和讨论。多个条件下观察到稳定反应，"
+    "统计分析显示该方法具有有效性。"
+)
+
 
 def test_detects_english_body_despite_cyrillic_comment_metadata() -> None:
     html = "<html><body><!-- source_pdf=\u0438 \u0434\u0440. -->" + EN_PARAGRAPH * 80 + "</body></html>"
@@ -86,6 +139,27 @@ def test_german_body_with_english_abstract_is_gated_before_english_run() -> None
     assert detection.detected_language == "de"
     assert detection.sampled_windows > 1
     assert decision.should_skip
+
+
+def test_detects_popular_non_english_languages_and_skips_english_translation() -> None:
+    samples = {
+        "fr": FR_PARAGRAPH,
+        "es": ES_PARAGRAPH,
+        "it": IT_PARAGRAPH,
+        "pt": PT_PARAGRAPH,
+        "nl": NL_PARAGRAPH,
+        "pl": PL_PARAGRAPH,
+        "ja": JA_PARAGRAPH,
+        "zh": ZH_PARAGRAPH,
+    }
+
+    for expected, paragraph in samples.items():
+        detection = detect_language_from_html("<html><body>" + paragraph * 80 + "</body></html>")
+        decision = language_gate_decision(detection, target_language="en")
+
+        assert detection.detected_language == expected
+        assert detection.confidence >= 0.75
+        assert decision.should_skip
 
 
 def test_visible_text_uses_document_text_before_references() -> None:
