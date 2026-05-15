@@ -49,7 +49,7 @@ URL_ANCHOR_RE = re.compile(
 )
 MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"](?:https?://|www\.)[^'\"]+['\"][^>]*>"
-    r"\s*(?:(?:hps|htps|ttps)://|https?://\s+)[\s\S]{0,300}?</a>",
+    r"\s*(?:(?:hps|htps|ttps)://|https?://\s+|\d+www\.)[\s\S]{0,300}?</a>",
     re.IGNORECASE | re.DOTALL,
 )
 REF_ANCHOR_BODY_RE = re.compile(
@@ -167,6 +167,8 @@ ML_PER_SECOND_CONTEXT_RE = re.compile(r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+
 BROKEN_URL_TEXT_RE = re.compile(
     r"\b(?:hps|htps|ttps)://\S+|"
     r"\bhttps?://\s+|"
+    r"\bhttps?://\S+\s+\d+www\.|"
+    r"\b\d+www\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|"
     r"\bhttps?://(?:dx\.)?doi\.org/\d+\.\d+/\s+[A-Za-z0-9]|"
     r"\bhttps?://doi\.org/10\s+\.\s+\d+|"
     r"\bhttps?://\S+/(?:wp|news-room/north|contents/part1/ports-and|ports-and-container)\s+[A-Za-z0-9]|"
@@ -195,7 +197,10 @@ LOST_FF_WORD_RE = re.compile(
     r"suficient(?:ly)?|tradeofs|"
     r"fexible|ultrafexible|fbers|flms?|fbroin|biofuid|difusion|coefcient|"
     r"defcits|scafolds|feld-efect|fnger|galss|artiicial|scientiic|"
-    r"certiication|deining|simpliication|irst|inluence|itness|worklow)\b|"
+    r"certiication|deining|simpliication|irst|inluence|itness|worklow|"
+    r"frst|fne|fgurative|defne(?:d)?|profcient|beneft|"
+    r"difcult(?:y|ies)?|staf|efort(?:s)?|confrm(?:ed|ing)?|clarifed|"
+    r"infuenced|fndings|feld)\b|"
     r"\b(?:specifi|Specifi|signifi|Signifi|defi|Defi|diffi|Diffi|profi|Profi|"
     r"confi|Confi|benefi|Benefi|identi?fi|Identi?fi|Offi|offi|Griffi|"
     r"fl|Fl|urofl|Urofl|outfl|Outfl|refl|Refl|infl|Infl)\s+"
@@ -226,7 +231,13 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"inhibitionbased|phaselocked|ofrealistic|ofmedical|ofclinical|"
     r"ofperspective|offactual|oflarge|of13|ofthe\s+accepted|andrequests|"
     r"andpermissions|Competinginterests|Additionalinformation|"
-    r"Alessentially|medicineresistant|customdesigned|hardwareupdate)\b|"
+    r"Alessentially|medicineresistant|customdesigned|hardwareupdate|"
+    r"KeunWhangbo|easy-tolearn|Shapefrom-shading|Attributebased|"
+    r"thistask|higherthan|disabilitiessometimesface|artworksis|"
+    r"hierarchicalsegmentation|webbased|needsto|includesinformation|"
+    r"participantssuggested|overallwork|guidelinesfor|issimilarto|"
+    r"easierto|spatialcognitive|wassupported|blindaccessible|"
+    r"Key-wordaware)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
@@ -302,7 +313,12 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"Constitutional\s+Al|GAL\s+such\s+as|"
     r"Al(?:\s+(?:techniques|Office|triad|systems|interventions|education|"
     r"feedback|driven|generated|based)|-driven|-generated|-based)|"
-    r"euromodulation\s+devices|crania\s+l\s+implant|Bultimore)\b|"
+    r"euromodulation\s+devices|crania\s+l\s+implant|Bultimore|"
+    r"Stoimeno\s+v\.|list\s+all\s+the\s+they\s+identified|"
+    r"OPRATING\s+PRICIPLE|discription|milivolt|upto|coma\s+separated|"
+    r"purposed\s+work|millitres|ghraph|Authers|"
+    r"Electronic\(Cambridge|If\s+inal|best\s+suites)\b|"
+    r"\bet\s+nl\.|\bHands\s+of!|\bComputer\s+Based\s+Method\s+\?|"
     r"\.oog-inch\b",
     re.IGNORECASE,
 )
@@ -318,17 +334,19 @@ LATEX_MACRO_RUNAWAY_RE = re.compile(r"(?:\\@ifnextchar[\s\S]{0,80}){6,}", re.IGN
 DOI_BODY_PROSE_MERGE_RE = re.compile(
     r"\b(?:DOI:\s*(?:https?://(?:dx\.)?doi\.org/)?10\.[^\s<]+|"
     r"https?://(?:dx\.)?doi\.org/10\.[^\s<]+)"
-    r"\s+(?:the|this|we|in|as|depicted|generated|lines)\b",
+    r"\s+(?:the|this|we|in|as|or|depicted|generated|lines)\b",
     re.IGNORECASE,
 )
 DETACHED_ACCENT_RE = re.compile(
-    r"\b[A-Za-z]{2,}[\u00a8\u00b4\u02c6\u02c7\u02dc][A-Za-z]{1,}\b|"
+    r"\b[A-Za-z]{2,}[\u00a8\u00b4\u00b8\u02c6\u02c7\u02d9\u02dc][A-Za-z]{1,}\b|"
     r"\bOA\u02c6\s+\u02c7SModhrain\b|"
     r"\bB[A-Za-z]+hler,\s*\u02dc\s+and\b|"
     r"\bHeppner,\s*[\u00b4\u02c6]\s+and\b|"
     r"\bC\u00b8\s*\.\s+Varel\b|"
     r"\bSyd\s+\u00a8\s+anheimo\b|"
     r"\bwireless\s+\u00a8\s+intraocular\b|"
+    r"\bPakenait\s+\u02d9\s*e\u02d9?\b|\bPeter\s+M\s+\u02d9\s+Hall\b|"
+    r"\bSpath\s+\u00a8\b|\bSequin\s+\u00b4\s+,|\bwould\s+\u00b4\s+be\b|"
     r"\bBRICENO\S\s*,\s*H\.\s*M\.|\bHOLLERER\s+[^A-Za-z0-9\s,]\s*,\s*T\.|"
     r"\b(?:PogoreliВґc|HuskiВґc|CohadЕѕiВґc|JukiВґc|Л‡\s+Using)\b",
     re.IGNORECASE,
@@ -359,7 +377,8 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bthr\s+ee\s+different\b|"
     r"\bt\s+o\s+the\s+best\s+of\s+our\s+knowledge\b|"
     r"\bhigh\s*\)\s*w\s+ere\b|"
-    r"\bB\s+rain-computer\b",
+    r"\bB\s+rain-computer\b|"
+    r"\bBel\s+humeur\b",
     re.IGNORECASE,
 )
 AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b[1-9]Department\b")
@@ -426,7 +445,9 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"(?:\s+\(MRI\))?\s+(?:\[071\]\s+)?This\s+(?:imaging\s+)?compatible\b|"
     r"\bThey\s+organize\s+sequential\s+neuronal\s+events\s+as\s+well\s+as\s+The\s+temporal\s+characteristics\b|"
     r"\bStudies\s+Glossary[\s\S]{0,2500}\brelating\s+timing\b|"
-    r"\bThe\s+laser\s+components\s+include\s+The\s+Cartesian[\s\S]{0,1600}\b16\s+a\s+60W\s+CO2\b",
+    r"\bThe\s+laser\s+components\s+include\s+The\s+Cartesian[\s\S]{0,1600}\b16\s+a\s+60W\s+CO2\b|"
+    r"\busing-artificial-intelligence-to-help-blind-people-see-facebook\s+A\s+novel\s+system\b|"
+    r"\bClearVision\s+project:\s+www\.clearvisionproject\.org\s+In\s+summary\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -436,7 +457,7 @@ REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
     re.IGNORECASE,
 )
 SPLIT_DOT_EMAIL_RE = re.compile(
-    r"\b[A-Za-z]{2,}\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|"
+    r"\b(?-i:[a-z]{2,})\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|"
     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\s*\.\s+|\s+\.\s*)[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
@@ -488,7 +509,10 @@ BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\b16\.\s+16Novadaq\b|"
     r"\b25\s+5\s+H\.\s+Li\b|\b100\s+39\s+Khokhlov\b|\b105\s+41\s+Y\.\s+Yan\b|"
     r"\bneuroimaging\s+76\.\s+Mondok\b|\b\(2020\)\.\s+van\s+Rijn\b|"
-    r"\b281\.\s+Zhang[\s\S]{0,500}\b282\.\s+Buzs|\bGroupMorrell\s+MJ\b",
+    r"\b281\.\s+Zhang[\s\S]{0,500}\b282\.\s+Buzs|\bGroupMorrell\s+MJ\b|"
+    r"\bSuggestive\s+contours\s+for\s+conveying\s+shape\.\s+5\.\s+ACM\s+Transactions\b|"
+    r"\bTouchPen[\s\S]{0,320}\b13\.\s+Cham\b|"
+    r"\bTinne\s+Tuytelaars[\s\S]{0,320}\b36\.\s+Cham\b",
     re.IGNORECASE,
 )
 PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
@@ -496,7 +520,8 @@ PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
     r"(?:\bBecome\s+a\s+Multilingual\b|\bChArUco-based\s+3D\s+scanner\b|"
     r"\btolerable\s+impurity\s+concentrations\b)|"
     r"\bArticles\s+you\s+may\s+be\s+interested\s+in\b[\s\S]{0,700}"
-    r"\bMagnetic\s+resonance-guided\s+near-infrared\s+tomography\s+of\s+the\s+breast\b",
+    r"\bMagnetic\s+resonance-guided\s+near-infrared\s+tomography\s+of\s+the\s+breast\b|"
+    r"\bFLORE\s+Repository\s+istituzionale[\s\S]{0,1500}\bArticle\s+begins\s+on\s+next\s+page\b",
     re.IGNORECASE,
 )
 AFFILIATION_MARKER_RESIDUE_RE = re.compile(

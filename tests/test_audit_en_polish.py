@@ -1397,6 +1397,81 @@ def test_analyze_pair_reports_fulltext_batch_056_060_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_061_065_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Front matter used https://doi.org/10.1145/3623509.3633377 or "
+                    "alternative text. Current methods continued the abstract.</p>",
+                    "<p>Footnotes merged with body: using-artificial-intelligence-to-help-blind-people-see-facebook "
+                    "A novel system and ClearVision project: www.clearvisionproject.org In summary.</p>",
+                    "<p>Repository chrome: FLORE Repository istituzionale dell'Universita degli Studi di Firenze "
+                    "with metadata, policy text, and Article begins on next page.</p>",
+                    "<p>Reference URL merge: http://bit.ly/art-brera 6www.ada.gov/lodblind.htm.</p>",
+                    "<p>Lost ligatures included frst fne fgurative defned profcient beneft "
+                    "difculty difculties staf eforts confrm confrming clarifed infuenced "
+                    "fndings feld.</p>",
+                    "<p>Joined terms included KeunWhangbo easy-tolearn Shapefrom-shading "
+                    "Attributebased thistask higherthan disabilitiessometimesface artworksis "
+                    "hierarchicalsegmentation webbased needsto includesinformation "
+                    "participantssuggested overallwork guidelinesfor issimilarto easierto "
+                    "spatialcognitive wassupported blindaccessible Key-wordaware.</p>",
+                    "<p>OCR tokens included Stoimeno v., list all the they identified, "
+                    "OPRATING PRICIPLE, discription, milivolt, upto, coma separated, "
+                    "purposed work, millitres, ghraph, Authers, et nl., Electronic(Cambridge, "
+                    "If inal, Hands of!, best suites, and Computer Based Method ?.</p>",
+                    "<p>Detached accents stayed in Pakenait &#729; e&#729;, fac&#184;ade, "
+                    "Spath &#168;, The challenge would &#180; be, and SEQUIN &#180; , C.</p>",
+                    "<p>The name Bel humeur was split by OCR spacing.</p>",
+                    "<p>References shifted: Suggestive contours for conveying shape. 5. ACM "
+                    "Transactions, and TouchPen details incorrectly continued as 13. Cham.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P66", "P67", "P71", "P75", "P76", "P78", "P83", "P90", "P91"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_country_period_before_email_for_p86() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Instrumentation and Control, Pune, Maharashtra, India. "
+            "aratipravin03@gmail.com</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P86" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

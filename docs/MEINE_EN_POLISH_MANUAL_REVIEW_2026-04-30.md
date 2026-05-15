@@ -3718,3 +3718,43 @@ Report:
   `P67=3`, `P71=3`, `P78=1`, `P81=1`, `P82=1`, `P83=2`,
   `P88=1`, `P90=2`, `P92=1`, plus existing `P05=1`, `P42=1`,
   `P70=1`, `P89=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 061-065 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0104`, `meine_0105`, `meine_0107`, `meine_0109`, and
+`meine_0110`; generated HTML was not edited. Raw HTML was spot-checked around
+the recurring residues, and the local Zotero PDF map confirmed source PDFs for
+all five documents.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 061 | `meine_0104_4533bbb6f0` | `P36/P67` | Added detection for ACM DOI/front-matter merged into the abstract (`...doi... or alternative text`), footnotes swallowing contribution prose (`Facebook... A novel system`, `ClearVision... In summary`), detached-dot author names (`Pakenait ˙ e˙`), `Stoimeno v.`, and shifted Springer reference continuations (`TouchPen... 13. Cham`, `Tuytelaars... 36. Cham`). |
+| 062 | `meine_0105_94913746ed` | `P67` | Added detached accent/cedilla residues (`fac¸ade`, `Spath ¨`, `Sequin ´`, `would ´ be`), split name `Bel humeur`, and shifted reference numbering where `Suggestive contours...` is separated from `ACM Transactions...` as item 5. |
+| 063 | `meine_0107_ca7c762afc` | `P76` | Added repository wrapper/chrome detection for `FLORE Repository... Article begins on next page`, joined `Shapefrom-shading`, OCR/math text `If inal`, and title marker residue `Computer Based Method ?`. |
+| 064 | `meine_0109_9d362effa4` | false `P86` | Tightened `P86` so `India. aratipravin03@gmail.com` is not treated as a split e-mail. Added OCR coverage for `OPRATING PRICIPLE`, `discription`, `milivolt`, `upto`, `coma separated`, `purposed work`, `millitres`, `ghraph`, `Authers`, `et nl.`, and `Electronic(Cambridge`. |
+| 065 | `meine_0110_d7da0239e6` | `P66/P75/P84` | Added URL-anchor label damage (`6www.ada.gov/...`), broader lost-ligature terms (`frst`, `fne`, `fgurative`, `profcient`, `beneft`, `staf`, `confrm`, `fndings`), joined UI/accessibility terms (`Attributebased`, `thistask`, `hierarchicalsegmentation`, `participantssuggested`, `wassupported`, `Key-wordaware`), and OCR tokens such as `best suites` and `Hands of!`. |
+
+Scanner changes:
+
+- `P36` catches URL anchor labels that start with a glued footnote number such
+  as `6www...`, in addition to existing broken URL labels.
+- `P66`, `P67`, `P71`, `P76`, and `P78` were extended with focused
+  lost-ligature, joined-word, OCR-token, detached-accent, and split-name
+  residues from this batch.
+- `P75` now catches DOI/front-matter lines followed by `or ...` body prose.
+- `P83` catches the Pic2Tac footnote/body contribution merges.
+- `P90` catches the newly observed shifted reference continuations.
+- `P91` catches repository cover-page chrome before the real article body.
+- `P86` was tightened to avoid treating a normal country sentence followed by
+  an e-mail address as a split local-part.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_061_065_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P36=2`, `P66=1`,
+  `P67=4`, `P71=4`, `P75=2`, `P76=3`, `P78=1`, `P83=1`,
+  `P84=1`, `P90=2`, `P91=1`. The previous `P86` hit on
+  `meine_0109` is now suppressed as a false positive.
