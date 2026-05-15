@@ -3447,3 +3447,38 @@ Report:
 - Real batch result after scanner expansion: `P67=1`, `P71=3`,
   `P83=1`, `P87=2`, `P88=1`, plus existing `P05=1`, `P12=1`,
   `P14=1`, `P22=1`, `P61=1`, `P62=1`, `P84=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 026-030 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0047`, `meine_0048`, `meine_0052`, `meine_0054`, and
+`meine_0055`; generated HTML was not edited. `meine_0052` stayed as a clean
+poster control, while `meine_0054` was routed as an old brochure/OCR-quality
+case rather than a normal article-polish repair.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 026 | `meine_0047_78d5e1f69c` | clean | Split e-mail domain after `@` (`iskandar@ neurosurgery.wisc.edu`), OCR/reference residues (`qualify factor`, `length form ADF4351`, `deceases as the distance`, `Fudan Univerisity`, `MEME sensors`), and detached accent marks in references (`Heppner, ´ and`, `C¸ . Varel`, `Syd ¨ anheimo`, `wireless ¨ intraocular`). |
+| 027 | `meine_0048_a97baaa72b` | `P05/P33/P50/P60` | Split DOI URL (`http://dx.doi.org/10.1136/ bmjopen-2021-056234`), body/table interruptions around `reliability remains insufficiently ... researched` and `Transperineal ultrasound uroflowmetry ... compared with pressure flow studies`, intra-word spacing (`supple mental`), and duplicated/shifted bibliography numbers (`20. 20 van Tulder`, `33. 32 De Nunzio`). |
+| 028 | `meine_0052_ef1533f1d7` | clean | No new defect; poster text stayed readable with low noise. |
+| 029 | `meine_0054_49ff51e940` | clean | Old-scan OCR gate for Linhof brochure residues such as `It isl`, `aJways`, `demonstrale`, `enor· mous`, `Llnhof Master Te<:hnlka`, `Unhol Kafdan Mastel TL`, `out of locus`, `ScheimplJug`, `subjecl`, and `specificions`. |
+| 030 | `meine_0055_2603fc9fe5` | `P33/P36/P62/P67/P84` | Questionnaire/table OCR garbage (`Did tl ne IAG he elp`, `Your general ii mpressio n`, `How did you f ind using g the IAC`, `What tee chnology u may tic k`, `Origina al Color Simpl i fication`), joined terms (`allin-one`, `singlefinger`, `locationspecific`, `Computeraided`), split URL domain (`http://journals . sagepub.com`), and reference OCR residues (`Bolognia`, `63 DPhotoWorks`, `Bulato v.`). |
+
+Scanner changes:
+
+- `P36` URL/DOI coverage now catches split DOI path fragments such as
+  `dx.doi.org/10.1136/ bmjopen...` and `doi.org/10 . 1109...`.
+- `P67`, `P71`, `P76`, `P78`, `P82`, `P83`, `P87`, and `P88` were extended
+  with the focused residues above.
+- `P89`: e-mail address split after at-sign.
+- `P90`: bibliography numbering duplicated or shifted in a reference list.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_026_030_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P71=3`, `P76=1`,
+  `P78=1`, `P82=1`, `P83=1`, `P87=1`, `P88=1`, `P89=1`, `P90=1`,
+  plus existing `P05=1`, `P33=2`, `P36=1`, `P50=1`, `P60=1`,
+  `P62=1`, `P67=1`, `P84=1`.

@@ -167,6 +167,8 @@ ML_PER_SECOND_CONTEXT_RE = re.compile(r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+
 BROKEN_URL_TEXT_RE = re.compile(
     r"\b(?:hps|htps|ttps)://\S+|"
     r"\bhttps?://\s+|"
+    r"\bhttps?://(?:dx\.)?doi\.org/\d+\.\d+/\s+[A-Za-z0-9]|"
+    r"\bhttps?://doi\.org/10\s+\.\s+\d+|"
     r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*[A-Za-z._~:/?#\[\]@!$&'*+,;=%-])"
     r"[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]+|"
@@ -195,7 +197,8 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional|"
     r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
     r"UFrecorded|SUFestimated|SUFdetermined|MRsafe|MRcompatible|"
-    r"lung-tohead|feed-andsleep|readyreckoners|injuryassociated)\b|"
+    r"lung-tohead|feed-andsleep|readyreckoners|injuryassociated|"
+    r"allin-one|singlefinger|locationspecific|Computeraided)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b",
     re.IGNORECASE,
 )
@@ -226,7 +229,11 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\bdocuments\s+that\s+that\s+intensity\b|\baesthesia\b|\bMagr\s+Reson\b|"
     r"\btelsa\b|\bMata-Analysis\b|\bcorrela\s+ition\b|\bcor\s+relation\b|"
     r"\braw\s+dat\s+a\b|\bRetinal\s+Nerve\s+Fiber\s+Laver\b|"
-    r"\bAmercian\s+ophthalmological\s+society\b|\bbulbocarnosus\b",
+    r"\bAmercian\s+ophthalmological\s+society\b|\bbulbocarnosus\b|"
+    r"\bqualify\s+factor\b|\blength\s+form\s+ADF4351\b|"
+    r"\bdeceases\s+as\s+the\s+distance\b|\bUniverisity\b|\bMEME\s+sensors\b|"
+    r"\bBolognia\b|\b63\s+DPhotoWorks\b|\bBulato\s+v\.\b|"
+    r"\br=0\.9\s+(?:840|526)\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
@@ -244,7 +251,11 @@ DOI_BODY_PROSE_MERGE_RE = re.compile(
 DETACHED_ACCENT_RE = re.compile(
     r"\b[A-Za-z]{2,}[\u00a8\u00b4\u02c6\u02c7\u02dc][A-Za-z]{2,}\b|"
     r"\bOA\u02c6\s+\u02c7SModhrain\b|"
-    r"\bB[A-Za-z]+hler,\s*\u02dc\s+and\b",
+    r"\bB[A-Za-z]+hler,\s*\u02dc\s+and\b|"
+    r"\bHeppner,\s*[\u00b4\u02c6]\s+and\b|"
+    r"\bC\u00b8\s*\.\s+Varel\b|"
+    r"\bSyd\s+\u00a8\s+anheimo\b|"
+    r"\bwireless\s+\u00a8\s+intraocular\b",
     re.IGNORECASE,
 )
 TABLE_SECTION_ABSORB_RE = re.compile(
@@ -258,6 +269,7 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bincl\s+ude\b|"
     r"\bb\s+e\s+interpreted\b|"
     r"\bA\s+dd\s+itional\b|"
+    r"\bsupple\s+mental\b|"
     r"\bexpressi\s+ve\s+ness\b|"
     r"\bT\s+his\s+fact\b|"
     r"\bCNC-millin\s+g\s+m\s+achines\b|"
@@ -282,7 +294,12 @@ BODY_PAGE_HEADER_RE = re.compile(r"\b[A-Z][A-Z]+(?:\s+ET\s+AL\.)?\s*\|\s*\d{3,5}
 TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bTABLE\s+\d[\s\S]{0,1400}\bnales\s+5\s+ted\s+Q\s+a\s+rates\b|"
     r"\bQn\s+Flow\s+i\s+[^\s]{1,4}ax\s+ndexes\b|"
-    r"\bP\s+Values\s+0\.06\s+0\.00\s+4\s+\.565\b",
+    r"\bP\s+Values\s+0\.06\s+0\.00\s+4\s+\.565\b|"
+    r"\bDid\s+tl\s+ne\s+IAG\s+he\s+elp\b|"
+    r"\bYour\s+general\s+ii\s+mpressio\s+n\b|"
+    r"\bHow\s+did\s+you\s+f\s+ind\s+using\s+g\s+the\s+IAC\b|"
+    r"\bWhat\s+tee\s+chnology\s+u\s+may\s+tic\s+k\b|"
+    r"\bOrigina\s+al\s+Color\s+Simpl\s+i\s+fication\b",
     re.IGNORECASE,
 )
 FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
@@ -291,7 +308,10 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bin\s+the\s+\(hypothetic\)[\s\S]{0,1600}\b3D\s+space\b|"
     r"\bprogrammed\s+pharmacological\s+delivery\s+and\s+mul-[\s\S]{0,2000}\btimodal\s+sensing\b|"
     r"\bMRI\s+is\s+now\s+recommended\s+as\s+the\s+standard\s+of\s+care\s+for\s+term\s+infants"
-    r"[\s\S]{0,1400}\bwith\s+hypoxic\s+ischaemic\s+encephalopathy\b",
+    r"[\s\S]{0,1400}\bwith\s+hypoxic\s+ischaemic\s+encephalopathy\b|"
+    r"\breliability\s+remains\s+insufficiently[\s\S]{0,2200}\bresearched\b|"
+    r"\bTransperineal\s+ultrasound\s+uroflowmetry[\s\S]{0,2600}\bwas\b"
+    r"[\s\S]{0,2600}\bcompared\s+with\s+pressure\s+flow\s+studies\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*\d+\b", re.IGNORECASE)
@@ -304,6 +324,10 @@ SPLIT_DOT_EMAIL_RE = re.compile(
     r"\b[A-Za-z]{2,}\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
+SPLIT_AT_EMAIL_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
 OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
     r"\bLUMBAH\s+I\s+-\s+i\b|"
     r"\(\s*!I\s+G\s*:\.\s*nosis\b|"
@@ -314,11 +338,26 @@ OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
     r"@e3\)|\borolanse\b|\bI\s+Bone\s+Point\s+Sure\b|\bBvadley\b|"
     r"\bsuiprising\b|\bforiTi\b|\bstimulus\.d/T\./Sz\b|\belTicacy\b|"
     r"\bkcounl/mg\s+prolan\b|\bLndferase\b|\bdetermitied\b|"
-    r"\biiiiegfiited\b|\blummesceoce\b|\blinearmotor\s+S~pole\s+aller\b",
+    r"\biiiiegfiited\b|\blummesceoce\b|\blinearmotor\s+S~pole\s+aller\b|"
+    r"\bIt\s+isl\b|\baJways\b|\bdemonstrale\b|\benor[\u00b7\s-]+mous\b|"
+    r"\briSing\b|\bproperty\s+center\b|\bcharaCleriza[\u00b7\s-]+lion\b|"
+    r"\bLlnhof\s+Master\s+Te<:hnlka\b|\bUnhol\s+Kafdan\s+Mastel\s+TL\b|"
+    r"\bI-SlOP\b|\binli\s+nily\b|\bout\s+of\s+locus\b|\bScheimplJug\b|"
+    r"\bcompanson\s+ShOIS\b|\bparticularimagedislance\b|"
+    r"\bIndMdual\s+OUlldlngs\b|\bgelloreground\b|\bsubjecl\b|"
+    r"\bslreellevel\b|\beleminate\b|\bpocIure\b|\bsufiicient\b|"
+    r"\bmillimelers\b|\bspecificions\b|\baillinhof-supplied\b",
     re.IGNORECASE,
 )
 SPLIT_URL_DOMAIN_RE = re.compile(
-    r"\bwww\.\s+[A-Za-z]{2,}\s+[A-Za-z](?:\.[A-Za-z]{2,})+\b",
+    r"\bwww\.\s+[A-Za-z]{2,}\s+[A-Za-z](?:\.[A-Za-z]{2,})+\b|"
+    r"\bhttps?://[A-Za-z0-9-]+\s+\.\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
+    r"\b20\.\s+20\s+van\s+Tulder\b|"
+    r"\b3[34]\.\s+3[23]\s+(?:De\s+Nunzio|G(?:u|Гј)zelsoy)\b|"
+    r"\bmagnetic\s+resonance\s+82\.\s+imaging\s+volume\s+estimation\b",
     re.IGNORECASE,
 )
 BOX_UNIT_RE = re.compile(
@@ -3111,6 +3150,46 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 proposed_fix_layer="EN polish URL/domain whitespace cleanup",
                 regression_test="Split domains such as 'www. osh a.europa.eu' are reported.",
                 extra={"match": split_url_domain_match.group(0)},
+            )
+        )
+
+    split_at_email_match = SPLIT_AT_EMAIL_RE.search(plain)
+    if split_at_email_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P89",
+                cc_class="CC-01/CC-04/CC-13",
+                check="Email address is split after at-sign",
+                severity="warning",
+                block=None,
+                snippet=_snippet(plain, split_at_email_match.start(), split_at_email_match.end()),
+                stage=POLISH_STAGE,
+                hypothesis="Line wrapping or front-matter cleanup inserted whitespace between the at-sign and the email domain.",
+                proposed_fix_layer="EN polish e-mail normalization",
+                regression_test="Visible e-mails such as 'iskandar@ neurosurgery.wisc.edu' are reported as split domains.",
+                extra={"match": split_at_email_match.group(0)},
+            )
+        )
+
+    bibliography_numbering_residue_match = BIBLIOGRAPHY_NUMBERING_RESIDUE_RE.search(plain)
+    if bibliography_numbering_residue_match is not None:
+        defects.append(
+            _defect(
+                defect_id="P90",
+                cc_class="CC-02/CC-04/CC-13",
+                check="Bibliography numbering is duplicated or shifted",
+                severity="warning",
+                block=None,
+                snippet=_snippet(
+                    plain,
+                    bibliography_numbering_residue_match.start(),
+                    bibliography_numbering_residue_match.end(),
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="Reference-list line wrapping preserved a previous bibliography number as visible text before the next entry.",
+                proposed_fix_layer="EN polish reference numbering cleanup",
+                regression_test="Reference runs such as '20. 20 van Tulder' and '33. 32 De Nunzio' are reported.",
+                extra={"match": bibliography_numbering_residue_match.group(0)},
             )
         )
 

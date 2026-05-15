@@ -996,6 +996,55 @@ def test_analyze_pair_reports_fulltext_batch_021_025_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_026_030_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Contact: iskandar@ neurosurgery.wisc.edu.</p>",
+                    "<p>The sensor, with qualify factor Q, had minimal step length form ADF4351 "
+                    "and coupling factor deceases as the distance 1/R3.</p>",
+                    "<p>Fa Wang received a degree from Fudan Univerisity and worked on MEME sensors.</p>",
+                    "<p>P. Heppner, \u00b4 and D. Budgett. C\u00b8 . Varel, Syd \u00a8 anheimo, "
+                    "and a wireless \u00a8 intraocular device were listed.</p>",
+                    "<p>Conclusion says reliability remains insufficiently</p>",
+                    "<p>Strengths and limitations text is inserted here.</p>",
+                    "<p>researched. Low-to-moderate levels of evidence follow.</p>",
+                    "<p>Transperineal ultrasound uroflowmetry with a radio frequency reflection measurement to evaluate BOO was</p>",
+                    "<table>Large summary table interrupts this sentence.</table>",
+                    "<p>compared with pressure flow studies, and demonstrated a high ROC-AUC.</p>",
+                    "<p>See http://dx.doi.org/10.1136/ bmjopen-2021-056234 and http://journals . sagepub.com/doi.</p>",
+                    "<p>Online supple mental table 1A-C is cited.</p>",
+                    "<p>References include 20. 20 van Tulder and 33. 32 De Nunzio.</p>",
+                    "<p>It isl part of this old scan. Purpose was to demonstrale the enor\u00b7 mous range. "
+                    "The brochure says Llnhof Master Te&lt;:hnlka and Unhol Kafdan Mastel TL.</p>",
+                    "<div>1 2 3 4 5 6 7 8 9 10 avg. sum 1. Did tl ne IAG he elp to bet ter "
+                    "unde rstand th e paintir ng?</div>",
+                    "<p>The allin-one prototype used singlefinger gestures for locationspecific content. "
+                    "Computeraided design is referenced. Bulato v. remained split.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P67", "P71", "P76", "P78", "P82", "P83", "P87", "P88", "P89", "P90"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
