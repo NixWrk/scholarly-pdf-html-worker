@@ -68,3 +68,6 @@ class PipelineSummary:
     webdav_failed_total: int = 0
     webdav_queued_total: int = 0
     webdav_pending_total: int = 0
+    ocr_quality_failed_total: int = 0
+    reocr_queued_total: int = 0
+    reocr_pending_total: int = 0

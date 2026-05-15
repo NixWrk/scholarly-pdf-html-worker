@@ -13,6 +13,7 @@ from .html_stages import html_stage_dir_for_html, save_html_stage
 from .llm_bundle import LlmBundleResult, create_llm_bundle
 from .marker_runner import MarkerRunner
 from .models import AttachmentRecord, PipelineSummary, ResolvedAttachment, StagedFile
+from .ocr_quality import assess_ocr_quality_from_html, enqueue_reocr_candidate, load_reocr_queue
 from .output_state import detect_existing_results, normalize_source_path
 from .paths import resolve_zotero_data_dir
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
@@ -736,6 +737,9 @@ def run_pipeline(
             webdav_failed_total = 0
             webdav_queued_total = 0
             webdav_pending_total = 0
+            ocr_quality_failed_total = 0
+            reocr_queued_total = 0
+            reocr_pending_total = len(load_reocr_queue(output_dir))
             translated_html_total = 0
             translated_html_failed_total = 0
             translated_html_language_code = ""
@@ -803,6 +807,27 @@ def run_pipeline(
                             source_path=html_path,
                             details=(f"source_pdf={staged_file.source_pdf_path.name}",),
                         )
+                        ocr_decision = assess_ocr_quality_from_html(raw_html)
+                        if ocr_decision.needs_reocr:
+                            queue_result = enqueue_reocr_candidate(
+                                output_dir=output_dir,
+                                source_pdf_path=staged_file.source_pdf_path,
+                                alias_base_name=staged_file.alias_base_name,
+                                artifact_path=html_path,
+                                stage_raw_path=raw_stage.path,
+                                decision=ocr_decision,
+                            )
+                            ocr_quality_failed_total += 1
+                            if queue_result.added:
+                                reocr_queued_total += 1
+                            reocr_pending_total = queue_result.pending_total
+                            log(
+                                "OCR quality gate queued for re-OCR: "
+                                f"{queue_result.reocr_alias_base_name} "
+                                f"(score={ocr_decision.score:.3f}, "
+                                f"reasons={','.join(ocr_decision.reasons) or 'score'}, "
+                                f"pending_total={queue_result.pending_total})"
+                            )
                         inline_started_at = perf_counter()
                         result = inline_images_from_html_file(html_path)
                         html_path.write_text(result.html, encoding="utf-8")
@@ -994,6 +1019,9 @@ def run_pipeline(
                 webdav_failed_total=webdav_failed_total,
                 webdav_queued_total=webdav_queued_total,
                 webdav_pending_total=webdav_pending_total,
+                ocr_quality_failed_total=ocr_quality_failed_total,
+                reocr_queued_total=reocr_queued_total,
+                reocr_pending_total=reocr_pending_total,
             )
         finally:
             cleanup_started_at = perf_counter()

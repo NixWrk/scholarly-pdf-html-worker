@@ -67,6 +67,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"output_dir={summary.output_dir}", flush=True)
     print(f"resolved_pdfs={summary.pdfs_resolved}", flush=True)
     print(f"converted={summary.converted_total}", flush=True)
+    print(f"ocr_quality_failed={summary.ocr_quality_failed_total}", flush=True)
+    print(f"reocr_queued={summary.reocr_queued_total}", flush=True)
+    print(f"reocr_pending={summary.reocr_pending_total}", flush=True)
     print(f"failed={summary.failed_total}", flush=True)
     return 0 if summary.failed_total == 0 else 1
 

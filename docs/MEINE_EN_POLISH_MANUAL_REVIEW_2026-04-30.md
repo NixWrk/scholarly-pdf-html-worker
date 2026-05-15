@@ -3951,3 +3951,57 @@ Report:
 - Real tail result: `P01=2`, `P12=1`, `P39=1`, `P45=1`, `P47=1`, `P48=1`.
 - No code or scanner changes for this batch because both documents are outside
   the English polish scope.
+
+## Universal EN-polish closure decision - 2026-05-15
+
+Decision after the full manual/raw/polished pass: close only the defect classes
+that are safe to fix universally inside the English polish layer. Defects that
+need source-language routing, PDF/package validation, or re-OCR must stay as
+diagnostics and queue signals instead of being silently rewritten by polish.
+
+Close through `en-polish`:
+
+1. Protected zones before linkification and text cleanup: front matter,
+   affiliations, footnotes, captions, table cells, units, equations, and
+   measurement expressions must be isolated before generic URL/DOI/email
+   rewriting runs.
+2. Citation and bibliography identity preservation: references must keep stable
+   author/year/title/DOI structure, while split URLs and DOIs are repaired only
+   when the raw text gives a reliable single target.
+3. Float/table/box assembly: figure/table captions, orphaned float fragments,
+   and nearby body paragraphs can be rejoined when the pattern is local and
+   deterministic.
+4. Journal/page/repository furniture quarantine: running heads, page numbers,
+   manuscript cover chrome, repository banners, and repeated page furniture can
+   be removed or demoted when they match known structural patterns.
+5. Conservative URL/DOI/email normalisation: split anchors, detached visible URL
+   tails, DOI spacing, and email punctuation can be normalised when the original
+   target is unambiguous.
+6. Conservative English text cleanup: focused OCR/lost-ligature residues and
+   joined technical terms can be fixed only when the mapping is narrow and
+   already covered by scanner evidence.
+
+Do not close through `en-polish`:
+
+1. Source-language routing defects such as `P53`: these belong to language
+   detection and dispatch, not English polish.
+2. Missing image/package defects such as `P62`: these require artifact/package
+   validation and possibly rerun, not HTML text rewriting.
+3. PDF-aware reading-order cases such as `P24`: these should remain manual/PDF
+   validation candidates unless the local HTML pattern is deterministic.
+4. Old OCR/table garbage such as `P82`, `P87`, and broad `P71`: these should be
+   routed to OCR-quality diagnostics and re-OCR instead of being broadly
+   normalised by English polish.
+
+OCR-quality gate added to the pipeline:
+
+- The gate inspects Marker-produced raw HTML immediately after saving
+  `_z2m_stages/01.en.raw.html`.
+- If the visible text is image-only, extremely short, has many damaged OCR
+  tokens, replacement characters, or known old-scan residues, the document is
+  appended to `_reocr_pending.json`.
+- Each queued document also gets a marker file under `_reocr_pending/` with the
+  special alias suffix `_needs_reocr`, for example
+  `article_alias_needs_reocr.json`.
+- The conversion may still continue. The quality gate is a re-OCR queue signal,
+  not a conversion failure.

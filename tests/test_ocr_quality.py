@@ -1,0 +1,150 @@
+import json
+from pathlib import Path
+import shutil
+from uuid import uuid4
+
+from zoteropdf2md.export_modes import ExportMode
+from zoteropdf2md.marker_runner import RunResult
+from zoteropdf2md.ocr_quality import (
+    REOCR_QUEUE_NAME,
+    REOCR_SUFFIX,
+    assess_ocr_quality_from_html,
+    enqueue_reocr_candidate,
+    load_reocr_queue,
+)
+from zoteropdf2md.pipeline import PipelineOptions, run_pipeline
+
+
+def _make_temp_dir() -> Path:
+    path = Path(".tmp_local2") / f"test_ocr_quality_{uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_ocr_quality_allows_normal_text() -> None:
+    html = (
+        "<html><body>"
+        "<p>This article describes accessible tactile diagrams and reports "
+        "a controlled evaluation with participants, figures, references, "
+        "and reproducible methods. The extracted text is coherent and has "
+        "ordinary sentence structure across several paragraphs.</p>"
+        "<p>The results indicate that the proposed method improves navigation "
+        "without introducing obvious OCR damage.</p>"
+        "</body></html>"
+    )
+
+    decision = assess_ocr_quality_from_html(html)
+
+    assert decision.needs_reocr is False
+    assert decision.score > 0.8
+    assert decision.reasons == []
+
+
+def test_ocr_quality_flags_image_only_or_garbage_text() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="page1.png"></p><p><img src="page2.png"></p>'
+        "<p>Abstrac t Chapte r Uroflowrnetry Gra1Jimetry "
+        "The second second C TANGET STATE Service Surveyor.</p>"
+        "</body></html>"
+    )
+
+    decision = assess_ocr_quality_from_html(html)
+
+    assert decision.needs_reocr is True
+    assert "too_little_extractable_text_with_images" in decision.reasons
+    assert decision.known_ocr_hits >= 4
+
+
+def test_reocr_queue_deduplicates_and_marks_suffix() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        source_pdf = tmp_path / "paper.pdf"
+        source_pdf.write_bytes(b"%PDF-1.4\n")
+        decision = assess_ocr_quality_from_html(
+            '<html><body><p><img src="1.png"></p><p><img src="2.png"></p></body></html>'
+        )
+
+        first = enqueue_reocr_candidate(
+            output_dir=tmp_path,
+            source_pdf_path=source_pdf,
+            alias_base_name="paper",
+            artifact_path=tmp_path / "paper" / "paper.html",
+            stage_raw_path=tmp_path / "paper" / "_z2m_stages" / "01.en.raw.html",
+            decision=decision,
+        )
+        second = enqueue_reocr_candidate(
+            output_dir=tmp_path,
+            source_pdf_path=source_pdf,
+            alias_base_name="paper",
+            artifact_path=tmp_path / "paper" / "paper.html",
+            stage_raw_path=tmp_path / "paper" / "_z2m_stages" / "01.en.raw.html",
+            decision=decision,
+        )
+
+        entries = load_reocr_queue(tmp_path)
+        assert first.added is True
+        assert second.added is False
+        assert len(entries) == 1
+        assert entries[0]["reocr_alias_base_name"] == f"paper{REOCR_SUFFIX}"
+        assert (tmp_path / "_reocr_pending" / f"paper{REOCR_SUFFIX}.json").is_file()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+class _FakeHtmlRunner:
+    def run_batch(self, *, input_dir, output_dir, output_format, **_kwargs):
+        assert output_format == "html"
+        for pdf_path in sorted(Path(input_dir).glob("*.pdf")):
+            article_dir = Path(output_dir) / pdf_path.stem
+            article_dir.mkdir(parents=True, exist_ok=True)
+            (article_dir / f"{pdf_path.stem}.html").write_text(
+                "<html><body>"
+                '<p><img src="page1.png"></p><p><img src="page2.png"></p>'
+                "<p>Abstrac t Chapte r Uroflowrnetry Gra1Jimetry "
+                "The second second C TANGET STATE Service Surveyor.</p>"
+                "</body></html>",
+                encoding="utf-8",
+            )
+        return RunResult(command=["fake-marker"], exit_code=0)
+
+    def run_single(self, **_kwargs):
+        return RunResult(command=["fake-marker-single"], exit_code=1)
+
+
+def test_pipeline_queues_bad_ocr_html_for_reocr(monkeypatch) -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+        source_pdf = tmp_path / "bad_scan.pdf"
+        source_pdf.write_bytes(b"%PDF-1.4\n")
+        output_dir = tmp_path / "out"
+        logs: list[str] = []
+
+        summary = run_pipeline(
+            PipelineOptions(
+                source_pdf_paths=[str(source_pdf)],
+                output_dir=str(output_dir),
+                export_mode=ExportMode.HTML.value,
+                skip_existing=False,
+                cleanup_staging=True,
+            ),
+            _FakeHtmlRunner(),
+            logs.append,
+            lambda: False,
+        )
+
+        queue_path = output_dir / REOCR_QUEUE_NAME
+        queue = json.loads(queue_path.read_text(encoding="utf-8"))
+        entry = queue["entries"][0]
+
+        assert summary.failed_total == 0
+        assert summary.ocr_quality_failed_total == 1
+        assert summary.reocr_queued_total == 1
+        assert summary.reocr_pending_total == 1
+        assert entry["alias_base_name"] == "bad_scan"
+        assert entry["reocr_alias_base_name"] == f"bad_scan{REOCR_SUFFIX}"
+        assert (output_dir / "_reocr_pending" / f"bad_scan{REOCR_SUFFIX}.json").is_file()
+        assert any("OCR quality gate queued for re-OCR" in line for line in logs)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
