@@ -954,6 +954,13 @@ _SPLIT_VISIBLE_URL_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]{0,500}?)</a>(?P<tail>\s*[^<]{1,300})',
     re.IGNORECASE,
 )
+_SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']*[-_])(?P=quote)[^>]*)>'
+    r'(?P<body>https?://[\s\S]{0,500}?[-_])</a>'
+    r'(?:\s*</p>\s*<p(?:\s+[^>]*)?>|\s+)\s*'
+    r'(?P<tail>[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{1,300})',
+    re.IGNORECASE,
+)
 _ADJACENT_SAME_HREF_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*)>'
     r'(?P<body>[\s\S]{0,260}?)</a>\s+'
@@ -3634,6 +3641,31 @@ def _repair_split_visible_url_anchors(html: str) -> str:
     return _SPLIT_VISIBLE_URL_ANCHOR_PATTERN.sub(replace, html)
 
 
+def _repair_split_url_anchor_block_tail(html: str) -> str:
+    """Join a URL anchor split at a paragraph boundary."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = _strip_wrapping_url_quotes(match.group("href"))
+        body = _visible_text(match.group("body"))
+        if _compact_visible_url_fragment(href) != _compact_visible_url_fragment(body):
+            return match.group(0)
+
+        merged_url, trailing = _split_url_and_trailing_punct(f"{href}{match.group('tail')}")
+        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
+            return match.group(0)
+
+        attrs = re.sub(
+            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
+            lambda m: f'{m.group(1)}"{_escape_html_attr(merged_url)}"',
+            match.group("attrs"),
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
+
+    return _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN.sub(replace, html)
+
+
 def _merge_adjacent_same_href_url_anchors(html: str) -> str:
     """Merge adjacent URL/DOI anchors that point to the same href."""
 
@@ -5980,7 +6012,13 @@ def _repair_author_year_footnote_ref_links(html: str) -> str:
         left_text = _visible_text(html[max(0, match.start() - 80): match.start()])
         if re.search(r"(?:\b[A-Z][a-z][A-Za-z'’.-]{2,}\.?\s*|\bet\s+al\.?\s*)$", left_text):
             return match.group(0)
-        if re.search(r"\b(?:day|used|source|data|platforms?|input|term|efficient)\s*$", left_text, re.IGNORECASE):
+        if re.search(
+            r"(?:\b(?:CIC|CSC|impedance|capacity|day|used|source|data|platforms?|input|term|efficient)|"
+            r"\((?:CIC|CSC)\)|"
+            r"\([A-Za-z][^()]{0,180}\d{4}[a-z]?(?:;[^()]{0,180}\d{4}[a-z]?)*\))\s*$",
+            left_text,
+            re.IGNORECASE,
+        ):
             return match.group("body")
         footnote_context = re.search(
             r"\b(?:source|web|github|facebook|living|data)\b",
@@ -5988,7 +6026,7 @@ def _repair_author_year_footnote_ref_links(html: str) -> str:
             re.IGNORECASE,
         ) is not None
         if "z2m-footnote-ref" not in raw_window and not footnote_context:
-            return match.group("body")
+            return match.group(0)
         return match.group("body")
 
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
@@ -9462,11 +9500,13 @@ def polish_html_document(
     polished = _normalize_spacing_after_z2m_links(polished)
     polished = _fix_nested_autolink_in_escaped_anchor_snippets(polished)
     polished = _unescape_safe_escaped_anchor_snippets(polished)
+    polished = _repair_split_url_anchor_block_tail(polished)
     polished = _repair_split_visible_url_anchors(polished)
     polished = _repair_miswrapped_doi_anchor_labels(polished)
     polished = _merge_adjacent_same_href_url_anchors(polished)
     polished = _repair_broken_plain_url_text(polished)
     polished = _autolink_plain_urls(polished)
+    polished = _repair_split_url_anchor_block_tail(polished)
     polished = _normalize_spacing_after_url_links(polished)
     polished = _mark_wide_table_layout(polished)
     polished = _inject_utf8_charset(polished)

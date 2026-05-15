@@ -4048,3 +4048,52 @@ Regression coverage:
   repairs.
 - `tests/test_audit_en_polish.py` covers the `P05` bracket-citation
   false-positive guard.
+
+## Remaining Meine corpus validation - 2026-05-15
+
+Validated the current `en-polish` implementation against the remaining imported
+Meine mirror corpus:
+
+- Corpus root:
+  `review_runs/imported_from_zoteropdf2md_2026-05-14/html_mirror/md_output/meine_full_library_en_polish_2026-04-28_single_loop`
+- Total stage pairs found: `141`.
+- Language gate: `80` English articles were in scope for `en-polish`;
+  `61` were skipped as non-English or mixed/unknown (`57` ru, `2` de,
+  `1` mixed, `1` unknown).
+- Generated review HTML was not edited. Raw stages were copied to
+  `.tmp_local2/remaining_meine_repolish_2026-05-15` and re-polished there.
+- The temporary validation copy intentionally did not include image assets, so
+  `P20` / `missing_img` is an artificial validation artifact and was excluded
+  from the regression comparison.
+
+The first broad comparison found two real `en-polish` regressions, both now
+covered by tests:
+
+1. `meine_0039_75458d8a00`: a valid numeric citation after `bladder emptying`
+   was unwrapped in an author-year-looking document. The author-year footnote
+   repair now only unwraps explicit footnote/unit/metadata contexts and keeps
+   ordinary numeric citations linked.
+2. `meine_0090_f9583a0fd3`: a URL split across a paragraph boundary was left as
+   `www.niepce-letters-and- documents.com`. The URL repair now joins anchors
+   whose `href` and visible text end in a URL continuation marker and whose next
+   text fragment forms a valid domain.
+
+Final English-only regression comparison, excluding artificial `P20`:
+
+- No new defect IDs were introduced in any of the `80` English articles.
+- Improved article-level diagnostics:
+  `meine_0001_3944c69948` (`P81` removed),
+  `meine_0003_b9eaf6e854` (`P81` removed),
+  `meine_0047_78d5e1f69c` (`P71`, `P76`, `P89` removed),
+  `meine_0072_05920f8331` (`P86` removed),
+  `meine_0101_b335da079c` (`P66`, `P67`, `P81`, `P92` removed),
+  `meine_0129_09858ae6b9` (`P81` removed),
+  `meine_0133_b3bf023ca8` (`P66` removed).
+- Aggregate improvements:
+  `P66 11 -> 9`, `P67 54 -> 53`, `P71 63 -> 62`, `P76 15 -> 14`,
+  `P81 16 -> 12`, `P86 2 -> 1`, `P89 2 -> 1`, `P92 7 -> 6`.
+
+Conclusion: the implemented `en-polish` fixes are stable on the remaining
+English Meine corpus. The residual scanner hits remain diagnostics for known
+manual/OCR/package classes rather than candidates for broad automatic polish
+rewrites.

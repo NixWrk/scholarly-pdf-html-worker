@@ -192,6 +192,22 @@ def test_polish_html_document_repairs_split_visible_url_anchor_text() -> None:
     assert "fncir.</a> 2017.00020" not in polished
 
 
+def test_polish_html_document_repairs_split_url_anchor_across_paragraphs() -> None:
+    html = (
+        "<html><body>"
+        '<p>Online at <a href="http://www.niepce-letters-and-">'
+        "http://www.niepce-letters-and-</a></p>"
+        "<p>documents.com/book/#/906/ (Date accessed, 18 March 2017)</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    expected_url = "http://www.niepce-letters-and-documents.com/book/#/906/"
+
+    assert f'<a href="{expected_url}">{expected_url}</a> (Date accessed' in polished
+    assert "letters-and-</a></p>" not in polished
+
+
 def test_polish_html_document_merges_adjacent_same_doi_anchors() -> None:
     html = (
         "<html><body><p>Ref. "
@@ -4553,6 +4569,26 @@ def test_polish_html_document_unlinks_author_year_footnote_markers() -> None:
     assert 'href="#ref-5"' not in polished
     assert "impedance<sup>2</sup>" in polished
     assert "(Cogan 2008; Larson and Meng 2019; Merrill et al. 2005)<sup>5</sup>" in polished
+
+
+def test_polish_html_document_keeps_numeric_citations_in_mixed_author_year_docs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Voiding dysfunction is highly prevalent. UF is a widely used test for bladder emptying."
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> It is carried out on an outpatient basis.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "make this look like an author-year document.</p>"
+        "<p>Electrode sites should have low impedance"
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> for recording.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 3))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'bladder emptying.<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>' in polished
+    assert 'impedance<sup>2</sup> for recording' in polished
 
 
 def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
