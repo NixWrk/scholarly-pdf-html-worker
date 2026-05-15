@@ -1503,6 +1503,85 @@ def test_analyze_pair_reports_fulltext_batch_066_070_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_071_075_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Reference URL path split: https://www.museodelprado.es/touching- the-prado "
+                    "in the bibliography.</p>",
+                    "<p>Lost ligatures stayed as urine ow rates and white ght in the old scan.</p>",
+                    "<p>Joined residues included FromFebruary, Qmaxurgency, image processingbased, "
+                    "extrusionsurgically, inflammationat, of theonly, NeururolUrodyn2021, "
+                    "such asportraits, and iodineattacks.</p>",
+                    "<p>OCR tokens included Deptartment, fascade, basrelif, Mulitmodal, agumentation, "
+                    "Archelological, Museum of Moden Art, Deparment, Polywoks, PRAVALENCE, "
+                    "pvalue &lt; 0.05, IPelvic, hispareunia, main: 12, characteriscs, obeserved, "
+                    "stuies, miduretrhal, incotinence, resultes, intrauethral, oncontinence, "
+                    "Urologiy, OUALITY, QLO C30, istopaholohical, Continues variables, "
+                    "postvoding, Thirtyeight, electronical, oraotten, PATRATS, STLAR, throughour, "
+                    "This ing with Fig. 1, elipse, couse-quence, Dipping Robs, daguerrectype, "
+                    "sclution, iedide, Cutring, proccss, Negavives, precipated, and cunce.</p>",
+                    "<p>Spaced OCR residues included Leporin i, enj oy, sepa ration, at tached, "
+                    "free fr om ye elk, and eve ly.</p>",
+                    "<p>Affiliation glue remained as InstituteDepartment of Urology.</p>",
+                    "<p>15206777, 2021, S3, Downloaded from "
+                    "https://onlinelibrary.wiley.com/doi/10.1002/nau.24751 by Egyptian National "
+                    "Sti. Network (Enstinet). RETURN CIRCULATION DEPARTMENT.</p>",
+                    "<p>Questionnaire table OCR: MS MPTO SY columns and responses collapsed before "
+                    "W TO GET IT HO. Hyposulp Water phite of of soc la also remained.</p>",
+                    "<p>Patients with a history of lower urinary system surgery, neurological problems, "
+                    "lower urinary tract tumor, and active urinary infections were ex- Main Points: "
+                    "Uroflowmetry is an essential test for evaluating patients with LUTS. cluded, "
+                    "and a total of 83 patients were included.</p>",
+                    "<p>www.forgottenbooks.com THIS PAGE IS LOCKED TO FREE MEMBERS. Purchase full "
+                    "membership to immediately unlock this page. Over 2,000 years of human knowledge.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P66", "P67", "P71", "P78", "P79", "P81", "P82", "P83", "P91"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_flag_title_case_tooteko_as_ocr_token() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>The Tooteko project provides tactile 3D models for museum "
+            "visitors.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P71" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_country_period_before_email_for_p86() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

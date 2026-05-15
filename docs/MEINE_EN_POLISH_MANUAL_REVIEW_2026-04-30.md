@@ -3800,3 +3800,43 @@ Report:
   `P71=5`, `P78=2`, `P81=2`, `P83=2`, `P90=1`, `P93=1`,
   plus existing `P05=1`, `P13=1`, `P14=1`, `P39=1`, `P59=2`,
   `P61=2`, `P76=1`, `P77=1`, `P91=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 071-075 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0122`, `meine_0123`, `meine_0126`, `meine_0127`, and
+`meine_0128`; raw HTML was checked around each recurring residue. Generated
+HTML was not edited. The local Zotero PDF map confirmed source PDFs for all
+five.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 071 | `meine_0122_7dc83f89b2` | `P22/P59/P62/P76/P84` | Added coverage for lost ligature `urine ow`, joined `FromFebruary`, affiliation glue `InstituteDepartment`, Wiley download/license page furniture, questionnaire-table OCR collapse, and focused abstract-book OCR tokens such as `PRAVALENCE`, `OUALITY`, `QLO C30`, `miduretrhal`, `incotinence`, and `postvoding`. |
+| 072 | `meine_0123_7efa824c9f` | `P67/P71` | Added `Deptartment`, `fascade`, `basrelif`, `Mulitmodal`, `agumentation`, `Archelological`, `Museum of Moden Art`, split name `Leporin i`, and URL path split `touching- the-prado`; title-case `Tooteko` is now treated as a legitimate project name. |
+| 073 | `meine_0126_88b178ad3d` | `P67/P71/P79` | Added `Qmaxurgency`, `Deparment`, and a reading-order interruption where `were ex-` is separated from `cluded` by the `Main Points` box. |
+| 074 | `meine_0127_8197240fe4` | `P39/P61` | Added Forgotten Books chrome/paywall detection (`www.forgottenbooks.com`, `THIS PAGE IS LOCKED...`), old-scan OCR tokens (`oraotten`, `PATRATS`, `STLAR`, `daguerrectype`, `proccss`, `Negavives`), split words (`sepa ration`, `at tached`, `fr om ye elk`), old table OCR collapse, and library circulation-page furniture. |
+| 075 | `meine_0128_d0a34eaf10` | `P67/P71` | Added `enj oy`, `image processingbased`, and `Polywoks`; existing `basreliefs` and `cognitive iter` remain valid hits. |
+
+Scanner changes:
+
+- `P36` catches the observed split URL path `touching- the-prado`.
+- `P66`, `P67`, `P71`, `P78`, and `P79` were extended with focused lost
+  ligature, joined-word, OCR-token, intra-word spacing, and affiliation-glue
+  residues from this batch.
+- `P81` catches Wiley download/license text and library circulation furniture.
+- `P82` catches the abstract-book questionnaire OCR collapse and old
+  photographic-manual table OCR collapse.
+- `P83` catches the `were ex- ... Main Points ... cluded` body interruption.
+- `P91` catches Forgotten Books chrome and locked-page membership prompts.
+- The `TOOTEKO` OCR rule is now case-sensitive, avoiding a false positive on
+  the legitimate title-case `Tooteko` project name.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_071_075_fulltext_after_scan_expansion_2026-05-15.json`
+- Real batch result after scanner expansion: `P66=2`, `P67=5`,
+  `P71=5`, `P78=3`, `P79=2`, `P81=2`, `P82=2`, `P83=1`,
+  `P91=1`, plus existing `P22=1`, `P39=1`, `P59=1`, `P61=1`,
+  `P62=1`, `P76=1`, `P84=1`.

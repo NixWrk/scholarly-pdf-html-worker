@@ -177,6 +177,7 @@ BROKEN_URL_TEXT_RE = re.compile(
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*[A-Za-z._~:/?#\[\]@!$&'*+,;=%-])"
     r"[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]+|"
     r"\bhttps?://\S+\.(?:h\s+tml|xht\s+ml)\b|"
+    r"\btouching-\s+the-prado\b|"
     r"\bdoi\.org/\s+10\.",
     re.IGNORECASE,
 )
@@ -202,7 +203,8 @@ LOST_FF_WORD_RE = re.compile(
     r"difcult(?:y|ies)?|staf|efort(?:s)?|confrm(?:ed|ing)?|clarifed|"
     r"infuenced|fndings|feld|rst|ndings)\b|"
     r"\b(?:suf|insuf)\s+cient\b|\bbene\s+ts\b|\bmagnetic\s+eld\b|"
-    r"\beld\s+strength\b|\bve\s+patients\b|\bOf\s+ce\b|"
+    r"\beld\s+strength\b|\bve\s+patients\b|\bOf\s+ce\b|\burine\s+ow\b|"
+    r"\bwhite\s+ght\b|"
     r"\b(?:specifi|Specifi|signifi|Signifi|defi|Defi|diffi|Diffi|profi|Profi|"
     r"confi|Confi|benefi|Benefi|identi?fi|Identi?fi|Offi|offi|Griffi|"
     r"fl|Fl|urofl|Urofl|outfl|Outfl|refl|Refl|infl|Infl)\s+"
@@ -227,6 +229,9 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"Positionrelated|intraand|lightbeam|Videobased|handassembled|OpticalTouch|"
     r"airpolluted|vitamin-Ddeficient|watersoluble|asprepared|ecofriendly|"
     r"explorationSeamless|basreliefs|frontto-back|signalto-noise|farred|"
+    r"FromFebruary|Qmaxurgency|image\s+processingbased|"
+    r"extrusionsurgically|inflammationat|of\s+theonly|NeururolUrodyn2021|"
+    r"such\s+asportraits|iodineattacks|"
     r"timedependent|first-inhumans|backilluminated|anatomicallycompatible|"
     r"convectionenhanced|neurologicallyrelated|valvegated|mindenhancing|"
     r"andChallenges|SoftBankbacked|singleneuron|crossfrequency|"
@@ -294,7 +299,17 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\bDirectX-\s+R\b|"
     r"\b(?:MDP\s+i|ISTOR|Appel's\s+Sir\s+i|Build-in\s+sensors|"
     r"Sem\s+i\s*-\s*structured|Gen-A\s+i|Numbe\s+er|parti\s+cipants|"
-    r"nterview|Ggather|Vorkshop|ocus\s+group|ANACCESSIBLE|TOOTEKO|"
+    r"nterview|Ggather|Vorkshop|ocus\s+group|ANACCESSIBLE|(?-i:TOOTEKO)|"
+    r"Deptartment|fascade|basrelif|Mulitmodal|agumentation|"
+    r"Archelological|Museum\s+of\s+Moden\s+Art|Deparment|Polywoks|"
+    r"PRAVALENCE|pvalue\s*[<=>]|IPelvic|hispareunia|main:\s+\d|"
+    r"characteriscs|obeserved|stuies|miduretrhal|incotinence|resultes|"
+    r"intrauethral|oncontinence|Urologiy|OUALITY|QLO\s+C30|"
+    r"istopaholohical|compilated|Continues\s+variables|San\s+Gerardoo|"
+    r"catherization|preferrable|postvoding|Thirtyeight|electronical|"
+    r"oraotten|PATRATS|STLAR|throughour|This\s+ing\s+with\s+Fig\.?\s*1|"
+    r"elipse|couse-quence|Dipping\s+Robs|daguerrectype|negitive|"
+    r"sclution|iedide|Cutring|proccss|Negavives|precipated|cunce|"
     r"14\s+C-beled|Shep(?:a|ha)dex|trimetylsilyl|dihydroxyated|"
     r"defensen|Rgiht|Verebrate|millenium|Foundayion|Naturwissenschaftem|"
     r"super\s+prescription\s+of\s+H3|secondsmm-2|sequence4|FA\s+330|"
@@ -386,10 +401,11 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bBel\s+humeur\b|"
     r"\bGroenenda\s+al@|\bWilhel\s+mina\b|\bRUTHERFO\s+RD\b|"
     r"\benviron\s+ment\b|\bInter\s+national\b|\bdisconti\s+nuation\b|"
-    r"\bIta\s+ly\b",
+    r"\bIta\s+ly\b|\bLeporin\s+i\b|\benj\s+oy\b|\bsepa\s+ration\b|"
+    r"\bat\s+tached\b|\bfr\s+om\s+ye\s+elk\b|\beve\s+ly\b",
     re.IGNORECASE,
 )
-AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b[1-9]Department\b")
+AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b(?:[1-9]|Institute)Department\b")
 SUSPICIOUS_EMAIL_DOMAIN_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@unfi\.it\b",
     re.IGNORECASE,
@@ -407,6 +423,9 @@ BODY_PAGE_HEADER_RE = re.compile(
     r"\bPublished\s+on\s+20\s+July\s+2015\.\s+Downloaded\s+by\s+California\s+State\s+University\s+at\s+Fresno\b|"
     r"\bPublished\s+on\s+03\s+August\s+2015\.\s+Downloaded\s+by\s+Emory\s+University\b|"
     r"\bChemComm\s+Accepted\s+Manuscript\b|"
+    r"\b15206777,\s+2021,\s+S3,\s+Downloaded\s+from\s+https://onlinelibrary\.wiley\.com/doi/10\.1002/nau\.24751\b|"
+    r"\bEgyptian\s+National\s+Sti\.\s+Network\s+\(Enstinet\)\b|"
+    r"\bRETURN\s+CIRCULATION\s+DEPARTMENT\b|"
     r"\b\d{2,3}\s+Y\.\s+Volpe\s+et\s+al\.(?=\s|$)|"
     r"\bCheck\s+for\s+updates\b",
     re.IGNORECASE,
@@ -425,6 +444,9 @@ TABLE_GIBBERISH_FLOW_RE = re.compile(
     r"\bCleaning\s+the\s+Autographic\s+Kodak\s+Camera\s+1915-192640[\s\S]{0,600}\bHIMPY\b|"
     r"\bGrafle\s+x\s+Speed\s+Graphic[\s\S]{0,1400}\btopper\s+diago\s+silotoro\b|"
     r"\bThornton-Pickard\s+Duple\s+x\s+Ruby\s+Refle\s+x[\s\S]{0,1400}\btiems\s+strate\b|"
+    r"\bMS\s+MPTO\s+SY[\s\S]{0,900}\bW\s+TO\s+GET\s+IT\s+HO\b|"
+    r"\bHyposulp\s+Water\s+phite\s+of\s+of\s+soc\s+la\b|"
+    r"\bRain\s+or\s+distille\s+d\s+w\s+rater\b|"
     r"\bРўСѓ\s+of\s+ar\s+t\s+bei\s+ng\s+M\s+oda\s+litie\s+s[\s\S]{0,1400}"
     r"\bEv\s+alu\s+atio\s+n\b|"
     r"\benclusive\s+app\b[\s\S]{0,1200}\bCavalier\s+i\s+et\s+al\.|"
@@ -465,7 +487,10 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bwho\s+measured\s+the\s+maximum\s+flow\s+by[\s\S]{0,1800}"
     r"\brecording\s+the\s+volume\s+of\s+air\s+displaced\b|"
     r"\bFour\s+of\s+these\s+principles\s+were\s+tested[\s\S]{0,1200}"
-    r"\bUF2[\s\S]{0,1200}\bconstant\s+flow\b",
+    r"\bUF2[\s\S]{0,1200}\bconstant\s+flow\b|"
+    r"\bPatients\s+with\s+a\s+history\s+of\s+lower\s+urinary\s+system\s+surgery"
+    r"[\s\S]{0,700}\bwere\s+ex-[\s\S]{0,1200}\bMain\s+Points\b"
+    r"[\s\S]{0,1200}\bcluded,\s+and\s+a\s+total\s+of\s+83\s+patients\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -544,7 +569,11 @@ PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
     r"\btolerable\s+impurity\s+concentrations\b)|"
     r"\bArticles\s+you\s+may\s+be\s+interested\s+in\b[\s\S]{0,700}"
     r"\bMagnetic\s+resonance-guided\s+near-infrared\s+tomography\s+of\s+the\s+breast\b|"
-    r"\bFLORE\s+Repository\s+istituzionale[\s\S]{0,1500}\bArticle\s+begins\s+on\s+next\s+page\b",
+    r"\bFLORE\s+Repository\s+istituzionale[\s\S]{0,1500}\bArticle\s+begins\s+on\s+next\s+page\b|"
+    r"\bwww\.forgottenbooks\.com\b|"
+    r"\bTHIS\s+PAGE\s+IS\s+LOCKED\s+TO\s+FREE\s+MEMBERS\b|"
+    r"\bPurchase\s+full\s+membership\s+to\s+immediately\s+unlock\s+this\s+page\b|"
+    r"\bOver\s+2,000\s+years\s+of\s+human\s+knowledge\b",
     re.IGNORECASE,
 )
 AFFILIATION_MARKER_RESIDUE_RE = re.compile(
