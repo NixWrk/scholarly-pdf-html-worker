@@ -3639,3 +3639,43 @@ Report:
 - Real batch result after scanner expansion: `P67=3`, `P71=4`,
   `P76=1`, `P78=1`, `P81=2`, `P82=1`, `P83=1`, `P90=2`,
   `P92=1`, `P93=1`, plus existing `P04=2`, `P05=1`.
+
+## Five-at-a-time full-text blind-spot pass, batch 051-055 - 2026-05-15
+
+Method: same five-at-a-time full-text pass. The complete polished text was
+reviewed for `meine_0088`, `meine_0089`, `meine_0090`, `meine_0091`, and
+`meine_0096`; generated HTML was not edited. Raw HTML was spot-checked for
+the recurring residues, and the local Zotero PDF map confirmed source PDFs
+for all five documents.
+
+Articles:
+
+| # | article | previous audit | manual blind spots added to scan |
+|---|---|---|---|
+| 051 | `meine_0088_9ee61053c9` | `P39` | DOI/front-matter line swallowed the first body sentence (`http://dx.doi.org/... lines as a basis`), joined words (`basreliefs`, `frontto-back`), and a missing separator after bracketed edge notation (`[p, pj]of`). |
+| 052 | `meine_0089_be819c099a` | `P59/P67` | AIP recommendation sidebar (`Articles you may be interested in...`) remained before the real article body; author marker residue (`Eva M. Sevick-Murac aa)`), joined NIR terms (`signalto-noise`, `farred`, `timedependent`, `first-inhumans`, `backilluminated`), table note inserted into body prose (`aSignificant, p < 0.05. standards`), and shifted bibliography numbering (`16. 16Novadaq`). |
+| 053 | `meine_0090_f9583a0fd3` | `P05/P13/P22/P40/P50/P67/P71` | Large thesis/book import with TOC/list OCR residues (`Abstrac t`, `List of F igures`, `Acknow rledgements`, `Chapte r`, `Append i ces`, `Apper ndi x`, `Bibliogra phy`), figure-list merge (`left)999`), and focused body/reference OCR tokens (`fotograf ii`, `London1843`, `co verage`, `approximatley`, `chronologicall y`, `Archtecture`, `Woodsawer`). |
+| 054 | `meine_0091_38079470c9` | `P39/P61/P67` | Patent joined terms (`anatomicallycompatible`, `convectionenhanced`, `neurologicallyrelated`, `valvegated`, `mindenhancing`), MRI disclosure sentence interrupted by paragraph numbering/front matter, and search-report OCR residues (`hiah camera`, `In some [880] embodiments`, `Date o of mailing`, `Autho Authorized`, `patent family anne x`, `Marvland`). |
+| 055 | `meine_0096_44b5fb52f5` | `P67` | Imported-source watermark (`OceanofPDF.com`), joined book-note terms (`andChallenges`, `SoftBankbacked`), split title/name tokens (`Learning R ates`, `Vacla v`), and URL-internal spaces in paths/queries (`/wp content`, `/north america`, `/ports-and container-shipping`, `? id=`). |
+
+Scanner changes:
+
+- `P36` catches focused URL path/query splits observed in book notes, while
+  keeping the existing `https://domain/ 1 March` guard.
+- `P67` and `P71` were extended with the joined-word and OCR-token residues
+  above.
+- `P72` catches a table-note fragment inserted into body prose.
+- `P75` now catches visible `http://dx.doi.org/...` DOI lines merged with
+  following body prose, not only `DOI:`-prefixed variants.
+- `P83` catches the patent MRI disclosure sentence interrupted by paragraph
+  numbering/metadata.
+- `P90`, `P91`, and `P92` include the `16. 16Novadaq` bibliography residue,
+  AIP recommendation sidebar, and `Sevick-Murac aa)` author-marker residue.
+
+Report:
+
+- `.tmp_local2/analysis/pair_audit_meine_051_055_fulltext_blindspots_2026-05-15.json`
+- Real batch result after scanner expansion: `P67=5`, `P71=4`,
+  `P75=1`, `P83=1`, `P90=1`, `P91=1`, `P92=1`, plus existing
+  `P05=1`, `P13=1`, `P22=1`, `P39=2`, `P40=1`, `P50=1`, `P59=1`,
+  `P61=1`.

@@ -1291,6 +1291,60 @@ def test_analyze_pair_reports_fulltext_batch_046_050_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_fulltext_batch_051_055_blind_spots() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>The front matter ended with http://dx.doi.org/10.1016/j.gmod.2013.10.001 "
+                    "lines as a basis for further work.</p>",
+                    "<p>Broken links included https://www.iceaaonline.com/wp "
+                    "content/uploads/2015/06/report.pdf and "
+                    "https://babel.hathitrust.org/cgi/pt? id=mdp.39015006370568.</p>",
+                    "<p>The basreliefs method had frontto-back traversal, signalto-noise measures, "
+                    "farred spectra, timedependent acquisition, first-inhumans studies, and a "
+                    "backilluminated detector.</p>",
+                    "<p>A patent described anatomicallycompatible, convectionenhanced, "
+                    "neurologicallyrelated, valvegated, and mindenhancing parts.</p>",
+                    "<p>The book title was Learning R ates andChallenges, with a SoftBankbacked "
+                    "company in the note.</p>",
+                    "<p>OCR residues included Abstrac t, List of F igures, Acknow rledgements, "
+                    "Chapte r, Append i ces, Apper ndi x, Bibliogra phy, [p, pj]of, left)999, "
+                    "fotograf ii, London1843, co verage, approximatley, chronologicall y, "
+                    "Archtecture, Woodsawer, Vacla v, Date o of mailing, Autho Authorized, "
+                    "patent family anne x, hiah camera, In some [880] embodiments, Marvland, "
+                    "and OceanofPDF.com.</p>",
+                    "<p>Although qualified, in the absence of aSignificant, p &lt; 0.05. standards, "
+                    "it remains impractical.</p>",
+                    "<p>The application discloses magnetic resonance imaging (MRI) [071] This "
+                    "compatible cranial implant device.</p>",
+                    "<p>The bibliography line was 16. 16Novadaq Technologies Inc.</p>",
+                    "<p>Articles you may be interested in Magnetic resonance-guided near-infrared "
+                    "tomography of the breast.</p>",
+                    "<p>Eva M. Sevick-Murac aa) Department of Molecular Imaging.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        expected = {"P36", "P67", "P71", "P72", "P75", "P83", "P90", "P91", "P92"}
+        assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positives() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

@@ -169,6 +169,8 @@ BROKEN_URL_TEXT_RE = re.compile(
     r"\bhttps?://\s+|"
     r"\bhttps?://(?:dx\.)?doi\.org/\d+\.\d+/\s+[A-Za-z0-9]|"
     r"\bhttps?://doi\.org/10\s+\.\s+\d+|"
+    r"\bhttps?://\S+/(?:wp|news-room/north|contents/part1/ports-and|ports-and-container)\s+[A-Za-z0-9]|"
+    r"\bhttps?://\S+/cgi/pt\?\s+[A-Za-z0-9]|"
     r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*[A-Za-z._~:/?#\[\]@!$&'*+,;=%-])"
     r"[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]+|"
@@ -213,7 +215,10 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"selfcontrolled|99Tcmcolloids|nonneoadjuvant|vanderVorst|populationbased|"
     r"Positionrelated|intraand|lightbeam|Videobased|handassembled|OpticalTouch|"
     r"airpolluted|vitamin-Ddeficient|watersoluble|asprepared|ecofriendly|"
-    r"explorationSeamless)\b|"
+    r"explorationSeamless|basreliefs|frontto-back|signalto-noise|farred|"
+    r"timedependent|first-inhumans|backilluminated|anatomicallycompatible|"
+    r"convectionenhanced|neurologicallyrelated|valvegated|mindenhancing|"
+    r"andChallenges|SoftBankbacked)\b|"
     r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
@@ -275,19 +280,29 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"Ote\s+this:\s+DO|ARTI\s+CLE\s+TYPE|Accepted\s+Manuscrip|"
     r"room\s+temperation|Enzymelinked|attempeted|detecte|afrer|"
     r"tranformed|coditions|realtive|occurance|oberved|imlied|"
-    r"speices|Furhtermore|responsed|treaditional|around287\.8)\b",
+    r"speices|Furhtermore|responsed|treaditional|around287\.8|"
+    r"Abstrac\s+t|F\s+igures|Acknow\s+rledgements|Chapte\s+r|"
+    r"Append\s+i\s+ces|Apper\s+ndi\s+x|Bibliogra\s+phy|p,\s*pj\]of|"
+    r"left\)999|fotograf\s+ii|London1843|co\s+verage|approximatley|"
+    r"chronologicall\s+y|Archtecture|Woodsawer|Learning\s+R\s+ates|"
+    r"Vacla\s+v|Date\s+o\s+of\s+mailing|Autho\s+Authorized|"
+    r"patent\s+family\s+anne\s+x|hiah\s+camera|"
+    r"In\s+some\s+\[880\]\s+embodiments|Marvland|OceanofPDF\.com)\b",
     re.IGNORECASE,
 )
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
     r"Positive\s+value\s*=\s*increased\s+symptoms,\s*negative\s+value\s*=\s*"
-    r"decreased\s+symptoms\s+studies\s+to\s+evaluate\b",
+    r"decreased\s+symptoms\s+studies\s+to\s+evaluate\b|"
+    r"\bin\s+the\s+absence\s+of\s+aSignificant,\s*p\s*(?:<|&lt;)\s*0\.05\.\s+"
+    r"standards,\s+it\s+remains\b",
     re.IGNORECASE,
 )
 AUTHOR_MARKER_GLUE_RE = re.compile(r"\b[A-Z][A-Za-z-]{3,}\s+100\s+and\b")
 LATEX_MACRO_RUNAWAY_RE = re.compile(r"(?:\\@ifnextchar[\s\S]{0,80}){6,}", re.IGNORECASE)
 DOI_BODY_PROSE_MERGE_RE = re.compile(
-    r"\bDOI:\s*(?:https?://(?:dx\.)?doi\.org/)?10\.[^\s<]+"
-    r"\s+(?:the|this|we|in|as|depicted|generated)\b",
+    r"\b(?:DOI:\s*(?:https?://(?:dx\.)?doi\.org/)?10\.[^\s<]+|"
+    r"https?://(?:dx\.)?doi\.org/10\.[^\s<]+)"
+    r"\s+(?:the|this|we|in|as|depicted|generated|lines)\b",
     re.IGNORECASE,
 )
 DETACHED_ACCENT_RE = re.compile(
@@ -387,7 +402,9 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"\bmany\s+visual\s+computing\s+algorithms\s+turn[\s\S]{0,1800}"
     r"\bout\s+to\s+be\s+equally\s+well\s+suited\b|"
     r"\bsurrounding\s+environment\s+needs\s+to\s+be\s+controlled\s+care-"
-    r"[\s\S]{0,1400}\bfully,\s+because\b",
+    r"[\s\S]{0,1400}\bfully,\s+because\b|"
+    r"\bapplication\s+discloses\s+magnetic\s+resonance(?:\s+imaging)?"
+    r"(?:\s+\(MRI\))?\s+(?:\[071\]\s+)?This\s+(?:imaging\s+)?compatible\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -445,18 +462,22 @@ BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
     r"\bUrethral\s+Stricture\s+Recurrence\s+21\.\s+After\s+Anterior\s+Urethroplasty\b|"
     r"\bChallenges\s+and\s+Opportunities,\s+Jeddah\s+28\.\s+Khorsheed\b|"
     r"\bProceedings\s+of\s+the\s+2023\s+ACM\s+31\.\s+International\s+Conference\b|"
+    r"\b16\.\s+16Novadaq\b|"
     r"\b25\s+5\s+H\.\s+Li\b|\b100\s+39\s+Khokhlov\b|\b105\s+41\s+Y\.\s+Yan\b",
     re.IGNORECASE,
 )
 PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
     r"\bYou\s+may\s+also\s+like\b[\s\S]{0,700}"
     r"(?:\bBecome\s+a\s+Multilingual\b|\bChArUco-based\s+3D\s+scanner\b|"
-    r"\btolerable\s+impurity\s+concentrations\b)",
+    r"\btolerable\s+impurity\s+concentrations\b)|"
+    r"\bArticles\s+you\s+may\s+be\s+interested\s+in\b[\s\S]{0,700}"
+    r"\bMagnetic\s+resonance-guided\s+near-infrared\s+tomography\s+of\s+the\s+breast\b",
     re.IGNORECASE,
 )
 AFFILIATION_MARKER_RESIDUE_RE = re.compile(
     r"\bYary\s+Volpe1\b|\b(?:Ilbey|İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b|"
     r"\bLujain\s+Al\s+Omari1\b|"
+    r"\bEva\s+M\.\s+Sevick-Murac\s+aa\)|"
     r"\bS\.V\.\s+Krishna\s+Reddy\s+pa\s+and\s+Ahammad\s+Basha\s+Shaik\s+pb\s+a\s+Department\b|"
     r"\bMingyue\s+Xue,\s+ab\s+Mengbing\s+Zou[\s\S]{0,120}"
     r"\bZhihua\s+Zhan\s+Ab\s+and\s+Shulin\s+Zhao\s+Zhao\b",
