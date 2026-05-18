@@ -367,10 +367,6 @@ _STAT_FALSE_REF_CONTEXT_PATTERN = re.compile(
     r"range\s+from\s+about|logMAR|within\s+\d+\s+or\s+\d+\s+s)\b",
     re.IGNORECASE,
 )
-_FORMULA_SUPERSCRIPT_LEFT_CONTEXT_PATTERN = re.compile(
-    r"(?:^|[^A-Za-z])(?:x|r|p|n|df|chi|[\u03c7\u03a7])\s*(?:[=<>+\-*/\u00d7\u2264\u2265]?\s*)$",
-    re.IGNORECASE,
-)
 _TABLE_REF_PATTERN = re.compile(
     r'\b((?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?)'
     rf'\s+({_TABLE_KEY_TOKEN})([a-z])?\b(?!\s*(?:\.\s|\|))',
@@ -594,11 +590,31 @@ _FALSE_BETWEEN_RANGE_SUP_REF_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _FALSE_STAT_SUP_CITATION_PATTERN = re.compile(
-    r'(?P<base>\b(?:[Rr]|chi|Chi)\s*|(?:\u03c7|\u03a7)\s*)'
+    r'(?P<base>\b(?:[RrXxPpNn]|df|chi)\s*|(?:\u03c7|\u03a7)\s*)'
     r'<sup(?P<attrs>[^>]*)>\s*'
     r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<ref>\d+)["\'][^>]*>\s*(?P<exp>2)\s*</a>\s*'
     r'</sup>',
     re.IGNORECASE,
+)
+_CHEMICAL_ELEMENT_SYMBOLS = (
+    "Og", "Ts", "Lv", "Mc", "Fl", "Nh", "Cn", "Rg", "Ds", "Mt", "Hs", "Bh", "Sg", "Db", "Rf",
+    "Lr", "No", "Md", "Fm", "Es", "Cf", "Bk", "Cm", "Am", "Pu", "Np", "Pa", "Th", "Ac", "Ra",
+    "Fr", "Rn", "At", "Po", "Bi", "Pb", "Tl", "Hg", "Au", "Pt", "Ir", "Os", "Re", "W", "Ta",
+    "Hf", "Lu", "Yb", "Tm", "Er", "Ho", "Dy", "Tb", "Gd", "Eu", "Sm", "Pm", "Nd", "Pr", "Ce",
+    "La", "Ba", "Cs", "Xe", "I", "Te", "Sb", "Sn", "In", "Cd", "Ag", "Pd", "Rh", "Ru", "Tc",
+    "Mo", "Nb", "Zr", "Y", "Sr", "Rb", "Kr", "Br", "Se", "As", "Ge", "Ga", "Zn", "Cu", "Ni",
+    "Co", "Fe", "Mn", "Cr", "V", "Ti", "Sc", "Ca", "K", "Ar", "Cl", "S", "P", "Si", "Al",
+    "Mg", "Na", "Ne", "F", "O", "N", "C", "B", "Be", "Li", "He", "H",
+)
+_CHEMICAL_ELEMENT_ALT = "|".join(re.escape(symbol) for symbol in _CHEMICAL_ELEMENT_SYMBOLS)
+_CHEMICAL_ELEMENT_TOKEN_PATTERN = re.compile(rf"(?:{_CHEMICAL_ELEMENT_ALT})")
+_CHEMICAL_SINGLE_PREFIX_FORMULAS = {"H", "N", "O"}
+_FALSE_CHEMICAL_FORMULA_SUP_CITATION_PATTERN = re.compile(
+    rf'(?P<base>\b(?:(?:{_CHEMICAL_ELEMENT_ALT})){{1,8}})'
+    r'<sup(?P<attrs>[^>]*)>\s*'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<ref>\d{1,2})["\'][^>]*>\s*(?P<num>\d{1,2})\s*</a>\s*'
+    r'</sup>'
+    rf'(?P<suffix>(?:\s*(?:{_CHEMICAL_ELEMENT_ALT})(?![a-z]))?)',
 )
 _LINKED_BASE10_MANTISSA_BEFORE_EXP_PATTERN = re.compile(
     r'<sup>\s*<a\b[^>]*\bhref\s*=\s*["\']#ref-10["\'][^>]*>\s*10\s*</a>\s*</sup>\s*'
@@ -3523,12 +3539,34 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
 
 def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
     """Undo known false-positive citation links in decimals and figure labels."""
+    def _repair_chemical_formula_sup(match: re.Match[str]) -> str:
+        if match.group("ref") != match.group("num"):
+            return match.group(0)
+        base = match.group("base")
+        suffix = match.group("suffix") or ""
+        suffix_stripped = suffix.strip()
+        element_count = len(_CHEMICAL_ELEMENT_TOKEN_PATTERN.findall(base))
+        has_suffix_element = bool(suffix_stripped)
+        if (
+            element_count < 2
+            and not has_suffix_element
+            and base not in _CHEMICAL_SINGLE_PREFIX_FORMULAS
+        ):
+            return match.group(0)
+        if has_suffix_element:
+            return f"{base}{match.group('num')}{suffix_stripped}"
+        return f"{base}{match.group('num')}"
+
     fixed = _FALSE_DECIMAL_SUP_CITATION_PATTERN.sub(
         lambda m: f"{m.group('num')}.{m.group('frac')}",
         html,
     )
     fixed = _FALSE_FIGURE_LABEL_SUP_PATTERN.sub(
         lambda m: f"{m.group('prefix')}{m.group('num')}",
+        fixed,
+    )
+    fixed = _FALSE_CHEMICAL_FORMULA_SUP_CITATION_PATTERN.sub(
+        _repair_chemical_formula_sup,
         fixed,
     )
     fixed = _FALSE_STAT_SUP_CITATION_PATTERN.sub(
@@ -4910,8 +4948,6 @@ def _numeric_superscript_context_allows_citation(
     left_visible = _visible_text(left[-100:])
 
     if _has_non_citation_numeric_left_context(left_visible):
-        return False
-    if _FORMULA_SUPERSCRIPT_LEFT_CONTEXT_PATTERN.search(left_visible) is not None:
         return False
     if left_stripped and left_stripped[-1] in _NUMERIC_SUPERSCRIPT_DASH_CHARS:
         return False

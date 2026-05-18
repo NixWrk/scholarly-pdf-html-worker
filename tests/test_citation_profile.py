@@ -419,8 +419,8 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
         },
     )
 
-    assert "x2 test" in polished
-    assert "\u03c72 independence test" in polished
+    assert "x<sup>2</sup> test" in polished
+    assert "\u03c7<sup>2</sup> independence test" in polished
     assert 'x<sup><a href="#ref-2"' not in polished
     assert '\u03c7<sup><a href="#ref-2"' not in polished
     assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
@@ -430,6 +430,44 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
     assert 'residual).<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a></sup> Digesu' in polished
     assert 'parameter.<sup><a href="#ref-19" class="z2m-ref-link">19</a></sup> The' in polished
     assert 'PVR).<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> In' in polished
+
+
+def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None:
+    html = (
+        "<html><body>"
+        "<p>The H2O signal, CO2 signal, and TiO2 layer were compared. "
+        "There are no clear methods to prove the symptoms. 2 Published studies continued.</p>"
+        f"{_refs(2)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "unknown",
+            "confidence": "low",
+            "zotero_citations": [
+                {"page": 1, "text": "2", "refs": [2], "context": "The H2O signal"},
+                {"page": 1, "text": "2", "refs": [2], "context": "CO2 signal"},
+                {"page": 1, "text": "2", "refs": [2], "context": "TiO2 layer"},
+                {
+                    "page": 1,
+                    "text": "2",
+                    "refs": [2],
+                    "context": "methods to prove the symptoms.2Published studies",
+                },
+            ],
+        },
+    )
+
+    assert "H2O signal" in polished
+    assert "CO2 signal" in polished
+    assert "TiO2 layer" in polished
+    assert 'H<sup><a href="#ref-2"' not in polished
+    assert 'CO<sup><a href="#ref-2"' not in polished
+    assert 'TiO<sup><a href="#ref-2"' not in polished
+    assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
 
 
 def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> None:
