@@ -2994,6 +2994,20 @@ def test_polish_html_document_unwraps_merken_dimension_prose_math() -> None:
     assert r"\(x_i = y_i + 1\)" in polished
 
 
+def test_polish_html_document_unwraps_dimension_tex_with_cm_squared() -> None:
+    html = (
+        "<html><body>"
+        r"<p>The device illuminates a maximum field of \(18.5 \times 13.5 \text{ cm}^2\) "
+        "and records a 1024 × 768 image.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert r"\(18.5" not in polished
+    assert '18.5 × 13.5 cm<sup class="z2m-unit-exp">2</sup>' in polished
+
+
 def test_polish_html_document_unwraps_dimension_tex_in_table_cells() -> None:
     html = (
         "<html><body>"

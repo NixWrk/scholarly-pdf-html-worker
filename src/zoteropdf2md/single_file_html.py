@@ -3219,7 +3219,11 @@ def _looks_inline_tex_dimension_prose(body: str) -> bool:
         return False
     if re.search(r"[_=]", visible):
         return False
-    if "^" in body and not re.search(r"(?:\\mu|µ|μ|um|Вµ|Ој|Р’Вµ|РћС)m?\s*\^", body, re.IGNORECASE):
+    if "^" in body and not re.search(
+        r"(?:(?:\\mu|µ|μ|um|Вµ|Ој|Р’Вµ|РћС)m?|\\text\{\s*(?:m|mm|cm|nm|um|µm|μm)\s*\}|\\mathrm\{\s*(?:m|mm|cm|nm|um|µm|μm)\s*\}|\b(?:m|mm|cm|nm|um|µm|μm)\b)\s*\^",
+        body,
+        re.IGNORECASE,
+    ):
         return False
     if not re.search(r"(?:\\mu|µm|μm|um|Вµm|Ојm|Р’Вµm|РћСm|\bmm\b|\bcm\b|\bch\b|\\times|×|x\s*\d|\bto\b)", body + " " + visible, re.IGNORECASE):
         return False
@@ -3266,6 +3270,12 @@ def _normalize_inline_tex_dimension_body(body: str) -> str:
     text = re.sub(
         r"\b(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>u|\u00b5|\u03bc|Вµ|Ој|Р’Вµ|РћС)m\s*\^?\s*2\b",
         lambda m: f"{m.group('value')} \u00b5m<sup class=\"z2m-unit-exp\">2</sup>",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"(?<![A-Za-z])(?P<unit>µm|μm|um|mm|cm|nm|m)\s*\^\{?\s*(?P<exp>[123])\s*\}?",
+        lambda m: f"{m.group('unit')}<sup class=\"z2m-unit-exp\">{m.group('exp')}</sup>",
         text,
         flags=re.IGNORECASE,
     )
