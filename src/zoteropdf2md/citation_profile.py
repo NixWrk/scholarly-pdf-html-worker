@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -51,6 +52,14 @@ class PdfReferenceStart:
 
 
 @dataclass(frozen=True)
+class ZoteroOverlayCitation:
+    page: int
+    text: str
+    refs: list[int] = field(default_factory=list)
+    context: str = ""
+
+
+@dataclass(frozen=True)
 class CitationProfile:
     source_pdf_path: str
     status: str
@@ -70,6 +79,8 @@ class CitationProfile:
     samples: list[PdfLinkSample] = field(default_factory=list)
     annotations: list[PdfLinkAnnotation] = field(default_factory=list)
     reference_starts: list[PdfReferenceStart] = field(default_factory=list)
+    zotero_citation_count: int = 0
+    zotero_citations: list[ZoteroOverlayCitation] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -101,6 +112,196 @@ def infer_citation_style_from_text(
     if bracket_count >= 5 and bracket_count > paren_count:
         return "bracket_numeric", "medium", paren_count, bracket_count
     return "unknown", "low", paren_count, bracket_count
+
+
+def _zotero_text_from_chars(chars: Any) -> str:
+    text: list[str] = []
+    if not isinstance(chars, list):
+        return ""
+    for char in chars:
+        if isinstance(char, dict):
+            text.append(str(char.get("c") or ""))
+        else:
+            text.append(str(getattr(char, "c", "") or ""))
+    return "".join(text)
+
+
+def _zotero_citation_refs(value: Any) -> list[int]:
+    refs: list[int] = []
+    if not isinstance(value, list):
+        return refs
+    for item in value:
+        raw: Any
+        if isinstance(item, dict):
+            raw = item.get("index")
+        else:
+            raw = getattr(item, "index", None)
+        try:
+            ref = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if ref > 0 and ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def _zotero_overlay_context(overlay: dict[str, Any], page: dict[str, Any]) -> str:
+    chars = page.get("chars")
+    word = overlay.get("word")
+    if not isinstance(chars, list) or not isinstance(word, list) or not word:
+        return ""
+    first = word[0]
+    if not isinstance(first, dict):
+        return ""
+    try:
+        offset = int(first.get("offset"))
+    except (TypeError, ValueError):
+        return ""
+    start = max(0, offset - 80)
+    end = min(len(chars), offset + len(word) + 80)
+    return re.sub(r"\s+", " ", _zotero_text_from_chars(chars[start:end])).strip()
+
+
+def _zotero_citations_from_summary(data: dict[str, Any]) -> list[ZoteroOverlayCitation]:
+    citations: list[ZoteroOverlayCitation] = []
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        return citations
+    raw_citations = summary.get("citations")
+    if not isinstance(raw_citations, list):
+        return citations
+    for item in raw_citations:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        refs = _zotero_citation_refs(item.get("references"))
+        if not text or not refs:
+            continue
+        try:
+            page = int(item.get("pageIndex")) + 1
+        except (TypeError, ValueError):
+            page = 0
+        citations.append(
+            ZoteroOverlayCitation(
+                page=page,
+                text=text,
+                refs=refs,
+                context=str(item.get("context") or ""),
+            )
+        )
+    return citations
+
+
+def _zotero_citations_from_processed_data(data: dict[str, Any]) -> list[ZoteroOverlayCitation]:
+    processed = data.get("processedData")
+    if not isinstance(processed, dict):
+        return []
+    pages = processed.get("pages")
+    if not isinstance(pages, dict):
+        return []
+
+    citations: list[ZoteroOverlayCitation] = []
+    for page_key, page in pages.items():
+        if not isinstance(page, dict):
+            continue
+        try:
+            page_number = int(page_key) + 1
+        except ValueError:
+            page_number = 0
+        overlays = page.get("overlays")
+        if not isinstance(overlays, list):
+            continue
+        for overlay in overlays:
+            if not isinstance(overlay, dict) or overlay.get("type") != "citation":
+                continue
+            text = _zotero_text_from_chars(overlay.get("word")).strip()
+            refs = _zotero_citation_refs(overlay.get("references"))
+            if not text or not refs:
+                continue
+            citations.append(
+                ZoteroOverlayCitation(
+                    page=page_number,
+                    text=text,
+                    refs=refs,
+                    context=_zotero_overlay_context(overlay, page),
+                )
+            )
+    return citations
+
+
+def load_zotero_overlay_citations(overlay_json_path: str | Path) -> list[ZoteroOverlayCitation]:
+    """Load citation overlays exported by the temporary Zotero/pdf.js probe."""
+    path = Path(overlay_json_path).expanduser().resolve(strict=False)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return []
+    citations = _zotero_citations_from_summary(data)
+    if citations:
+        return citations
+    return _zotero_citations_from_processed_data(data)
+
+
+_ZOTERO_NUMERIC_CITATION_TEXT_RE = re.compile(
+    r"^\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*$"
+)
+
+
+def _numeric_zotero_citation_count(citations: list[ZoteroOverlayCitation]) -> int:
+    count = 0
+    for citation in citations:
+        if citation.refs and _ZOTERO_NUMERIC_CITATION_TEXT_RE.match(citation.text):
+            count += 1
+    return count
+
+
+def merge_citation_profile_with_zotero_overlays(
+    profile: CitationProfile | dict[str, Any],
+    overlay_json_path: str | Path,
+    *,
+    sample_limit: int = 256,
+) -> CitationProfile | dict[str, Any]:
+    """Attach Zotero/pdf.js computed citation overlays to an existing profile."""
+    try:
+        citations = load_zotero_overlay_citations(overlay_json_path)
+        errors: list[str] = []
+    except Exception as exc:
+        citations = []
+        errors = [f"Zotero overlay load failed: {exc}"]
+
+    numeric_count = _numeric_zotero_citation_count(citations)
+    limited_citations = citations[:sample_limit]
+
+    def resolved_style(style: str, confidence: str) -> tuple[str, str]:
+        if numeric_count >= 5 and not (style == "paren_numeric" and confidence == "high"):
+            return "superscript_numeric", "high"
+        return style, confidence
+
+    if isinstance(profile, dict):
+        updated = dict(profile)
+        existing_errors = updated.get("errors")
+        merged_errors = list(existing_errors) if isinstance(existing_errors, list) else []
+        merged_errors.extend(errors)
+        style, confidence = resolved_style(
+            str(updated.get("style") or "unknown"),
+            str(updated.get("confidence") or "low"),
+        )
+        updated["style"] = style
+        updated["confidence"] = confidence
+        updated["zotero_citation_count"] = len(citations)
+        updated["zotero_citations"] = [asdict(citation) for citation in limited_citations]
+        if merged_errors:
+            updated["errors"] = merged_errors
+        return updated
+
+    style, confidence = resolved_style(profile.style, profile.confidence)
+    return replace(
+        profile,
+        style=style,
+        confidence=confidence,
+        zotero_citation_count=len(citations),
+        zotero_citations=limited_citations,
+        errors=[*profile.errors, *errors],
+    )
 
 
 def _dest_prefix_counts(dests: list[str]) -> dict[str, int]:
@@ -279,7 +480,12 @@ def _superscript_reference_hint_count(annotations: list[PdfLinkAnnotation]) -> i
     return count
 
 
-def build_citation_profile_from_pdf(pdf_path: str | Path, *, sample_limit: int = 32) -> CitationProfile:
+def build_citation_profile_from_pdf(
+    pdf_path: str | Path,
+    *,
+    sample_limit: int = 32,
+    zotero_overlay_path: str | Path | None = None,
+) -> CitationProfile:
     path = Path(pdf_path).expanduser().resolve(strict=False)
     if not path.is_file():
         return CitationProfile(
@@ -428,7 +634,7 @@ def build_citation_profile_from_pdf(pdf_path: str | Path, *, sample_limit: int =
         superscript_hint_count=_superscript_reference_hint_count(annotations),
     )
 
-    return CitationProfile(
+    profile = CitationProfile(
         source_pdf_path=str(path),
         status="ok",
         style=style,
@@ -449,3 +655,8 @@ def build_citation_profile_from_pdf(pdf_path: str | Path, *, sample_limit: int =
         reference_starts=reference_starts,
         errors=errors,
     )
+    if zotero_overlay_path is not None:
+        merged = merge_citation_profile_with_zotero_overlays(profile, zotero_overlay_path)
+        if isinstance(merged, CitationProfile):
+            return merged
+    return profile

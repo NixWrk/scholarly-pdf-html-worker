@@ -24,7 +24,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.citation_profile import CitationProfile, build_citation_profile_from_pdf  # noqa: E402
+from zoteropdf2md.citation_profile import (  # noqa: E402
+    CitationProfile,
+    build_citation_profile_from_pdf,
+    merge_citation_profile_with_zotero_overlays,
+)
 from zoteropdf2md.single_file_html import polish_html_document  # noqa: E402
 
 
@@ -78,10 +82,15 @@ def _load_or_build_profile(
     profile_path: Path,
     *,
     refresh: bool,
+    zotero_overlay_path: Path | None = None,
 ) -> CitationProfile | dict[str, object]:
     if profile_path.is_file() and not refresh:
-        return json.loads(profile_path.read_text(encoding="utf-8"))
-    profile = build_citation_profile_from_pdf(pdf_path)
+        profile_data = json.loads(profile_path.read_text(encoding="utf-8"))
+        if zotero_overlay_path is not None and not profile_data.get("zotero_citations"):
+            profile_data = merge_citation_profile_with_zotero_overlays(profile_data, zotero_overlay_path)
+            profile_path.write_text(json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return profile_data
+    profile = build_citation_profile_from_pdf(pdf_path, zotero_overlay_path=zotero_overlay_path)
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(
         json.dumps(profile.to_json_dict(), ensure_ascii=False, indent=2) + "\n",
@@ -96,12 +105,40 @@ def _profile_attr(profile: CitationProfile | dict[str, object], key: str, defaul
     return str(getattr(profile, key, default) or default)
 
 
+def _find_zotero_overlay_path(
+    zotero_overlay_dir: Path | None,
+    pdf_path: str,
+    suffix: str,
+) -> Path | None:
+    if zotero_overlay_dir is None:
+        return None
+    overlay_dir = zotero_overlay_dir.expanduser().resolve(strict=False)
+    if not overlay_dir.is_dir():
+        return None
+
+    pdf_name = Path(pdf_path).name
+    candidates = [
+        overlay_dir / f"{Path(pdf_name).stem}.overlays.json",
+        overlay_dir / f"{suffix}.overlays.json",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    matches = sorted(overlay_dir.glob(f"*{suffix}*.overlays.json"), key=str)
+    if matches:
+        return matches[0]
+    matches = sorted(overlay_dir.glob(f"*{Path(pdf_name).stem[:48]}*.overlays.json"), key=str)
+    return matches[0] if matches else None
+
+
 def run_lab(
     source_root: Path,
     out_dir: Path,
     *,
     refresh_raw_cache: bool = False,
     refresh_profiles: bool = False,
+    zotero_overlay_dir: Path | None = None,
     suffixes: set[str] | None = None,
 ) -> dict[str, object]:
     source_root = source_root.expanduser().resolve(strict=False)
@@ -129,7 +166,13 @@ def run_lab(
         profile_path = profile_dir / f"{suffix}.citation_profile.json"
         profile: CitationProfile | dict[str, object]
         if source_pdf_path:
-            profile = _load_or_build_profile(source_pdf_path, profile_path, refresh=refresh_profiles)
+            zotero_overlay_path = _find_zotero_overlay_path(zotero_overlay_dir, source_pdf_path, suffix)
+            profile = _load_or_build_profile(
+                source_pdf_path,
+                profile_path,
+                refresh=refresh_profiles,
+                zotero_overlay_path=zotero_overlay_path,
+            )
         else:
             profile = {
                 "source_pdf_path": "",
@@ -190,6 +233,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--refresh-raw-cache", action="store_true")
     parser.add_argument("--refresh-profiles", action="store_true")
     parser.add_argument(
+        "--zotero-overlay-dir",
+        type=Path,
+        help="Optional directory with Zotero/pdf.js *.overlays.json files.",
+    )
+    parser.add_argument(
         "--suffix",
         action="append",
         help="Optional 8-char article suffix to process. Repeat for multiple articles.",
@@ -205,6 +253,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         args.out_dir,
         refresh_raw_cache=args.refresh_raw_cache,
         refresh_profiles=args.refresh_profiles,
+        zotero_overlay_dir=args.zotero_overlay_dir,
         suffixes=suffixes,
     )
     print(

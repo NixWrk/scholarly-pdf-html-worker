@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from zoteropdf2md.citation_profile import infer_citation_style_from_text
+import json
+from pathlib import Path
+
+from zoteropdf2md.citation_profile import (
+    infer_citation_style_from_text,
+    load_zotero_overlay_citations,
+    merge_citation_profile_with_zotero_overlays,
+)
 from zoteropdf2md.single_file_html import polish_html_document
 
 
@@ -44,6 +51,43 @@ def test_infer_citation_style_detects_flattened_superscript_numeric_pdf_text() -
     assert confidence == "high"
     assert paren_count == 0
     assert bracket_count == 0
+
+
+def test_load_zotero_overlay_citations_reads_probe_summary() -> None:
+    overlay_path = Path(".tmp_local2/test_zotero_overlay_probe_summary.overlays.json")
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        overlay_path.write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "citations": [
+                            {
+                                "pageIndex": 0,
+                                "text": "3-5",
+                                "context": "pretreatment UDS.3-5Recently",
+                                "references": [{"index": 3}, {"index": 4}, {"index": 5}],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        citations = load_zotero_overlay_citations(overlay_path)
+        merged = merge_citation_profile_with_zotero_overlays(
+            {"style": "unknown", "confidence": "low"},
+            overlay_path,
+        )
+    finally:
+        overlay_path.unlink(missing_ok=True)
+
+    assert len(citations) == 1
+    assert citations[0].text == "3-5"
+    assert citations[0].refs == [3, 4, 5]
+    assert merged["zotero_citation_count"] == 1
+    assert merged["zotero_citations"][0]["context"] == "pretreatment UDS.3-5Recently"
 
 
 def test_parenthetical_numeric_profile_retargers_page_anchor_citations_without_sup_false_positive() -> None:
@@ -303,6 +347,86 @@ def test_flattened_superscript_numeric_document_links_groups_without_line_number
     assert "QDs 30 and" in polished
     assert '10<sup class="z2m-unit-exp">-17</sup>' in polished
     assert 'nm<sup class="z2m-unit-exp">4</sup>' in polished
+
+
+def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_only() -> None:
+    html = (
+        "<html><body>"
+        "<p>The x2 test was used before the clinical text. "
+        "There are no clear methods to prove the symptoms. 2 Published studies continued. "
+        "Treatment was not correlated with pretreatment UDS.3-5 Recently, interest increased. "
+        "C-reactive protein.6-10 Genetic association was investigated. "
+        "Haylen et al.12 created the Liverpool nomograms. "
+        "volume voided plus residual). 14,15 Digesu et al. found another pattern. "
+        "No clear parameter. 19 The report continued. "
+        "The last marker was PVR). 24 In our study it mattered.</p>"
+        f"{_refs(24)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "unknown",
+            "confidence": "low",
+            "zotero_citations": [
+                {"page": 2, "text": "2", "refs": [2], "context": "parity and x2test was used"},
+                {
+                    "page": 1,
+                    "text": "2",
+                    "refs": [2],
+                    "context": "methods to prove the symptoms.2Published studies",
+                },
+                {
+                    "page": 1,
+                    "text": "3-5",
+                    "refs": [3, 4, 5],
+                    "context": "pretreatment UDS.3-5Recently, interest",
+                },
+                {
+                    "page": 1,
+                    "text": "6-10",
+                    "refs": [6, 7, 8, 9, 10],
+                    "context": "C-reactive protein.6-10Genetic association",
+                },
+                {
+                    "page": 4,
+                    "text": "12",
+                    "refs": [12],
+                    "context": "Haylen et al.12created the Liverpool",
+                },
+                {
+                    "page": 4,
+                    "text": "14,15",
+                    "refs": [14, 15],
+                    "context": "voided plus residual).14,15Digesu et al",
+                },
+                {
+                    "page": 4,
+                    "text": "19",
+                    "refs": [19],
+                    "context": "No clear parameter.19The report continued",
+                },
+                {
+                    "page": 4,
+                    "text": "24",
+                    "refs": [24],
+                    "context": "last marker was PVR).24In our study",
+                },
+            ],
+        },
+    )
+
+    assert "x2 test was used" in polished
+    assert 'x<sup><a href="#ref-2"' not in polished
+    assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
+    assert 'UDS.<sup><a href="#ref-3" class="z2m-ref-link">3</a>-<a href="#ref-5" class="z2m-ref-link">5</a></sup> Recently' in polished
+    assert 'protein.<sup><a href="#ref-6" class="z2m-ref-link">6</a>-<a href="#ref-10" class="z2m-ref-link">10</a></sup> Genetic' in polished
+    assert 'al.<sup><a href="#ref-12" class="z2m-ref-link">12</a></sup> created' in polished
+    assert 'residual).<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a></sup> Digesu' in polished
+    assert 'parameter.<sup><a href="#ref-19" class="z2m-ref-link">19</a></sup> The' in polished
+    assert 'PVR).<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> In' in polished
 
 
 def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> None:

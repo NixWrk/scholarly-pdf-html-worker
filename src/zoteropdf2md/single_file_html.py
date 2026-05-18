@@ -4951,6 +4951,191 @@ def _link_pdf_annotation_plain_superscript_citations(
     return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
 
 
+_ZOTERO_OVERLAY_NUMERIC_CITATION_TEXT_RE = re.compile(
+    r"^\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*$"
+)
+_ZOTERO_OVERLAY_NUMERIC_TOKEN_RE = re.compile(r"\d{1,3}|[,;]|\u2013|\u2014|-")
+
+
+def _zotero_overlay_citation_refs(item: Any, ref_index: int) -> list[int]:
+    raw_refs = _profile_item_value(item, "refs", None)
+    if raw_refs is None:
+        raw_refs = _profile_item_value(item, "references", None)
+    refs: list[int] = []
+    if not isinstance(raw_refs, list):
+        return refs
+    for raw in raw_refs:
+        value = raw.get("index") if isinstance(raw, dict) else raw
+        try:
+            ref = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= ref <= ref_index and ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def _zotero_overlay_citation_hints(text: str, context: str) -> list[tuple[str, str]]:
+    compact_text = _compact_pdf_annotation_context(text)
+    compact_context = _compact_pdf_annotation_context(context)
+    if not compact_text or not compact_context:
+        return []
+    hints: list[tuple[str, str]] = []
+    start = 0
+    while True:
+        index = compact_context.find(compact_text, start)
+        if index < 0:
+            break
+        left_hint = compact_context[:index][-18:]
+        right_hint = compact_context[index + len(compact_text):][:18]
+        if left_hint or right_hint:
+            hints.append((left_hint, right_hint))
+        start = index + 1
+    return hints
+
+
+def _zotero_numeric_citation_pattern(text: str) -> re.Pattern[str] | None:
+    normalized = _normalize_pdf_annotation_context(text).strip()
+    if not _ZOTERO_OVERLAY_NUMERIC_CITATION_TEXT_RE.fullmatch(normalized):
+        return None
+    tokens = _ZOTERO_OVERLAY_NUMERIC_TOKEN_RE.findall(normalized)
+    if not tokens or not re.fullmatch(r"\d{1,3}", tokens[0] or ""):
+        return None
+    parts: list[str] = []
+    expect_number = True
+    for token in tokens:
+        if re.fullmatch(r"\d{1,3}", token):
+            if not expect_number:
+                return None
+            if len(token) > 1 and token.startswith("0"):
+                return None
+            parts.append(re.escape(token))
+            expect_number = False
+        else:
+            if expect_number:
+                return None
+            if token in {",", ";"}:
+                parts.append(r"\s*[,;]\s*")
+            else:
+                parts.append(r"\s*(?:-|\u2013|\u2014)\s*")
+            expect_number = True
+    if expect_number:
+        return None
+    return re.compile(rf"(?P<gap>\s*)(?P<body>{''.join(parts)})(?!\d)")
+
+
+def _zotero_overlay_numeric_citation_entries(
+    citation_profile: Any | None,
+    ref_index: int,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for item in _citation_profile_items(citation_profile, "zotero_citations"):
+        text = str(_profile_item_value(item, "text", "") or "")
+        refs = _zotero_overlay_citation_refs(item, ref_index)
+        if not text or not refs:
+            continue
+        pattern = _zotero_numeric_citation_pattern(text)
+        if pattern is None:
+            continue
+        hints = _zotero_overlay_citation_hints(text, str(_profile_item_value(item, "context", "") or ""))
+        if not hints:
+            continue
+        entries.append({"text": text, "refs": refs, "pattern": pattern, "hints": hints})
+    return entries
+
+
+def _has_zotero_overlay_numeric_citations(citation_profile: Any | None, ref_index: int) -> bool:
+    return bool(_zotero_overlay_numeric_citation_entries(citation_profile, ref_index))
+
+
+def _zotero_overlay_left_context_allows_superscript(left: str) -> bool:
+    stripped = left.rstrip()
+    if not stripped:
+        return False
+    last = stripped[-1]
+    if last.isalnum() or last in {"_", "\u03c7", "\u03a7"}:
+        return False
+    return True
+
+
+def _link_zotero_overlay_numeric_citations_in_safe_blocks(
+    html: str,
+    citation_profile: Any | None,
+    ref_index: int,
+) -> str:
+    entries = _zotero_overlay_numeric_citation_entries(citation_profile, ref_index)
+    if not entries:
+        return html
+    remaining = {index: 1 for index in range(len(entries))}
+
+    def replace_text(part: str) -> str:
+        current = part
+        for index, entry in enumerate(entries):
+            if remaining.get(index, 0) <= 0:
+                continue
+            pattern: re.Pattern[str] = entry["pattern"]
+
+            def replace(match: re.Match[str], *, entry_index: int = index, entry_data: dict[str, Any] = entry) -> str:
+                if remaining.get(entry_index, 0) <= 0:
+                    return match.group(0)
+                body = match.group("body")
+                linked = _link_numeric_superscript_body(body, ref_index)
+                if linked is None:
+                    return match.group(0)
+
+                left = match.string[: match.start("body")]
+                right = match.string[match.end("body"):]
+                if not _zotero_overlay_left_context_allows_superscript(left):
+                    return match.group(0)
+                if right.lstrip().startswith("%"):
+                    return match.group(0)
+                if not _pdf_annotation_superscript_context_matches(left, right, entry_data["hints"]):
+                    return match.group(0)
+
+                remaining[entry_index] = remaining.get(entry_index, 0) - 1
+                gap = match.group("gap") or ""
+                prefix = "" if gap and left.rstrip() else gap
+                return f"{prefix}<sup>{linked}</sup>"
+
+            current = pattern.sub(replace, current)
+        return current
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        parts = _TAG_SPLIT_PATTERN.split(raw)
+        out: list[str] = []
+        skip_stack: list[str] = []
+        inline_skip_stack: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                _update_citation_skip_stack(part, skip_stack)
+                close_match = _CLOSE_TAG_PATTERN.match(part.strip())
+                if close_match is not None and inline_skip_stack:
+                    tag_name = close_match.group(1).lower()
+                    for idx in range(len(inline_skip_stack) - 1, -1, -1):
+                        if inline_skip_stack[idx] == tag_name:
+                            del inline_skip_stack[idx]
+                            break
+                else:
+                    open_match = _OPEN_TAG_PATTERN.match(part.strip())
+                    if (
+                        open_match is not None
+                        and open_match.group(1).lower() in {"a", "sup"}
+                        and not part.rstrip().endswith("/>")
+                    ):
+                        inline_skip_stack.append(open_match.group(1).lower())
+                out.append(part)
+                continue
+            out.append(part if skip_stack or inline_skip_stack else replace_text(part))
+        return "".join(out)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
 _PLAIN_SUPERSCRIPT_NUMERIC_CITATION_GROUP_PATTERN = re.compile(
     r"(?P<punct>[.!?])\s+"
     r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){1,12})"
@@ -4981,10 +5166,14 @@ def _looks_like_flattened_superscript_numeric_document(html: str, ref_index: int
 
 
 def _link_numeric_superscript_body(body: str, ref_index: int) -> str | None:
-    numbers = [int(value) for value in re.findall(r"\d{1,3}", _visible_text(body))]
+    visible = _visible_text(body)
+    tokens = re.findall(r"\d{1,3}", visible)
+    if any(len(value) > 1 and value.startswith("0") for value in tokens):
+        return None
+    numbers = [int(value) for value in tokens]
     if not numbers or any(number < 1 or number > ref_index for number in numbers):
         return None
-    if not re.fullmatch(r"\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*", _visible_text(body)):
+    if not re.fullmatch(r"\s*\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12}\s*", visible):
         return None
 
     def link_number(match: re.Match[str]) -> str:
@@ -5193,9 +5382,14 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
         and not profile_has_reference_annotations
         and _looks_like_flattened_superscript_numeric_document(before_references, ref_index)
     )
+    profile_has_zotero_overlay_citations = (
+        not profile_is_paren_numeric
+        and _has_zotero_overlay_numeric_citations(citation_profile, ref_index)
+    )
     profile_is_superscript_numeric = (
         _citation_profile_is_high_confidence_superscript_numeric(citation_profile)
         or profile_is_flattened_superscript_numeric
+        or profile_has_zotero_overlay_citations
     )
 
     page_to_ref = _reference_page_anchor_map(references_with_ids)
@@ -5226,6 +5420,11 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             ref_index,
         )
         before_references = _link_pdf_annotation_plain_superscript_citations(
+            before_references,
+            citation_profile,
+            ref_index,
+        )
+        before_references = _link_zotero_overlay_numeric_citations_in_safe_blocks(
             before_references,
             citation_profile,
             ref_index,
