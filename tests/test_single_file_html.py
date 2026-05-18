@@ -2307,6 +2307,39 @@ def test_polish_html_document_converts_inline_math_to_tex_delimiters() -> None:
     assert "<math" not in polished
 
 
+def test_polish_html_document_repairs_marker_inline_math_artifacts() -> None:
+    html = (
+        "<html><body>"
+        r'<p>Cells were added in the range of 0.2- <math display="inline">_{75}</math> '
+        "10 \u03bcM and incubated for 24 h. The relative cell viability "
+        r'(mean <math display="inline">\%\pm</math> SD) was measured with '
+        r'<math display="inline">\geq</math> 99.9% purity.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert r"_{75}" not in polished
+    assert r"\%\pm" not in polished
+    assert "0.2-10 \u03bcM and incubated" in polished
+    assert "mean % \u00b1 SD" in polished
+    assert "\u2265 99.9% purity" in polished
+
+
+def test_polish_html_document_repairs_split_inline_equation_tail() -> None:
+    html = (
+        "<html><body>"
+        r'<p>The linear regression equation <math display="inline">F/F_0 = -</math>'
+        r'0.0834C + 0.97394. Where <math display="inline">F_0</math> is control.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert r"\(F/F_0 = -0.0834C + 0.97394\)" in polished
+    assert r"\(F/F_0 = -\)0.0834C" not in polished
+
+
 def test_polish_html_document_positions_equation_number_right() -> None:
     """Equation numbers like (1) must be extracted into a flex-row wrapper div."""
     html = (

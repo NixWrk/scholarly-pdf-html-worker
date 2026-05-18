@@ -726,6 +726,23 @@ _INLINE_TEX_MICRO_SYMBOL_PATTERN = re.compile(
 )
 _INLINE_TEX_OMEGA_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\Omega\s*\\\)", re.IGNORECASE)
 _INLINE_TEX_PM_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\pm\s*\\\)", re.IGNORECASE)
+_INLINE_TEX_MARKER_LINE_SUBSCRIPT_PATTERN = re.compile(
+    r"\\\(\s*_\{\s*\d{1,3}\s*\}\s*\\\)\s*",
+    re.IGNORECASE,
+)
+_INLINE_TEX_PERCENT_PM_SYMBOL_PATTERN = re.compile(
+    r"\\\(\s*\\%\s*\\pm\s*\\\)",
+    re.IGNORECASE,
+)
+_INLINE_TEX_GEQ_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\geq\s*\\\)", re.IGNORECASE)
+_INLINE_TEX_LEQ_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\leq\s*\\\)", re.IGNORECASE)
+_INLINE_TEX_SIM_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\sim\s*\\\)", re.IGNORECASE)
+_INLINE_TEX_MICROLITER_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\mu\s+L\s*\\\)", re.IGNORECASE)
+_SPLIT_INLINE_EQUATION_OPERATOR_TAIL_PATTERN = re.compile(
+    r"\\\((?P<formula>[^<>()]{1,120}?(?:=|[+\-*/])\s*[+\-])\\\)"
+    r"\s*(?P<tail>\d+(?:\.\d+)?[A-Za-z]?(?:\s*[+\-]\s*\d+(?:\.\d+)?[A-Za-z]?){0,3})",
+    re.IGNORECASE,
+)
 _INLINE_TEX_DIMENSION_PROSE_PATTERN = re.compile(
     r"\\\((?P<body>[\s\S]{1,420}?)\\\)",
     re.IGNORECASE,
@@ -3050,6 +3067,29 @@ def _move_trailing_bracket_citations_out_of_inline_tex(html: str) -> str:
 
 def _repair_common_math_ocr_substitutions(html: str) -> str:
     return _OMEGA_ZERO_RATIO_OCR_PATTERN.sub(r"\\frac{\\omega}{\\omega_0}", html)
+
+
+def _repair_marker_inline_math_artifacts(html: str) -> str:
+    r"""Clean up tiny inline math fragments that Marker created from page furniture.
+
+    These are not formulas with missing rendering support. They are isolated OCR
+    fragments such as a PDF line number emitted as ``<math>_{75}</math>`` or a
+    textual symbol pair like ``<math>\\%\\pm</math>``. Once converted to TeX,
+    MathJax would faithfully render the garbage, so handle them before the
+    citation/linking passes.
+    """
+
+    html = _INLINE_TEX_MARKER_LINE_SUBSCRIPT_PATTERN.sub("", html)
+    html = _INLINE_TEX_PERCENT_PM_SYMBOL_PATTERN.sub("% \u00b1", html)
+    html = _INLINE_TEX_GEQ_SYMBOL_PATTERN.sub("\u2265", html)
+    html = _INLINE_TEX_LEQ_SYMBOL_PATTERN.sub("\u2264", html)
+    html = _INLINE_TEX_SIM_SYMBOL_PATTERN.sub("~", html)
+    html = _INLINE_TEX_MICROLITER_SYMBOL_PATTERN.sub("\u03bcL", html)
+    html = _SPLIT_INLINE_EQUATION_OPERATOR_TAIL_PATTERN.sub(
+        lambda m: f"\\({m.group('formula')}{m.group('tail')}\\)",
+        html,
+    )
+    return re.sub(r"(?<=\d)\s*-\s+(?=\d)", "-", html)
 
 
 def _restore_inline_tex_sentence_punctuation(html: str) -> str:
@@ -10714,6 +10754,7 @@ def polish_html_document(
     polished = _mark_unit_exponent_superscripts(polished)
     polished = _fix_equation_display(polished)
     polished = _convert_math_tags_to_tex(polished)
+    polished = _repair_marker_inline_math_artifacts(polished)
     polished = _convert_latex_sup_citations(polished)
     polished = _restore_inline_tex_sentence_punctuation(polished)
     polished = _normalize_scientific_units(polished)
