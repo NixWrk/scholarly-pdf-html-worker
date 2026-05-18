@@ -5972,6 +5972,12 @@ def _fix_equation_display(html: str) -> str:
             f"</div>"
         )
 
+    def _looks_like_equation_display_prefix(value: str) -> bool:
+        visible = _visible_text(value)
+        if len(visible) > 80:
+            return False
+        return re.fullmatch(r"[A-Za-z][A-Za-z0-9_\\{}^().,\s+\-]*=\s*", visible) is not None
+
     def _looks_like_standalone_text_equation(body: str, visible_without_num: str) -> bool:
         if "=" not in visible_without_num:
             return False
@@ -5999,17 +6005,30 @@ def _fix_equation_display(html: str) -> str:
         tail_after_first = body_rstripped[first_display.end() :].lstrip()
         split_num = tag_num
         split_tail = tail_after_first
+        split_punct = ""
         if split_num is None:
-            tail_num_match = re.match(r"(?P<num>\(\d{1,3}\))(?P<tail>\s+\S[\s\S]*)$", tail_after_first)
+            tail_num_match = re.match(
+                r"(?P<punct>[.,])?\s*(?P<num>\(\d{1,3}\))(?P<tail>\s+\S[\s\S]*)?$",
+                tail_after_first,
+            )
             if tail_num_match is not None:
                 split_num = tail_num_match.group("num")
-                split_tail = tail_num_match.group("tail").lstrip()
+                split_tail = (tail_num_match.group("tail") or "").lstrip()
+                split_punct = tail_num_match.group("punct") or ""
 
         if not leading_text and split_num is not None and split_tail:
             return (
                 _equation_row(open_tag, cleaned_first_math, close_tag, split_num)
                 + f'<p block-type="Text">{split_tail}</p>'
             )
+
+        if leading_text and split_num is not None and not split_tail and _looks_like_equation_display_prefix(leading_text):
+            inner = first_display.group(1).strip()
+            inner_no_tag, _ = _strip_tag_from_math(inner)
+            prefix = leading_text.rstrip()
+            joiner = "" if prefix.endswith(("+", "-", "\u2212", "/", "*")) else " "
+            combined = f"\\[{prefix}{joiner}{inner_no_tag.strip()}{split_punct}\\]"
+            return _equation_row(open_tag, combined, close_tag, split_num)
 
         stripped = _DISPLAY_MATH_IN_PARA_PATTERN.sub("", body)
         stripped = re.sub(r"\(\d+\)", "", stripped).strip()

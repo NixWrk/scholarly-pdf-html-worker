@@ -2410,6 +2410,21 @@ def test_polish_html_document_demotes_block_math_in_text_paragraph() -> None:
     assert '<p block-type="Text">' in polished
 
 
+def test_polish_html_document_keeps_equation_prefix_with_display_math() -> None:
+    html = (
+        "<html><body>"
+        r'<p block-type="Equation">SNR = \[20 \log_{10} \frac{\bar{S}^{t}(C)}{\bar{S}^{b}(0)}\]. (3)</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert r"\[SNR = 20 \log_{10} \frac{\bar{S}^{t}(C)}{\bar{S}^{b}(0)}.\]" in polished
+    assert r"SNR = \(20 \log" not in polished
+    assert '<span class="z2m-eq-num">(3)</span>' in polished
+    assert 'id="eq-3"' in polished
+
+
 def test_polish_html_document_wraps_existing_ref_number_in_span() -> None:
     """References already numbered 'N. Author' by Marker must get z2m-ref-num span."""
     html = (
