@@ -1,4 +1,6 @@
-﻿FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -10,13 +12,23 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip \
+    && pip install \
+        marker-pdf==1.10.2 \
+        "requests>=2.31" \
+        "psutil>=5.9" \
+        "mini-racer>=0.12" \
+        "pymupdf>=1.24" \
+        "pypdf>=4"
+
 COPY src ./src
 COPY tools ./tools
 COPY experiments/lmstudio_instruct_translation ./experiments/lmstudio_instruct_translation
 COPY docs ./docs
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir marker-pdf==1.10.2 \
-    && pip install --no-cache-dir -e ".[math,pdf-text-detect]"
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps -e .
 
 CMD ["pdf-html-convert", "--help"]
