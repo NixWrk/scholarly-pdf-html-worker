@@ -29,7 +29,10 @@ from zoteropdf2md.citation_profile import (  # noqa: E402
     build_citation_profile_from_pdf,
     merge_citation_profile_with_zotero_overlays,
 )
-from zoteropdf2md.single_file_html import polish_html_document  # noqa: E402
+from zoteropdf2md.single_file_html import (  # noqa: E402
+    close_katex_v8_context,
+    polish_html_document,
+)
 
 
 RAW_STAGE = "01.en.raw.html"
@@ -252,14 +255,17 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     suffixes = {value.lower() for value in args.suffix} if args.suffix else None
-    report = run_lab(
-        args.source_root,
-        args.out_dir,
-        refresh_raw_cache=args.refresh_raw_cache,
-        refresh_profiles=args.refresh_profiles,
-        zotero_overlay_dir=args.zotero_overlay_dir,
-        suffixes=suffixes,
-    )
+    try:
+        report = run_lab(
+            args.source_root,
+            args.out_dir,
+            refresh_raw_cache=args.refresh_raw_cache,
+            refresh_profiles=args.refresh_profiles,
+            zotero_overlay_dir=args.zotero_overlay_dir,
+            suffixes=suffixes,
+        )
+    finally:
+        close_katex_v8_context()
     print(
         "PDF profile lab: "
         f"articles={report['article_count']} "

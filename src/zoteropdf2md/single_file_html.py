@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import base64
 import functools
 import hashlib
@@ -1847,6 +1848,28 @@ def _katex_v8_context() -> Any:
         "+String(e&&e.message||e)+'</span>';}});};"
     )
     return ctx
+
+
+def close_katex_v8_context() -> None:
+    """Close the cached MiniRacer context so CLI processes can exit cleanly."""
+    if _katex_v8_context.cache_info().currsize == 0:
+        return
+
+    try:
+        ctx = _katex_v8_context()
+    except Exception:
+        _katex_v8_context.cache_clear()
+        return
+
+    try:
+        close = getattr(ctx, "close", None)
+        if callable(close):
+            close()
+    finally:
+        _katex_v8_context.cache_clear()
+
+
+atexit.register(close_katex_v8_context)
 
 
 def _strip_mathjax_scripts(html: str) -> str:

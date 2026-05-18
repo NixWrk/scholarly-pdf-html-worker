@@ -14,6 +14,7 @@ from zoteropdf2md.single_file_html import (
     _repair_sentence_breaks_around_float_units,
     _to_data_url,
     _validate_data_url,
+    close_katex_v8_context,
     inline_images_from_html_file,
     polish_html_document,
 )
@@ -2945,6 +2946,22 @@ def test_polish_html_document_renders_static_katex_without_mathjax() -> None:
     assert repolished.count('data-z2m-style="katex"') == 1
     assert repolished.count('data-z2m-tex="\\(E=mc^2\\)"') == 1
     assert repolished.count('class="katex') == polished.count('class="katex')
+
+
+def test_close_katex_v8_context_allows_recreate_after_static_render() -> None:
+    html = "<html><body>" r"<p>Energy \(E=mc^2\).</p>" "</body></html>"
+
+    try:
+        first = polish_html_document(html, table_caption_language="en")
+        assert 'data-z2m-style="katex"' in first
+
+        close_katex_v8_context()
+
+        second = polish_html_document(html, table_caption_language="en")
+        assert 'data-z2m-style="katex"' in second
+        assert r'data-z2m-tex="\(E=mc^2\)"' in second
+    finally:
+        close_katex_v8_context()
 
 
 def test_polish_html_document_repairs_snr_sqrt_subscript_brace_spill_for_katex() -> None:
