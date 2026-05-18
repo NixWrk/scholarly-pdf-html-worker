@@ -87,12 +87,19 @@ _SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 _SUP_NUMBER_PATTERN = re.compile(r"\d+")
 
 
-def _references_heading_search(html: str) -> re.Match[str] | None:
-    return _REFERENCES_HEADING_PATTERN.search(html) or _NOTES_AND_REFERENCES_HEADING_PATTERN.search(html)
+def _references_heading_search(html: str, *, allow_notes_heading: bool = False) -> re.Match[str] | None:
+    matches = [match for match in (_REFERENCES_HEADING_PATTERN.search(html),) if match is not None]
+    if allow_notes_heading:
+        notes_match = _NOTES_AND_REFERENCES_HEADING_PATTERN.search(html)
+        if notes_match is not None:
+            matches.append(notes_match)
+    return min(matches, key=lambda match: match.start()) if matches else None
 
 
-def _references_heading_match(html: str) -> re.Match[str] | None:
-    return _REFERENCES_HEADING_PATTERN.match(html) or _NOTES_AND_REFERENCES_HEADING_PATTERN.match(html)
+def _references_heading_match(html: str, *, allow_notes_heading: bool = False) -> re.Match[str] | None:
+    return _REFERENCES_HEADING_PATTERN.match(html) or (
+        _NOTES_AND_REFERENCES_HEADING_PATTERN.match(html) if allow_notes_heading else None
+    )
 
 
 _BRACKET_CITATION_PATTERN = re.compile(
@@ -4552,6 +4559,16 @@ def _citation_profile_ref_prefix(citation_profile: Any | None) -> str:
     return str(getattr(citation_profile, "ref_dest_prefix", "") or "")
 
 
+def _citation_profile_has_zotero_reference_evidence(citation_profile: Any | None) -> bool:
+    if citation_profile is None:
+        return False
+    try:
+        count = int(_profile_item_value(citation_profile, "zotero_citation_count", 0) or 0)
+    except (TypeError, ValueError):
+        count = 0
+    return count > 0 or bool(_citation_profile_items(citation_profile, "zotero_citations"))
+
+
 def _profile_item_value(item: Any, key: str, default: Any = "") -> Any:
     if isinstance(item, dict):
         return item.get(key, default)
@@ -5549,7 +5566,10 @@ def _link_paren_numeric_page_citations_in_safe_blocks(
 
 
 def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | None = None) -> str:
-    heading_match = _references_heading_search(html)
+    heading_match = _references_heading_search(
+        html,
+        allow_notes_heading=_citation_profile_has_zotero_reference_evidence(citation_profile),
+    )
     if heading_match is not None:
         split_at = heading_match.end()
     else:
@@ -10828,7 +10848,7 @@ def _restore_abbreviations(html: str) -> str:
     return "".join(out)
 
 
-def inline_images_from_html_file(html_path: Path) -> InlineHtmlResult:
+def inline_images_from_html_file(html_path: Path, citation_profile: Any | None = None) -> InlineHtmlResult:
     text = html_path.read_text(encoding="utf-8", errors="replace")
     base_dir = html_path.parent
     inlined_count = 0
@@ -10928,6 +10948,7 @@ def inline_images_from_html_file(html_path: Path) -> InlineHtmlResult:
         inlined_html,
         table_caption_language=("ru" if is_ru_html else "en"),
         enable_citation_linkify=not is_ru_html,
+        citation_profile=citation_profile,
     )
     inlined_html, refreshed_after_polish = _refresh_inlined_data_urls_by_hint(
         inlined_html,

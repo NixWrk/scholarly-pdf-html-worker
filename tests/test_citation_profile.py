@@ -517,6 +517,21 @@ def test_zotero_overlay_profile_handles_rsc_notes_and_references_front_matter() 
     assert 'photocatalysis.<sup><a href="#ref-5" class="z2m-ref-link">5</a>,<a href="#ref-6" class="z2m-ref-link">6</a></sup> and' in polished
 
 
+def test_notes_and_references_heading_requires_zotero_overlay_evidence() -> None:
+    html = (
+        "<html><body>"
+        "<p>A local note mentions 1,2 but no overlay confirmed bibliography.</p>"
+        "<h4>Notes and references</h4>"
+        "<ul><li>Not necessarily a bibliography.</li><li>Another note.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="ref-1"' not in polished
+    assert 'href="#ref-1"' not in polished
+
+
 def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> None:
     html = (
         "<html><body>"

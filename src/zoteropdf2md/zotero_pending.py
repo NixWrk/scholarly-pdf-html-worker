@@ -9,6 +9,7 @@ from typing import Callable
 
 from .history import append_history
 from .paths import resolve_zotero_data_dir
+from .citation_profile import build_citation_profile_from_pdf
 from .single_file_html import inline_images_from_html_file
 from .zotero_html_attachment import attach_single_file_html, check_zotero_write_access
 
@@ -201,7 +202,11 @@ def retry_pending_attachments(
 
         attempted += 1
         try:
-            inline_result = inline_images_from_html_file(html_path)
+            citation_profile = build_citation_profile_from_pdf(source_pdf_path)
+            inline_result = inline_images_from_html_file(
+                html_path,
+                citation_profile=citation_profile,
+            )
             attach_result = attach_single_file_html(
                 zotero_data_dir=zotero_dir,
                 parent_item_id=row.parent_item_id,

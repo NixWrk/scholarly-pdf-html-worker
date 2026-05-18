@@ -89,6 +89,10 @@ def _load_or_build_profile(
         if zotero_overlay_path is not None and not profile_data.get("zotero_citations"):
             profile_data = merge_citation_profile_with_zotero_overlays(profile_data, zotero_overlay_path)
             profile_path.write_text(json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        elif not profile_data.get("zotero_overlay_status"):
+            profile = build_citation_profile_from_pdf(pdf_path)
+            profile_data = profile.to_json_dict() if isinstance(profile, CitationProfile) else profile
+            profile_path.write_text(json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return profile_data
     profile = build_citation_profile_from_pdf(pdf_path, zotero_overlay_path=zotero_overlay_path)
     profile_path.parent.mkdir(parents=True, exist_ok=True)

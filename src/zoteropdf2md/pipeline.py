@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Callable
 
 from .attachments import resolve_pdf_attachments
+from .citation_profile import build_citation_profile_from_pdf
 from .export_modes import ExportMode, get_export_mode_spec, parse_export_mode
 from .history import append_history
 from .html_stages import html_stage_dir_for_html, save_html_stage
@@ -527,6 +528,32 @@ def run_pipeline(
                 skipped_existing=skipped_existing,
             )
 
+        citation_profile_by_source: dict[str, object] = {}
+
+        def citation_profile_for(source_pdf_path: Path) -> object:
+            source_norm = normalize_source_path(source_pdf_path)
+            cached = citation_profile_by_source.get(source_norm)
+            if cached is not None:
+                return cached
+            started_profile_at = perf_counter()
+            profile = build_citation_profile_from_pdf(source_pdf_path)
+            citation_profile_by_source[source_norm] = profile
+            status = getattr(profile, "zotero_overlay_status", "")
+            count = getattr(profile, "zotero_citation_count", 0)
+            error = getattr(profile, "zotero_overlay_error", "")
+            log(
+                "Citation profile built: "
+                f"{source_pdf_path.name} "
+                f"(style={getattr(profile, 'style', 'unknown')}, "
+                f"confidence={getattr(profile, 'confidence', 'low')}, "
+                f"zotero_overlay={status or 'unknown'}, "
+                f"zotero_citations={count})"
+            )
+            if error:
+                log(f"Zotero overlay note: {source_pdf_path.name}: {error}")
+            _log_elapsed(log, "pipeline.citation_profile", started_profile_at)
+            return profile
+
         if ExportMode.ZOTERO in export_modes_list:
             started_at = perf_counter()
             zotero_dir_for_mode = resolve_zotero_data_dir(options.zotero_data_dir)
@@ -829,7 +856,11 @@ def run_pipeline(
                                 f"pending_total={queue_result.pending_total})"
                             )
                         inline_started_at = perf_counter()
-                        result = inline_images_from_html_file(html_path)
+                        citation_profile = citation_profile_for(staged_file.source_pdf_path)
+                        result = inline_images_from_html_file(
+                            html_path,
+                            citation_profile=citation_profile,
+                        )
                         html_path.write_text(result.html, encoding="utf-8")
                         polish_stage = save_html_stage(
                             stage_dir,
@@ -946,7 +977,11 @@ def run_pipeline(
                             continue
 
                         try:
-                            inline_result = inline_images_from_html_file(html_path)
+                            citation_profile = citation_profile_for(staged_file.source_pdf_path)
+                            inline_result = inline_images_from_html_file(
+                                html_path,
+                                citation_profile=citation_profile,
+                            )
                             parent_item_id = resolved_item.attachment.parent_item_id or resolved_item.attachment.item_id
                             attach_result = attach_single_file_html(
                                 zotero_data_dir=zotero_dir,

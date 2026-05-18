@@ -4,7 +4,10 @@ from dataclasses import asdict, dataclass, field, replace
 import json
 from pathlib import Path
 import re
+import tempfile
 from typing import Any
+
+from .zotero_overlay_probe import generate_zotero_overlay_json
 
 
 PAREN_NUMERIC_CITATION_RE = re.compile(
@@ -81,6 +84,8 @@ class CitationProfile:
     reference_starts: list[PdfReferenceStart] = field(default_factory=list)
     zotero_citation_count: int = 0
     zotero_citations: list[ZoteroOverlayCitation] = field(default_factory=list)
+    zotero_overlay_status: str = "not_attempted"
+    zotero_overlay_error: str = ""
     errors: list[str] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -289,6 +294,8 @@ def merge_citation_profile_with_zotero_overlays(
         updated["confidence"] = confidence
         updated["zotero_citation_count"] = len(citations)
         updated["zotero_citations"] = [asdict(citation) for citation in limited_citations]
+        updated["zotero_overlay_status"] = "loaded" if not errors else "load_failed"
+        updated["zotero_overlay_error"] = "; ".join(errors)
         if merged_errors:
             updated["errors"] = merged_errors
         return updated
@@ -300,6 +307,8 @@ def merge_citation_profile_with_zotero_overlays(
         confidence=confidence,
         zotero_citation_count=len(citations),
         zotero_citations=limited_citations,
+        zotero_overlay_status="loaded" if not errors else "load_failed",
+        zotero_overlay_error="; ".join(errors),
         errors=[*profile.errors, *errors],
     )
 
@@ -485,6 +494,7 @@ def build_citation_profile_from_pdf(
     *,
     sample_limit: int = 32,
     zotero_overlay_path: str | Path | None = None,
+    auto_zotero_overlay: bool = True,
 ) -> CitationProfile:
     path = Path(pdf_path).expanduser().resolve(strict=False)
     if not path.is_file():
@@ -634,6 +644,30 @@ def build_citation_profile_from_pdf(
         superscript_hint_count=_superscript_reference_hint_count(annotations),
     )
 
+    overlay_path_to_merge: Path | None = (
+        Path(zotero_overlay_path).expanduser().resolve(strict=False)
+        if zotero_overlay_path is not None
+        else None
+    )
+    temp_overlay_dir: tempfile.TemporaryDirectory[str] | None = None
+    zotero_overlay_status = "provided" if overlay_path_to_merge is not None else "not_attempted"
+    zotero_overlay_error = ""
+    if overlay_path_to_merge is None and auto_zotero_overlay:
+        temp_overlay_dir = tempfile.TemporaryDirectory(prefix="z2m_zotero_overlay_")
+        candidate = Path(temp_overlay_dir.name) / f"{path.stem}.overlays.json"
+        result = generate_zotero_overlay_json(path, candidate)
+        if result.generated:
+            overlay_path_to_merge = result.output_path
+            zotero_overlay_status = "generated"
+        else:
+            zotero_overlay_status = "failed" if result.attempted else "unavailable"
+            details = result.error
+            if result.stderr:
+                details = f"{details}: {result.stderr.strip()[:400]}"
+            zotero_overlay_error = details
+            if details:
+                errors.append(details)
+
     profile = CitationProfile(
         source_pdf_path=str(path),
         status="ok",
@@ -653,10 +687,18 @@ def build_citation_profile_from_pdf(
         samples=samples,
         annotations=annotations,
         reference_starts=reference_starts,
+        zotero_overlay_status=zotero_overlay_status,
+        zotero_overlay_error=zotero_overlay_error,
         errors=errors,
     )
-    if zotero_overlay_path is not None:
-        merged = merge_citation_profile_with_zotero_overlays(profile, zotero_overlay_path)
-        if isinstance(merged, CitationProfile):
-            return merged
-    return profile
+    try:
+        if overlay_path_to_merge is not None:
+            merged = merge_citation_profile_with_zotero_overlays(profile, overlay_path_to_merge)
+            if isinstance(merged, CitationProfile):
+                if zotero_overlay_status == "generated":
+                    return replace(merged, zotero_overlay_status="generated")
+                return merged
+        return profile
+    finally:
+        if temp_overlay_dir is not None:
+            temp_overlay_dir.cleanup()
