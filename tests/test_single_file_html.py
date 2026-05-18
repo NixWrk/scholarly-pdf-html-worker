@@ -2981,6 +2981,7 @@ def test_polish_html_document_unwraps_simple_statistical_inline_tex() -> None:
         "<html><body>"
         r"<p>The values were \((4.37 \pm 2.47 vs. 5.22 \pm 2.38, p = 0.075;\) "
         r"\(0.23 \pm 0.57\) vs. \(0.47 \pm 1.10\) , p = 0.247) . However, values changed.</p>"
+        r"<p>The median was (median \(0.51\pm0.09\) vs. \(0.53\pm0.09\) , respectively; P=0.58).</p>"
         r"<p>Near-infrared imaging provides \(\gamma\)-ray tissue penetration.</p>"
         "</body></html>"
     )
@@ -2991,6 +2992,7 @@ def test_polish_html_document_unwraps_simple_statistical_inline_tex() -> None:
         "(4.37 ± 2.47 vs. 5.22 ± 2.38, p = 0.075; "
         "0.23 ± 0.57 vs. 0.47 ± 1.10, p = 0.247). However"
     ) in polished
+    assert "(median 0.51 ± 0.09 vs. 0.53 ± 0.09, respectively; P = 0.58)." in polished
     assert r"\pm" not in polished
     assert r"\(\gamma\)" in polished
 

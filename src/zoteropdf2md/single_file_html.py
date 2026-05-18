@@ -3120,9 +3120,9 @@ def _looks_inline_tex_statistical_prose(body: str) -> bool:
         return False
     if "<" in body or ">" in body:
         return False
-    if not re.search(r"\\pm\b", body, re.IGNORECASE):
+    if not re.search(r"\\pm(?=\b|\d)", body, re.IGNORECASE):
         return False
-    if re.search(r"\\(?!pm\b|[,;! ])", body, re.IGNORECASE):
+    if re.search(r"\\(?!pm(?=\b|\d)|[,;! ])", body, re.IGNORECASE):
         return False
     visible = _visible_text(body)
     if not re.search(r"\d", visible):
@@ -3134,7 +3134,7 @@ def _looks_inline_tex_statistical_prose(body: str) -> bool:
 
 def _normalize_inline_tex_statistical_body(body: str) -> str:
     text = body
-    text = re.sub(r"\\pm\b", "\u00b1", text, flags=re.IGNORECASE)
+    text = re.sub(r"\\pm(?=\b|\d)", "\u00b1", text, flags=re.IGNORECASE)
     text = re.sub(r"\\(?:,|;|!| )", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"\s*±\s*", " ± ", text)
@@ -3413,7 +3413,8 @@ def _normalize_scientific_units(html: str) -> str:
         text = _INLINE_TEX_MICRO_SYMBOL_PATTERN.sub("\u03bc", text)
         text = _INLINE_TEX_OMEGA_SYMBOL_PATTERN.sub("\u03a9", text)
         text = _INLINE_TEX_PM_SYMBOL_PATTERN.sub("\u00b1", text)
-        text = re.sub(r"(?<=\d)\s+,\s+(?=p\s*=)", ", ", text, flags=re.IGNORECASE)
+        text = re.sub(r"(?<=\d)\s+,\s+(?=(?:respectively|p\s*=))", ", ", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b([Pp])\s*=\s*(?=\d)", r"\1 = ", text)
         text = re.sub(r"\)\s+\.(?=\s+[A-Z])", ").", text)
         text = _DIMENSION_TIMES_PATTERN.sub(
             lambda m: f"{m.group('left')} \u00d7 {m.group('right')}",
