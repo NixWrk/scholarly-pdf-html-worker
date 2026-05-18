@@ -11,7 +11,6 @@ from zoteropdf2md.single_file_html import (
     _fix_subscript_equation_spill,
     _link_figure_refs,
     _link_section_refs,
-    _repair_sqrt_denominator_subscript_spill,
     _repair_sentence_breaks_around_float_units,
     _to_data_url,
     _validate_data_url,
@@ -1512,8 +1511,7 @@ def test_polish_html_document_repairs_sentence_split_across_table_and_formula_no
         "Fig. 16 shows the k factor for two antenna with distance varying based on "
         "sizes. A small antenna features higher k factor at close distance."
     ) in polished
-    assert 'data-z2m-tex="\\(f_{brain}\\)"' in polished
-    assert "f<sub>brain</sub></span> is the function which describes localized tissue properties." in polished
+    assert "\\(f_{brain}\\) is the function which describes localized tissue properties." in polished
     assert '<div id="table-iii" class="z2m-float-unit z2m-table-unit">' in polished
     assert '<h4 class="z2m-table-caption">TABLE III Antenna Parameters</h4>' in polished
     assert "<table><tbody><tr><td>Parameter</td><td>Value</td></tr></tbody></table>" in polished
@@ -1546,8 +1544,7 @@ def test_polish_html_document_splits_table_note_from_body_continuation() -> None
         polished.index('<div id="table-iii" class="z2m-float-unit z2m-table-unit">') :
         polished.index("</div>", polished.index('<div id="table-iii" class="z2m-float-unit z2m-table-unit">'))
     ]
-    assert 'data-z2m-tex="\\(f_{brain}\\)"' in table_unit
-    assert "f<sub>brain</sub></span> is the function" in table_unit
+    assert "\\(f_{brain}\\) is the function" in table_unit
 
 
 def test_polish_html_document_keeps_parenthetical_sample_size_table_note() -> None:
@@ -2310,61 +2307,6 @@ def test_polish_html_document_converts_inline_math_to_tex_delimiters() -> None:
     assert "<math" not in polished
 
 
-def test_polish_html_document_renders_static_math_without_mathjax_script() -> None:
-    html = (
-        "<html><head>"
-        "<script>MathJax={tex:{}}</script>"
-        '<script id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'
-        "</head><body>"
-        r"<p>\[SNR = \frac{\bar{S}^{t}(C)}{\sqrt{mn}}\]</p>"
-        r"<p>\(\Phi_{\rm ICG} = 0.132\)</p>"
-        "</body></html>"
-    )
-
-    polished = polish_html_document(html, table_caption_language="en")
-
-    assert "MathJax-script" not in polished
-    assert "cdn.jsdelivr.net/npm/mathjax" not in polished
-    assert '<span class="z2m-math z2m-math-display"' in polished
-    assert '<span class="z2m-frac">' in polished
-    assert '<span class="z2m-overline">S</span><sup>t</sup>(C)' in polished
-    assert '<span class="z2m-radical-sign">√</span><span class="z2m-radicand">mn</span>' in polished
-    assert "Φ<sub>ICG</sub> = 0.132" in polished
-
-
-def test_polish_html_document_repairs_marker_inline_math_artifacts() -> None:
-    html = (
-        "<html><body>"
-        r'<p>Cells were added in the range of 0.2- <math display="inline">_{75}</math> '
-        "10 \u03bcM and incubated for 24 h. The relative cell viability "
-        r'(mean <math display="inline">\%\pm</math> SD) was measured with '
-        r'<math display="inline">\geq</math> 99.9% purity.</p>'
-        "</body></html>"
-    )
-
-    polished = polish_html_document(html, table_caption_language="en")
-
-    assert r"_{75}" not in polished
-    assert r"\%\pm" not in polished
-    assert "0.2-10 \u03bcM and incubated" in polished
-    assert "mean % \u00b1 SD" in polished
-    assert "\u2265 99.9% purity" in polished
-
-
-def test_polish_html_document_repairs_split_inline_equation_tail() -> None:
-    html = (
-        "<html><body>"
-        r'<p>The linear regression equation <math display="inline">F/F_0 = -</math>'
-        r'0.0834C + 0.97394. Where <math display="inline">F_0</math> is control.</p>'
-        "</body></html>"
-    )
-
-    polished = polish_html_document(html, table_caption_language="en")
-
-    assert r"\(F/F_0 = -0.0834C + 0.97394\)" in polished
-    assert r"\(F/F_0 = -\)0.0834C" not in polished
-
-
 def test_polish_html_document_positions_equation_number_right() -> None:
     """Equation numbers like (1) must be extracted into a flex-row wrapper div."""
     html = (
@@ -2432,21 +2374,6 @@ def test_polish_html_document_demotes_block_math_in_text_paragraph() -> None:
     assert '\\(Z_1\\)' in polished
     assert '\\[Z_1\\]' not in polished
     assert '<p block-type="Text">' in polished
-
-
-def test_polish_html_document_keeps_equation_prefix_with_display_math() -> None:
-    html = (
-        "<html><body>"
-        r'<p block-type="Equation">SNR = \[20 \log_{10} \frac{\bar{S}^{t}(C)}{\bar{S}^{b}(0)}\]. (3)</p>'
-        "</body></html>"
-    )
-
-    polished = polish_html_document(html, table_caption_language="en")
-
-    assert r"\[SNR = 20 \log_{10} \frac{\bar{S}^{t}(C)}{\bar{S}^{b}(0)}.\]" in polished
-    assert r"SNR = \(20 \log" not in polished
-    assert '<span class="z2m-eq-num">(3)</span>' in polished
-    assert 'id="eq-3"' in polished
 
 
 def test_polish_html_document_wraps_existing_ref_number_in_span() -> None:
@@ -2809,7 +2736,6 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
         "<p>The dose was 10 mg kg h − 1 IV and capacitance was 750 μCcm−2.</p>"
         "<p>The voltage was 0.7Vand 1.0Vfor 30 μAand 250 μA, respectively.</p>"
         "<p>The coating was at least 130 <i>µ</i> m thick.</p>"
-        "<p>The extinction coefficient was 129 000 M^{-1} cm^{-1}.</p>"
         "<p>The grating covered 1.5 ◦ × 1.5 ◦ and was baked at 200 ◦ C.</p>"
         "<p>The window covered 1.5 <i>◦ ×</i> 1.5 <i>◦</i> and was baked at 350 <i>◦</i> C.</p>"
         "</body></html>"
@@ -2820,7 +2746,6 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
     assert '67.5 µm<sup class="z2m-unit-exp">2</sup> were made' in polished
     assert 'mg kg<sup class="z2m-unit-exp">-1</sup> h<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'μC cm<sup class="z2m-unit-exp">-2</sup>' in polished
-    assert '129 000 M<sup class="z2m-unit-exp">-1</sup> cm<sup class="z2m-unit-exp">-1</sup>' in polished
     assert "0.7 V and 1.0 V for 30 μA and 250 μA" in polished
     assert "130 µm thick" in polished
     assert "<i>µ</i> m" not in polished
@@ -2841,10 +2766,7 @@ def test_polish_html_document_keeps_prose_outside_inline_unit_formula_tail() -> 
 
     polished = polish_html_document(html, table_caption_language="en")
 
-    assert 'data-z2m-tex="\\(mg\\cdot kg^{-1}\\cdot h^{-1}\\)"' in polished
-    assert "4.25–8.5 <span" in polished
-    assert "mg· kg<sup>-1</sup>· h<sup>-1</sup></span>, 10.6" in polished
-    assert "μ g· kg<sup>-1</sup>· h<sup>-1</sup></span>, and 0–2%, respectively." in polished
+    assert r"4.25–8.5 \(mg\cdot kg^{-1}\cdot h^{-1}\), 10.6 \(\mu g\cdot kg^{-1}\cdot h^{-1}\), and 0–2%, respectively." in polished
     assert r"and\ 0–2\%,\ respectively.\)" not in polished
 
 
@@ -3021,20 +2943,6 @@ def test_polish_html_document_unwraps_merken_dimension_prose_math() -> None:
     assert '4000 µm<sup class="z2m-unit-exp">2</sup>; 11/92 ch' in polished
     assert "(30 × 30 µm to 200 × 40 µm)" in polished
     assert r"\(x_i = y_i + 1\)" in polished
-
-
-def test_polish_html_document_unwraps_dimension_tex_with_cm_squared() -> None:
-    html = (
-        "<html><body>"
-        r"<p>The device illuminates a maximum field of \(18.5 \times 13.5 \text{ cm}^2\) "
-        "and records a 1024 × 768 image.</p>"
-        "</body></html>"
-    )
-
-    polished = polish_html_document(html, table_caption_language="en")
-
-    assert r"\(18.5" not in polished
-    assert '18.5 × 13.5 cm<sup class="z2m-unit-exp">2</sup>' in polished
 
 
 def test_polish_html_document_unwraps_dimension_tex_in_table_cells() -> None:
@@ -4598,22 +4506,6 @@ def test_fix_subscript_equation_spill_leaves_html_unchanged_when_no_match() -> N
     assert _fix_subscript_equation_spill(html) == html
 
 
-def test_repair_sqrt_denominator_subscript_spill_moves_mean_denominator_inside_sqrt() -> None:
-    latex = (
-        r"\frac{\bar{S}^{t}(C) - \bar{S}^{b}(0)}"
-        r"{\sqrt{\sum_{i=1}^{m} \sum_{j=1}^{n} "
-        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}}_{mn}},"
-    )
-
-    result = _repair_sqrt_denominator_subscript_spill(latex)
-
-    assert r"}_{mn}}" not in result
-    assert (
-        r"\sqrt{\frac{\sum_{i=1}^{m} \sum_{j=1}^{n} "
-        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}{mn}}"
-    ) in result
-
-
 def test_polish_html_document_fixes_subscript_equation_spill() -> None:
     r"""End-to-end: spill inside an equation paragraph is repaired."""
     html = (
@@ -4624,25 +4516,6 @@ def test_polish_html_document_fixes_subscript_equation_spill() -> None:
     polished = polish_html_document(html)
     assert r"\gamma_{ij}=\frac" in polished
     assert r"\gamma_{ij=\frac" not in polished
-
-
-def test_polish_html_document_repairs_sqrt_denominator_subscript_spill() -> None:
-    html = (
-        "<html><body>"
-        r'<p block-type="Equation"><math display="block">'
-        r"SNR = \frac{\bar{S}^{t}(C) - \bar{S}^{b}(0)}"
-        r"{\sqrt{\sum_{i=1}^{m} \sum_{j=1}^{n} "
-        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}}_{mn}},"
-        r"</math> (2)</p>"
-        "</body></html>"
-    )
-
-    polished = polish_html_document(html, table_caption_language="en")
-
-    assert r"}_{mn}}" not in polished
-    assert r"\sqrt{\frac{\sum_{i=1}^{m}" in polished
-    assert r"{mn}}" in polished
-    assert '<span class="z2m-eq-num">(2)</span>' in polished
 
 
 # ---------------------------------------------------------------------------

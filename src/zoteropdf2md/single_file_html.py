@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import html as html_lib
 import mimetypes
 import re
 import urllib.parse
@@ -727,23 +726,6 @@ _INLINE_TEX_MICRO_SYMBOL_PATTERN = re.compile(
 )
 _INLINE_TEX_OMEGA_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\Omega\s*\\\)", re.IGNORECASE)
 _INLINE_TEX_PM_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\pm\s*\\\)", re.IGNORECASE)
-_INLINE_TEX_MARKER_LINE_SUBSCRIPT_PATTERN = re.compile(
-    r"\\\(\s*_\{\s*\d{1,3}\s*\}\s*\\\)\s*",
-    re.IGNORECASE,
-)
-_INLINE_TEX_PERCENT_PM_SYMBOL_PATTERN = re.compile(
-    r"\\\(\s*\\%\s*\\pm\s*\\\)",
-    re.IGNORECASE,
-)
-_INLINE_TEX_GEQ_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\geq\s*\\\)", re.IGNORECASE)
-_INLINE_TEX_LEQ_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\leq\s*\\\)", re.IGNORECASE)
-_INLINE_TEX_SIM_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\sim\s*\\\)", re.IGNORECASE)
-_INLINE_TEX_MICROLITER_SYMBOL_PATTERN = re.compile(r"\\\(\s*\\mu\s+L\s*\\\)", re.IGNORECASE)
-_SPLIT_INLINE_EQUATION_OPERATOR_TAIL_PATTERN = re.compile(
-    r"\\\((?P<formula>[^<>()]{1,120}?(?:=|[+\-*/])\s*[+\-])\\\)"
-    r"\s*(?P<tail>\d+(?:\.\d+)?[A-Za-z]?(?:\s*[+\-]\s*\d+(?:\.\d+)?[A-Za-z]?){0,3})",
-    re.IGNORECASE,
-)
 _INLINE_TEX_DIMENSION_PROSE_PATTERN = re.compile(
     r"\\\((?P<body>[\s\S]{1,420}?)\\\)",
     re.IGNORECASE,
@@ -946,12 +928,6 @@ _PLAIN_NEG_UNIT_EXP_PATTERN = re.compile(
     r"[-\u2212\u2013\u2014]\s*(?P<exp>[123])\b",
     re.IGNORECASE,
 )
-_BRACED_UNIT_EXP_PATTERN = re.compile(
-    r"(?<![A-Za-z])(?P<unit>(?:M|mC\s*cm|\u00b5C\s*cm|\u03bcC\s*cm|uC\s*cm|"
-    r"cd\s*m|nm\s*d|mm\s*s|cm\s*s|m\s*s|cm|mm|nm|m|d|s)\s*)"
-    r"\^\{\s*(?P<exp>[-\u2212\u2013\u2014]?\s*[123])\s*\}",
-    re.IGNORECASE,
-)
 _LINKED_DIRECT_UNIT_EXPONENT_REF_PATTERN = re.compile(
     r"(?P<prefix>\b(?:N|Pa|MPa|GPa|J|W|V|A|F|Ohm|\u03a9)\s+)"
     r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<exp>[123])['\"][^>]*>\s*"
@@ -1065,8 +1041,6 @@ _LATEX_TEXTBF_PATTERN = re.compile(r"\\textbf\{([^{}]*)\}")
 _LATEX_ITALIC_PATTERN = re.compile(r"\\(?:textit|emph)\{([^{}]*)\}")
 _LATEX_TEXTRM_PATTERN = re.compile(r"\\textrm\{([^{}]*)\}")
 _LATEX_TEXT_PATTERN = re.compile(r"\\text\{([^{}]*)\}")
-_STATIC_DISPLAY_TEX_PATTERN = re.compile(r"\\\[(?P<body>[\s\S]*?)\\\]")
-_STATIC_INLINE_TEX_PATTERN = re.compile(r"\\\((?P<body>[\s\S]*?)\\\)")
 
 # Matches a phrase of 2-7 words repeated 2+ additional times back-to-back.
 # Example: "the property of the property of the property of" → "the property of"
@@ -1075,118 +1049,16 @@ _REPEATED_PHRASE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_MATHJAX_SCRIPT_TAG_PATTERN = re.compile(
-    r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*>[\s\S]*?</script>|'
-    r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*/?>',
-    re.IGNORECASE,
+_MATHJAX_SCRIPT = (
+    '<script>'
+    'MathJax={'
+    'tex:{inlineMath:[["$","$"],["\\\\(","\\\\)"]],displayMath:[["$$","$$"],["\\\\[","\\\\]"]]},'
+    'svg:{fontCache:"global"}'
+    '};'
+    '</script>\n'
+    '<script id="MathJax-script" async '
+    'src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'
 )
-_MATHJAX_CONFIG_TAG_PATTERN = re.compile(
-    r"<script\b[^>]*>[\s\S]*?\bMathJax\s*=[\s\S]*?</script>",
-    re.IGNORECASE,
-)
-_STATIC_MATH_SKIP_TAGS = _SKIP_AUTOLINK_TAGS | {"textarea"}
-_LATEX_SYMBOLS: dict[str, str] = {
-    "alpha": "α",
-    "beta": "β",
-    "gamma": "γ",
-    "delta": "δ",
-    "epsilon": "ε",
-    "varepsilon": "ε",
-    "zeta": "ζ",
-    "eta": "η",
-    "theta": "θ",
-    "vartheta": "ϑ",
-    "iota": "ι",
-    "kappa": "κ",
-    "lambda": "λ",
-    "mu": "μ",
-    "nu": "ν",
-    "xi": "ξ",
-    "pi": "π",
-    "rho": "ρ",
-    "sigma": "σ",
-    "tau": "τ",
-    "upsilon": "υ",
-    "phi": "φ",
-    "varphi": "φ",
-    "chi": "χ",
-    "psi": "ψ",
-    "omega": "ω",
-    "Gamma": "Γ",
-    "Delta": "Δ",
-    "Theta": "Θ",
-    "Lambda": "Λ",
-    "Xi": "Ξ",
-    "Pi": "Π",
-    "Sigma": "Σ",
-    "Phi": "Φ",
-    "Psi": "Ψ",
-    "Omega": "Ω",
-    "pm": "±",
-    "mp": "∓",
-    "times": "×",
-    "cdot": "·",
-    "leq": "≤",
-    "le": "≤",
-    "geq": "≥",
-    "ge": "≥",
-    "neq": "≠",
-    "ne": "≠",
-    "approx": "≈",
-    "simeq": "≃",
-    "sim": "∼",
-    "propto": "∝",
-    "infty": "∞",
-    "partial": "∂",
-    "nabla": "∇",
-    "sum": "∑",
-    "prod": "∏",
-    "int": "∫",
-    "oint": "∮",
-    "rightarrow": "→",
-    "to": "→",
-    "leftarrow": "←",
-    "leftrightarrow": "↔",
-    "Rightarrow": "⇒",
-    "Leftarrow": "⇐",
-    "Leftrightarrow": "⇔",
-    "ldots": "…",
-    "dots": "…",
-    "cdots": "⋯",
-    "degree": "°",
-    "circ": "∘",
-    "prime": "′",
-}
-_LATEX_FUNCTIONS = {
-    "arccos",
-    "arcsin",
-    "arctan",
-    "arg",
-    "cos",
-    "cosh",
-    "cot",
-    "coth",
-    "csc",
-    "deg",
-    "det",
-    "dim",
-    "exp",
-    "gcd",
-    "hom",
-    "ker",
-    "lg",
-    "lim",
-    "ln",
-    "log",
-    "max",
-    "min",
-    "sec",
-    "sin",
-    "sinh",
-    "sup",
-    "tan",
-    "tanh",
-}
 
 _DEFAULT_READABILITY_STYLE = """
 <style data-z2m-style="readable">
@@ -1419,69 +1291,6 @@ _DEFAULT_READABILITY_STYLE = """
   }
   math {
     overflow-x: auto;
-  }
-  .z2m-math {
-    font-family: "Cambria Math", "STIX Two Math", "DejaVu Serif", "Times New Roman", serif;
-    font-size: 1.02em;
-    line-height: 1.25;
-    white-space: nowrap;
-  }
-  .z2m-math-inline {
-    display: inline;
-  }
-  .z2m-math-display {
-    display: block;
-    margin: 0.65em 0;
-    text-align: center;
-    overflow-x: auto;
-    white-space: normal;
-  }
-  .z2m-math-fn {
-    font-family: "Segoe UI", "Arial", sans-serif;
-    font-style: normal;
-    margin-right: 0.08em;
-  }
-  .z2m-frac {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: center;
-    text-align: center;
-    vertical-align: middle;
-    line-height: 1.05;
-    margin: 0 0.12em;
-  }
-  .z2m-frac-num {
-    display: block;
-    border-bottom: 1px solid currentColor;
-    padding: 0 0.18em 0.08em;
-  }
-  .z2m-frac-den {
-    display: block;
-    padding: 0.08em 0.18em 0;
-  }
-  .z2m-radical {
-    display: inline-flex;
-    align-items: flex-start;
-    vertical-align: middle;
-    margin: 0 0.08em;
-  }
-  .z2m-radical-sign {
-    font-size: 1.35em;
-    line-height: 1;
-  }
-  .z2m-radicand {
-    border-top: 1px solid currentColor;
-    padding: 0 0.14em;
-  }
-  .z2m-overline {
-    text-decoration: overline;
-    text-decoration-thickness: from-font;
-  }
-  .z2m-math sub,
-  .z2m-math sup {
-    font-size: 0.72em;
-    line-height: 0;
   }
   p[block-type="Equation"] {
     text-align: center;
@@ -1931,105 +1740,6 @@ def _fix_subscript_equation_spill(html: str) -> str:
     return "".join(out)
 
 
-def _matching_latex_brace(text: str, open_pos: int) -> int:
-    if open_pos < 0 or open_pos >= len(text) or text[open_pos] != "{":
-        return -1
-    depth = 0
-    idx = open_pos
-    while idx < len(text):
-        char = text[idx]
-        if char == "\\":
-            idx += 2
-            continue
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return idx
-        idx += 1
-    return -1
-
-
-def _repair_sqrt_denominator_subscript_spill(html: str) -> str:
-    r"""Repair Marker's ``\frac{...}{\sqrt{...}}_{mn}}`` spill.
-
-    Marker sometimes extracts a fraction whose denominator is a square root of a
-    mean-square term as if the ``/mn`` part were a subscript attached after the
-    square-root denominator. The extra closing brace after the subscript makes
-    the TeX invalid. Treat this as ``\sqrt{\frac{...}{mn}}``.
-    """
-    trigger = r"}_{"
-    if r"\frac{" not in html or r"\sqrt{" not in html or trigger not in html:
-        return html
-
-    out: list[str] = []
-    idx = 0
-    while idx < len(html):
-        frac_pos = html.find(r"\frac", idx)
-        if frac_pos < 0:
-            out.append(html[idx:])
-            break
-
-        out.append(html[idx:frac_pos])
-        num_open = frac_pos + len(r"\frac")
-        if num_open >= len(html) or html[num_open] != "{":
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        num_close = _matching_latex_brace(html, num_open)
-        den_open = num_close + 1 if num_close >= 0 else -1
-        if den_open < 0 or den_open >= len(html) or html[den_open] != "{":
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        den_close = _matching_latex_brace(html, den_open)
-        den_content = html[den_open + 1 : den_close] if den_close >= 0 else ""
-        if not den_content.startswith(r"\sqrt{"):
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        sqrt_body_open = den_open + 1 + len(r"\sqrt")
-        sqrt_body_close = _matching_latex_brace(html, sqrt_body_open)
-        if sqrt_body_close < 0 or den_close < 0:
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        if html[sqrt_body_close + 1 : den_close].strip():
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        sub_open = den_close + 2
-        if den_close + 1 >= len(html) or html[den_close + 1] != "_" or sub_open >= len(html) or html[sub_open] != "{":
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        sub_close = _matching_latex_brace(html, sub_open)
-        if sub_close < 0 or sub_close + 1 >= len(html) or html[sub_close + 1] != "}":
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        subscript = html[sub_open + 1 : sub_close].strip()
-        if re.fullmatch(r"[A-Za-z0-9_,\s]+", subscript) is None:
-            out.append(html[frac_pos : frac_pos + len(r"\frac")])
-            idx = frac_pos + len(r"\frac")
-            continue
-
-        numerator = html[num_open + 1 : num_close]
-        sqrt_body = html[sqrt_body_open + 1 : sqrt_body_close]
-        out.append(rf"\frac{{{numerator}}}{{\sqrt{{\frac{{{sqrt_body}}}{{{subscript}}}}}}}")
-        idx = sub_close + 2
-
-    return "".join(out)
-
-
 def _fix_latex_text_commands(html: str) -> str:
     html = _LATEX_LABEL_PATTERN.sub("", html)
     html = _LATEX_TEXTBF_PATTERN.sub(r"<strong>\1</strong>", html)
@@ -2039,347 +1749,26 @@ def _fix_latex_text_commands(html: str) -> str:
     return html
 
 
-def _strip_mathjax_scripts(html: str) -> str:
-    html = _MATHJAX_SCRIPT_TAG_PATTERN.sub("", html)
-    return _MATHJAX_CONFIG_TAG_PATTERN.sub("", html)
-
-
-def _escape_math_text(text: str) -> str:
-    return html_lib.escape(text, quote=False)
-
-
-def _consume_braced_tex(text: str, position: int) -> tuple[str, int, bool]:
-    if position >= len(text) or text[position] != "{":
-        return "", position, False
-    close = _matching_latex_brace(text, position)
-    if close < 0:
-        return "", position, False
-    return text[position + 1 : close], close + 1, True
-
-
-def _consume_bracketed_tex(text: str, position: int) -> tuple[str, int, bool]:
-    if position >= len(text) or text[position] != "[":
-        return "", position, False
-
-    depth = 0
-    idx = position
-    while idx < len(text):
-        char = text[idx]
-        if char == "\\":
-            idx += 2
-            continue
-        if char == "[":
-            depth += 1
-        elif char == "]":
-            depth -= 1
-            if depth == 0:
-                return text[position + 1 : idx], idx + 1, True
-        idx += 1
-    return "", position, False
-
-
-def _render_tex_required_group(text: str, position: int) -> tuple[str, int, bool]:
-    raw, next_position, ok = _consume_braced_tex(text, position)
-    if not ok:
-        return "", position, False
-    return _render_tex_expression(raw), next_position, True
-
-
-def _render_tex_atom(text: str, position: int) -> tuple[str, int]:
-    while position < len(text) and text[position].isspace():
-        position += 1
-    if position >= len(text):
-        return "", position
-
-    char = text[position]
-    if char == "{":
-        rendered, next_position, ok = _render_tex_required_group(text, position)
-        if ok:
-            return rendered, next_position
-        return _escape_math_text(char), position + 1
-    if char == "\\":
-        return _render_tex_command(text, position)
-    if char in "_^":
-        return "", position + 1
-    if char == "~":
-        return " ", position + 1
-    if char == "&":
-        return " ", position + 1
-    return _escape_math_text(char), position + 1
-
-
-def _render_tex_script(text: str, position: int, tag: str) -> tuple[str, int]:
-    body, next_position = _render_tex_atom(text, position)
-    if not body:
-        return "", next_position
-    return f"<{tag}>{body}</{tag}>", next_position
-
-
-def _render_tex_command(text: str, position: int) -> tuple[str, int]:
-    if position + 1 >= len(text):
-        return "\\", position + 1
-
-    next_char = text[position + 1]
-    if not next_char.isalpha():
-        simple = {
-            "\\": "<br>",
-            ",": " ",
-            ";": " ",
-            ":": " ",
-            "!": "",
-            " ": " ",
-            "~": " ",
-            "%": "%",
-            "$": "$",
-            "#": "#",
-            "&": "&amp;",
-            "_": "_",
-            "{": "{",
-            "}": "}",
-            "[": "[",
-            "]": "]",
-        }.get(next_char)
-        if simple is not None:
-            return simple, position + 2
-        return _escape_math_text(next_char), position + 2
-
-    end = position + 1
-    while end < len(text) and text[end].isalpha():
-        end += 1
-    command = text[position + 1 : end]
-
-    if command in {"left", "right", "big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr"}:
-        probe = end
-        while probe < len(text) and text[probe].isspace():
-            probe += 1
-        if probe >= len(text):
-            return "", end
-        if text[probe] == ".":
-            return "", probe + 1
-        if text[probe] == "\\":
-            return _render_tex_command(text, probe)
-        return _escape_math_text(text[probe]), probe + 1
-
-    if command == "frac":
-        numerator, after_num, ok_num = _render_tex_required_group(text, end)
-        denominator, after_den, ok_den = _render_tex_required_group(text, after_num)
-        if ok_num and ok_den:
-            return (
-                '<span class="z2m-frac">'
-                f'<span class="z2m-frac-num">{numerator}</span>'
-                f'<span class="z2m-frac-den">{denominator}</span>'
-                "</span>",
-                after_den,
-            )
-        return "frac", end
-
-    if command == "sqrt":
-        root_html = ""
-        after_command = end
-        raw_root, after_root, has_root = _consume_bracketed_tex(text, after_command)
-        if has_root:
-            root_html = f"<sup>{_render_tex_expression(raw_root)}</sup>"
-            after_command = after_root
-        radicand, after_body, ok_body = _render_tex_required_group(text, after_command)
-        if ok_body:
-            return (
-                '<span class="z2m-radical">'
-                f'<span class="z2m-radical-sign">{root_html}√</span>'
-                f'<span class="z2m-radicand">{radicand}</span>'
-                "</span>",
-                after_body,
-            )
-        return "√", end
-
-    if command in {"bar", "overline"}:
-        body, after_body = _render_tex_atom(text, end)
-        if body:
-            return f'<span class="z2m-overline">{body}</span>', after_body
-        return "", end
-
-    if command in {"hat", "widehat"}:
-        body, after_body = _render_tex_atom(text, end)
-        if body:
-            return f"{body}\u0302", after_body
-        return "", end
-
-    if command in {"tilde", "widetilde"}:
-        body, after_body = _render_tex_atom(text, end)
-        if body:
-            return f"{body}\u0303", after_body
-        return "", end
-
-    if command in {"vec", "overrightarrow"}:
-        body, after_body = _render_tex_atom(text, end)
-        if body:
-            return f"{body}\u20d7", after_body
-        return "", end
-
-    if command in {"text", "mathrm", "textrm", "operatorname"}:
-        raw, after_body, ok = _consume_braced_tex(text, end)
-        if ok:
-            return _escape_math_text(raw), after_body
-        return command, end
-
-    if command in {"textbf", "mathbf", "boldsymbol"}:
-        body, after_body = _render_tex_atom(text, end)
-        if body:
-            return f"<strong>{body}</strong>", after_body
-        return "", end
-
-    if command in {"textit", "emph", "mathit"}:
-        body, after_body = _render_tex_atom(text, end)
-        if body:
-            return f"<em>{body}</em>", after_body
-        return "", end
-
-    if command in {"begin", "end"}:
-        _, after_body, ok = _consume_braced_tex(text, end)
-        return ("", after_body) if ok else ("", end)
-
-    if command in {
-        "bf",
-        "cal",
-        "displaystyle",
-        "it",
-        "rm",
-        "scriptstyle",
-        "scriptscriptstyle",
-        "sf",
-        "textstyle",
-        "tt",
-    }:
-        after_style = end
-        while after_style < len(text) and text[after_style].isspace():
-            after_style += 1
-        return "", after_style
-
-    symbol = _LATEX_SYMBOLS.get(command)
-    if symbol is not None:
-        return symbol, end
-
-    if command in _LATEX_FUNCTIONS:
-        return f'<span class="z2m-math-fn">{command}</span>', end
-
-    if command in {"quad", "qquad"}:
-        return "  ", end
-
-    return _escape_math_text(command), end
-
-
-def _render_tex_until(text: str, position: int = 0, stop: str | None = None) -> tuple[str, int]:
-    out: list[str] = []
-    idx = position
-    while idx < len(text):
-        char = text[idx]
-        if stop is not None and char == stop:
-            return "".join(out), idx + 1
-        if char == "\\":
-            rendered, idx = _render_tex_command(text, idx)
-            out.append(rendered)
-            continue
-        if char == "{":
-            rendered, idx = _render_tex_until(text, idx + 1, "}")
-            out.append(rendered)
-            continue
-        if char == "}":
-            return "".join(out), idx + 1
-        if char == "^":
-            rendered, idx = _render_tex_script(text, idx + 1, "sup")
-            out.append(rendered)
-            continue
-        if char == "_":
-            rendered, idx = _render_tex_script(text, idx + 1, "sub")
-            out.append(rendered)
-            continue
-        if char == "~":
-            out.append(" ")
-            idx += 1
-            continue
-        if char == "&":
-            out.append(" ")
-            idx += 1
-            continue
-        out.append(_escape_math_text(char))
-        idx += 1
-    return "".join(out), idx
-
-
-def _render_tex_expression(text: str) -> str:
-    rendered, _ = _render_tex_until(text.strip())
-    return rendered.strip()
-
-
-def _static_math_span(body: str, *, display: bool, source_tex: str) -> str:
-    rendered = _render_tex_expression(body)
-    if not rendered:
-        return ""
-    class_name = "z2m-math z2m-math-display" if display else "z2m-math z2m-math-inline"
-    escaped_source = _escape_html_attr(source_tex)
-    return f'<span class="{class_name}" role="math" data-z2m-tex="{escaped_source}">{rendered}</span>'
-
-
-def _render_static_math_text_segment(text: str) -> str:
-    def replace_display(match: re.Match[str]) -> str:
-        return _static_math_span(
-            match.group("body"),
-            display=True,
-            source_tex=match.group(0),
+def _inject_mathjax(html: str) -> str:
+    if 'MathJax-script' in html:
+        # Replace whatever MathJax was injected (e.g. by Marker with wrong delimiters)
+        # with our correctly-configured version.
+        html = re.sub(
+            r'<script[^>]*id="MathJax-script"[^>]*/?>.*?(?:</script>)?',
+            "",
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
         )
-
-    def replace_inline(match: re.Match[str]) -> str:
-        return _static_math_span(
-            match.group("body"),
-            display=False,
-            source_tex=match.group(0),
+        html = re.sub(
+            r'<script[^>]*>[^<]*MathJax\s*=[^<]*</script>',
+            "",
+            html,
+            flags=re.IGNORECASE | re.DOTALL,
         )
-
-    rendered = _STATIC_DISPLAY_TEX_PATTERN.sub(replace_display, text)
-    return _STATIC_INLINE_TEX_PATTERN.sub(replace_inline, rendered)
-
-
-def _update_static_math_skip_stack(tag_fragment: str, skip_stack: list[str]) -> None:
-    raw = tag_fragment.strip()
-    if not raw.startswith("<") or raw.startswith("<!--") or raw.startswith("<!"):
-        return
-
-    close_match = _CLOSE_TAG_PATTERN.match(raw)
-    if close_match is not None:
-        tag_name = close_match.group(1).lower()
-        for idx in range(len(skip_stack) - 1, -1, -1):
-            if skip_stack[idx] == tag_name:
-                del skip_stack[idx]
-                break
-        return
-
-    if raw.endswith("/>"):
-        return
-
-    open_match = _OPEN_TAG_PATTERN.match(raw)
-    if open_match is None:
-        return
-    tag_name = open_match.group(1).lower()
-    if tag_name in _STATIC_MATH_SKIP_TAGS:
-        skip_stack.append(tag_name)
-
-
-def _render_static_math_html(html: str) -> str:
-    html = _strip_mathjax_scripts(html)
-    if "\\(" not in html and "\\[" not in html:
-        return html
-
-    parts = _TAG_SPLIT_PATTERN.split(html)
-    out: list[str] = []
-    skip_stack: list[str] = []
-    for part in parts:
-        if not part:
-            continue
-        if part.startswith("<"):
-            _update_static_math_skip_stack(part, skip_stack)
-            out.append(part)
-            continue
-        out.append(part if skip_stack else _render_static_math_text_segment(part))
-    return "".join(out)
+    if not _HEAD_CLOSE_PATTERN.search(html):
+        html = _inject_default_styles(html)
+    # Use a lambda so re.sub does NOT process backslashes in the replacement string.
+    return _HEAD_CLOSE_PATTERN.sub(lambda _: f"{_MATHJAX_SCRIPT}\n</head>", html, count=1)
 
 
 def _unescape_inline_sup_sub(html: str) -> str:
@@ -3660,31 +3049,7 @@ def _move_trailing_bracket_citations_out_of_inline_tex(html: str) -> str:
 
 
 def _repair_common_math_ocr_substitutions(html: str) -> str:
-    html = _repair_sqrt_denominator_subscript_spill(html)
     return _OMEGA_ZERO_RATIO_OCR_PATTERN.sub(r"\\frac{\\omega}{\\omega_0}", html)
-
-
-def _repair_marker_inline_math_artifacts(html: str) -> str:
-    r"""Clean up tiny inline math fragments that Marker created from page furniture.
-
-    These are not formulas with missing rendering support. They are isolated OCR
-    fragments such as a PDF line number emitted as ``<math>_{75}</math>`` or a
-    textual symbol pair like ``<math>\\%\\pm</math>``. Once converted to TeX,
-    the static math renderer would faithfully render the garbage, so handle
-    them before the citation/linking passes.
-    """
-
-    html = _INLINE_TEX_MARKER_LINE_SUBSCRIPT_PATTERN.sub("", html)
-    html = _INLINE_TEX_PERCENT_PM_SYMBOL_PATTERN.sub("% \u00b1", html)
-    html = _INLINE_TEX_GEQ_SYMBOL_PATTERN.sub("\u2265", html)
-    html = _INLINE_TEX_LEQ_SYMBOL_PATTERN.sub("\u2264", html)
-    html = _INLINE_TEX_SIM_SYMBOL_PATTERN.sub("~", html)
-    html = _INLINE_TEX_MICROLITER_SYMBOL_PATTERN.sub("\u03bcL", html)
-    html = _SPLIT_INLINE_EQUATION_OPERATOR_TAIL_PATTERN.sub(
-        lambda m: f"\\({m.group('formula')}{m.group('tail')}\\)",
-        html,
-    )
-    return re.sub(r"(?<=\d)\s*-\s+(?=\d)", "-", html)
 
 
 def _restore_inline_tex_sentence_punctuation(html: str) -> str:
@@ -3714,11 +3079,7 @@ def _looks_inline_tex_dimension_prose(body: str) -> bool:
         return False
     if re.search(r"[_=]", visible):
         return False
-    if "^" in body and not re.search(
-        r"(?:(?:\\mu|µ|μ|um|Вµ|Ој|Р’Вµ|РћС)m?|\\text\{\s*(?:m|mm|cm|nm|um|µm|μm)\s*\}|\\mathrm\{\s*(?:m|mm|cm|nm|um|µm|μm)\s*\}|\b(?:m|mm|cm|nm|um|µm|μm)\b)\s*\^",
-        body,
-        re.IGNORECASE,
-    ):
+    if "^" in body and not re.search(r"(?:\\mu|µ|μ|um|Вµ|Ој|Р’Вµ|РћС)m?\s*\^", body, re.IGNORECASE):
         return False
     if not re.search(r"(?:\\mu|µm|μm|um|Вµm|Ојm|Р’Вµm|РћСm|\bmm\b|\bcm\b|\bch\b|\\times|×|x\s*\d|\bto\b)", body + " " + visible, re.IGNORECASE):
         return False
@@ -3765,12 +3126,6 @@ def _normalize_inline_tex_dimension_body(body: str) -> str:
     text = re.sub(
         r"\b(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>u|\u00b5|\u03bc|Вµ|Ој|Р’Вµ|РћС)m\s*\^?\s*2\b",
         lambda m: f"{m.group('value')} \u00b5m<sup class=\"z2m-unit-exp\">2</sup>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"(?<![A-Za-z])(?P<unit>µm|μm|um|mm|cm|nm|m)\s*\^\{?\s*(?P<exp>[123])\s*\}?",
-        lambda m: f"{m.group('unit')}<sup class=\"z2m-unit-exp\">{m.group('exp')}</sup>",
         text,
         flags=re.IGNORECASE,
     )
@@ -4171,19 +3526,6 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
     def replace_ml_per_second_sup(match: re.Match[str]) -> str:
         return f'{match.group("unit")} s<sup class="z2m-unit-exp">-1</sup>'
 
-    def replace_braced_unit_exp(match: re.Match[str]) -> str:
-        prefix = match.string[: match.start()].lower()
-        if prefix.rfind("<math") > prefix.rfind("</math>"):
-            return match.group(0)
-        exp = (
-            match.group("exp")
-            .replace(" ", "")
-            .replace("\u2212", "-")
-            .replace("\u2013", "-")
-            .replace("\u2014", "-")
-        )
-        return f'{match.group("unit").rstrip()}<sup class="z2m-unit-exp">{exp}</sup>'
-
     html = _LINKED_ML_PER_SECOND_UNIT_EXPONENT_SUP_PATTERN.sub(
         replace_ml_per_second_sup,
         html,
@@ -4221,7 +3563,6 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
         lambda m: f'{m.group("unit").rstrip()}<sup class="z2m-unit-exp">-{m.group("exp")}</sup>',
         html,
     )
-    html = _BRACED_UNIT_EXP_PATTERN.sub(replace_braced_unit_exp, html)
     html = _LINKED_DIRECT_UNIT_EXPONENT_REF_PATTERN.sub(
         lambda m: f'{m.group("prefix")}{m.group("unit")}<sup class="z2m-unit-exp">{m.group("exp")}</sup>',
         html,
@@ -6491,12 +5832,6 @@ def _fix_equation_display(html: str) -> str:
             f"</div>"
         )
 
-    def _looks_like_equation_display_prefix(value: str) -> bool:
-        visible = _visible_text(value)
-        if len(visible) > 80:
-            return False
-        return re.fullmatch(r"[A-Za-z][A-Za-z0-9_\\{}^().,\s+\-]*=\s*", visible) is not None
-
     def _looks_like_standalone_text_equation(body: str, visible_without_num: str) -> bool:
         if "=" not in visible_without_num:
             return False
@@ -6524,30 +5859,17 @@ def _fix_equation_display(html: str) -> str:
         tail_after_first = body_rstripped[first_display.end() :].lstrip()
         split_num = tag_num
         split_tail = tail_after_first
-        split_punct = ""
         if split_num is None:
-            tail_num_match = re.match(
-                r"(?P<punct>[.,])?\s*(?P<num>\(\d{1,3}\))(?P<tail>\s+\S[\s\S]*)?$",
-                tail_after_first,
-            )
+            tail_num_match = re.match(r"(?P<num>\(\d{1,3}\))(?P<tail>\s+\S[\s\S]*)$", tail_after_first)
             if tail_num_match is not None:
                 split_num = tail_num_match.group("num")
-                split_tail = (tail_num_match.group("tail") or "").lstrip()
-                split_punct = tail_num_match.group("punct") or ""
+                split_tail = tail_num_match.group("tail").lstrip()
 
         if not leading_text and split_num is not None and split_tail:
             return (
                 _equation_row(open_tag, cleaned_first_math, close_tag, split_num)
                 + f'<p block-type="Text">{split_tail}</p>'
             )
-
-        if leading_text and split_num is not None and not split_tail and _looks_like_equation_display_prefix(leading_text):
-            inner = first_display.group(1).strip()
-            inner_no_tag, _ = _strip_tag_from_math(inner)
-            prefix = leading_text.rstrip()
-            joiner = "" if prefix.endswith(("+", "-", "\u2212", "/", "*")) else " "
-            combined = f"\\[{prefix}{joiner}{inner_no_tag.strip()}{split_punct}\\]"
-            return _equation_row(open_tag, combined, close_tag, split_num)
 
         stripped = _DISPLAY_MATH_IN_PARA_PATTERN.sub("", body)
         stripped = re.sub(r"\(\d+\)", "", stripped).strip()
@@ -6603,8 +5925,8 @@ def _fix_equation_display(html: str) -> str:
 
 
 def _convert_math_tags_to_tex(html: str) -> str:
-    """Convert <math> HTML elements that contain raw LaTeX into TeX delimiters:
-    ``\\[...\\]`` for block and ``\\(...\\)`` for inline math.
+    """Convert <math> HTML elements that contain raw LaTeX into MathJax-renderable
+    delimiters: ``\\[...\\]`` for block and ``\\(...\\)`` for inline math.
 
     Real MathML (content with child XML elements) is left untouched.
     """
@@ -11392,7 +10714,6 @@ def polish_html_document(
     polished = _mark_unit_exponent_superscripts(polished)
     polished = _fix_equation_display(polished)
     polished = _convert_math_tags_to_tex(polished)
-    polished = _repair_marker_inline_math_artifacts(polished)
     polished = _convert_latex_sup_citations(polished)
     polished = _restore_inline_tex_sentence_punctuation(polished)
     polished = _normalize_scientific_units(polished)
@@ -11488,9 +10809,9 @@ def polish_html_document(
     polished = _repair_split_url_anchor_block_tail(polished)
     polished = _normalize_spacing_after_url_links(polished)
     polished = _mark_wide_table_layout(polished)
-    polished = _render_static_math_html(polished)
     polished = _inject_utf8_charset(polished)
     polished = _inject_default_styles(polished)
+    polished = _inject_mathjax(polished)
     polished = _wrap_body_in_container(polished)
     polished = _cleanup_empty_html_blocks(polished)
     polished = _fix_heading_translation_breaks(polished)  # ". <i>LC</i>" → " <i>LC</i>"
