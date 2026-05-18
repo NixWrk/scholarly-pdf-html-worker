@@ -30,12 +30,14 @@ translation runner.
 ## Install
 
 ```powershell
-pip install -e .
+pip install -e ".[math,pdf-text-detect]"
 ```
 
 Runtime requirements outside this package:
 
 - `marker` and `marker_single` available in `PATH`.
+- Node.js plus a Zotero/pdf.js `generic-legacy` build for Zotero overlay
+  citation recovery, unless you pass prebuilt `*.overlays.json` files.
 - LM Studio local server and `lms` CLI for auto-load/unload translation runs.
 
 The Docker image installs `marker-pdf==1.10.2`, which provides `marker` and
@@ -50,10 +52,14 @@ image/environment where `lms` is available.
 pdf-html-convert `
   --pdf "D:\work\paper.pdf" `
   --output-dir "D:\work\pdf-html-output" `
+  --zotero-overlay-dir "D:\work\zotero-overlays" `
   --export-mode html
 ```
 
 Output HTML stages are saved under each article folder in `_z2m_stages`.
+`--zotero-overlay-dir` is optional; when present, matching Zotero/pdf.js
+`*.overlays.json` files are used for citation-link recovery before automatic
+overlay generation is attempted.
 
 Multiple PDFs can be passed by repeating `--pdf`:
 
@@ -89,7 +95,11 @@ The translated file for each article is `03.ru.translate.html`.
 
 ## Container Notes
 
-The included Dockerfile is a scaffold. It installs this project but leaves Marker/model runtime choices explicit, because GPU/CUDA and Marker installation tend to be host-specific.
+The included Dockerfile installs Marker, Node.js, the local overlay probe, and
+the optional math/PDF-text dependencies used by the HTML polish path. For Zotero
+overlay citation recovery, mount or provide a Zotero/pdf.js `generic-legacy`
+build and set `Z2M_ZOTERO_PDFJS_DIR`, or pass prebuilt overlays with
+`--zotero-overlay-dir`.
 
 For LM Studio from a container, use a reachable host URL such as `http://host.docker.internal:<port>/v1` instead of container-local `127.0.0.1`.
 

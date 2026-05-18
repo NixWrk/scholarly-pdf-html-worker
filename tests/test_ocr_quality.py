@@ -12,7 +12,8 @@ from zoteropdf2md.ocr_quality import (
     enqueue_reocr_candidate,
     load_reocr_queue,
 )
-from zoteropdf2md.pipeline import PipelineOptions, run_pipeline
+import zoteropdf2md.pipeline as pipeline_module
+from zoteropdf2md.pipeline import PipelineOptions, _find_zotero_overlay_path, run_pipeline
 
 
 def _make_temp_dir() -> Path:
@@ -112,6 +113,25 @@ class _FakeHtmlRunner:
         return RunResult(command=["fake-marker-single"], exit_code=1)
 
 
+class _FakeMathHtmlRunner:
+    def run_batch(self, *, input_dir, output_dir, output_format, **_kwargs):
+        assert output_format == "html"
+        for pdf_path in sorted(Path(input_dir).glob("*.pdf")):
+            article_dir = Path(output_dir) / pdf_path.stem
+            article_dir.mkdir(parents=True, exist_ok=True)
+            (article_dir / f"{pdf_path.stem}.html").write_text(
+                "<html><body>"
+                r"<p>Energy \(E=mc^2\) released.</p>"
+                '<h2>References</h2><ol><li id="ref-1">Example reference.</li></ol>'
+                "</body></html>",
+                encoding="utf-8",
+            )
+        return RunResult(command=["fake-marker"], exit_code=0)
+
+    def run_single(self, **_kwargs):
+        return RunResult(command=["fake-marker-single"], exit_code=1)
+
+
 def test_pipeline_queues_bad_ocr_html_for_reocr(monkeypatch) -> None:
     tmp_path = _make_temp_dir()
     try:
@@ -147,4 +167,78 @@ def test_pipeline_queues_bad_ocr_html_for_reocr(monkeypatch) -> None:
         assert (output_dir / "_reocr_pending" / f"bad_scan{REOCR_SUFFIX}.json").is_file()
         assert any("OCR quality gate queued for re-OCR" in line for line in logs)
     finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_pipeline_finds_zotero_overlay_by_alias_suffix() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        overlay_dir = tmp_path / "overlays"
+        overlay_dir.mkdir()
+        overlay_path = overlay_dir / "cached_82a4cf51.overlays.json"
+        overlay_path.write_text('{"summary":{"citations":[]}}\n', encoding="utf-8")
+
+        match = _find_zotero_overlay_path(
+            overlay_dir,
+            tmp_path / "Very long source title.pdf",
+            "Very long source title_82a4cf51",
+        )
+
+        assert match == overlay_path
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_pipeline_html_polish_uses_static_katex_and_closes_context(monkeypatch) -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+        source_pdf = tmp_path / "math_article.pdf"
+        source_pdf.write_bytes(b"%PDF-1.4\n")
+        overlay_dir = tmp_path / "overlays"
+        overlay_dir.mkdir()
+        overlay_path = overlay_dir / "math_article.overlays.json"
+        overlay_path.write_text('{"summary":{"citations":[]}}\n', encoding="utf-8")
+        output_dir = tmp_path / "out"
+        logs: list[str] = []
+        close_calls: list[bool] = []
+        profile_overlay_paths: list[Path | None] = []
+        original_close = pipeline_module.close_katex_v8_context
+
+        def close_context() -> None:
+            close_calls.append(True)
+            original_close()
+
+        def build_profile(_path, **kwargs):
+            profile_overlay_paths.append(kwargs.get("zotero_overlay_path"))
+            return {"status": "test", "style": "numeric", "confidence": "high"}
+
+        monkeypatch.setattr(pipeline_module, "close_katex_v8_context", close_context)
+        monkeypatch.setattr(pipeline_module, "build_citation_profile_from_pdf", build_profile)
+
+        summary = run_pipeline(
+            PipelineOptions(
+                source_pdf_paths=[str(source_pdf)],
+                output_dir=str(output_dir),
+                export_mode=ExportMode.HTML.value,
+                skip_existing=False,
+                cleanup_staging=True,
+                zotero_overlay_dir=str(overlay_dir),
+            ),
+            _FakeMathHtmlRunner(),
+            logs.append,
+            lambda: False,
+        )
+
+        html_path = output_dir / "math_article" / "math_article.html"
+        html = html_path.read_text(encoding="utf-8")
+
+        assert summary.failed_total == 0
+        assert summary.converted_total == 1
+        assert 'data-z2m-style="katex"' in html
+        assert r'data-z2m-tex="\(E=mc^2\)"' in html
+        assert profile_overlay_paths == [overlay_path.resolve(strict=False)]
+        assert close_calls == [True]
+    finally:
+        pipeline_module.close_katex_v8_context()
         shutil.rmtree(tmp_path, ignore_errors=True)

@@ -30,6 +30,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-base-len", type=int, default=120)
     parser.add_argument("--disable-batch-multiprocessing", action="store_true")
     parser.add_argument(
+        "--zotero-overlay-dir",
+        default=None,
+        help=(
+            "Optional directory with Zotero/pdf.js *.overlays.json files. "
+            "When provided, citation profiles use these overlays before "
+            "falling back to automatic overlay generation."
+        ),
+    )
+    parser.add_argument(
         "--export-mode",
         default=ExportMode.HTML.value,
         choices=[ExportMode.HTML.value, ExportMode.CLASSIC.value, ExportMode.LLM.value],
@@ -55,6 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         model_cache_dir=args.model_cache_dir,
         max_base_len=args.max_base_len,
         disable_batch_multiprocessing=args.disable_batch_multiprocessing,
+        zotero_overlay_dir=args.zotero_overlay_dir,
         export_mode=args.export_mode,
         translate_html_with_gemma=False,
     )

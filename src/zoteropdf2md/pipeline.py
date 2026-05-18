@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import glob
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -18,7 +20,11 @@ from .ocr_quality import assess_ocr_quality_from_html, enqueue_reocr_candidate, 
 from .output_state import detect_existing_results, normalize_source_path
 from .paths import resolve_zotero_data_dir
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
-from .single_file_html import drop_repeated_phrases, inline_images_from_html_file
+from .single_file_html import (
+    close_katex_v8_context,
+    drop_repeated_phrases,
+    inline_images_from_html_file,
+)
 from .staging import (
     DEFAULT_MAX_BASE_LEN,
     FILENAME_MAP_NAME,
@@ -42,6 +48,9 @@ from .zotero_pending import (
     load_pending_attachments,
     retry_pending_attachments,
 )
+
+
+OVERLAY_SUFFIX_RE = re.compile(r"_([0-9a-f]{8})(?:\.pdf)?$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,7 @@ class PipelineOptions:
     translation_context_max_window_chars: int = 40_000
     translation_enable_en_residual_quality_gate: bool = True
     translation_en_residual_quality_gate_max_segments: int = 8
+    zotero_overlay_dir: str | None = None
     webdav_upload_enabled: bool = False
     webdav_config_path: str | None = None
 
@@ -355,6 +365,54 @@ def _artifact_signature(path: Path) -> tuple[bool, int, int]:
     return True, int(stat.st_size), int(stat.st_mtime_ns)
 
 
+def _alias_suffix(value: str) -> str:
+    match = OVERLAY_SUFFIX_RE.search(value)
+    return match.group(1).lower() if match else ""
+
+
+def _find_zotero_overlay_path(
+    overlay_dir: Path | None,
+    source_pdf_path: Path,
+    alias_base_name: str | None,
+) -> Path | None:
+    if overlay_dir is None or not overlay_dir.is_dir():
+        return None
+
+    source_stem = source_pdf_path.stem
+    alias_stem = alias_base_name or ""
+    suffix = _alias_suffix(alias_stem) or _alias_suffix(source_stem)
+    candidates = [
+        overlay_dir / f"{source_stem}.overlays.json",
+    ]
+    if alias_stem:
+        candidates.append(overlay_dir / f"{alias_stem}.overlays.json")
+    if suffix:
+        candidates.append(overlay_dir / f"{suffix}.overlays.json")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate
+
+    if suffix:
+        matches = sorted(overlay_dir.glob(f"*{glob.escape(suffix)}*.overlays.json"), key=str)
+        if matches:
+            return matches[0]
+
+    source_prefix = source_stem[:48]
+    if source_prefix:
+        matches = sorted(
+            overlay_dir.glob(f"*{glob.escape(source_prefix)}*.overlays.json"),
+            key=str,
+        )
+        if matches:
+            return matches[0]
+    return None
+
+
 def _empty_pipeline_summary(
     *,
     discovery: PdfDiscoveryResult,
@@ -386,6 +444,11 @@ def run_pipeline(
     pipeline_started_at = perf_counter()
     output_dir = Path(options.output_dir).expanduser().resolve()
     runtime_tmp_root = runtime_temp_root(output_dir)
+    zotero_overlay_dir = (
+        Path(options.zotero_overlay_dir).expanduser().resolve(strict=False)
+        if options.zotero_overlay_dir
+        else None
+    )
 
     # Support comma-separated multi-mode (e.g. "classic,llm_bundle").
     # All modes in one pipeline call must share the same marker_output_format.
@@ -530,13 +593,26 @@ def run_pipeline(
 
         citation_profile_by_source: dict[str, object] = {}
 
-        def citation_profile_for(source_pdf_path: Path) -> object:
+        def citation_profile_for(source_pdf_path: Path, alias_base_name: str | None = None) -> object:
             source_norm = normalize_source_path(source_pdf_path)
             cached = citation_profile_by_source.get(source_norm)
             if cached is not None:
                 return cached
             started_profile_at = perf_counter()
-            profile = build_citation_profile_from_pdf(source_pdf_path)
+            zotero_overlay_path = _find_zotero_overlay_path(
+                zotero_overlay_dir,
+                source_pdf_path,
+                alias_base_name,
+            )
+            if zotero_overlay_path is not None:
+                log(
+                    "Zotero overlay selected: "
+                    f"{source_pdf_path.name}: {zotero_overlay_path}"
+                )
+            profile = build_citation_profile_from_pdf(
+                source_pdf_path,
+                zotero_overlay_path=zotero_overlay_path,
+            )
             citation_profile_by_source[source_norm] = profile
             status = getattr(profile, "zotero_overlay_status", "")
             count = getattr(profile, "zotero_citation_count", 0)
@@ -856,7 +932,10 @@ def run_pipeline(
                                 f"pending_total={queue_result.pending_total})"
                             )
                         inline_started_at = perf_counter()
-                        citation_profile = citation_profile_for(staged_file.source_pdf_path)
+                        citation_profile = citation_profile_for(
+                            staged_file.source_pdf_path,
+                            staged_file.alias_base_name,
+                        )
                         result = inline_images_from_html_file(
                             html_path,
                             citation_profile=citation_profile,
@@ -977,7 +1056,10 @@ def run_pipeline(
                             continue
 
                         try:
-                            citation_profile = citation_profile_for(staged_file.source_pdf_path)
+                            citation_profile = citation_profile_for(
+                                staged_file.source_pdf_path,
+                                staged_file.alias_base_name,
+                            )
                             inline_result = inline_images_from_html_file(
                                 html_path,
                                 citation_profile=citation_profile,
@@ -1064,6 +1146,7 @@ def run_pipeline(
             log("Staging folder cleaned up.")
             _log_elapsed(log, "pipeline.cleanup_staging", cleanup_started_at)
     finally:
+        close_katex_v8_context()
         cleanup_runtime_temp_root(runtime_tmp_root)
         log(f"Runtime temp cleaned: {runtime_tmp_root}")
         _log_elapsed(log, "pipeline.total", pipeline_started_at)
