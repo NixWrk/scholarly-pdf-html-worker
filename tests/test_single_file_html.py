@@ -2976,6 +2976,25 @@ def test_polish_html_document_unwraps_dimension_tex_in_table_cells() -> None:
     assert r"\(x_i = y_i + 1\)" in polished
 
 
+def test_polish_html_document_unwraps_simple_statistical_inline_tex() -> None:
+    html = (
+        "<html><body>"
+        r"<p>The values were \((4.37 \pm 2.47 vs. 5.22 \pm 2.38, p = 0.075;\) "
+        r"\(0.23 \pm 0.57\) vs. \(0.47 \pm 1.10\) , p = 0.247) . However, values changed.</p>"
+        r"<p>Near-infrared imaging provides \(\gamma\)-ray tissue penetration.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert (
+        "(4.37 ± 2.47 vs. 5.22 ± 2.38, p = 0.075; "
+        "0.23 ± 0.57 vs. 0.47 ± 1.10, p = 0.247). However"
+    ) in polished
+    assert r"\pm" not in polished
+    assert r"\(\gamma\)" in polished
+
+
 def test_polish_html_document_restores_period_after_terminal_inline_formula() -> None:
     html = (
         "<html><body>"
