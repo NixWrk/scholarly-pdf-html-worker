@@ -352,7 +352,7 @@ def test_flattened_superscript_numeric_document_links_groups_without_line_number
 def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_only() -> None:
     html = (
         "<html><body>"
-        "<p>The x2 test was used before the clinical text. "
+        "<p>The x2 test and \u03c72 independence test were used before the clinical text. "
         "There are no clear methods to prove the symptoms. 2 Published studies continued. "
         "Treatment was not correlated with pretreatment UDS.3-5 Recently, interest increased. "
         "C-reactive protein.6-10 Genetic association was investigated. "
@@ -372,6 +372,7 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
             "confidence": "low",
             "zotero_citations": [
                 {"page": 2, "text": "2", "refs": [2], "context": "parity and x2test was used"},
+                {"page": 3, "text": "2", "refs": [2], "context": "\u03c72independence test showed"},
                 {
                     "page": 1,
                     "text": "2",
@@ -418,8 +419,10 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
         },
     )
 
-    assert "x2 test was used" in polished
+    assert "x2 test" in polished
+    assert "\u03c72 independence test" in polished
     assert 'x<sup><a href="#ref-2"' not in polished
+    assert '\u03c7<sup><a href="#ref-2"' not in polished
     assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
     assert 'UDS.<sup><a href="#ref-3" class="z2m-ref-link">3</a>-<a href="#ref-5" class="z2m-ref-link">5</a></sup> Recently' in polished
     assert 'protein.<sup><a href="#ref-6" class="z2m-ref-link">6</a>-<a href="#ref-10" class="z2m-ref-link">10</a></sup> Genetic' in polished

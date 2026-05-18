@@ -367,6 +367,10 @@ _STAT_FALSE_REF_CONTEXT_PATTERN = re.compile(
     r"range\s+from\s+about|logMAR|within\s+\d+\s+or\s+\d+\s+s)\b",
     re.IGNORECASE,
 )
+_FORMULA_SUPERSCRIPT_LEFT_CONTEXT_PATTERN = re.compile(
+    r"(?:^|[^A-Za-z])(?:x|r|p|n|df|chi|[\u03c7\u03a7])\s*(?:[=<>+\-*/\u00d7\u2264\u2265]?\s*)$",
+    re.IGNORECASE,
+)
 _TABLE_REF_PATTERN = re.compile(
     r'\b((?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?)'
     rf'\s+({_TABLE_KEY_TOKEN})([a-z])?\b(?!\s*(?:\.\s|\|))',
@@ -4863,6 +4867,69 @@ def _pdf_annotation_superscript_context_matches(
     return False
 
 
+_NUMERIC_SUPERSCRIPT_DASH_CHARS = "-\u2013\u2014"
+_NUMERIC_SUPERSCRIPT_OPERATOR_CHARS = "=+*/^<>≤≥±"
+
+
+def _inline_math_is_open(text: str, position: int) -> bool:
+    left_inline_open = text.rfind(r"\(", 0, position)
+    left_inline_close = text.rfind(r"\)", 0, position)
+    left_display_open = text.rfind(r"\[", 0, position)
+    left_display_close = text.rfind(r"\]", 0, position)
+    return left_inline_open > left_inline_close or left_display_open > left_display_close
+
+
+def _has_non_citation_numeric_left_context(left_visible: str) -> bool:
+    for match in _NONCITATION_NUMERIC_CONTEXT_PATTERN.finditer(left_visible):
+        if (
+            match.start() > 0
+            and left_visible[match.start() - 1] == "."
+            and left_visible[match.start()].lower() in {"a", "v"}
+        ):
+            continue
+        return True
+    return False
+
+
+def _numeric_superscript_context_allows_citation(
+    text: str,
+    start: int,
+    end: int,
+    *,
+    allow_lowercase_after: bool = False,
+) -> bool:
+    if start > 0 and text[start - 1].isdigit():
+        return False
+    if _inline_math_is_open(text, start):
+        return False
+
+    left = text[:start]
+    right = text[end:]
+    left_stripped = left.rstrip()
+    right_stripped = right.lstrip()
+    left_visible = _visible_text(left[-100:])
+
+    if _has_non_citation_numeric_left_context(left_visible):
+        return False
+    if _FORMULA_SUPERSCRIPT_LEFT_CONTEXT_PATTERN.search(left_visible) is not None:
+        return False
+    if left_stripped and left_stripped[-1] in _NUMERIC_SUPERSCRIPT_DASH_CHARS:
+        return False
+    if left_stripped and left_stripped[-1] in _NUMERIC_SUPERSCRIPT_OPERATOR_CHARS:
+        return False
+    if right_stripped and right_stripped[0] in _NUMERIC_SUPERSCRIPT_DASH_CHARS:
+        return False
+    if right_stripped.startswith("%"):
+        return False
+    if (
+        not allow_lowercase_after
+        and re.match(r"[A-Za-z]", right_stripped)
+        and not re.match(r"[A-Z]", right_stripped)
+    ):
+        return False
+    return True
+
+
 def _link_pdf_annotation_plain_superscript_citations(
     html: str,
     citation_profile: Any | None,
@@ -4886,14 +4953,6 @@ def _link_pdf_annotation_plain_superscript_citations(
     number_pattern = re.compile(
         rf"(?P<gap>\s*)(?P<num>{'|'.join(re.escape(str(target)) for target in targets)})(?!\d)"
     )
-    dash_chars = "-\u2013\u2014"
-
-    def in_inline_math(text: str, position: int) -> bool:
-        left_inline_open = text.rfind(r"\(", 0, position)
-        left_inline_close = text.rfind(r"\)", 0, position)
-        left_display_open = text.rfind(r"\[", 0, position)
-        left_display_close = text.rfind(r"\]", 0, position)
-        return left_inline_open > left_inline_close or left_display_open > left_display_close
 
     def replace_in_text(part: str) -> str:
         def replace(match: re.Match[str]) -> str:
@@ -4906,23 +4965,10 @@ def _link_pdf_annotation_plain_superscript_citations(
 
             start = match.start("num")
             end = match.end("num")
-            if start > 0 and part[start - 1].isdigit():
+            if not _numeric_superscript_context_allows_citation(part, start, end):
                 return match.group(0)
-            if in_inline_math(part, start):
-                return match.group(0)
-
             left = part[:start]
             right = part[end:]
-            left_stripped = left.rstrip()
-            right_stripped = right.lstrip()
-            if left_stripped and left_stripped[-1] in dash_chars:
-                return match.group(0)
-            if right_stripped and right_stripped[0] in dash_chars:
-                return match.group(0)
-            if right_stripped.startswith("%"):
-                return match.group(0)
-            if re.match(r"[A-Za-z]", right_stripped) and not re.match(r"[A-Z]", right_stripped):
-                return match.group(0)
             if not _pdf_annotation_superscript_context_matches(left, right, hints.get(target, [])):
                 return match.group(0)
 
@@ -5048,16 +5094,6 @@ def _has_zotero_overlay_numeric_citations(citation_profile: Any | None, ref_inde
     return bool(_zotero_overlay_numeric_citation_entries(citation_profile, ref_index))
 
 
-def _zotero_overlay_left_context_allows_superscript(left: str) -> bool:
-    stripped = left.rstrip()
-    if not stripped:
-        return False
-    last = stripped[-1]
-    if last.isalnum() or last in {"_", "\u03c7", "\u03a7"}:
-        return False
-    return True
-
-
 def _link_zotero_overlay_numeric_citations_in_safe_blocks(
     html: str,
     citation_profile: Any | None,
@@ -5085,9 +5121,12 @@ def _link_zotero_overlay_numeric_citations_in_safe_blocks(
 
                 left = match.string[: match.start("body")]
                 right = match.string[match.end("body"):]
-                if not _zotero_overlay_left_context_allows_superscript(left):
-                    return match.group(0)
-                if right.lstrip().startswith("%"):
+                if not _numeric_superscript_context_allows_citation(
+                    match.string,
+                    match.start("body"),
+                    match.end("body"),
+                    allow_lowercase_after=True,
+                ):
                     return match.group(0)
                 if not _pdf_annotation_superscript_context_matches(left, right, entry_data["hints"]):
                     return match.group(0)
@@ -5188,6 +5227,12 @@ def _link_existing_numeric_superscripts_in_safe_blocks(html: str, ref_index: int
         raw = match.group(0)
         if "z2m-unit-exp" in raw or "z2m-footnote-ref" in raw or "<a " in raw.lower():
             return raw
+        if not _numeric_superscript_context_allows_citation(
+            match.string,
+            match.start(),
+            match.end(),
+        ):
+            return raw
         linked = _link_numeric_superscript_body(match.group(1), ref_index)
         if linked is None:
             return raw
@@ -5215,6 +5260,12 @@ def _link_plain_superscript_numeric_groups_in_safe_blocks(
     )
 
     def replace_group(match: re.Match[str]) -> str:
+        if not _numeric_superscript_context_allows_citation(
+            match.string,
+            match.start("body"),
+            match.end("body"),
+        ):
+            return match.group(0)
         linked = _link_numeric_superscript_body(match.group("body"), ref_index)
         if linked is None:
             return match.group(0)
