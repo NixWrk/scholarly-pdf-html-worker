@@ -1512,7 +1512,8 @@ def test_polish_html_document_repairs_sentence_split_across_table_and_formula_no
         "Fig. 16 shows the k factor for two antenna with distance varying based on "
         "sizes. A small antenna features higher k factor at close distance."
     ) in polished
-    assert "\\(f_{brain}\\) is the function which describes localized tissue properties." in polished
+    assert 'data-z2m-tex="\\(f_{brain}\\)"' in polished
+    assert "f<sub>brain</sub></span> is the function which describes localized tissue properties." in polished
     assert '<div id="table-iii" class="z2m-float-unit z2m-table-unit">' in polished
     assert '<h4 class="z2m-table-caption">TABLE III Antenna Parameters</h4>' in polished
     assert "<table><tbody><tr><td>Parameter</td><td>Value</td></tr></tbody></table>" in polished
@@ -1545,7 +1546,8 @@ def test_polish_html_document_splits_table_note_from_body_continuation() -> None
         polished.index('<div id="table-iii" class="z2m-float-unit z2m-table-unit">') :
         polished.index("</div>", polished.index('<div id="table-iii" class="z2m-float-unit z2m-table-unit">'))
     ]
-    assert "\\(f_{brain}\\) is the function" in table_unit
+    assert 'data-z2m-tex="\\(f_{brain}\\)"' in table_unit
+    assert "f<sub>brain</sub></span> is the function" in table_unit
 
 
 def test_polish_html_document_keeps_parenthetical_sample_size_table_note() -> None:
@@ -2308,6 +2310,28 @@ def test_polish_html_document_converts_inline_math_to_tex_delimiters() -> None:
     assert "<math" not in polished
 
 
+def test_polish_html_document_renders_static_math_without_mathjax_script() -> None:
+    html = (
+        "<html><head>"
+        "<script>MathJax={tex:{}}</script>"
+        '<script id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'
+        "</head><body>"
+        r"<p>\[SNR = \frac{\bar{S}^{t}(C)}{\sqrt{mn}}\]</p>"
+        r"<p>\(\Phi_{\rm ICG} = 0.132\)</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "MathJax-script" not in polished
+    assert "cdn.jsdelivr.net/npm/mathjax" not in polished
+    assert '<span class="z2m-math z2m-math-display"' in polished
+    assert '<span class="z2m-frac">' in polished
+    assert '<span class="z2m-overline">S</span><sup>t</sup>(C)' in polished
+    assert '<span class="z2m-radical-sign">√</span><span class="z2m-radicand">mn</span>' in polished
+    assert "Φ<sub>ICG</sub> = 0.132" in polished
+
+
 def test_polish_html_document_repairs_marker_inline_math_artifacts() -> None:
     html = (
         "<html><body>"
@@ -2785,6 +2809,7 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
         "<p>The dose was 10 mg kg h − 1 IV and capacitance was 750 μCcm−2.</p>"
         "<p>The voltage was 0.7Vand 1.0Vfor 30 μAand 250 μA, respectively.</p>"
         "<p>The coating was at least 130 <i>µ</i> m thick.</p>"
+        "<p>The extinction coefficient was 129 000 M^{-1} cm^{-1}.</p>"
         "<p>The grating covered 1.5 ◦ × 1.5 ◦ and was baked at 200 ◦ C.</p>"
         "<p>The window covered 1.5 <i>◦ ×</i> 1.5 <i>◦</i> and was baked at 350 <i>◦</i> C.</p>"
         "</body></html>"
@@ -2795,6 +2820,7 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
     assert '67.5 µm<sup class="z2m-unit-exp">2</sup> were made' in polished
     assert 'mg kg<sup class="z2m-unit-exp">-1</sup> h<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'μC cm<sup class="z2m-unit-exp">-2</sup>' in polished
+    assert '129 000 M<sup class="z2m-unit-exp">-1</sup> cm<sup class="z2m-unit-exp">-1</sup>' in polished
     assert "0.7 V and 1.0 V for 30 μA and 250 μA" in polished
     assert "130 µm thick" in polished
     assert "<i>µ</i> m" not in polished
@@ -2815,7 +2841,10 @@ def test_polish_html_document_keeps_prose_outside_inline_unit_formula_tail() -> 
 
     polished = polish_html_document(html, table_caption_language="en")
 
-    assert r"4.25–8.5 \(mg\cdot kg^{-1}\cdot h^{-1}\), 10.6 \(\mu g\cdot kg^{-1}\cdot h^{-1}\), and 0–2%, respectively." in polished
+    assert 'data-z2m-tex="\\(mg\\cdot kg^{-1}\\cdot h^{-1}\\)"' in polished
+    assert "4.25–8.5 <span" in polished
+    assert "mg· kg<sup>-1</sup>· h<sup>-1</sup></span>, 10.6" in polished
+    assert "μ g· kg<sup>-1</sup>· h<sup>-1</sup></span>, and 0–2%, respectively." in polished
     assert r"and\ 0–2\%,\ respectively.\)" not in polished
 
 
