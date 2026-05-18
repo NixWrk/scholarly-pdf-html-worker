@@ -4586,6 +4586,61 @@ def test_polish_html_document_drops_journal_page_furniture_and_preserves_sentenc
     assert "This role may be performed by friends" in polished
 
 
+def test_polish_html_document_strips_dense_pdf_line_numbers_without_units_or_citations() -> None:
+    html = (
+        "<html><body>"
+        "<p>A green 5 approach was developed as a 10 fluorescence probe. "
+        "It was then applied 15 for imaging with 20 the sizes below 10 nm. "
+        "Methods have been 25 reported and equipment 30 required for green 35 chemistry. "
+        "A new carbon 40 source had 45 high coloring effects, cancer, 50 skin irritation, "
+        "leuco-methylene 55 blue during MB 60 treatment and simple 65 operation.</p>"
+        "<p>Real values remain below 10 nm and at 10 μM. Fig. 5 shows controls. "
+        "Electron transfer process. 40 In addition, MB stayed stable. "
+        "Hydrothermal cutting strategies 19,20 Nevertheless continued.</p>"
+        "<p>Spectroscopy 70 (XPS) of the sample and carbonized at the 75 After point.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "green approach" in polished
+    assert "as a fluorescence probe" in polished
+    assert "applied for imaging" in polished
+    assert "with the sizes below 10 nm" in polished
+    assert "been reported" in polished
+    assert "equipment required" in polished
+    assert "green chemistry" in polished
+    assert "carbon source" in polished
+    assert "high coloring effects" in polished
+    assert "cancer, skin irritation" in polished
+    assert "leuco-methylene blue" in polished
+    assert "MB treatment" in polished
+    assert "simple operation" in polished
+    assert "Spectroscopy (XPS) of the sample" in polished
+    assert "carbonized at the After point" in polished
+    assert "below 10 nm" in polished
+    assert "10 μM" in polished
+    assert "Fig. 5 shows" in polished
+    assert "process. 40 In addition" in polished
+    assert "strategies 19,20 Nevertheless" in polished
+
+
+def test_polish_html_document_does_not_strip_sparse_multiples_as_line_numbers() -> None:
+    html = (
+        "<html><body>"
+        "<p>The culture incubated for 10 min before Figure 5 shows the control. "
+        "The detection limit was 50 mM, and Section 20 describes the model.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "10 min" in polished
+    assert "Figure 5 shows" in polished
+    assert "50 mM" in polished
+    assert "Section 20 describes" in polished
+
+
 def test_polish_html_document_does_not_link_front_matter_glued_author_markers() -> None:
     html = (
         "<html><body>"

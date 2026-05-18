@@ -3684,6 +3684,215 @@ def _repair_safe_text_artifacts(html: str) -> str:
     return "".join(out)
 
 
+_PDF_LINE_NUMBER_TOKEN_PATTERN = re.compile(
+    r"(?<![\w./-])(?P<num>[1-9]\d{0,2})(?![\w./-])"
+)
+_PDF_LINE_NUMBER_UNIT_FOLLOW_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"%|‰|°|"
+    r"(?:[µμu]?(?:g|m|mol|M|A|C)|nM|mM|M|mg|kg|g|ng|pg|"
+    r"mL|L|nm|µm|μm|um|mm|cm|m|s|sec|min|h|Hz|kHz|MHz|GHz|"
+    r"kV|mV|V|W|K|Pa|Da|bp|kb|MBq)\b"
+    r")",
+    re.IGNORECASE,
+)
+_PDF_LINE_NUMBER_MONTH_FOLLOW_PATTERN = re.compile(
+    r"^\s*(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\b",
+    re.IGNORECASE,
+)
+_PDF_LINE_NUMBER_LEFT_LABEL_PATTERN = re.compile(
+    r"\b(?:fig(?:ure)?|table|section|sec|chapter|eq(?:uation)?|page|pages|"
+    r"vol(?:ume)?|issue|doi|no)\.?\s*$",
+    re.IGNORECASE,
+)
+_PDF_LINE_NUMBER_LEFT_UNIT_PATTERN = re.compile(
+    r"\b(?:pH|kg|g|mg|ng|pg|mol|mL|L|nm|µm|μm|um|mm|cm|m|s|sec|min|h|"
+    r"Hz|kHz|MHz|GHz|kV|mV|V|W|K|Pa|Da|bp|kb)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_pdf_line_number_value(value: int) -> bool:
+    return 5 <= value <= 300 and value % 5 == 0
+
+
+def _line_number_skip_stack_update(tag_fragment: str, skip_stack: list[str]) -> None:
+    raw = tag_fragment.strip()
+    if not raw.startswith("<") or raw.startswith("<!--") or raw.startswith("<!"):
+        return
+    close_match = _CLOSE_TAG_PATTERN.match(raw)
+    if close_match is not None:
+        tag_name = close_match.group(1).lower()
+        for idx in range(len(skip_stack) - 1, -1, -1):
+            if skip_stack[idx] == tag_name:
+                del skip_stack[idx]
+                break
+        return
+    if raw.endswith("/>"):
+        return
+    open_match = _OPEN_TAG_PATTERN.match(raw)
+    if open_match is None:
+        return
+    tag_name = open_match.group(1).lower()
+    if tag_name in _CITATION_SKIP_TAGS or tag_name in {"sup", "sub"}:
+        skip_stack.append(tag_name)
+        return
+    if _CITATION_PROTECTED_CLASS_PATTERN.search(raw) is not None:
+        skip_stack.append(tag_name)
+
+
+def _pdf_line_number_text_parts(html: str) -> list[str]:
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    text_parts: list[str] = []
+    skip_stack: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            _line_number_skip_stack_update(part, skip_stack)
+            continue
+        if not skip_stack:
+            text_parts.append(part)
+    return text_parts
+
+
+def _pdf_line_number_context_allows(text: str, match: re.Match[str]) -> bool:
+    try:
+        value = int(match.group("num"))
+    except ValueError:
+        return False
+    if not _is_pdf_line_number_value(value):
+        return False
+
+    left = text[: match.start()]
+    right = text[match.end():]
+    left_stripped = left.rstrip()
+    right_stripped = right.lstrip()
+    if not right_stripped:
+        return False
+    if left_stripped and left_stripped[-1] in "-–—/":
+        return False
+    if right_stripped[0] in "-–—/.,:)]}%":
+        return False
+    if re.search(r"\b\d{1,3}\s*,\s*$", left):
+        return False
+    if _PDF_LINE_NUMBER_UNIT_FOLLOW_PATTERN.match(right):
+        return False
+    if _PDF_LINE_NUMBER_MONTH_FOLLOW_PATTERN.match(right):
+        return False
+    left_visible = _visible_text(left[-80:])
+    if _PDF_LINE_NUMBER_LEFT_LABEL_PATTERN.search(left_visible):
+        return False
+    if _PDF_LINE_NUMBER_LEFT_UNIT_PATTERN.search(left_visible):
+        return False
+
+    right_word_match = re.match(r"\s*([A-Za-z][A-Za-z-]*)", right)
+    right_acronym_match = re.match(r"\s*\([A-Z][A-Z0-9-]{1,12}\)", right)
+    before_is_start = not left_stripped
+    left_word_match = re.search(r"([A-Za-z][A-Za-z-]*)\s*[,;:]?\s*$", left)
+    has_left_word = left_word_match is not None
+    if right_word_match is None:
+        return bool(right_acronym_match and has_left_word and left_stripped[-1] not in ".!?")
+
+    right_word = right_word_match.group(1)
+    right_word_lower = right_word.lower()
+    if before_is_start:
+        return len(right_word) >= 3 and right_word_lower not in {"ref", "doi"}
+
+    if left_stripped[-1] in ".!?":
+        # Superscript-style citations often OCR as ". 40 In"; do not eat them.
+        return False
+
+    if right_word[0].islower():
+        return has_left_word or (left_stripped[-1] in ",;:")
+    if has_left_word and right_word_lower not in {"fig", "figure", "table", "section"}:
+        return True
+    if left_stripped[-1] in ",;:" and right_word_lower not in {"fig", "figure", "table"}:
+        return True
+    return has_left_word and right_word_lower in {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "for",
+        "of",
+        "in",
+        "on",
+        "to",
+        "with",
+        "by",
+        "from",
+        "as",
+        "which",
+        "that",
+        "this",
+        "these",
+        "those",
+    }
+
+
+def _pdf_line_number_candidates(text: str) -> list[int]:
+    values: list[int] = []
+    for match in _PDF_LINE_NUMBER_TOKEN_PATTERN.finditer(text):
+        if _pdf_line_number_context_allows(text, match):
+            values.append(int(match.group("num")))
+    return values
+
+
+def _longest_pdf_line_number_run(values: set[int]) -> int:
+    longest = 0
+    current = 0
+    for value in range(5, 305, 5):
+        if value in values:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def _looks_like_pdf_line_numbered_document(html: str) -> bool:
+    candidates: list[int] = []
+    for text in _pdf_line_number_text_parts(html):
+        candidates.extend(_pdf_line_number_candidates(text))
+    unique = set(candidates)
+    return len(candidates) >= 10 and len(unique) >= 8 and _longest_pdf_line_number_run(unique) >= 6
+
+
+def _strip_pdf_line_number_artifacts(html: str) -> str:
+    if not _looks_like_pdf_line_numbered_document(html):
+        return html
+
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    skip_stack: list[str] = []
+
+    def replace(match: re.Match[str]) -> str:
+        if not _pdf_line_number_context_allows(match.string, match):
+            return match.group(0)
+        return ""
+
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            _line_number_skip_stack_update(part, skip_stack)
+            out.append(part)
+            continue
+        if skip_stack:
+            out.append(part)
+            continue
+        repaired = _PDF_LINE_NUMBER_TOKEN_PATTERN.sub(replace, part)
+        repaired = re.sub(r"(?<=\S) {2,}(?=\S)", " ", repaired)
+        repaired = re.sub(r"^\s+(?=[A-Z])", "", repaired)
+        out.append(repaired)
+
+    return "".join(out)
+
+
 def _normalize_scientific_units(html: str) -> str:
     html = _normalize_split_micro_meter_tokens(html)
     html = _normalize_inline_tex_statistical_prose(html)
@@ -5821,6 +6030,11 @@ _PLAIN_SUPERSCRIPT_NUMERIC_CITATION_GROUP_PATTERN = re.compile(
     r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){1,12})"
     r"(?=\s+[A-Z])"
 )
+_PLAIN_SUPERSCRIPT_NUMERIC_COMMA_GROUP_PATTERN = re.compile(
+    r"(?P<punct>,)\s+"
+    r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){1,12})"
+    r"(?=\s+(?:and|or|but|whereas|while)\b)"
+)
 _PLAIN_SUPERSCRIPT_NUMERIC_CITATION_ANY_PATTERN = re.compile(
     r"(?P<punct>[.!?])\s+"
     r"(?P<body>\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12})"
@@ -5901,6 +6115,8 @@ def _link_plain_superscript_numeric_groups_in_safe_blocks(
     )
 
     def replace_group(match: re.Match[str]) -> str:
+        if match.group("punct") == "," and re.search(r"[-\u2013\u2014]", match.group("body")) is None:
+            return match.group(0)
         if not _numeric_superscript_context_allows_citation(
             match.string,
             match.start("body"),
@@ -5913,7 +6129,10 @@ def _link_plain_superscript_numeric_groups_in_safe_blocks(
         return f"{match.group('punct')}<sup>{linked}</sup>"
 
     def replace_text(part: str) -> str:
-        return pattern.sub(replace_group, part)
+        text = pattern.sub(replace_group, part)
+        if not allow_single:
+            text = _PLAIN_SUPERSCRIPT_NUMERIC_COMMA_GROUP_PATTERN.sub(replace_group, text)
+        return text
 
     def replace_node(match: re.Match[str]) -> str:
         raw = match.group(0)
@@ -11225,6 +11444,7 @@ def polish_html_document(
     polished = _split_url_footnote_prose_tails(polished)
     polished = _repair_page_footnote_ref_links(polished)
     polished = _strip_reference_links_in_protected_blocks(polished)
+    polished = _strip_pdf_line_number_artifacts(polished)
     polished, found_sections = _add_section_anchors(polished)
     polished, found_figures = _add_figure_anchors(polished)
     polished, found_tables = _add_table_anchors(polished)

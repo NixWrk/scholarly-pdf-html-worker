@@ -432,6 +432,45 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
     assert 'PVR).<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> In' in polished
 
 
+def test_superscript_numeric_profile_links_comma_before_range_citation() -> None:
+    html = (
+        "<html><body>"
+        "<p>It has been reported for colloidal quantum dots, 37-39 and the emission is quenched.</p>"
+        f"{_refs(41)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert (
+        'quantum dots,<sup><a href="#ref-37" class="z2m-ref-link">37</a>-'
+        '<a href="#ref-39" class="z2m-ref-link">39</a></sup> and'
+    ) in polished
+
+
+def test_superscript_numeric_profile_does_not_link_comma_measurement_series() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-figure-caption">Fig. 8. Fluorescence response '
+        "from top: 0, 0.2, 0.8, 1, 2, 4, 6, 8 and 10 uM.</p>"
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert "0.8, 1, 2, 4, 6, 8 and 10 uM" in polished
+    assert 'href="#ref-1"' not in polished
+
+
 def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None:
     html = (
         "<html><body>"
