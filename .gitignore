@@ -30,3 +30,6 @@ webdav_servers.json
 # Imported local review corpora
 review_runs/
 .tmp_local2/
+
+.tmp_katex_build/
+zotero_katex_pipeline_sample.html

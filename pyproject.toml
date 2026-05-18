@@ -27,6 +27,9 @@ pdf-text-detect = [
 ru-quality = [
   "pymorphy3>=2.0",
 ]
+math = [
+  "mini-racer>=0.12",
+]
 
 [project.scripts]
 pdf-html-convert = "pdf_html_translator.cli.convert_file:main"
@@ -34,3 +37,6 @@ pdf-html-translate = "pdf_html_translator.cli.translate_html:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+zoteropdf2md = ["assets/katex/*"]

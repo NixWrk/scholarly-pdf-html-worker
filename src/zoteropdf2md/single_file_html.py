@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
+import html as html_lib
 import mimetypes
 import re
 import urllib.parse
@@ -546,6 +548,9 @@ _LEADING_SPACED_BACKSLASH_PATTERN = re.compile(r"(^|\s)\\+\s+")
 _TRAILING_SPACED_BACKSLASH_PATTERN = re.compile(r"\s+\\+(?=\s|$)")
 # Backslash immediately before a quote mark: word\" → word"  (Marker OCR artefact)
 _BACKSLASH_BEFORE_QUOTE_PATTERN = re.compile(r'\\(["\'])')
+# Capturing split on a display or inline TeX span (used to shield LaTeX from
+# prose-only artefact cleaners that would otherwise eat ``\\`` row separators).
+_INLINE_OR_DISPLAY_TEX_PATTERN = re.compile(r"(\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\))")
 # Marker OCR artefact: figure captions wrapped in <math display="inline"> instead
 # of plain HTML.  A genuine <math> block never contains <strong>/<em>/<b>/<i> tags.
 _SPURIOUS_MATH_CAPTION_PATTERN = re.compile(
@@ -1771,6 +1776,142 @@ def _inject_mathjax(html: str) -> str:
     return _HEAD_CLOSE_PATTERN.sub(lambda _: f"{_MATHJAX_SCRIPT}\n</head>", html, count=1)
 
 
+_KATEX_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "katex"
+_KATEX_STYLE_MARKER = 'data-z2m-style="katex"'
+_STATIC_DISPLAY_TEX_PATTERN = re.compile(r"\\\[(?P<body>[\s\S]*?)\\\]")
+_STATIC_INLINE_TEX_PATTERN = re.compile(r"\\\((?P<body>[\s\S]*?)\\\)")
+_KATEX_PLACEHOLDER_PATTERN = re.compile("Z2MK([0-9]+)")
+# Splits on REAL HTML tags only. Unlike the generic _TAG_SPLIT_PATTERN
+# (``<[^>]+>``), this never mistakes a bare ``<`` from math text (``a < b``,
+# ``x < 0``) for a tag: a tag must start with a name/``/``/``!``/``?`` and a
+# real tag never contains ``<`` before its closing ``>`` (``[^<>]``). Our own
+# emitted tags stay safe because _escape_html_attr escapes ``<`` in attributes.
+_MATH_TAG_SPLIT_PATTERN = re.compile(
+    r"(<!--[\s\S]*?-->|<![^<>]*>|</?[A-Za-z][^<>]*>)"
+)
+_MATHJAX_SCRIPT_TAG_PATTERN = re.compile(
+    r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*>[\s\S]*?</script>|'
+    r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*/?>',
+    re.IGNORECASE,
+)
+_MATHJAX_CONFIG_TAG_PATTERN = re.compile(
+    r"<script\b[^>]*>[\s\S]*?\bMathJax\s*=[\s\S]*?</script>",
+    re.IGNORECASE,
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _katex_inlined_css() -> str:
+    return (_KATEX_ASSET_DIR / "katex.inlined.css").read_text(encoding="utf-8")
+
+
+@functools.lru_cache(maxsize=1)
+def _katex_v8_context() -> Any:
+    """Embedded-V8 KaTeX context. Built once per process.
+
+    Raises ImportError if the optional ``mini-racer`` dependency is absent;
+    callers fall back to MathJax injection in that case.
+    """
+    from py_mini_racer import MiniRacer
+
+    ctx = MiniRacer()
+    ctx.eval((_KATEX_ASSET_DIR / "katex.min.js").read_text(encoding="utf-8"))
+    ctx.eval(
+        "globalThis.__z2m_katex=function(items){return items.map(function(it){"
+        "try{return katex.renderToString(it.t,{displayMode:!!it.d,"
+        "throwOnError:false,output:'html'});}"
+        "catch(e){return '<span class=\"z2m-math-error\">'"
+        "+String(e&&e.message||e)+'</span>';}});};"
+    )
+    return ctx
+
+
+def _strip_mathjax_scripts(html: str) -> str:
+    html = _MATHJAX_SCRIPT_TAG_PATTERN.sub("", html)
+    return _MATHJAX_CONFIG_TAG_PATTERN.sub("", html)
+
+
+def _inject_katex_css(html: str) -> str:
+    if _KATEX_STYLE_MARKER in html:
+        return html
+    style = f"<style {_KATEX_STYLE_MARKER}>\n{_katex_inlined_css()}\n</style>"
+    if not _HEAD_CLOSE_PATTERN.search(html):
+        html = _inject_default_styles(html)
+    # Lambda replacement so re.sub does not interpret backslashes in the CSS.
+    return _HEAD_CLOSE_PATTERN.sub(lambda _: f"{style}\n</head>", html, count=1)
+
+
+def _render_katex_html(html: str) -> str:
+    r"""Replace ``\(...\)`` / ``\[...\]`` TeX with static KaTeX HTML so formulas
+    render in viewers that do not run JavaScript (e.g. Zotero's HTML reader).
+
+    The output is text (HTML+CSS), never a rasterised image, and the original
+    LaTeX is preserved verbatim in a ``data-z2m-tex`` attribute so a later
+    HTML→Markdown step can recover ``$...$`` for LLM consumption.
+
+    Idempotent: re-running leaves already-rendered spans untouched. If the
+    optional ``mini-racer`` dependency is missing it falls back to MathJax
+    script injection (browser-only rendering, previous behaviour).
+    """
+    original = html
+    html = _strip_mathjax_scripts(html)
+    if "\\(" not in html and "\\[" not in html:
+        return html
+
+    jobs: list[tuple[str, bool]] = []
+
+    def _mask_segment(text: str) -> str:
+        def _collect(match: re.Match[str], display: bool) -> str:
+            jobs.append((html_lib.unescape(match.group("body")), display))
+            return f"Z2MK{len(jobs) - 1}"
+
+        text = _STATIC_DISPLAY_TEX_PATTERN.sub(lambda m: _collect(m, True), text)
+        return _STATIC_INLINE_TEX_PATTERN.sub(lambda m: _collect(m, False), text)
+
+    parts = _MATH_TAG_SPLIT_PATTERN.split(html)
+    skip_stack: list[str] = []
+    for idx, part in enumerate(parts):
+        if not part:
+            continue
+        if _MATH_TAG_SPLIT_PATTERN.fullmatch(part):
+            _update_skip_stack(part, skip_stack)
+            continue
+        if skip_stack:
+            continue
+        if "\\(" in part or "\\[" in part:
+            parts[idx] = _mask_segment(part)
+
+    if not jobs:
+        # All TeX delimiters live inside skip regions (e.g. <code>): leave as-is.
+        return original
+
+    try:
+        ctx = _katex_v8_context()
+    except ImportError:
+        return _inject_mathjax(original)
+
+    rendered = ctx.call(
+        "__z2m_katex", [{"t": tex, "d": display} for tex, display in jobs]
+    )
+
+    def _expand(match: re.Match[str]) -> str:
+        job_index = int(match.group(1))
+        tex, display = jobs[job_index]
+        body = rendered[job_index] if job_index < len(rendered) else ""
+        css_class = (
+            "z2m-math z2m-math-display" if display else "z2m-math z2m-math-inline"
+        )
+        delimited = f"\\[{tex}\\]" if display else f"\\({tex}\\)"
+        attr = _escape_html_attr(delimited)
+        return (
+            f'<span class="{css_class}" role="math" '
+            f'data-z2m-tex="{attr}">{body}</span>'
+        )
+
+    out = _KATEX_PLACEHOLDER_PATTERN.sub(_expand, "".join(parts))
+    return _inject_katex_css(out)
+
+
 def _unescape_inline_sup_sub(html: str) -> str:
     return _ESCAPED_INLINE_TAG_PATTERN.sub(r"<\1\2>", html)
 
@@ -1796,24 +1937,39 @@ def _fix_common_mojibake(html: str) -> str:
 
 
 def _cleanup_marker_escape_artifacts(html: str) -> str:
-    parts = _TAG_SPLIT_PATTERN.split(html)
+    # Use the math-safe split: a bare ``<`` from TeX (``x < 0``) must not be
+    # treated as a tag, or it would fragment a ``\[...\]`` span and defeat the
+    # LaTeX protection below (eating ``\\`` row separators in cases/aligned).
+    parts = _MATH_TAG_SPLIT_PATTERN.split(html)
     out: list[str] = []
     skip_stack: list[str] = []
 
     for part in parts:
         if not part:
             continue
-        if part.startswith("<"):
+        if _MATH_TAG_SPLIT_PATTERN.fullmatch(part):
             _update_skip_stack(part, skip_stack)
             out.append(part)
             continue
         if skip_stack:
             out.append(part)
             continue
-        cleaned = _SLASH_PIPE_ARTIFACT_PATTERN.sub(" | ", part)
-        cleaned = _LEADING_SPACED_BACKSLASH_PATTERN.sub(r"\1", cleaned)
-        cleaned = _TRAILING_SPACED_BACKSLASH_PATTERN.sub(" ", cleaned)
-        cleaned = _BACKSLASH_BEFORE_QUOTE_PATTERN.sub(r"\1", cleaned)
+
+        def _clean_prose(text: str) -> str:
+            text = _SLASH_PIPE_ARTIFACT_PATTERN.sub(" | ", text)
+            text = _LEADING_SPACED_BACKSLASH_PATTERN.sub(r"\1", text)
+            text = _TRAILING_SPACED_BACKSLASH_PATTERN.sub(" ", text)
+            return _BACKSLASH_BEFORE_QUOTE_PATTERN.sub(r"\1", text)
+
+        # Protect TeX spans: their ``\\`` row separators and ``\"``/``\|``
+        # delimiters are valid LaTeX, not Marker escape artefacts.
+        cleaned = "".join(
+            frag
+            if _INLINE_OR_DISPLAY_TEX_PATTERN.fullmatch(frag)
+            else _clean_prose(frag)
+            for frag in _INLINE_OR_DISPLAY_TEX_PATTERN.split(part)
+            if frag
+        )
         out.append(cleaned)
 
     normalized_html = "".join(out)
@@ -10811,11 +10967,13 @@ def polish_html_document(
     polished = _mark_wide_table_layout(polished)
     polished = _inject_utf8_charset(polished)
     polished = _inject_default_styles(polished)
-    polished = _inject_mathjax(polished)
     polished = _wrap_body_in_container(polished)
     polished = _cleanup_empty_html_blocks(polished)
     polished = _fix_heading_translation_breaks(polished)  # ". <i>LC</i>" → " <i>LC</i>"
     polished = _restore_abbreviations(polished)
+    # Static math LAST: KaTeX emits real HTML (incl. empty layout struts) that
+    # earlier DOM-cleanup passes would otherwise corrupt.
+    polished = _render_katex_html(polished)
     return polished
 
 

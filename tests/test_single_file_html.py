@@ -1511,7 +1511,11 @@ def test_polish_html_document_repairs_sentence_split_across_table_and_formula_no
         "Fig. 16 shows the k factor for two antenna with distance varying based on "
         "sizes. A small antenna features higher k factor at close distance."
     ) in polished
-    assert "\\(f_{brain}\\) is the function which describes localized tissue properties." in polished
+    # Formula is now statically rendered (KaTeX); the original TeX is preserved
+    # verbatim in data-z2m-tex for HTML→Markdown recovery, and the note prose
+    # must still follow the rendered formula in the same paragraph.
+    assert 'data-z2m-tex="\\(f_{brain}\\)"' in polished
+    assert "</span> is the function which describes localized tissue properties." in polished
     assert '<div id="table-iii" class="z2m-float-unit z2m-table-unit">' in polished
     assert '<h4 class="z2m-table-caption">TABLE III Antenna Parameters</h4>' in polished
     assert "<table><tbody><tr><td>Parameter</td><td>Value</td></tr></tbody></table>" in polished
@@ -1544,7 +1548,8 @@ def test_polish_html_document_splits_table_note_from_body_continuation() -> None
         polished.index('<div id="table-iii" class="z2m-float-unit z2m-table-unit">') :
         polished.index("</div>", polished.index('<div id="table-iii" class="z2m-float-unit z2m-table-unit">'))
     ]
-    assert "\\(f_{brain}\\) is the function" in table_unit
+    assert 'data-z2m-tex="\\(f_{brain}\\)"' in table_unit
+    assert "</span> is the function" in table_unit
 
 
 def test_polish_html_document_keeps_parenthetical_sample_size_table_note() -> None:
@@ -2766,8 +2771,51 @@ def test_polish_html_document_keeps_prose_outside_inline_unit_formula_tail() -> 
 
     polished = polish_html_document(html, table_caption_language="en")
 
-    assert r"4.25–8.5 \(mg\cdot kg^{-1}\cdot h^{-1}\), 10.6 \(\mu g\cdot kg^{-1}\cdot h^{-1}\), and 0–2%, respectively." in polished
+    # The swallowed prose tail must be split back OUT of the inline math: each
+    # unit becomes its own rendered formula (TeX recoverable via data-z2m-tex)
+    # and the trailing prose stays as plain text, not trapped in the formula.
+    assert r'data-z2m-tex="\(mg\cdot kg^{-1}\cdot h^{-1}\)"' in polished
+    assert r'data-z2m-tex="\(\mu g\cdot kg^{-1}\cdot h^{-1}\)"' in polished
+    assert "and 0–2%, respectively." in polished
     assert r"and\ 0–2\%,\ respectively.\)" not in polished
+
+
+def test_polish_html_document_renders_static_katex_without_mathjax() -> None:
+    html = (
+        "<html><head>"
+        "<script>MathJax={tex:{}}</script>"
+        '<script id="MathJax-script" '
+        'src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'
+        "</head><body>"
+        r"<p>Energy \(E=mc^2\) released.</p>"
+        r"<p>\[\chi^2 = \sum_{i=1}^{n} \frac{(O_i-E_i)^2}{E_i}\]</p>"
+        r"<p>System: \[\begin{aligned} a &= b+c \\ &= d \end{aligned}\]</p>"
+        r"<pre>literal \(x^2\) must survive verbatim</pre>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    # MathJax is fully removed; no JS dependency remains.
+    assert "MathJax-script" not in polished
+    assert "cdn.jsdelivr.net/npm/mathjax" not in polished
+    # KaTeX rendered the formulas statically (HTML+CSS, not an image).
+    assert 'data-z2m-style="katex"' in polished
+    assert polished.count('class="katex') >= 3
+    assert "<img" not in polished
+    # Original LaTeX is recoverable for the later HTML→Markdown / LLM step.
+    assert r'data-z2m-tex="\(E=mc^2\)"' in polished
+    assert r'class="z2m-math z2m-math-inline"' in polished
+    assert r'class="z2m-math z2m-math-display"' in polished
+    # aligned environment rendered (KaTeX, unlike the rejected hand-rolled path).
+    assert "z2m-math-error" not in polished
+    # Skip regions are left untouched.
+    assert r"literal \(x^2\) must survive verbatim" in polished
+    # Idempotent: re-polishing already-rendered output is a no-op for math.
+    repolished = polish_html_document(polished, table_caption_language="en")
+    assert repolished.count('data-z2m-style="katex"') == 1
+    assert repolished.count('data-z2m-tex="\\(E=mc^2\\)"') == 1
+    assert repolished.count('class="katex') == polished.count('class="katex')
 
 
 def test_polish_html_document_repairs_common_scientific_word_glue() -> None:
