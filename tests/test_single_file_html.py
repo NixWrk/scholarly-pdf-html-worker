@@ -11,6 +11,7 @@ from zoteropdf2md.single_file_html import (
     _fix_subscript_equation_spill,
     _link_figure_refs,
     _link_section_refs,
+    _repair_sqrt_denominator_subscript_spill,
     _repair_sentence_breaks_around_float_units,
     _to_data_url,
     _validate_data_url,
@@ -4539,6 +4540,22 @@ def test_fix_subscript_equation_spill_leaves_html_unchanged_when_no_match() -> N
     assert _fix_subscript_equation_spill(html) == html
 
 
+def test_repair_sqrt_denominator_subscript_spill_moves_mean_denominator_inside_sqrt() -> None:
+    latex = (
+        r"\frac{\bar{S}^{t}(C) - \bar{S}^{b}(0)}"
+        r"{\sqrt{\sum_{i=1}^{m} \sum_{j=1}^{n} "
+        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}}_{mn}},"
+    )
+
+    result = _repair_sqrt_denominator_subscript_spill(latex)
+
+    assert r"}_{mn}}" not in result
+    assert (
+        r"\sqrt{\frac{\sum_{i=1}^{m} \sum_{j=1}^{n} "
+        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}{mn}}"
+    ) in result
+
+
 def test_polish_html_document_fixes_subscript_equation_spill() -> None:
     r"""End-to-end: spill inside an equation paragraph is repaired."""
     html = (
@@ -4549,6 +4566,25 @@ def test_polish_html_document_fixes_subscript_equation_spill() -> None:
     polished = polish_html_document(html)
     assert r"\gamma_{ij}=\frac" in polished
     assert r"\gamma_{ij=\frac" not in polished
+
+
+def test_polish_html_document_repairs_sqrt_denominator_subscript_spill() -> None:
+    html = (
+        "<html><body>"
+        r'<p block-type="Equation"><math display="block">'
+        r"SNR = \frac{\bar{S}^{t}(C) - \bar{S}^{b}(0)}"
+        r"{\sqrt{\sum_{i=1}^{m} \sum_{j=1}^{n} "
+        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}}_{mn}},"
+        r"</math> (2)</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert r"}_{mn}}" not in polished
+    assert r"\sqrt{\frac{\sum_{i=1}^{m}" in polished
+    assert r"{mn}}" in polished
+    assert '<span class="z2m-eq-num">(2)</span>' in polished
 
 
 # ---------------------------------------------------------------------------

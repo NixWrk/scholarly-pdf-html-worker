@@ -1757,6 +1757,105 @@ def _fix_subscript_equation_spill(html: str) -> str:
     return "".join(out)
 
 
+def _matching_latex_brace(text: str, open_pos: int) -> int:
+    if open_pos < 0 or open_pos >= len(text) or text[open_pos] != "{":
+        return -1
+    depth = 0
+    idx = open_pos
+    while idx < len(text):
+        char = text[idx]
+        if char == "\\":
+            idx += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return idx
+        idx += 1
+    return -1
+
+
+def _repair_sqrt_denominator_subscript_spill(html: str) -> str:
+    r"""Repair Marker's ``\frac{...}{\sqrt{...}}_{mn}}`` spill.
+
+    Marker sometimes extracts a fraction whose denominator is a square root of a
+    mean-square term as if the ``/mn`` part were a subscript attached after the
+    square-root denominator. The extra closing brace after the subscript makes
+    the TeX invalid. Treat this as ``\sqrt{\frac{...}{mn}}``.
+    """
+    trigger = r"}_{"
+    if r"\frac{" not in html or r"\sqrt{" not in html or trigger not in html:
+        return html
+
+    out: list[str] = []
+    idx = 0
+    while idx < len(html):
+        frac_pos = html.find(r"\frac", idx)
+        if frac_pos < 0:
+            out.append(html[idx:])
+            break
+
+        out.append(html[idx:frac_pos])
+        num_open = frac_pos + len(r"\frac")
+        if num_open >= len(html) or html[num_open] != "{":
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        num_close = _matching_latex_brace(html, num_open)
+        den_open = num_close + 1 if num_close >= 0 else -1
+        if den_open < 0 or den_open >= len(html) or html[den_open] != "{":
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        den_close = _matching_latex_brace(html, den_open)
+        den_content = html[den_open + 1 : den_close] if den_close >= 0 else ""
+        if not den_content.startswith(r"\sqrt{"):
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        sqrt_body_open = den_open + 1 + len(r"\sqrt")
+        sqrt_body_close = _matching_latex_brace(html, sqrt_body_open)
+        if sqrt_body_close < 0 or den_close < 0:
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        if html[sqrt_body_close + 1 : den_close].strip():
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        sub_open = den_close + 2
+        if den_close + 1 >= len(html) or html[den_close + 1] != "_" or sub_open >= len(html) or html[sub_open] != "{":
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        sub_close = _matching_latex_brace(html, sub_open)
+        if sub_close < 0 or sub_close + 1 >= len(html) or html[sub_close + 1] != "}":
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        subscript = html[sub_open + 1 : sub_close].strip()
+        if re.fullmatch(r"[A-Za-z0-9_,\s]+", subscript) is None:
+            out.append(html[frac_pos : frac_pos + len(r"\frac")])
+            idx = frac_pos + len(r"\frac")
+            continue
+
+        numerator = html[num_open + 1 : num_close]
+        sqrt_body = html[sqrt_body_open + 1 : sqrt_body_close]
+        out.append(rf"\frac{{{numerator}}}{{\sqrt{{\frac{{{sqrt_body}}}{{{subscript}}}}}}}")
+        idx = sub_close + 2
+
+    return "".join(out)
+
+
 def _fix_latex_text_commands(html: str) -> str:
     html = _LATEX_LABEL_PATTERN.sub("", html)
     html = _LATEX_TEXTBF_PATTERN.sub(r"<strong>\1</strong>", html)
@@ -3066,6 +3165,7 @@ def _move_trailing_bracket_citations_out_of_inline_tex(html: str) -> str:
 
 
 def _repair_common_math_ocr_substitutions(html: str) -> str:
+    html = _repair_sqrt_denominator_subscript_spill(html)
     return _OMEGA_ZERO_RATIO_OCR_PATTERN.sub(r"\\frac{\\omega}{\\omega_0}", html)
 
 
