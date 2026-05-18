@@ -517,6 +517,83 @@ def test_zotero_overlay_profile_handles_rsc_notes_and_references_front_matter() 
     assert 'photocatalysis.<sup><a href="#ref-5" class="z2m-ref-link">5</a>,<a href="#ref-6" class="z2m-ref-link">6</a></sup> and' in polished
 
 
+def test_rsc_nested_reference_items_keep_true_numbers_and_link_series_superscripts() -> None:
+    ref_prefix = "".join(f"<li>{idx}. Reference {idx}.</li>" for idx in range(1, 5))
+    ref_middle = (
+        "<li>25 5 H. Li, X. He and S. T. Lee, Angew. Chem. Int. Ed., 2010, 49, 4430-4434.</li>"
+        + "".join(f"<li>{idx} A. Author, Journal, 2012, {idx}, 1-2.</li>" for idx in range(6, 21))
+    )
+    html = (
+        "<html><body>"
+        "<p>Carbonizing organics routes<sup>15-18</sup> and green sources such as "
+        "soybeans,<sup>21</sup> orange juice,<sup>22</sup> gas soot,<sup>23</sup> grass,"
+        "<sup>24</sup> watermelon peel,<sup>25</sup> pomelo peel,<sup>26</sup> ginger"
+        "<sup>27</sup> and honey.<sup>28</sup> Electron transfer was reported"
+        "<sup>37-39</sup> and confirmed.<sup>40</sup> Final work.<sup>41</sup></p>"
+        "<h4>Notes and references</h4>"
+        "<p block-type='ListGroup'><ul>"
+        f"{ref_prefix}{ref_middle}"
+        "<li>60 21 C. Zhu, J. Zhai and S. Dong, Chem. Commun., 2012, 48, 9367-9369."
+        "<ul><li class='list-indent-1'>22 S. Sahu, B. Behera and S. Mohapatra, Chem. Commun., 2012, 48, 8835-8837.</li></ul>"
+        "<ul><li class='list-indent-1'>23 L. Tian, D. Ghosh and S. Chen, Chem. Mater., 2009, 21, 2803-2809.</li></ul>"
+        "</li>"
+        "<li>65 24 S. Liu, J. Tian and X. Sun, Adv. Mater., 2012, 24, 2037-2041.</li>"
+        "<li>25 J. Zhou, Z. Sheng and C. Li, Mater. Lett., 2012, 66, 222-224.</li>"
+        "</ul></p>"
+        "<p block-type='ListGroup'><ul>"
+        "<li>26 W. Lu, X. Qin and X. Sun, Anal. Chem., 2012, 84, 5351-5357.</li>"
+        "<li>27 C. L. Li, C. M. Ou and H. T. Chang, J. Mater. Chem. B, 2014, 2, 4564-4571.</li>"
+        "<li>75 28 X. M. Yang, Y. Zhuo and Y. Dou, Biosens. Bioelectron., 2014, 60, 292-298."
+        "<ul><li class='list-indent-1'>29 I. A. W. Tan, A. L. Ahmad and B. Hameed, Desalination, 2008, 225, 13-28.</li></ul>"
+        "<ul><li class='list-indent-1'>30 M. Auta and B. Hameed, Chem. Eng. J., 2014, 237, 352-361.</li></ul>"
+        "</li>"
+        "<li>80 31 A. M. Vargas, A. L. Cazetta and V. Almeida, Chem. Eng. J., 2011, 168, 722-730."
+        "<ul><li class='list-indent-1'>M. H. Wheeler and J. S. H. Wade, Am. J. Surg., 1982, 143, 713-716.</li></ul>"
+        "<ul><li class='list-indent-1'>J. Sprung, D. L. Bourke and P. Thomas, J. Clin. Monit., 1994, 10, 267-269.</li></ul>"
+        "</li>"
+        "<li>R. Liu, D. Wu, S. Liu, K. Koynov and Q. Li, Angew. Chem., 2009, 121, 4668-4671.</li>"
+        "<li>35 Y. P. Sun, B. Zhou and S. Xie, J. Am. Chem. Soc., 2006, 128, 7756-7757.</li>"
+        "<li>36 J. Peng, W. Gao and P. M. Ajayan, Nano Lett., 2012, 12, 844-849.</li>"
+        "<li>95 37 J. Huang, Z. Huang and T. Lian, J. Am. Chem. Soc., 2010, 132, 4858-4864."
+        "<ul><li class='list-indent-1'>A. Rakovich, D. Savateeva and A. Eychmuller, Nanoscale Res. Lett., 2010, 5, 753-760.</li></ul>"
+        "</li>"
+        "<li>O. V. Ovchinnikov, M. S. Smirnov, T. S. Shatskikh, V. Y. 100 39 Khokhlov, B. Shapiro and S. Ambrozevich, J. Nanopart. Res., 2014, 16, 2286-2304."
+        "<ul><li class='list-indent-1'>P. V. Kamat, N. M. Dimitrijevic and R. Fessenden, J. Phys. Chem., 1987, 91, 396-401.</li></ul>"
+        "</li>"
+        "<li>105 41 Y. Yan, M. Zhang and L. Mao, Chem. Mater., 2005, 17, 3457-3463.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "superscript_numeric",
+            "confidence": "high",
+            "zotero_citations": [
+                {"text": "21", "refs": [21], "context": "sources such as soybeans,21orange juice"}
+            ],
+        },
+    )
+    ref_section = polished[polished.index("Notes and references") :]
+
+    assert 'id="ref-5"><span class="z2m-ref-num">5.</span> H. Li' in ref_section
+    assert 'id="ref-22"><span class="z2m-ref-num">22.</span> S. Sahu' in ref_section
+    assert 'id="ref-23"><span class="z2m-ref-num">23.</span> L. Tian' in ref_section
+    assert 'id="ref-29"><span class="z2m-ref-num">29.</span> I. A. W. Tan' in ref_section
+    assert 'id="ref-32"><span class="z2m-ref-num">32.</span> M. H. Wheeler' in ref_section
+    assert 'id="ref-40"><span class="z2m-ref-num">40.</span> P. V. Kamat' in ref_section
+    assert 'id="ref-41"><span class="z2m-ref-num">41.</span> Y. Yan' in ref_section
+    assert "25 5 H. Li" not in ref_section
+    assert "60 21 C. Zhu" not in ref_section
+    assert "100 39 Khokhlov" not in ref_section
+    assert "V. Y. Khokhlov" in ref_section
+    assert 'routes<sup><a href="#ref-15" class="z2m-ref-link">15</a>-<a href="#ref-18" class="z2m-ref-link">18</a></sup> and' in polished
+    for ref_id in (21, 22, 23, 24, 25, 26, 27, 28, 37, 39, 40, 41):
+        assert f'href="#ref-{ref_id}"' in polished[: polished.index("Notes and references")]
+
+
 def test_notes_and_references_heading_requires_zotero_overlay_evidence() -> None:
     html = (
         "<html><body>"

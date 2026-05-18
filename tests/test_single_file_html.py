@@ -106,6 +106,25 @@ def test_inline_images_adds_readability_and_repairs_common_text_artifacts() -> N
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_polish_html_document_repairs_spaced_escaped_sup_artifacts() -> None:
+    html = (
+        "<html><body>"
+        "<p><sup>&amp;</sup> lt;sup&gt;b&lt;/sup&gt;Tumor in situ.</p>"
+        "<p>& lt;sup&gt;c&lt;/sup&gt;Triple-negative breast cancer.</p>"
+        "<p>&amp; lt;sub&gt;x&lt;/sub&gt; axis label.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "<sup>b</sup>Tumor in situ." in polished
+    assert "<sup>c</sup>Triple-negative breast cancer." in polished
+    assert "<sub>x</sub> axis label." in polished
+    assert "lt;sup" not in polished
+    assert "<sup>&amp;</sup>" not in polished
+    assert "& lt;" not in polished
+
+
 def test_polish_html_document_refreshes_existing_readability_style() -> None:
     html = (
         "<html><head>"
@@ -2865,6 +2884,27 @@ def test_polish_html_document_renders_static_katex_without_mathjax() -> None:
     assert repolished.count('data-z2m-style="katex"') == 1
     assert repolished.count('data-z2m-tex="\\(E=mc^2\\)"') == 1
     assert repolished.count('class="katex') == polished.count('class="katex')
+
+
+def test_polish_html_document_repairs_snr_sqrt_subscript_brace_spill_for_katex() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Equation"><math display="block">'
+        r"SNR = \frac{\bar{S}^{t}(C) - \bar{S}^{b}(0)}"
+        r"{\sqrt{\sum_{i=1}^{m} \sum_{j=1}^{n} "
+        r"\left[S^{b}_{(i,j)}(0) - \bar{S}^{b}(0)\right]^{2}}}_{mn}},"
+        "</math> (2)</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "katex-error" not in polished
+    assert "z2m-math-error" not in polished
+    assert r"}^{2}}}_{mn}}" not in polished
+    assert r"\sqrt{\frac{\sum_{i=1}^{m}" in polished
+    assert r"\right]^{2}}{mn}}" in polished
+    assert '<span class="z2m-eq-num">(2)</span>' in polished
 
 
 def test_polish_html_document_repairs_common_scientific_word_glue() -> None:

@@ -47,6 +47,14 @@ _TAG_SPLIT_PATTERN = re.compile(r"(<[^>]+>)")
 _OPEN_TAG_PATTERN = re.compile(r"^<\s*([a-zA-Z0-9:_-]+)")
 _CLOSE_TAG_PATTERN = re.compile(r"^<\s*/\s*([a-zA-Z0-9:_-]+)")
 _ESCAPED_INLINE_TAG_PATTERN = re.compile(r"&lt;(/?)(sup|sub)&gt;", re.IGNORECASE)
+_SPACED_ESCAPED_INLINE_TAG_PATTERN = re.compile(
+    r"(?:&amp;|&)\s+lt;\s*(/?)\s*(sup|sub)\s*(?:&gt;|>)",
+    re.IGNORECASE,
+)
+_SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN = re.compile(
+    r"<sup\b[^>]*>\s*(?:&amp;|&)\s*</sup>\s*lt;\s*(sup|sub)\s*&gt;",
+    re.IGNORECASE,
+)
 _SPACED_INLINE_TAG_PATTERN = re.compile(r"<\s*(/?)\s*(sup|sub)\s*>", re.IGNORECASE)
 _EMPTY_PARAGRAPH_PATTERN = re.compile(r"<p>\s*(?:&nbsp;|\u00a0)?\s*</p>", re.IGNORECASE)
 _EXCESSIVE_BREAKS_PATTERN = re.compile(r"(?:<br\s*/?>\s*){4,}", re.IGNORECASE)
@@ -182,9 +190,17 @@ _PAGE_ANCHOR_DOTTED_REF_NUM_STRIP_PATTERN = re.compile(
 )
 _VISIBLE_REF_NUM_PATTERN = re.compile(
     r'^\s*(?:<[^>]+>\s*)*'
-    r'(?:\[(?P<bracket>\d{1,4})\]|(?P<dot>\d{1,4})\.|(?P<glued>\d{1,4})(?=[A-Z]\.))\s*',
+    r'(?:'
+    r'\[(?P<bracket>\d{1,4})\]'
+    r'|(?P<dot>\d{1,4})\.'
+    r'|(?P<glued>\d{1,4})(?=[A-Z]\.)'
+    r'|(?P<spaced>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z]\.)'
+    r')\s*',
     re.IGNORECASE,
 )
+_UL_OPEN_PATTERN = re.compile(r"<ul\b([^>]*)>", re.IGNORECASE)
+_UL_TAG_PATTERN = re.compile(r"</?ul\b[^>]*>", re.IGNORECASE)
+_LI_TAG_PATTERN = re.compile(r"</?li\b[^>]*>", re.IGNORECASE)
 _REFERENCE_PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
 _MATH_TAG_PATTERN = re.compile(r"<math(\b[^>]*)>(.*?)</math>", re.IGNORECASE | re.DOTALL)
 _EQUATION_PARA_PATTERN = re.compile(
@@ -1913,6 +1929,14 @@ def _render_katex_html(html: str) -> str:
 
 
 def _unescape_inline_sup_sub(html: str) -> str:
+    html = _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN.sub(
+        lambda m: f"<{m.group(1).lower()}>",
+        html,
+    )
+    html = _SPACED_ESCAPED_INLINE_TAG_PATTERN.sub(
+        lambda m: f"<{m.group(1)}{m.group(2).lower()}>",
+        html,
+    )
     return _ESCAPED_INLINE_TAG_PATTERN.sub(r"<\1\2>", html)
 
 
@@ -3204,8 +3228,157 @@ def _move_trailing_bracket_citations_out_of_inline_tex(html: str) -> str:
     return _INLINE_TEX_PATTERN.sub(replace, html)
 
 
+def _latex_group_end(text: str, open_pos: int) -> int:
+    if open_pos < 0 or open_pos >= len(text) or text[open_pos] != "{":
+        return -1
+    depth = 0
+    escaped = False
+    for pos in range(open_pos, len(text)):
+        ch = text[pos]
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return pos
+    return -1
+
+
+def _latex_brace_balance(text: str) -> int:
+    balance = 0
+    escaped = False
+    for ch in text:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == "{":
+            balance += 1
+        elif ch == "}":
+            balance -= 1
+    return balance
+
+
+def _skip_latex_spaces(text: str, pos: int) -> int:
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    return pos
+
+
+def _repair_sqrt_subscript_brace_spill(tex: str) -> str:
+    r"""Repair OCR that closes a ``\frac`` denominator before a sqrt subscript.
+
+    Marker occasionally emits a root-mean-square denominator as::
+
+        \frac{A}{\sqrt{B}}}_{mn}}
+
+    The first brace after ``\sqrt{B}`` prematurely closes the denominator, and
+    the actual ``mn`` denominator is OCR'd as a subscript.  If the TeX segment
+    already has balanced braces, leave it alone; otherwise, restore the intended
+    denominator inside the radical::
+
+        \frac{A}{\sqrt{\frac{B}{mn}}}
+    """
+    if "\\frac" not in tex or "\\sqrt" not in tex or "_{" not in tex:
+        return tex
+    if _latex_brace_balance(tex) >= 0:
+        return tex
+
+    replacements: list[tuple[int, int, str]] = []
+    search_from = 0
+    while True:
+        frac_pos = tex.find(r"\frac", search_from)
+        if frac_pos < 0:
+            break
+        pos = _skip_latex_spaces(tex, frac_pos + len(r"\frac"))
+        if pos >= len(tex) or tex[pos] != "{":
+            search_from = frac_pos + len(r"\frac")
+            continue
+
+        numerator_end = _latex_group_end(tex, pos)
+        if numerator_end < 0:
+            break
+        denom_open = _skip_latex_spaces(tex, numerator_end + 1)
+        if denom_open >= len(tex) or tex[denom_open] != "{":
+            search_from = numerator_end + 1
+            continue
+
+        denom_body = _skip_latex_spaces(tex, denom_open + 1)
+        if not tex.startswith(r"\sqrt", denom_body):
+            search_from = denom_open + 1
+            continue
+        sqrt_group_open = _skip_latex_spaces(tex, denom_body + len(r"\sqrt"))
+        if sqrt_group_open >= len(tex) or tex[sqrt_group_open] != "{":
+            search_from = denom_body + len(r"\sqrt")
+            continue
+
+        sqrt_group_end = _latex_group_end(tex, sqrt_group_open)
+        if sqrt_group_end < 0:
+            break
+        premature_denom_close = _skip_latex_spaces(tex, sqrt_group_end + 1)
+        if premature_denom_close >= len(tex) or tex[premature_denom_close] != "}":
+            search_from = sqrt_group_end + 1
+            continue
+        if _latex_group_end(tex, denom_open) != premature_denom_close:
+            search_from = premature_denom_close + 1
+            continue
+
+        subscript_marker = _skip_latex_spaces(tex, premature_denom_close + 1)
+        if subscript_marker >= len(tex) or tex[subscript_marker] != "_":
+            search_from = premature_denom_close + 1
+            continue
+        subscript_open = _skip_latex_spaces(tex, subscript_marker + 1)
+        if subscript_open >= len(tex) or tex[subscript_open] != "{":
+            search_from = subscript_marker + 1
+            continue
+        subscript_end = _latex_group_end(tex, subscript_open)
+        if subscript_end < 0:
+            break
+        subscript_body = tex[subscript_open + 1:subscript_end]
+        if not re.fullmatch(r"[A-Za-z0-9,\s]+", subscript_body) or len(subscript_body) > 24:
+            search_from = subscript_end + 1
+            continue
+
+        delayed_denom_close = _skip_latex_spaces(tex, subscript_end + 1)
+        if delayed_denom_close >= len(tex) or tex[delayed_denom_close] != "}":
+            search_from = subscript_end + 1
+            continue
+
+        sqrt_body = tex[sqrt_group_open + 1:sqrt_group_end]
+        replacement = r"{\sqrt{\frac{" + sqrt_body + "}{" + subscript_body.strip() + r"}}}"
+        replacements.append((denom_open, delayed_denom_close + 1, replacement))
+        search_from = delayed_denom_close + 1
+
+    if not replacements:
+        return tex
+    repaired = tex
+    for start, end, replacement in sorted(replacements, reverse=True):
+        repaired = repaired[:start] + replacement + repaired[end:]
+    return repaired
+
+
+def _repair_latex_parse_artifacts(tex: str) -> str:
+    return _repair_sqrt_subscript_brace_spill(tex)
+
+
 def _repair_common_math_ocr_substitutions(html: str) -> str:
-    return _OMEGA_ZERO_RATIO_OCR_PATTERN.sub(r"\\frac{\\omega}{\\omega_0}", html)
+    html = _OMEGA_ZERO_RATIO_OCR_PATTERN.sub(r"\\frac{\\omega}{\\omega_0}", html)
+    html = _STATIC_DISPLAY_TEX_PATTERN.sub(
+        lambda m: f"\\[{_repair_latex_parse_artifacts(m.group('body'))}\\]",
+        html,
+    )
+    return _STATIC_INLINE_TEX_PATTERN.sub(
+        lambda m: f"\\({_repair_latex_parse_artifacts(m.group('body'))}\\)",
+        html,
+    )
 
 
 def _restore_inline_tex_sentence_punctuation(html: str) -> str:
@@ -4214,7 +4387,7 @@ def _reference_visible_number(body: str) -> int | None:
     match = _VISIBLE_REF_NUM_PATTERN.match(body)
     if match is None:
         return None
-    value = match.group("bracket") or match.group("dot") or match.group("glued")
+    value = match.group("bracket") or match.group("dot") or match.group("glued") or match.group("spaced")
     if value is None:
         return None
     try:
@@ -4225,6 +4398,46 @@ def _reference_visible_number(body: str) -> int | None:
 
 def _strip_reference_visible_number(body: str) -> str:
     return _VISIBLE_REF_NUM_PATTERN.sub("", body, count=1)
+
+
+def _looks_like_reference_line_number(value: int) -> bool:
+    return 5 <= value <= 300 and value % 5 == 0
+
+
+def _strip_reference_line_number_artifacts(body: str, number: str) -> str:
+    def strip_start(match: re.Match[str]) -> str:
+        try:
+            line_number = int(match.group("line"))
+        except ValueError:
+            return match.group(0)
+        if line_number == int(number) or not _looks_like_reference_line_number(line_number):
+            return match.group(0)
+        return match.group("prefix")
+
+    fixed = re.sub(
+        rf'^(?P<prefix>\s*(?:<[^>]+>\s*)*)(?P<line>\d{{1,4}})\s+{re.escape(number)}\s+'
+        r'(?=(?:<[^>]+>\s*)*[A-Z])',
+        strip_start,
+        body,
+        count=1,
+    )
+
+    def strip_embedded(match: re.Match[str]) -> str:
+        try:
+            line_number = int(match.group("line"))
+        except ValueError:
+            return match.group(0)
+        if line_number == int(number) or not _looks_like_reference_line_number(line_number):
+            return match.group(0)
+        return match.group("prefix")
+
+    return re.sub(
+        rf'(?P<prefix>(?:^|[\s,;])(?:[A-Z]\.\s*){{1,4}})(?P<line>\d{{1,4}})\s+'
+        rf'{re.escape(number)}\s+(?=[A-Z][A-Za-z-]+\b)',
+        strip_embedded,
+        fixed,
+        count=1,
+    )
 
 
 def _looks_reference_front_matter_list_item(body: str) -> bool:
@@ -4247,6 +4460,101 @@ def _looks_reference_front_matter_list_item(body: str) -> bool:
     if re.match(r"^[a-z]\s+.*\b(?:china|usa|uk|germany|france|japan|canada|italy)\.?\s*$", lower):
         return True
     return False
+
+
+def _find_matching_html_tag(html: str, open_start: int, tag_name: str) -> tuple[int, int] | None:
+    pattern = _UL_TAG_PATTERN if tag_name.lower() == "ul" else _LI_TAG_PATTERN
+    depth = 0
+    for match in pattern.finditer(html, open_start):
+        raw = match.group(0)
+        if raw.startswith("</"):
+            depth -= 1
+            if depth == 0:
+                return match.start(), match.end()
+            continue
+        if raw.rstrip().endswith("/>"):
+            continue
+        depth += 1
+    return None
+
+
+def _remove_reference_list_indent_class(attrs: str) -> str:
+    class_match = re.search(r'\s*\bclass\s*=\s*(["\'])(.*?)\1', attrs, re.IGNORECASE | re.DOTALL)
+    if class_match is None:
+        return attrs
+    classes = [
+        class_name
+        for class_name in class_match.group(2).split()
+        if not re.fullmatch(r"list-indent-\d+", class_name, re.IGNORECASE)
+    ]
+    if not classes:
+        return attrs[: class_match.start()] + attrs[class_match.end() :]
+    return (
+        attrs[: class_match.start(2)]
+        + " ".join(classes)
+        + attrs[class_match.end(2) :]
+    )
+
+
+def _flatten_reference_li_nodes(ul_body: str) -> list[str]:
+    items: list[str] = []
+    cursor = 0
+    while True:
+        open_match = _LI_OPEN_PATTERN.search(ul_body, cursor)
+        if open_match is None:
+            break
+        close_span = _find_matching_html_tag(ul_body, open_match.start(), "li")
+        if close_span is None:
+            break
+        close_start, close_end = close_span
+        attrs = _remove_reference_list_indent_class(open_match.group(1) or "")
+        body = ul_body[open_match.end():close_start]
+        parent_parts: list[str] = []
+        nested_items: list[str] = []
+        body_cursor = 0
+        while True:
+            nested_open = _UL_OPEN_PATTERN.search(body, body_cursor)
+            if nested_open is None:
+                break
+            nested_close = _find_matching_html_tag(body, nested_open.start(), "ul")
+            if nested_close is None:
+                break
+            nested_close_start, nested_close_end = nested_close
+            parent_parts.append(body[body_cursor:nested_open.start()])
+            nested_items.extend(_flatten_reference_li_nodes(body[nested_open.end():nested_close_start]))
+            body_cursor = nested_close_end
+        parent_parts.append(body[body_cursor:])
+        parent_body = "".join(parent_parts).strip()
+        if _visible_text(parent_body).strip():
+            items.append(f"<li{attrs}>{parent_body}</li>")
+        items.extend(nested_items)
+        cursor = close_end
+    return items
+
+
+def _flatten_nested_reference_list_items(html: str) -> str:
+    if "<ul" not in html.lower() or "list-indent" not in html.lower():
+        return html
+
+    out: list[str] = []
+    cursor = 0
+    while True:
+        open_match = _UL_OPEN_PATTERN.search(html, cursor)
+        if open_match is None:
+            break
+        close_span = _find_matching_html_tag(html, open_match.start(), "ul")
+        if close_span is None:
+            break
+        close_start, close_end = close_span
+        out.append(html[cursor:open_match.start()])
+        flattened = _flatten_reference_li_nodes(html[open_match.end():close_start])
+        if flattened:
+            out.append(f"{open_match.group(0)} {' '.join(flattened)} </ul>")
+        else:
+            out.append(html[open_match.start():close_end])
+        cursor = close_end
+    out.append(html[cursor:])
+    return "".join(out)
 
 
 _UNHEADED_REFERENCE_LIST_BLOCK_PATTERN = re.compile(
@@ -5199,6 +5507,21 @@ def _has_non_citation_numeric_left_context(left_visible: str) -> bool:
     return False
 
 
+def _lowercase_after_superscript_still_looks_citation(left_visible: str, right_visible: str) -> bool:
+    right = right_visible.lstrip()
+    if not re.match(r"[a-z]", right):
+        return True
+    left = left_visible.rstrip()
+    if not left:
+        return False
+    if left[-1] in {",", ";", "."}:
+        return True
+    if not re.match(r"(?:and|or|with|for|in|to|from|of)\b", right, re.IGNORECASE):
+        return False
+    word_match = re.search(r"([A-Za-z][A-Za-z-]{2,})\s*$", left)
+    return word_match is not None
+
+
 def _numeric_superscript_context_allows_citation(
     text: str,
     start: int,
@@ -5231,6 +5554,7 @@ def _numeric_superscript_context_allows_citation(
         not allow_lowercase_after
         and re.match(r"[A-Za-z]", right_stripped)
         and not re.match(r"[A-Z]", right_stripped)
+        and not _lowercase_after_superscript_still_looks_citation(left_visible, _visible_text(right[:80]))
     ):
         return False
     return True
@@ -5739,6 +6063,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     before_references = _mark_footnote_paragraphs_and_refs(before_references)
     before_references = _strip_reference_links_in_protected_blocks(before_references)
 
+    references_and_after = _flatten_nested_reference_list_items(references_and_after)
     references_and_after = _normalize_reference_list_items(references_and_after)
     references_with_ids, ref_index = _add_reference_ids_to_list_items(references_and_after)
     if ref_index == 0:
@@ -5822,6 +6147,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             body = _BRACKET_REF_NUM_STRIP_PATTERN.sub("", body)
             body = _DOTTED_BRACKET_REF_NUM_STRIP_PATTERN.sub(r"\1", body)
             body = _PAGE_ANCHOR_DOTTED_REF_NUM_STRIP_PATTERN.sub("", body)
+            body = _strip_reference_line_number_artifacts(body, number)
             body = re.sub(
                 rf'^(\s*(?:<[^>]+>\s*)*){re.escape(number)}(?=[A-Z]\.)',
                 r"\1",
