@@ -2562,6 +2562,55 @@ def test_polish_html_document_merges_numbered_reference_continuation_before_ids(
     assert '<li id="ref-26"><span class="z2m-ref-num">26.</span> Li, M. et al.' in ref_section
 
 
+def test_polish_html_document_merges_uppercase_reference_continuation_before_ids() -> None:
+    html = (
+        "<html><body>"
+        "<p>Earlier clinical utility work is discussed (27).</p>"
+        "<h4>References</h4>"
+        '<p block-type="ListGroup"><ul>'
+        + "".join(f"<li>{i}. Reference {i}.</li>" for i in range(1, 26))
+        + (
+            "<li>26. Sugie T, Kinoshita T, Masuda N, Sawada T, Yamauchi A, "
+            "Kuroi K, et al. Evaluation of the Clinical Utility of the ICG "
+            "Fluorescence Method Compared</li>"
+        )
+        + "</ul></p>"
+        '<p block-type="Text"><span id="page-7-0"></span> Jin et al. Combined Imaging in Breast Cancer</p>'
+        '<p block-type="ListGroup"><ul>'
+        + (
+            "<li>With the Radioisotope Method for Sentinel Lymph Node Biopsy in "
+            "Breast Cancer. Ann Surg Oncol (2016) 1:44-50. doi: "
+            '<a href="https://doi.org/10.1245/s10434-015-4809-4">'
+            "10.1245/s10434-015-4809-4</a></li>"
+        )
+        + (
+            "<li>27. He K, Chi C, Kou D, Huang W, Wu J, Wang Y, et al. "
+            "Comparison Between the Indocyanine Green Fluorescence and Blue Dye "
+            "Methods for Sentinel Lymph Node Biopsy.</li>"
+        )
+        + "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "high"},
+    )
+    ref_section = polished[polished.index("References"):]
+
+    assert 'href="#ref-27"' in polished[: polished.index("References")]
+    assert 'id="ref-28"' not in ref_section
+    assert ref_section.count('id="ref-26"') == 1
+    assert ref_section.count('id="ref-27"') == 1
+    assert (
+        '<li id="ref-26"><span class="z2m-ref-num">26.</span> '
+        "Sugie T, Kinoshita T, Masuda N"
+    ) in ref_section
+    assert "Compared With the Radioisotope Method" in ref_section
+    assert '<li id="ref-27"><span class="z2m-ref-num">27.</span> He K, Chi C' in ref_section
+
+
 def test_polish_html_document_retargets_author_year_page_links_to_reference_ids() -> None:
     html = (
         "<html><body>"
