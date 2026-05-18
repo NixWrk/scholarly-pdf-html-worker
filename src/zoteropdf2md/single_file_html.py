@@ -198,6 +198,13 @@ _VISIBLE_REF_NUM_PATTERN = re.compile(
     r')\s*',
     re.IGNORECASE,
 )
+_LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN = re.compile(
+    r'^\s*(?:<[^>]+>\s*)*'
+    r'(?P<line>\d{1,4})(?:\s*</sup>)?\s+'
+    r'(?P<number>\d{1,4})'
+    r'(?=\s+(?:<[^>]+>\s*)*[A-Z]\.)',
+    re.IGNORECASE,
+)
 _UL_OPEN_PATTERN = re.compile(r"<ul\b([^>]*)>", re.IGNORECASE)
 _UL_TAG_PATTERN = re.compile(r"</?ul\b[^>]*>", re.IGNORECASE)
 _LI_TAG_PATTERN = re.compile(r"</?li\b[^>]*>", re.IGNORECASE)
@@ -4592,7 +4599,27 @@ def _looks_like_ocr_split_word_join(word: str, letter: str) -> bool:
     return token.lower() in {"in", "on", "of", "to", "as", "is", "it", "if", "by", "or", "we", "wm"} or token.isupper()
 
 
+def _line_prefixed_reference_number_match(body: str) -> re.Match[str] | None:
+    match = _LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN.match(body)
+    if match is None:
+        return None
+    try:
+        line_number = int(match.group("line"))
+        ref_number = int(match.group("number"))
+    except ValueError:
+        return None
+    if line_number == ref_number or not _looks_like_reference_line_number(line_number):
+        return None
+    if ref_number <= 0 or ref_number > 999:
+        return None
+    return match
+
+
 def _reference_visible_number(body: str) -> int | None:
+    line_prefixed_match = _line_prefixed_reference_number_match(body)
+    if line_prefixed_match is not None:
+        return int(line_prefixed_match.group("number"))
+
     match = _VISIBLE_REF_NUM_PATTERN.match(body)
     if match is None:
         return None
@@ -4606,6 +4633,9 @@ def _reference_visible_number(body: str) -> int | None:
 
 
 def _strip_reference_visible_number(body: str) -> str:
+    line_prefixed_match = _line_prefixed_reference_number_match(body)
+    if line_prefixed_match is not None:
+        return body[: line_prefixed_match.start()] + body[line_prefixed_match.end():]
     return _VISIBLE_REF_NUM_PATTERN.sub("", body, count=1)
 
 
@@ -4624,10 +4654,19 @@ def _strip_reference_line_number_artifacts(body: str, number: str) -> str:
         return match.group("prefix")
 
     fixed = re.sub(
-        rf'^(?P<prefix>\s*(?:<[^>]+>\s*)*)(?P<line>\d{{1,4}})\s+{re.escape(number)}\s+'
+        rf'^(?P<prefix>\s*(?:(?!</?sup\b)<[^>]+>\s*)*)<sup\b[^>]*>\s*'
+        rf'(?P<line>\d{{1,4}})\s*</sup>\s+{re.escape(number)}\s+'
         r'(?=(?:<[^>]+>\s*)*[A-Z])',
         strip_start,
         body,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    fixed = re.sub(
+        rf'^(?P<prefix>\s*(?:<[^>]+>\s*)*)(?P<line>\d{{1,4}})\s+{re.escape(number)}\s+'
+        r'(?=(?:<[^>]+>\s*)*[A-Z])',
+        strip_start,
+        fixed,
         count=1,
     )
 
@@ -4812,6 +4851,22 @@ def _looks_reference_continuation_body(body: str) -> bool:
     return bool(re.match(r"^[a-z][a-z-]{2,}\b", text))
 
 
+def _looks_like_uppercase_reference_continuation(prev_body: str, body: str) -> bool:
+    if _reference_visible_number(body) is not None:
+        return False
+    text = _visible_text(_strip_reference_visible_number(body)).strip()
+    if not re.match(r"^[A-Z][A-Za-z-]{2,}\b", text):
+        return False
+    prev_text = _visible_text(_strip_reference_visible_number(prev_body)).strip()
+    if not prev_text:
+        return False
+    if re.search(r"(?:[,;:]|\b(?:and|or|with|for|of|in|compared))\s*$", prev_text, re.IGNORECASE):
+        return True
+    if not re.search(r"[.!?][\"')\]]?\s*$", prev_text):
+        return True
+    return bool(re.search(r"(?:\b[A-Z]\.\s*){1,4}$", prev_text))
+
+
 def _normalize_reference_list_items(html: str) -> str:
     """Merge reference continuation ``<li>`` nodes before assigning IDs."""
     matches = list(_LI_BLOCK_PATTERN.finditer(html))
@@ -4827,6 +4882,14 @@ def _normalize_reference_list_items(html: str) -> str:
         body = replacement_bodies.get(index, match.group(2) or "")
         visible_number = _reference_visible_number(body)
         starts_like_continuation = _looks_reference_continuation_body(body)
+        if (
+            not starts_like_continuation
+            and last_real_index is not None
+            and numbered_mode
+            and visible_number is None
+        ):
+            prev_body = replacement_bodies.get(last_real_index, matches[last_real_index].group(2) or "")
+            starts_like_continuation = _looks_like_uppercase_reference_continuation(prev_body, body)
         is_continuation = (
             last_real_index is not None
             and numbered_mode
@@ -4835,7 +4898,17 @@ def _normalize_reference_list_items(html: str) -> str:
 
         if is_continuation:
             prev_body = replacement_bodies.get(last_real_index, matches[last_real_index].group(2) or "")
-            continuation_body = _strip_reference_visible_number(body).lstrip()
+            prev_number = _reference_visible_number(prev_body)
+            stripped_body = _strip_reference_visible_number(body).lstrip()
+            if (
+                visible_number is not None
+                and not _visible_text(stripped_body).strip()
+                and prev_number is not None
+                and visible_number not in {prev_number, prev_number + 1}
+            ):
+                continuation_body = body.lstrip()
+            else:
+                continuation_body = stripped_body
             replacement_bodies[last_real_index] = f"{prev_body.rstrip()} {continuation_body}".rstrip()
             skipped.add(index)
             continue

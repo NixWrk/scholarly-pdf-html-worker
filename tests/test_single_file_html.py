@@ -2635,6 +2635,67 @@ def test_polish_html_document_merges_uppercase_reference_continuation_before_ids
     assert '<li id="ref-27"><span class="z2m-ref-num">27.</span> He K, Chi C' in ref_section
 
 
+def test_polish_html_document_recovers_rsc_line_numbered_reference_ids() -> None:
+    html = (
+        "<html><body>"
+        "<p>Probe performance was compared<sup>21,27</sup>.</p>"
+        "<h4>References</h4>"
+        '<p block-type="ListGroup" class="has-continuation"><ul>'
+        "<li>H. S. Choi, Nat Biotech, 2013, 31, 148.</li>"
+        "<li>S. H. Kim, Sci. Rep., 2013, 3, 1198.</li>"
+        "<li>3 M.-Y. Wu, Chem. Commun., 2014, 50, 183.</li>"
+        "<li>4 G. S. Filonov, Nat Biotech, 2011, 29, 757.</li>"
+        "<li>5 H. Hyun, Nat. Med., 2015, 21, 192.</li>"
+        "<li>6 C. Zhao, Chem. Asian J., 2014, 9, 1777.</li>"
+        "<li><sup>50</sup> 7 P. Greenspan and S. D. Fowler, J. Lipid Res., 1985, 26, 781.</li>"
+        "<li>H. S. Muddana, Nano Lett., 2009, 9, 1559.</li>"
+        "<li>9 R. D. Moriarty, A. Martin, K. Adamson, E. O'Reilly, P. Mollard, R. J.</li>"
+        "</ul></p>"
+        '<p block-type="ListGroup"><ul>'
+        "<li>Forster and T. E. Keyes, J Microsc, 2014, 253, 204.</li>"
+        "<li>55 10 X. He, X. Wu, K. Wang, B. Shi and L. Hai, Biomaterials, 2009, 30, 5601.</li>"
+        "<li>11 X. Peng, J. Am. Chem. Soc., 2005, 127, 4170.</li>"
+        "<li>J. Massin, W. Dayoub, C. Andraud, Chem. Mater., 2011, 23, 862.</li>"
+        "<li>13 X. He, Wires. Nanomed. Nanobi., 2010, 2, 349.</li>"
+        "<li>14 X. Du and Z. Y. Wang, Chem. Commun., 2011, 47, 4276.</li>"
+        "<li>15 X. Zhang, J. Yu, Y. Rong, Chem. Sci., 2013, 4, 2143.</li>"
+        "<li>16 X. He, Anal. Chem., 2012, 84, 9056.</li>"
+        "<li>17 J. Geng, Nanoscale, 2014, 6, 939.</li>"
+        "<li>70 18 J. Gravier, Mol Pharm, 2014, 11, 3133.</li>"
+        "<li>19 Y. Jin, ACS Nano, 2011, <b>5</b>,</li>"
+        "<li>1468.</li>"
+        "<li>20 L. Wang and W. Tan, Nano Lett., 2006, 6, 84.</li>"
+        "<li>75 21 X. Chen, Anal. Chem., 2009, <b>81</b>, 7009.</li>"
+        "<li>22 A. Wagh, Bioconjugate Chem, 2012, 23, 981.</li>"
+        "<li>23 H. Zhang and D. Zhou, Chem. Commun., 2012, 48, 5097.</li>"
+        "<li>24 M. Hasegawa, Chem. Commun., 2013, 49, 228.</li>"
+        "<li>25 Y. Wang, Chem. Commun., 2014, 50, 811.</li>"
+        "<li>26 Q. Ma and X. Su. Analyst, 2010, 135, 1867.</li>"
+        "<li>We. Liu, H. Choi, J. P. Zimmer and M. Bawendi. J. Am. Chem. Soc., 2007, 129, 14530.</li>"
+        '<li class="list-indent-1">28 S. Mishra, P. Kumar. J. Adv. Eng. Res. 2014, 1, 36</li>'
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    ref_section = polished[polished.index("References"):]
+
+    assert 'href="#ref-21"' in polished[: polished.index("References")]
+    assert 'href="#ref-27"' in polished[: polished.index("References")]
+    assert 'id="ref-29"' not in ref_section
+    assert 'id="ref-1468"' not in ref_section
+    assert '<li id="ref-9"><span class="z2m-ref-num">9.</span> R. D. Moriarty' in ref_section
+    assert "R. J. Forster and T. E. Keyes" in ref_section
+    assert '<li id="ref-10"><span class="z2m-ref-num">10.</span> X. He' in ref_section
+    assert '<li id="ref-19"><span class="z2m-ref-num">19.</span> Y. Jin' in ref_section
+    assert "ACS Nano, 2011, <b>5</b>, 1468." in ref_section
+    assert '<li id="ref-21"><span class="z2m-ref-num">21.</span> X. Chen' in ref_section
+    assert '<li id="ref-27"><span class="z2m-ref-num">27.</span> We. Liu' in ref_section
+    assert '<li id="ref-28"><span class="z2m-ref-num">28.</span> S. Mishra' in ref_section
+    assert "55 10 X. He" not in ref_section
+    assert "75 21 X. Chen" not in ref_section
+
+
 def test_polish_html_document_retargets_author_year_page_links_to_reference_ids() -> None:
     html = (
         "<html><body>"
