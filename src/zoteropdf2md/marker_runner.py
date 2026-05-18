@@ -240,6 +240,10 @@ class MarkerRunner:
             output_format,
             "--drop_repeated_text",
             "--drop_repeated_table_text",
+            "--lowres_image_dpi",
+            "300",
+            "--highres_image_dpi",
+            "300",
         ]
         if skip_existing:
             cmd.append("--skip_existing")
@@ -264,6 +268,10 @@ class MarkerRunner:
             output_format,
             "--drop_repeated_text",
             "--drop_repeated_table_text",
+            "--lowres_image_dpi",
+            "300",
+            "--highres_image_dpi",
+            "300",
             "--PdfProvider_pdftext_workers",
             "1",
         ]

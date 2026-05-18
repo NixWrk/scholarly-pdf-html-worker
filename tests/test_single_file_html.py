@@ -379,6 +379,50 @@ def test_polish_html_document_links_sup_citations_to_references() -> None:
     ) in polished
 
 
+def test_polish_html_document_leaves_ambiguous_plain_comma_refs_when_numbers_already_linked() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 42))
+    html = (
+        "<html><body>"
+        "<p>Prior reports.<sup>38</sup> These established the baseline. "
+        "Later work.<sup>39</sup> These confirmed it.</p>"
+        "<p>The spectra resembled a metal quantum dots system, 38,39 no obvious peaks appeared.</p>"
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert '<a href="#ref-38" class="z2m-ref-link">38</a>' in polished
+    assert '<a href="#ref-39" class="z2m-ref-link">39</a>' in polished
+    assert "system, 38,39 no obvious peaks appeared" in polished
+    assert "system,<sup>" not in polished
+
+
+def test_polish_html_document_links_ambiguous_plain_comma_refs_when_numbers_are_missing_elsewhere() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 42))
+    html = (
+        "<html><body>"
+        "<p>The spectra resembled a metal quantum dots system, 38,39 no obvious peaks appeared.</p>"
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert (
+        'system,<sup><a href="#ref-38" class="z2m-ref-link">38</a>,'
+        '<a href="#ref-39" class="z2m-ref-link">39</a></sup> no obvious peaks appeared'
+    ) in polished
+
+
 def test_polish_html_document_links_bare_latex_sup_citations_to_references() -> None:
     refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 6))
     html = (
@@ -890,6 +934,26 @@ def test_polish_html_document_drops_page_footer_paragraphs() -> None:
     assert "Real article text continues here." in polished
 
 
+def test_polish_html_document_drops_repeated_running_headers_and_repairs_text() -> None:
+    html = (
+        "<html><body>"
+        "<p>Journal of Useful Imaging Accepted Manuscript</p>"
+        "<p>During phantom evaluation, the device measured</p>"
+        "<p>Journal of Useful Imaging Accepted Manuscript the signal continuously.</p>"
+        "<p>Journal of Useful Imaging Accepted Manuscript</p>"
+        "<p>Repeated observation remains a real body sentence.</p>"
+        "<p>Repeated observation remains a real body sentence.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "Journal of Useful Imaging Accepted Manuscript" not in flat
+    assert "the device measured the signal continuously." in flat
+    assert flat.count("Repeated observation remains a real body sentence.") == 2
+
+
 def test_polish_html_document_splits_glued_roman_suffixes() -> None:
     html = (
         "<html><body>"
@@ -1293,6 +1357,126 @@ def test_polish_html_document_repairs_sentence_split_by_wrapped_float_unit() -> 
     assert "questionnaire validated for the assessment of LUTS" in flat
     assert flat.count("the assessment of LUTS") == 1
     assert '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">' in polished
+
+
+def test_polish_html_document_strips_running_header_inside_float_split() -> None:
+    html = (
+        "<html><body>"
+        "<p>These factors and individual differences in lymphatic anatomy</p>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit"></div>'
+        "<p>Combined Imaging in Breast Cancer were reduced by the self-controlled protocol.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 1
+    assert "lymphatic anatomy were reduced by the self-controlled protocol." in polished
+    assert "Combined Imaging in Breast Cancer were reduced" not in polished
+    assert '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">' in polished
+
+
+def test_polish_html_document_repairs_acronym_continuation_after_float() -> None:
+    html = (
+        "<html><body>"
+        "<p>The results were obtained using the ICCD and EMCCD cameras, respectively, and the</p>"
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit"><p>Figure 4. Cameras.</p></div>'
+        "<p>EMCCD camera gives a higher signal-to-noise ratio.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 1
+    assert "respectively, and the EMCCD camera gives a higher signal-to-noise ratio." in polished
+    assert polished.count("EMCCD camera gives") == 1
+
+
+def test_polish_html_document_strips_line_number_inside_float_split() -> None:
+    html = (
+        "<html><body>"
+        "<p>The peak at about 284.9</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit"><p>Figure 2. XPS.</p></div>'
+        "<p>35 eV suggests that carbon was present.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 1
+    assert "The peak at about 284.9 eV suggests that carbon was present." in polished
+    assert "284.9 35 eV" not in polished
+
+
+def test_polish_html_document_splits_trailing_table_note_before_float_continuation() -> None:
+    html = (
+        "<html><body>"
+        "<p>Although this prior study qualified the device, in the absence of "
+        "aSignificant, <i> p &lt; </i> 0.05.</p>"
+        '<div id="table-iii" class="z2m-float-unit z2m-table-unit"><p>Table III. Standards.</p></div>'
+        "<p>standards, it remains impractical for clinical use.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+    flat = " ".join(polished.split())
+
+    assert repairs == 1
+    assert "in the absence of standards, it remains impractical for clinical use." in flat
+    assert '<p class="z2m-table-note">aSignificant, <i> p &lt; </i> 0.05.</p>' in polished
+    assert "absence of aSignificant" not in flat
+
+
+def test_polish_html_document_splits_embedded_table_caption_before_continuation() -> None:
+    html = (
+        "<html><body>"
+        "<p>Although this prior study may have qualified the device, in the absence of "
+        '<span id="page-9-0"> </span> TABLE III. A two-way analysis of variance.</p>'
+        "<table><tbody><tr><td>SNR</td></tr></tbody></table>"
+        "<p><span id=\"page-9-2\"> </span> aSignificant, <i> p &lt; </i> 0.05.</p>"
+        "<p>standards, it remains impractical to qualify individual devices.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "in the absence of standards, it remains impractical to qualify individual devices." in flat
+    assert "absence of <span id=\"page-9-0\"> </span> TABLE III" not in polished
+    assert '<div id="table-iii" class="z2m-float-unit z2m-table-unit">' in polished
+    assert '<p class="z2m-table-note"><span id="page-9-2"> </span> aSignificant' in polished
+
+
+def test_polish_html_document_repairs_adjacent_running_header_split() -> None:
+    html = (
+        "<html><body>"
+        "<p>Fresh lychee was purchased from a local market. After its skin</p>"
+        '<p block-type="Text" class="z2m-front-matter">'
+        "Journal of Materials Chemistry B Accepted Manuscrip was peeled, the lychee seed was taken out.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "After its skin was peeled, the lychee seed was taken out." in flat
+    assert "Accepted Manuscrip was peeled" not in flat
+
+
+def test_polish_html_document_strips_sup_line_number_in_adjacent_split() -> None:
+    html = (
+        "<html><body>"
+        "<p>This work was supported by the National Natural Science</p>"
+        "<p>Foundations of China and the Scientific</p>"
+        "<p><sup>5</sup>Research Project of Guangxi Higher Learning.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "National Natural Science Foundations of China and the Scientific Research Project" in flat
+    assert "<sup>5</sup>Research Project" not in polished
 
 
 def test_polish_html_document_merges_body_tail_across_table_notes_and_figure() -> None:
