@@ -73,11 +73,28 @@ _REFERENCES_HEADING_PATTERN = re.compile(
     r"\s*(?:</[^>]+>\s*)*</h\1>",
     re.IGNORECASE | re.DOTALL,
 )
+_NOTES_AND_REFERENCES_HEADING_PATTERN = re.compile(
+    r"<h([1-6])\b[^>]*>\s*(?:<[^>]+>\s*)*"
+    r"(?:(?:[IVXLCM]+|\d+)\.?\s+)?"
+    r"Notes\s+and\s+references"
+    r"\s*(?:</[^>]+>\s*)*</h\1>",
+    re.IGNORECASE | re.DOTALL,
+)
 _LI_OPEN_PATTERN = re.compile(r"<li\b([^>]*)>", re.IGNORECASE)
 _LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.IGNORECASE | re.DOTALL)
 _LI_ID_PATTERN = re.compile(r'\bid\s*=\s*["\']ref-(\d+)["\']', re.IGNORECASE)
 _SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 _SUP_NUMBER_PATTERN = re.compile(r"\d+")
+
+
+def _references_heading_search(html: str) -> re.Match[str] | None:
+    return _REFERENCES_HEADING_PATTERN.search(html) or _NOTES_AND_REFERENCES_HEADING_PATTERN.search(html)
+
+
+def _references_heading_match(html: str) -> re.Match[str] | None:
+    return _REFERENCES_HEADING_PATTERN.match(html) or _NOTES_AND_REFERENCES_HEADING_PATTERN.match(html)
+
+
 _BRACKET_CITATION_PATTERN = re.compile(
     r'(?<!\\)\[\s*(\d{1,3}(?:\s*(?:,|[-\u2013\u2014])\s*\d{1,3})*)\s*\]'
 )
@@ -132,7 +149,7 @@ _NONCITATION_NUMERIC_CONTEXT_PATTERN = re.compile(
     r"(?:"
     r"\bpH\s+(?:of\s+)?$|"
     r"\bD\s*$|"
-    r"\b(?:monkey|week|month|unit|units|animal|female|male|kg|cm|mm|um|nm|mA|uA|A|V|Hz|MHz|GHz|kHz)\b[\s\S]{0,24}$|"
+    r"\b(?:monkey|week|month|unit|units|animal|female|male|sp|kg|cm|mm|um|nm|mA|uA|A|V|Hz|MHz|GHz|kHz)\b[\s\S]{0,24}$|"
     r"\b(?:fig|figure|table|section|eq|equation)\.?\s*$"
     r")",
     re.IGNORECASE,
@@ -4047,6 +4064,28 @@ def _strip_reference_visible_number(body: str) -> str:
     return _VISIBLE_REF_NUM_PATTERN.sub("", body, count=1)
 
 
+def _looks_reference_front_matter_list_item(body: str) -> bool:
+    """Detect affiliation/ESI list items that RSC puts before references."""
+    text = _visible_text(body).strip()
+    if not text:
+        return True
+    lower = text.lower()
+    if re.match(r"^[^a-z0-9]{0,3}\s*(?:electronic\s+)?supplementary\b", lower):
+        return True
+    if re.search(r"\b(?:e-?mail|fax|tel)\s*:", lower):
+        return True
+    if re.match(
+        r"^[a-z]\s+"
+        r"(?:key\s+laboratory|laboratory|department|school|institute|faculty|college|"
+        r"university|centre|center)\b",
+        lower,
+    ):
+        return True
+    if re.match(r"^[a-z]\s+.*\b(?:china|usa|uk|germany|france|japan|canada|italy)\.?\s*$", lower):
+        return True
+    return False
+
+
 _UNHEADED_REFERENCE_LIST_BLOCK_PATTERN = re.compile(
     r'(?:<p\b[^>]*>\s*)?<ul\b[\s\S]*?</ul>(?:\s*</p>)?',
     re.IGNORECASE,
@@ -4146,6 +4185,7 @@ def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
     ref_index = 0
     max_ref_id = 0
     used_ids: set[int] = set()
+    started_references = False
 
     def _next_unused_id(preferred: int | None = None) -> int:
         nonlocal ref_index
@@ -4158,7 +4198,7 @@ def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
         return ref_index
 
     def replace(match: re.Match[str]) -> str:
-        nonlocal max_ref_id
+        nonlocal max_ref_id, started_references
         attrs = match.group(1) or ""
         body = match.group(2) or ""
         existing_id = _LI_ID_PATTERN.search(attrs)
@@ -4169,8 +4209,13 @@ def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
                 ref_id = _next_unused_id()
             used_ids.add(ref_id)
             max_ref_id = max(max_ref_id, ref_id)
+            started_references = True
             return match.group(0)
 
+        if not started_references and _looks_reference_front_matter_list_item(body):
+            return match.group(0)
+
+        started_references = True
         ref_id = _next_unused_id(_reference_visible_number(body))
         used_ids.add(ref_id)
         max_ref_id = max(max_ref_id, ref_id)
@@ -4955,6 +5000,12 @@ _NUMERIC_SUPERSCRIPT_DASH_CHARS = "-\u2013\u2014"
 _NUMERIC_SUPERSCRIPT_OPERATOR_CHARS = "=+*/^<>≤≥±"
 
 
+_UNIT_SENTENCE_LEFT_CONTEXT_PATTERN = re.compile(
+    r"\b(?:kg|cm|mm|um|nm|mA|uA|A|V|Hz|MHz|GHz|kHz)\.?\s*$",
+    re.IGNORECASE,
+)
+
+
 def _inline_math_is_open(text: str, position: int) -> bool:
     left_inline_open = text.rfind(r"\(", 0, position)
     left_inline_close = text.rfind(r"\)", 0, position)
@@ -5010,6 +5061,18 @@ def _numeric_superscript_context_allows_citation(
     ):
         return False
     return True
+
+
+def _numeric_superscript_context_allows_zotero_citation(text: str, start: int, end: int) -> bool:
+    if _numeric_superscript_context_allows_citation(
+        text,
+        start,
+        end,
+        allow_lowercase_after=True,
+    ):
+        return True
+    left_visible = _visible_text(text[:start][-100:])
+    return bool(_UNIT_SENTENCE_LEFT_CONTEXT_PATTERN.search(left_visible))
 
 
 def _link_pdf_annotation_plain_superscript_citations(
@@ -5203,11 +5266,10 @@ def _link_zotero_overlay_numeric_citations_in_safe_blocks(
 
                 left = match.string[: match.start("body")]
                 right = match.string[match.end("body"):]
-                if not _numeric_superscript_context_allows_citation(
+                if not _numeric_superscript_context_allows_zotero_citation(
                     match.string,
                     match.start("body"),
                     match.end("body"),
-                    allow_lowercase_after=True,
                 ):
                     return match.group(0)
                 if not _pdf_annotation_superscript_context_matches(left, right, entry_data["hints"]):
@@ -5487,7 +5549,7 @@ def _link_paren_numeric_page_citations_in_safe_blocks(
 
 
 def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | None = None) -> str:
-    heading_match = _REFERENCES_HEADING_PATTERN.search(html)
+    heading_match = _references_heading_search(html)
     if heading_match is not None:
         split_at = heading_match.end()
     else:
@@ -7191,7 +7253,7 @@ def _repair_figure_ref_links_misclassified_as_refs(html: str, found_figures: set
 
 
 def _looks_author_year_citation_document(html: str) -> bool:
-    heading_match = _REFERENCES_HEADING_PATTERN.search(html)
+    heading_match = _references_heading_search(html)
     body_html = html[: heading_match.start()] if heading_match is not None else html
     body_text = _visible_text(body_html)
     author_year_count = len(_AUTHOR_YEAR_CITATION_TEXT_PATTERN.findall(body_text))
@@ -7205,7 +7267,7 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
         return html
     if "#ref-" not in html or not _looks_author_year_citation_document(html):
         return html
-    references_heading = _REFERENCES_HEADING_PATTERN.search(html)
+    references_heading = _references_heading_search(html)
 
     def _replace(match: re.Match[str]) -> str:
         if references_heading is not None and match.start() > references_heading.start():
@@ -10002,7 +10064,7 @@ def _wrap_box_units(html: str) -> str:
             return True
         if _BOX_HEADING_VISIBLE_PATTERN.match(visible):
             return True
-        if _REFERENCES_HEADING_PATTERN.match(raw):
+        if _references_heading_match(raw):
             return True
         if re.match(r"<h[1-6]\b", raw, re.IGNORECASE):
             return True

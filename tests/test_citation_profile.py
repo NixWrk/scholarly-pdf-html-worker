@@ -435,7 +435,7 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
 def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None:
     html = (
         "<html><body>"
-        "<p>The H2O signal, CO2 signal, and TiO2 layer were compared. "
+        "<p>The H2O signal, CO2 signal, TiO2 layer, and sp2 carbon were compared. "
         "There are no clear methods to prove the symptoms. 2 Published studies continued.</p>"
         f"{_refs(2)}"
         "</body></html>"
@@ -451,6 +451,7 @@ def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None
                 {"page": 1, "text": "2", "refs": [2], "context": "The H2O signal"},
                 {"page": 1, "text": "2", "refs": [2], "context": "CO2 signal"},
                 {"page": 1, "text": "2", "refs": [2], "context": "TiO2 layer"},
+                {"page": 1, "text": "2", "refs": [2], "context": "sp2 carbon were compared"},
                 {
                     "page": 1,
                     "text": "2",
@@ -464,10 +465,56 @@ def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None
     assert "H2O signal" in polished
     assert "CO2 signal" in polished
     assert "TiO2 layer" in polished
+    assert "sp2 carbon" in polished
     assert 'H<sup><a href="#ref-2"' not in polished
     assert 'CO<sup><a href="#ref-2"' not in polished
     assert 'TiO<sup><a href="#ref-2"' not in polished
+    assert 'sp<sup><a href="#ref-2"' not in polished
     assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
+
+
+def test_zotero_overlay_profile_handles_rsc_notes_and_references_front_matter() -> None:
+    html = (
+        "<html><body>"
+        "<p>The particles were below 10 nm. 1,2 Owing to robust inertness, CDs are "
+        "useful in bioimaging, 3,4 photocatalysis. 5,6 and light-emitting devices.</p>"
+        "<h4>Notes and references</h4>"
+        '<p block-type="ListGroup" class="has-continuation z2m-affiliations"><ul>'
+        "<li><sup>a</sup> Key Laboratory for Chemistry, Guangxi Normal University, China. "
+        "Fax: (+86) 773-5832294; Tel: (+86)</li>"
+        "<li>10 773-5845973; E-mail: jzhao12@example.org</li>"
+        "<li><sup>b</sup> Guilin Normal College, Guilin, 541001, China.</li>"
+        "<li>† Electronic Supplementary Information (ESI) available: figures and tables.</li>"
+        "<li>Y. Fang, S. Guo, D. Li, ACS Nano, 2012, 6, 400-409.</li>"
+        "<li>S. N. Baker and G. A. Baker, Angew. Chem. Int. Ed., 2010, 49, 6726-6726.</li>"
+        "<li>L. Cao, X. Wang and Y. P. Sun, J. Am. Chem. Soc., 2007, 129, 11318-11319.</li>"
+        "<li>S. Yang, L. Cao and Y. P. Sun, J. Am. Chem. Soc., 2009, 131, 11308-11309.</li>"
+        "<li>H. Li, X. He and S. T. Lee, Angew. Chem. Int. Ed., 2010, 49, 4430-4434.</li>"
+        "<li>L. Cao, S. Sahu and Y. P. Sun, J. Am. Chem. Soc., 2011, 133, 4754-4757.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "unknown",
+            "confidence": "low",
+            "zotero_citations": [
+                {"text": "1,2", "refs": [1, 2], "context": "were below 10 nm.1,2Owing to robust"},
+                {"text": "3,4", "refs": [3, 4], "context": "useful in bioimaging,3,4photocatalysis"},
+                {"text": "5,6", "refs": [5, 6], "context": "photocatalysis.5,6and light-emitting"},
+            ],
+        },
+    )
+
+    assert '<li><sup>a</sup> Key Laboratory' in polished
+    assert 'id="ref-1"><span class="z2m-ref-num">1.</span> Y. Fang' in polished
+    assert 'id="ref-1"><sup>a</sup>' not in polished
+    assert 'below 10 nm.<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a></sup> Owing' in polished
+    assert 'bioimaging,<sup><a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-4" class="z2m-ref-link">4</a></sup> photocatalysis' in polished
+    assert 'photocatalysis.<sup><a href="#ref-5" class="z2m-ref-link">5</a>,<a href="#ref-6" class="z2m-ref-link">6</a></sup> and' in polished
 
 
 def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> None:
