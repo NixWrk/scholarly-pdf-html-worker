@@ -26,6 +26,19 @@ def _make_temp_dir() -> Path:
     return path
 
 
+_VALID_TINY_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
+
+def _valid_tiny_png_bytes() -> bytes:
+    return base64.b64decode(_VALID_TINY_PNG_B64)
+
+
+def _valid_tiny_png_data_url() -> str:
+    return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
+
+
 def test_inline_images_from_html_file() -> None:
     tmp_path = _make_temp_dir()
     try:
@@ -38,7 +51,8 @@ def test_inline_images_from_html_file() -> None:
 
         assert result.inlined_images == 1
         assert "data:image/png;base64," in result.html
-        assert "img.png" not in result.html
+        assert re.search(r'\s+src=(["\'])img\.png\1', result.html) is None
+        assert 'data-z2m-src="img.png"' in result.html
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -73,9 +87,7 @@ def test_inline_images_refreshes_existing_data_uri_from_sidecar_hint() -> None:
 def test_inline_images_repairs_broken_data_uri_from_sidecar_before_missing_warning() -> None:
     tmp_path = _make_temp_dir()
     try:
-        valid_png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-        )
+        valid_png = _valid_tiny_png_bytes()
         broken_png = base64.b64encode(b"\x89PNG\r\n\x1a\ntruncated").decode("ascii").rstrip("=")
         html_path = tmp_path / "doc.html"
         image_path = tmp_path / "fig5.png"
@@ -102,6 +114,29 @@ def test_inline_images_repairs_broken_data_uri_from_sidecar_before_missing_warni
         assert base64.b64decode(payload) == valid_png
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_polish_html_document_restores_broken_data_image_from_cache_before_missing_warning() -> None:
+    broken_png = base64.b64encode(b"\x89PNG\r\n\x1a\ntruncated").decode("ascii").rstrip("=")
+    valid_data_url = _valid_tiny_png_data_url()
+    html = (
+        "<html><body>"
+        f'<p id="fig-5"><img data-z2m-image-key="fig-5-0" src="data:image/png;base64,{broken_png}"/></p>'
+        "<p>Figure 5. Caption should keep the cached image.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        image_cache={"fig-5-0": valid_data_url},
+    )
+
+    assert '<p class="z2m-missing-figure-warning"' not in polished
+    assert "z2m-missing-figure-unit" not in polished
+    assert broken_png not in polished
+    assert valid_data_url in polished
+    assert '<p class="z2m-figure-caption">Figure 5. Caption should keep the cached image.</p>' in polished
 
 
 def test_inline_images_polish_uses_en_mode_for_non_ru_html() -> None:
@@ -732,6 +767,7 @@ def test_polish_html_document_normalizes_table_caption_style() -> None:
         "<p>TABLE II. PARAMETERS OF SENSOR</p>"
         "<p>Таблица III параметры антенны</p>"
         "<p>Таблица IV: COMPARISON OF STATE OF ARTS.</p>"
+        '<p><span id="page-4-0"></span> TABLE V Анализ Бланда — Альтмана Qmax и PVR</p>'
         "</body></html>"
     )
 
@@ -741,10 +777,12 @@ def test_polish_html_document_normalizes_table_caption_style() -> None:
     assert "Таблица II. Parameters of sensor." in polished
     assert "Таблица III. Параметры антенны." in polished
     assert "Таблица IV. Comparison of state of arts." in polished
+    assert '<span id="page-4-0"></span> Таблица V. Анализ Бланда — Альтмана Qmax и PVR.' in polished
     assert 'id="table-i"' in polished
     assert 'id="table-ii"' in polished
     assert 'id="table-iii"' in polished
     assert 'id="table-iv"' in polished
+    assert 'id="table-v"' in polished
 
 
 def test_polish_html_document_normalizes_table_caption_style_en_mode() -> None:
@@ -1214,6 +1252,139 @@ def test_polish_html_document_repairs_sentence_split_by_float_run_after_long_bod
     assert "The Annunciation permanently displayed at the Museo di San Marco." in polished
     assert polished.count("displayed at the Museo di San Marco.") == 1
     assert '<div id="fig-16" class="z2m-float-unit z2m-figure-unit' in polished
+
+
+def test_polish_html_document_repairs_sentence_split_by_multiple_float_runs() -> None:
+    html = (
+        "<html><body>"
+        "<p>The tactile output from the prototype</p>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit"><p>Figure 1. Prototype.</p></div>'
+        "<p>was evaluated by participants</p>"
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit"><p>Table 1. Scores.</p></div>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit"><p>Figure 2. Setup.</p></div>'
+        "<p>during the second study.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 2
+    assert "The tactile output from the prototype was evaluated by participants during the second study." in polished
+    assert polished.count("was evaluated by participants") == 1
+    assert polished.count("during the second study.") == 1
+    assert '<div id="table-1" class="z2m-float-unit z2m-table-unit">' in polished
+    assert '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">' in polished
+
+
+def test_polish_html_document_repairs_ru_sentence_split_by_multiple_tables() -> None:
+    html = (
+        "<html><body>"
+        "<p>Также очевидно, что второе мочеиспускание у этих пациентов характеризуется большей вариабельностью</p>"
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit"><p>Таблица 1. Женщины.</p></div>'
+        '<div id="table-2" class="z2m-float-unit z2m-table-unit"><p>Таблица 2. Мужчины.</p></div>'
+        "<p>с более высокими показателями ошибок между потоками.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 1
+    assert (
+        "Также очевидно, что второе мочеиспускание у этих пациентов характеризуется большей вариабельностью "
+        "с более высокими показателями ошибок между потоками."
+    ) in polished
+    assert polished.count("с более высокими показателями ошибок между потоками.") == 1
+    assert '<div id="table-1" class="z2m-float-unit z2m-table-unit">' in polished
+    assert '<div id="table-2" class="z2m-float-unit z2m-table-unit">' in polished
+
+
+def test_polish_html_document_repairs_en_sentence_split_by_multiple_tables_after_front_matter_mark() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-front-matter">'
+        "On the accuracy analysis tables, we see that volume affects Qmax the most, "
+        "with the lowest error rates seen in ideal voiders with the IVFE and the greatest "
+        "errors in the high volume high PVR voiders. It is also clear that the second void "
+        "in these patients has greater variability</p>"
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit"><p>TABLE 1. Female statistics.</p></div>'
+        '<div id="table-2" class="z2m-float-unit z2m-table-unit"><p>TABLE 2. Male statistics.</p></div>'
+        "<p>with higher error rates between the flows.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 1
+    assert (
+        "It is also clear that the second void in these patients has greater variability "
+        "with higher error rates between the flows."
+    ) in polished
+    assert polished.count("with higher error rates between the flows.") == 1
+    assert '<div id="table-1" class="z2m-float-unit z2m-table-unit">' in polished
+    assert '<div id="table-2" class="z2m-float-unit z2m-table-unit">' in polished
+
+
+def test_polish_html_document_repairs_split_after_pre_wrapped_table_run() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-front-matter">'
+        "It is also clear that the second void in these patients has greater variability</p>"
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">TABLE 1. Female statistics.</p>'
+        "<table><tr><td>A</td></tr></table></div>"
+        '<div id="table-2" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">TABLE 2. Male statistics.</p>'
+        "<table><tr><td>B</td></tr></table></div>"
+        "<p>with higher error rates between the flows.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "greater variability with higher error rates between the flows." in polished
+    assert polished.count('id="table-1"') == 1
+    assert polished.count('id="table-2"') == 1
+    assert '<div id="table-1" class="z2m-float-unit z2m-table-unit"><div id="table-1"' not in polished
+
+
+def test_polish_html_document_repairs_split_across_tables_with_punctuation_gap() -> None:
+    html = (
+        "<html><body>"
+        "<p>Using accuracy measures, results are lower in normal bladder volumes and no PVR "
+        "(Supplemental Table S3). We</p>"
+        '<div id="table-3" class="z2m-float-unit z2m-table-unit"><p>TABLE 3. First table.</p></div>'
+        '<p block-type="Text"> . </p>'
+        '<div id="table-4" class="z2m-float-unit z2m-table-unit"><p>TABLE 4. Second table.</p></div>'
+        '<p block-type="Text"> . </p>'
+        '<div id="table-5" class="z2m-float-unit z2m-table-unit"><p>TABLE 5. Third table.</p></div>'
+        '<span id="page-6-0"> </span>'
+        "<p>can see that the derived values remain stable.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "(Supplemental Table S3). We can see that the derived values remain stable." in polished
+    assert "We </p>" not in polished
+    assert polished.count("can see that the derived values remain stable.") == 1
+    assert '<p block-type="Text"> . </p>' in polished
+
+
+def test_polish_html_document_repairs_short_multiword_fragment_before_float() -> None:
+    html = (
+        "<html><body>"
+        "<p>We can clearly</p>"
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit"><p>TABLE 1. Results.</p></div>'
+        "<p>see the pattern in both groups.</p>"
+        "</body></html>"
+    )
+
+    polished, repairs = _repair_sentence_breaks_around_float_units(html)
+
+    assert repairs == 1
+    assert "We can clearly see the pattern in both groups." in polished
+    assert polished.count("see the pattern in both groups.") == 1
+    assert '<div id="table-1" class="z2m-float-unit z2m-table-unit">' in polished
 
 
 def test_polish_html_document_repairs_sentence_split_by_image_then_table_float() -> None:
@@ -4342,6 +4513,74 @@ def test_polish_html_document_links_plural_table_pair_with_page_link_tail() -> N
     assert 'Tables <a href="#table-6"' not in polished
     assert '<a href="#table-6" class="z2m-table-link">Tables\xa06</a>' in polished
     assert '<a href="#table-7" class="z2m-table-link">7</a>)' in polished
+
+
+def test_polish_html_document_repairs_ru_table_pair_with_misclassified_ref() -> None:
+    html = (
+        "<html><body>"
+        "<p>Описательная статистика приведена в таблицах 1 и <sup>2</sup>.</p>"
+        "<p>Анализ представлен в Table 4 и <sup>5</sup>.</p>"
+        "<p>TABLE 1. Female descriptive statistics.</p><table><tr><td>A</td></tr></table>"
+        "<p>TABLE 2. Male descriptive statistics.</p><table><tr><td>B</td></tr></table>"
+        "<p>TABLE 4. Bland-Altman analysis for Qmax and PVR.</p><table><tr><td>C</td></tr></table>"
+        "<p>TABLE 5. Male Qmax comparison.</p><table><tr><td>D</td></tr></table>"
+        "<h4>References</h4><ol>"
+        "<li>Reference one.</li><li>Reference two.</li><li>Reference three.</li>"
+        "<li>Reference four.</li><li>Reference five.</li>"
+        "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru")
+
+    assert 'href="#table-1"' in polished
+    assert 'href="#table-2"' in polished
+    assert 'href="#table-4"' in polished
+    assert 'href="#table-5"' in polished
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a>' not in polished
+    assert '<a href="#ref-5" class="z2m-ref-link">5</a>' not in polished
+    assert '<sup><a href="#table-2"' not in polished
+    assert '<sup><a href="#table-5"' not in polished
+    assert "Таблица 4" in polished
+
+
+def test_polish_html_document_repairs_existing_ru_table_ref_links_when_linkify_disabled() -> None:
+    html = (
+        "<html><body>"
+        '<p>Описательная статистика приведена в таблицах 1 и '
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>.</p>'
+        "<p>Дополнительный анализ приведен в Таблицы 1 и <sup>2</sup>.</p>"
+        "<p>TABLE 1. Female descriptive statistics.</p><table><tr><td>A</td></tr></table>"
+        "<p>TABLE 2. Male descriptive statistics.</p><table><tr><td>B</td></tr></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="ru",
+        enable_citation_linkify=False,
+    )
+
+    assert '<a href="#table-1" class="z2m-table-link">таблицах\xa01</a>' in polished
+    assert '<a href="#table-2" class="z2m-table-link">2</a>' in polished
+    assert '<a href="#table-1" class="z2m-table-link">Таблицы\xa01</a>' in polished
+    assert 'href="#ref-2"' not in polished
+    assert '<sup><a href="#table-2"' not in polished
+
+
+def test_polish_html_document_localizes_ru_plural_table_link_label() -> None:
+    html = (
+        "<html><body>"
+        "<p>Анализ представлен в Tables 4 and 5.</p>"
+        "<p>TABLE 4. Bland-Altman analysis for Qmax and PVR.</p><table><tr><td>C</td></tr></table>"
+        "<p>TABLE 5. Male Qmax comparison.</p><table><tr><td>D</td></tr></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru")
+
+    assert '<a href="#table-4" class="z2m-table-link">Таблицы 4</a>' in polished
+    assert '<a href="#table-5" class="z2m-table-link">5</a>' in polished
+    assert "Tables 4" not in polished
 
 
 def test_polish_html_document_retargets_page_table_pair_and_appendix_label() -> None:

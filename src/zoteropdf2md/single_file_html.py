@@ -10,7 +10,7 @@ import re
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from .abbreviations import RU_ABBREV_TO_LATIN
 
@@ -35,6 +35,10 @@ _IMAGE_SIGNATURES: dict[bytes, str] = {
 
 
 _IMG_SRC_PATTERN = re.compile(r'(<img\b[^>]*?\ssrc\s*=\s*)(["\'])([^"\']+)(\2)', re.IGNORECASE)
+_IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
+    r'\bdata-z2m-image-key\s*=\s*(["\'])([^"\']+)\1',
+    re.IGNORECASE,
+)
 _HEAD_OPEN_PATTERN = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
 _HEAD_CLOSE_PATTERN = re.compile(r"</head>", re.IGNORECASE)
 _META_CHARSET_PATTERN = re.compile(r"<meta\s+charset\s*=\s*['\"]?utf-8['\"]?\s*/?>", re.IGNORECASE)
@@ -419,21 +423,25 @@ _STAT_FALSE_REF_CONTEXT_PATTERN = re.compile(
     r"range\s+from\s+about|logMAR|within\s+\d+\s+or\s+\d+\s+s)\b",
     re.IGNORECASE,
 )
+_TABLE_REF_WORD_TOKEN = (
+    r"(?:TABLES?|Tables?|"
+    r"\u0422\u0430\u0431\u043b\u0438\u0446(?:\u0430|\u044b|\u0435|\u0430\u0445|\u0443)?)"
+)
 _TABLE_REF_PATTERN = re.compile(
-    r'\b((?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?)'
+    rf'\b({_TABLE_REF_WORD_TOKEN}\.?)'
     rf'\s+({_TABLE_KEY_TOKEN})([a-z])?\b(?!\s*(?:\.\s|\|))',
     re.IGNORECASE,
 )
 _TABLE_REF_PAIR_PAGE_LINK_PATTERN = re.compile(
-    rf'\b(?P<word>Tables?)\s+(?P<first>{_TABLE_KEY_TOKEN})\s+'
-    r'(?P<join>and|or|&)\s+'
+    rf'\b(?P<word>{_TABLE_REF_WORD_TOKEN})\s+(?P<first>{_TABLE_KEY_TOKEN})\s+'
+    r'(?P<join>and|or|и|или|&)\s+'
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
 _TABLE_REF_PAIR_PATTERN = re.compile(
-    rf'\b(?P<word>Tables?)\s+(?P<first>{_TABLE_KEY_TOKEN})\s+'
-    rf'(?P<join>and|or|&)\s+(?P<second>{_TABLE_KEY_TOKEN})\b',
+    rf'\b(?P<word>{_TABLE_REF_WORD_TOKEN})\s+(?P<first>{_TABLE_KEY_TOKEN})\s+'
+    rf'(?P<join>and|or|и|или|&)\s+(?P<second>{_TABLE_KEY_TOKEN})\b',
     re.IGNORECASE,
 )
 _TABLE_CELL_BLOCK_PATTERN = re.compile(
@@ -523,7 +531,9 @@ _H_BLOCK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _TABLE_CAPTION_PARA_PATTERN = re.compile(
-    r'(<p\b[^>]*>\s*)(TABLE|Таблица)\s+([IVXLCM\d]+)\s*[\.\-:]?\s*([^<]*?)(\s*</p>)',
+    r'(<p\b[^>]*>\s*)'
+    r'((?:(?:<(?:span|strong|em|b|i|sup|sub)\b[^>]*>|</(?:span|strong|em|b|i|sup|sub)>)\s*)*)'
+    r'(TABLE|Table|Таблица)\s+([IVXLCM\d]+)\s*[\.\-:]?\s*([^<]*?)(\s*</p>)',
     re.IGNORECASE,
 )
 _FIGURE_CAPTION_STYLE_PATTERN = re.compile(
@@ -543,7 +553,7 @@ _RU_INLINE_FIG_REF_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _RU_INLINE_TABLE_REF_PATTERN = re.compile(
-    r"\bTable\.?\s+([IVXLCM\d]+)\b",
+    r"\b(Table|Tables)\.?\s+([IVXLCM\d]+)\b",
     re.IGNORECASE,
 )
 _RU_BARE_FIG_LEXEME_PATTERN = re.compile(
@@ -1671,6 +1681,41 @@ def _refresh_inlined_data_urls_by_hint(
 
         refreshed += 1
         return f"{prefix}{quote}{refreshed_data_url}{suffix}"
+
+    return _IMG_SRC_PATTERN.sub(replace, html), refreshed
+
+
+def _refresh_inlined_data_urls_by_cache(
+    html: str,
+    *,
+    image_cache: Mapping[str, str] | None,
+) -> tuple[str, int]:
+    """Restore broken inline image payloads from the pre-polish image cache."""
+    if not image_cache:
+        return html, 0
+
+    refreshed = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal refreshed
+        prefix = match.group(1)
+        quote = match.group(2)
+        src_value = match.group(3).strip()
+        suffix = match.group(4)
+
+        key_match = _IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix)
+        if key_match is None:
+            return match.group(0)
+        cached_data_url = image_cache.get(key_match.group(2).strip())
+        if not cached_data_url or not cached_data_url.lower().startswith("data:image/"):
+            return match.group(0)
+        if not _data_image_src_looks_renderable(cached_data_url):
+            return match.group(0)
+        if src_value.lower().startswith("data:image/") and _data_image_src_looks_renderable(src_value):
+            return match.group(0)
+
+        refreshed += 1
+        return f"{prefix}{quote}{cached_data_url}{suffix}"
 
     return _IMG_SRC_PATTERN.sub(replace, html), refreshed
 
@@ -8149,6 +8194,56 @@ def _repair_figure_ref_links_misclassified_as_refs(html: str, found_figures: set
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
 
 
+_SUP_TABLE_LINK_PATTERN = re.compile(
+    r'<sup\b[^>]*>\s*(<a\b(?=[^>]*\bz2m-table-link\b)[^>]*>[\s\S]*?</a>)\s*</sup>',
+    re.IGNORECASE,
+)
+_SUP_NUMERIC_LABEL_PATTERN = re.compile(
+    r'<sup\b[^>]*>\s*(?P<label>\d{1,3}|[IVXLCM]+)\s*</sup>',
+    re.IGNORECASE,
+)
+
+
+def _repair_table_ref_links_misclassified_as_refs(html: str, found_tables: set[str]) -> str:
+    """Retarget numeric refs that are actually the second item in a table list."""
+    if "#ref-" not in html or not found_tables:
+        return html
+
+    table_context = re.compile(
+        rf"(?:{_TABLE_REF_WORD_TOKEN})\.?\s+{_TABLE_KEY_TOKEN}\s*"
+        r"(?:and|or|и|или|,|&)\s*$",
+        re.IGNORECASE,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        label = _visible_text(match.group("body")).strip(" .;:,")
+        if re.fullmatch(r"\d{1,3}|[IVXLCM]+", label, re.IGNORECASE) is None:
+            return match.group(0)
+        key = _normalize_table_key(label)
+        if key not in found_tables:
+            return match.group(0)
+        left_text = _visible_text(html[max(0, match.start() - 180): match.start()])
+        if table_context.search(left_text) is None:
+            return match.group(0)
+        attrs = _replace_href_and_link_class(match.group("attrs"), f"#table-{key}", "z2m-table-link")
+        return f'<a{attrs}>{match.group("body")}</a>'
+
+    repaired = _REF_ANCHOR_PATTERN.sub(_replace, html)
+    repaired = _SUP_TABLE_LINK_PATTERN.sub(r"\1", repaired)
+
+    def _replace_plain_sup(match: re.Match[str]) -> str:
+        label = match.group("label").strip()
+        key = _normalize_table_key(label)
+        if key not in found_tables:
+            return match.group(0)
+        left_text = _visible_text(repaired[max(0, match.start() - 180): match.start()])
+        if table_context.search(left_text) is None:
+            return match.group(0)
+        return f'<a href="#table-{key}" class="z2m-table-link">{label}</a>'
+
+    return _SUP_NUMERIC_LABEL_PATTERN.sub(_replace_plain_sup, repaired)
+
+
 def _looks_author_year_citation_document(html: str) -> bool:
     heading_match = _references_heading_search(html)
     body_html = html[: heading_match.start()] if heading_match is not None else html
@@ -8482,17 +8577,24 @@ def _normalize_table_caption_style(html: str, *, table_caption_language: str = "
     - ``TABLE N. Tail.`` for ``table_caption_language='en'``
     """
     def _normalize(m: re.Match[str]) -> str:
-        p_open, _source_label, table_no, tail, p_close = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+        p_open = m.group(1)
+        leading_inline = m.group(2)
+        table_no = m.group(4)
+        tail = m.group(5)
+        p_close = m.group(6)
         number = table_no.upper()
         cleaned_tail = re.sub(r"\s+", " ", tail).strip()
         cleaned_tail = cleaned_tail.strip(" .;:,")
         label = "TABLE" if table_caption_language == "en" else "Таблица"
 
         if cleaned_tail:
-            sentence_tail = cleaned_tail.lower()
+            letters = re.findall(r"[A-Za-zА-Яа-яЁё]", cleaned_tail)
+            has_lower = any(ch.lower() == ch and ch.upper() != ch for ch in letters)
+            has_upper = any(ch.upper() == ch and ch.lower() != ch for ch in letters)
+            sentence_tail = cleaned_tail.lower() if letters and has_upper and not has_lower else cleaned_tail
             sentence_tail = sentence_tail[:1].upper() + sentence_tail[1:]
-            return f"{p_open}{label} {number}. {sentence_tail}.{p_close}"
-        return f"{p_open}{label} {number}.{p_close}"
+            return f"{p_open}{leading_inline}{label} {number}. {sentence_tail}.{p_close}"
+        return f"{p_open}{leading_inline}{label} {number}.{p_close}"
 
     return _TABLE_CAPTION_PARA_PATTERN.sub(_normalize, html)
 
@@ -8589,7 +8691,7 @@ def _normalize_ru_reference_lexemes(html: str) -> str:
             part,
         )
         normalized = _RU_INLINE_TABLE_REF_PATTERN.sub(
-            lambda m: f"Таблица {m.group(1)}",
+            lambda m: f"{'Таблицы' if m.group(1).lower().endswith('s') else 'Таблица'} {m.group(2)}",
             normalized,
         )
         out.append(normalized)
@@ -9648,6 +9750,8 @@ def _looks_nonprose_gap_block(block_html: str) -> bool:
         visible = _visible_text(stripped)
         if not visible:
             return True
+        if re.fullmatch(r"[\s.,;:|/\\-]+", visible):
+            return True
         if _looks_running_header_line(visible):
             return True
         if re.match(r"^(?:table|таблица)\.?\s*[ivxlcdm\d]+\b", visible, re.IGNORECASE):
@@ -9745,12 +9849,10 @@ def _language_probe_text_for_continuation(text: str) -> str:
 def _is_sentence_continuation(left_text: str, right_text: str) -> bool:
     if not left_text or not right_text:
         return False
-    if not re.search(r"[A-Za-z]", left_text + right_text):
+    if not re.search(r"[A-Za-zА-Яа-яЁё]", left_text + right_text):
         return False
     left_text = _language_probe_text_for_continuation(left_text)
     right_text = _language_probe_text_for_continuation(right_text)
-    if re.search(r"[А-Яа-яЁё]", left_text + right_text):
-        return False
 
     right_start = right_text.lstrip()
     if not right_start:
@@ -9789,7 +9891,7 @@ def _is_sentence_continuation(left_text: str, right_text: str) -> bool:
     if left_text.rstrip().endswith((".", "!", "?", ":", ";", "…")):
         return False
 
-    first_token_match = re.match(r'^["\'(\[]*([A-Za-z]+)', norm_right_start)
+    first_token_match = re.match(r'^["\'(\[]*([^\W\d_]+)', norm_right_start, re.UNICODE)
     first_token = first_token_match.group(1).lower() if first_token_match else ""
     if re.search(r"\b(?:Science|Construction|Scientific)\s*$", left_text, re.IGNORECASE) and re.match(
         r"^(?:Foundations?|Research\s+Project)\b",
@@ -9798,7 +9900,8 @@ def _is_sentence_continuation(left_text: str, right_text: str) -> bool:
     ):
         return True
     if re.search(
-        r"\b(?:the|a|an|of|for|with|and|or|to|in|at|by|from|between|through|using|into|on)\s*$",
+        r"\b(?:the|a|an|of|for|with|and|or|to|in|at|by|from|between|through|using|into|on|"
+        r"и|или|с|со|в|во|на|по|для|от|из|к|ко|при|между)\s*$",
         left_text,
         re.IGNORECASE,
     ) and re.match(
@@ -9842,6 +9945,24 @@ def _is_sentence_continuation(left_text: str, right_text: str) -> bool:
         "a",
         "an",
         "acquisition",
+        "и",
+        "или",
+        "но",
+        "с",
+        "со",
+        "в",
+        "во",
+        "на",
+        "по",
+        "для",
+        "что",
+        "как",
+        "который",
+        "которая",
+        "которое",
+        "которые",
+        "при",
+        "между",
     }
     first_char = norm_right_start[0]
     if first_char.islower():
@@ -9880,10 +10001,32 @@ def _is_sentence_continuation_across_affiliation_gap(left_text: str, right_text:
 
 
 def _is_short_fragment_left(left_text: str) -> bool:
-    words = re.findall(r"[A-Za-z]+", left_text)
-    if not words or len(words) > 4:
+    words = re.findall(r"[^\W\d_]+", left_text, re.UNICODE)
+    if not words or len(words) > 5:
         return False
-    return words[0].lower() in {"this", "these", "it", "that", "which", "also"}
+    if left_text.rstrip().endswith((".", "!", "?", ":", ";", "…")):
+        return False
+    first = words[0].lower()
+    return first in {
+        "this",
+        "these",
+        "it",
+        "that",
+        "which",
+        "also",
+        "we",
+        "they",
+        "there",
+        "here",
+        "our",
+        "the",
+        "мы",
+        "это",
+        "также",
+        "который",
+        "которая",
+        "которые",
+    }
 
 
 def _merge_sentence_parts(left_body: str, right_body: str) -> str:
@@ -10959,10 +11102,6 @@ def _repair_sentence_breaks_around_footnote_blocks(html: str) -> tuple[str, int]
         if _is_caption_node(left_raw) or _node_has_class(left_raw, "z2m-footnote"):
             i += 1
             continue
-        if _looks_front_matter_block(left_raw):
-            i += 1
-            continue
-
         gap_indices: list[int] = []
         j = i + 1
         while j < len(nodes) and len(gap_indices) < 10:
@@ -11865,7 +12004,31 @@ def _mark_missing_figure_units(html: str) -> str:
     return _FLOAT_UNIT_DIV_PATTERN.sub(_replace, html)
 
 
-def _repair_sentence_breaks_around_float_units(html: str) -> tuple[str, int]:
+_DUPLICATE_NESTED_FLOAT_UNIT_PATTERN = re.compile(
+    r'<div\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\bz2m-float-unit\b)[^>]*'
+    r'\bid\s*=\s*["\'](?P<outer_id>[^"\']+)["\'][^>]*>\s*'
+    r'(?P<inner><div\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\bz2m-float-unit\b)[^>]*'
+    r'\bid\s*=\s*["\'](?P<inner_id>[^"\']+)["\'][^>]*>[\s\S]*?</div>)\s*</div>',
+    re.IGNORECASE,
+)
+
+
+def _collapse_duplicate_nested_float_units(html: str) -> str:
+    """Collapse duplicate float wrappers produced when source HTML is already polished."""
+    def _replace(match: re.Match[str]) -> str:
+        if match.group("outer_id") != match.group("inner_id"):
+            return match.group(0)
+        return match.group("inner")
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = _DUPLICATE_NESTED_FLOAT_UNIT_PATTERN.sub(_replace, current)
+    return current
+
+
+def _repair_sentence_breaks_around_float_units_once(html: str) -> tuple[str, int]:
     """Move prose continuations back across already wrapped figure/table/box units."""
     nodes = list(_FLOAT_AWARE_SENTENCE_NODE_PATTERN.finditer(html))
     if not nodes:
@@ -11890,9 +12053,11 @@ def _repair_sentence_breaks_around_float_units(html: str) -> tuple[str, int]:
         ):
             return True
         if _is_p_node(raw):
+            visible = _visible_text(raw)
             return (
-                not _visible_text(raw).strip()
-                or _looks_running_header_line(_visible_text(raw))
+                not visible.strip()
+                or re.fullmatch(r"[\s.,;:|/\\-]+", visible) is not None
+                or _looks_running_header_line(visible)
                 or _looks_inline_figure_block(raw)
                 or _is_figure_caption_node(raw)
             )
@@ -11921,10 +12086,6 @@ def _repair_sentence_breaks_around_float_units(html: str) -> tuple[str, int]:
         if _node_has_class(left_raw, "z2m-footnote") or _node_has_class(left_raw, "z2m-table-note"):
             i += 1
             continue
-        if _looks_front_matter_block(left_raw):
-            i += 1
-            continue
-
         gap_indices: list[int] = []
         j = i + 1
         while j < len(nodes) and len(gap_indices) < 16:
@@ -11997,6 +12158,18 @@ def _repair_sentence_breaks_around_float_units(html: str) -> tuple[str, int]:
         cursor = node.end()
     out_parts.append(html[cursor:])
     return "".join(out_parts), repairs
+
+
+def _repair_sentence_breaks_around_float_units(html: str) -> tuple[str, int]:
+    """Move prose continuations back across one or more adjacent float runs."""
+    current = html
+    total_repairs = 0
+    for _ in range(8):
+        current, repairs = _repair_sentence_breaks_around_float_units_once(current)
+        if repairs == 0:
+            return current, total_repairs
+        total_repairs += repairs
+    return current, total_repairs
 
 
 def _mark_consecutive_float_runs(html: str) -> str:
@@ -12159,6 +12332,7 @@ def polish_html_document(
     table_caption_language: str = "ru",
     enable_citation_linkify: bool = True,
     citation_profile: Any | None = None,
+    image_cache: Mapping[str, str] | None = None,
 ) -> str:
     polished = _unwrap_spurious_math_captions(html)  # before all else: free captions from <math>
     polished = _unwrap_nested_fig_links(polished)
@@ -12245,6 +12419,7 @@ def polish_html_document(
         polished = _repair_figure_ref_links_misclassified_as_refs(polished, found_figures)
         polished = _rewrite_existing_page_table_links(polished, found_tables)
         polished = _link_table_refs(polished, found_tables)
+        polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
         polished = _unwrap_unresolved_semantic_page_links(
             polished,
             found_figures=found_figures,
@@ -12258,10 +12433,15 @@ def polish_html_document(
         polished = _mark_unit_exponent_superscripts(polished)
         polished = _repair_nested_reference_links(polished)
         polished = _fix_false_sup_citations_in_decimals_and_figure_labels(polished)
+    else:
+        polished = _rewrite_existing_page_table_links(polished, found_tables)
+        polished = _link_table_refs(polished, found_tables)
+        polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
     polished = _normalize_table_caption_style(polished, table_caption_language=table_caption_language)
     polished = _normalize_figure_caption_style(polished, figure_caption_language=table_caption_language)
     polished, _ = _merge_biorender_caption_fragments(polished)
     polished, _ = _repair_caption_suffix_left_body_tail_right(polished)
+    polished, _ = _refresh_inlined_data_urls_by_cache(polished, image_cache=image_cache)
     ru_caption_context = (
         table_caption_language == "ru"
         and (not enable_citation_linkify or _looks_like_ru_html_content(polished))
@@ -12273,8 +12453,10 @@ def polish_html_document(
     polished, _ = _drop_compound_caption_missing_warnings(polished)
     polished = _wrap_box_units(polished)
     polished = _wrap_float_units(polished)
+    polished = _collapse_duplicate_nested_float_units(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _repair_remaining_table_caption_units(polished)
+    polished = _collapse_duplicate_nested_float_units(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)
     polished = _repair_known_word_glue(polished)
@@ -12370,6 +12552,8 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
     all_images_already_data = bool(img_matches) and data_img_count == len(img_matches)
     allow_sidecar_order_refresh = all_images_already_data and len(sidecar_images) == len(img_matches)
     sidecar_cursor = [0]
+    image_match_cursor = [0]
+    image_cache: dict[str, str] = {}
 
     def resolve_candidate(path_value: str) -> Path | None:
         if not path_value:
@@ -12392,8 +12576,40 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
             flags=re.IGNORECASE,
         )
 
+    def add_image_key(prefix: str, image_key: str) -> str:
+        if _IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix):
+            return prefix
+        escaped_key = _escape_html_attr(image_key)
+        return re.sub(
+            r"\bsrc\s*=\s*$",
+            f'data-z2m-image-key="{escaped_key}" src=',
+            prefix,
+            flags=re.IGNORECASE,
+        )
+
+    def remember_data_url(prefix: str, data_url: str, match_idx: int) -> str:
+        if not data_url.lower().startswith("data:image/"):
+            return prefix
+        if not _data_image_src_looks_renderable(data_url):
+            return prefix
+        decoded = _decode_data_image_payload(data_url)
+        if decoded is None:
+            return prefix
+        _, blob = decoded
+        key_match = _IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix)
+        if key_match is None:
+            digest = hashlib.sha256(blob).hexdigest()[:16]
+            image_key = f"img-{match_idx}-{digest}"
+            prefix = add_image_key(prefix, image_key)
+        else:
+            image_key = key_match.group(2).strip()
+        image_cache[image_key] = data_url
+        return prefix
+
     def replace(match: re.Match[str]) -> str:
         nonlocal inlined_count
+        match_idx = image_match_cursor[0]
+        image_match_cursor[0] += 1
         prefix = match.group(1)
         quote = match.group(2)
         src_value = match.group(3).strip()
@@ -12418,6 +12634,9 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
                 sidecar_cursor[0] += 1
                 prefix = add_src_hint(prefix, candidate.name)
             if candidate is None:
+                prefix = remember_data_url(prefix, src_value, match_idx)
+                if prefix != match.group(1):
+                    return f"{prefix}{quote}{src_value}{suffix}"
                 return match.group(0)
         elif _is_inline_or_remote(src_value):
             return match.group(0)
@@ -12425,6 +12644,7 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
             candidate = resolve_candidate(src_value)
             if candidate is None:
                 return match.group(0)
+            prefix = add_src_hint(prefix, src_value)
 
         # Try to get the hint path for validation logging
         hint_path = src_hint or candidate.name
@@ -12443,6 +12663,7 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
             # This preserves the image even if base64 encoding is problematic
             return match.group(0)
 
+        prefix = remember_data_url(prefix, data_url, match_idx)
         inlined_count += 1
         return f"{prefix}{quote}{data_url}{suffix}"
 
@@ -12453,11 +12674,17 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
         table_caption_language=("ru" if is_ru_html else "en"),
         enable_citation_linkify=not is_ru_html,
         citation_profile=citation_profile,
+        image_cache=image_cache,
     )
     inlined_html, refreshed_after_polish = _refresh_inlined_data_urls_by_hint(
         inlined_html,
         base_dir=base_dir,
     )
     inlined_count += refreshed_after_polish
+    inlined_html, refreshed_from_cache = _refresh_inlined_data_urls_by_cache(
+        inlined_html,
+        image_cache=image_cache,
+    )
+    inlined_count += refreshed_from_cache
     return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count)
 
