@@ -3,6 +3,13 @@
 
 The lab keeps one cached raw HTML per article and writes polish outputs into a
 single flat folder.  It intentionally does not copy image sidecars.
+
+For production-equivalent citation/internal-link checks, put
+``_source_filename_map.csv`` in ``--source-root`` with ``alias_pdf_path`` and
+``source_pdf_path`` columns.  The alias suffix must match the raw article
+directory suffix so the lab can rebuild the same PDF-derived citation profile
+that production passes to ``polish_html_document``.  Pass ``--zotero-overlay-dir``
+to merge prebuilt Zotero/pdf.js overlay JSON when that data is part of the run.
 """
 
 from __future__ import annotations

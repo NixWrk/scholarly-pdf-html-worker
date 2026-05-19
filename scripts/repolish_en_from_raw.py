@@ -1,5 +1,15 @@
 #!/usr/bin/env python
-"""Regenerate ``02.en.polish.html`` from existing ``01.en.raw.html`` stages."""
+"""Regenerate ``02.en.polish.html`` from existing ``01.en.raw.html`` stages.
+
+This helper intentionally uses only raw HTML stages.  It does not rebuild or
+pass the PDF-derived citation profile used by the production pipeline, and it
+does not consume Zotero/pdf.js overlay JSON.  Use it for raw-HTML-only polish
+checks such as text cleanup, float recovery, and math/layout behavior.
+
+For citation/internal-link quality checks, use ``scripts/pdf_profile_lab.py``
+with ``_source_filename_map.csv`` so each raw stage is paired with its source
+PDF and rebuilt citation profile.
+"""
 
 from __future__ import annotations
 

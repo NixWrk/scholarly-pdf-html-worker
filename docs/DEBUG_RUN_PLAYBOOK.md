@@ -56,6 +56,12 @@ The stage where the defect first appears determines where to debug:
 For EN raw triage, use the article-level matrix in
 [`EN_RAW_DEBUG_TEST_PLAN.md`](EN_RAW_DEBUG_TEST_PLAN.md).
 
+For EN polish citation or internal-link defects, preserve the extra production
+inputs. `02.en.polish.html` uses a citation profile built from the source PDF
+and, when available, Zotero/pdf.js overlay JSON. A raw-only repolish can hide or
+create link regressions and must not be used as the validation run for
+reference, figure, table, or page-link quality.
+
 ## Run Ladder
 
 Use the smallest run that can falsify the hypothesis, then widen.
@@ -65,7 +71,10 @@ Use the smallest run that can falsify the hypothesis, then widen.
 2. Unit/regression test: reproduce the mechanism without the model when
    possible.
 3. Postprocess-only run: use existing stage artifacts when only polish/link/
-   cleanup code changed.
+   cleanup code changed. For link-sensitive EN polish checks, use
+   `scripts/pdf_profile_lab.py` with `_source_filename_map.csv` and optional
+   `--zotero-overlay-dir`; use `scripts/repolish_en_from_raw.py` only for
+   raw-HTML-only text/float/math checks.
 4. Translation-only run on one article: use fixed `02.en.polish.html` input
    when only Gemma logic changed.
 5. Translation-only run on the control corpus: required before calling a

@@ -14,11 +14,16 @@ write-back, WebDAV, or Web API work belongs to the caller.
 1. Receive one or more local PDF paths.
 2. Stage PDFs with short deterministic aliases for Marker.
 3. Run `marker` batch conversion with `marker_single` fallback.
-4. Save HTML stages:
+4. Build a PDF-derived citation profile from the original source PDF.
+   - The profile uses PDF links/named destinations and optional
+     Zotero/pdf.js overlay JSON.
+   - Citation/internal-link recovery in EN polish is not derived from
+     `01.en.raw.html` alone.
+5. Save HTML stages:
    - `01.en.raw.html`
    - `02.en.polish.html`
-5. Detect source language from the polished HTML/text.
-6. Translate English `02.en.polish.html` to Russian through LM Studio/Gemma:
+6. Detect source language from the polished HTML/text.
+7. Translate English `02.en.polish.html` to Russian through LM Studio/Gemma:
    - `03.ru.translate.html`
 
 Source language detection currently recognizes `en`, `ru`, `de`, `fr`, `es`,
@@ -60,6 +65,18 @@ Output HTML stages are saved under each article folder in `_z2m_stages`.
 `--zotero-overlay-dir` is optional; when present, matching Zotero/pdf.js
 `*.overlays.json` files are used for citation-link recovery before automatic
 overlay generation is attempted.
+
+Important: `02.en.polish.html` is not a pure function of `01.en.raw.html` for
+link quality. The production path also passes a citation profile built from the
+source PDF, optionally enriched with Zotero/pdf.js overlays. Raw-only repolish
+helpers can be useful for text, float, math, or layout checks, but they are not
+valid for citation/internal-link regression checks.
+
+For link-sensitive repolish experiments, use `scripts/pdf_profile_lab.py` with a
+`_source_filename_map.csv` beside the raw stages. The CSV must include
+`alias_pdf_path` and `source_pdf_path` columns so the lab can rebuild the same
+PDF-derived citation profiles used by production. Pass `--zotero-overlay-dir`
+when the run should reuse prebuilt Zotero/pdf.js `*.overlays.json` files.
 
 Multiple PDFs can be passed by repeating `--pdf`:
 

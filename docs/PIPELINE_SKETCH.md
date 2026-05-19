@@ -18,15 +18,28 @@ Current production path in this extraction:
    - `run_batch()` calls `marker`
    - `run_single()` calls `marker_single` fallback
 
-5. `zoteropdf2md.single_file_html.inline_images_from_html_file()`
+5. `zoteropdf2md.citation_profile.build_citation_profile_from_pdf()`
+   - reads the original source PDF, not the raw HTML stage
+   - extracts PDF links/named destinations for citation, figure, and table
+     recovery
+   - merges matching Zotero/pdf.js `*.overlays.json` data when supplied through
+     `--zotero-overlay-dir`
+
+6. `zoteropdf2md.single_file_html.inline_images_from_html_file()`
    - inlines image assets
-   - calls `polish_html_document()`
+   - calls `polish_html_document(citation_profile=...)`
    - saves `02.en.polish.html` through `html_stages.save_html_stage()`
 
-6. `experiments/lmstudio_instruct_translation/run_html_probe.py`
+7. `experiments/lmstudio_instruct_translation/run_html_probe.py`
    - finds `02.en.polish.html`
    - calls `zoteropdf2md.gemma_html.translate_html_text_nodes()`
    - writes `03.ru.translate.html`
 
 Some legacy extraction modules still exist in the source tree, but the public
 automation boundary is file-based: PDF in, HTML out.
+
+`01.en.raw.html` is not enough to reproduce production citation/internal-link
+behavior. Use `scripts/pdf_profile_lab.py` plus `_source_filename_map.csv` for
+link-sensitive repolish checks. `scripts/repolish_en_from_raw.py` deliberately
+does not build or pass PDF citation profiles and should only be used for
+raw-HTML-only polish checks.
