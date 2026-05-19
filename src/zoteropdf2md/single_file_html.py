@@ -276,6 +276,7 @@ _HEADING_ACRONYM_SENSOR_PATTERN = re.compile(
     r'(<(i|em|b|strong)\b[^>]*>\s*[A-Z0-9]{2,8}\s*</\2>)\s+датчик\b',
     re.IGNORECASE,
 )
+_HEADING_OPEN_TAG_PATTERN = re.compile(r"^<h[1-6](?P<attrs>\b[^>]*)>$", re.IGNORECASE)
 _Z2M_LINK_GLUE_PATTERN = re.compile(
     r'(<a\b[^>]*\bclass\s*=\s*["\']z2m-(?:ref|fig|section)-link["\'][^>]*>[\s\S]*?</a>)(?=[A-Za-zА-Яа-яЁё])',
     re.IGNORECASE,
@@ -290,6 +291,7 @@ _SLASH_PIPE_ARTIFACT_PATTERN = re.compile(r"\s*\\+\s*\|\s*\\+\s*")
 # When followed by citation numbers they represent a dropped <sup> tag.
 _BYTE_TOKEN_ARTIFACT_PATTERN = re.compile(r'(?:<0x[0-9A-Fa-f]{2}>)+')
 _BYTE_TOKEN_CITATION_PATTERN = re.compile(r'(?:<0x[0-9A-Fa-f]{2}>)+(\d[\d,\u2013\u2014\-]*)')
+_CYRILLIC_CHAR_PATTERN = re.compile(r"[\u0400-\u04FF]")
 # Bare citation numbers that Marker failed to mark as superscript.
 # Two variants:
 #   Glued  — number immediately follows letter: "issues17,68"
@@ -8435,6 +8437,33 @@ def _fix_heading_translation_breaks(html: str) -> str:
     return _HEADING_TAG_PATTERN.sub(fix_heading, html)
 
 
+def _normalize_numeric_section_heading_levels(html: str) -> str:
+    """Keep numbered article headings at stable visual levels."""
+
+    def _replace(match: re.Match[str]) -> str:
+        open_tag, body = match.group(1), match.group(2)
+        visible = _visible_text(body)
+        numeric = _NUMERIC_SECTION_HEADING_VISIBLE_PATTERN.match(visible)
+        if numeric is None:
+            return match.group(0)
+        if re.search(r"\bpage\s+\d+\s+of\s+\d+\b", visible, re.IGNORECASE):
+            return match.group(0)
+
+        section_num = numeric.group(1)
+        target_tag = "h3" if "." in section_num else "h2"
+        open_match = _HEADING_OPEN_TAG_PATTERN.match(open_tag)
+        if open_match is None:
+            return match.group(0)
+        attrs = open_match.group("attrs") or ""
+        return f"<{target_tag}{attrs}>{body}</{target_tag}>"
+
+    return _HEADING_TAG_PATTERN.sub(_replace, html)
+
+
+def _looks_like_ru_html_content(html: str) -> bool:
+    return len(_CYRILLIC_CHAR_PATTERN.findall(html)) >= 24
+
+
 def _normalize_spacing_after_z2m_links(html: str) -> str:
     """Insert a missing space when a z2m link is glued to the following word."""
     return _Z2M_LINK_GLUE_PATTERN.sub(r"\1 ", html)
@@ -8492,8 +8521,8 @@ def _normalize_figure_caption_style(html: str, *, figure_caption_language: str =
         if figure_caption_language == "en":
             label = "Figure"
         else:
-            # Keep English labels in generic mode; RU-only post-pass will
-            # normalize these when citation linkify is disabled.
+            # Keep English labels in generic mode; the RU post-pass normalizes
+            # these only once the document is known to be Russian.
             if english_label:
                 return m.group(0)
             label = "Рисунок"
@@ -9890,13 +9919,181 @@ def _is_caption_node(raw: str) -> bool:
     return _is_figure_caption_node(raw) or _is_table_caption_node(raw)
 
 
-def _insert_missing_figure_warnings(html: str) -> tuple[str, int]:
+def _decode_data_image_payload(src_value: str) -> tuple[str, bytes] | None:
+    if not src_value.lower().startswith("data:image/"):
+        return None
+    comma_idx = src_value.find(",")
+    if comma_idx < 0:
+        return None
+    meta = src_value[:comma_idx].lower()
+    if ";base64" not in meta:
+        return None
+    mime = meta.removeprefix("data:").split(";", 1)[0]
+    payload = re.sub(r"\s+", "", src_value[comma_idx + 1 :])
+    if len(payload) % 4 == 1:
+        return mime, b""
+    padded = payload + ("=" * ((4 - len(payload) % 4) % 4))
+    try:
+        return mime, base64.b64decode(padded)
+    except Exception:
+        return mime, b""
+
+
+def _data_image_src_looks_renderable(src_value: str) -> bool:
+    decoded = _decode_data_image_payload(src_value)
+    if decoded is None:
+        return True
+    mime, blob = decoded
+    if not blob:
+        return False
+    if mime == "image/jpeg":
+        return blob.startswith(b"\xff\xd8") and blob.endswith(b"\xff\xd9")
+    if mime == "image/png":
+        return blob.startswith(b"\x89PNG\r\n\x1a\n") and blob.endswith(b"IEND\xaeB`\x82")
+    if mime == "image/gif":
+        return blob.startswith((b"GIF87a", b"GIF89a")) and blob.endswith(b";")
+    if mime == "image/webp":
+        return len(blob) >= 12 and blob.startswith(b"RIFF") and blob[8:12] == b"WEBP"
+    return True
+
+
+def _node_image_srcs(raw: str) -> list[str]:
+    return [match.group(3).strip() for match in _IMG_SRC_PATTERN.finditer(raw)]
+
+
+def _node_has_renderable_image(raw: str) -> bool:
+    return any(_data_image_src_looks_renderable(src) for src in _node_image_srcs(raw))
+
+
+def _node_has_broken_data_image(raw: str) -> bool:
+    return any(
+        src.lower().startswith("data:image/") and not _data_image_src_looks_renderable(src)
+        for src in _node_image_srcs(raw)
+    )
+
+
+def _missing_figure_warning_html(fig_num: str, *, figure_caption_language: str = "en") -> str:
+    if figure_caption_language == "ru":
+        text = (
+            f"Рисунок {fig_num} не был извлечен в этот HTML. "
+            "См. исходный PDF для отсутствующего визуального содержимого."
+        )
+    else:
+        text = (
+            f"Figure {fig_num} image was not extracted into this HTML. "
+            "Please check the original PDF for the missing visual content."
+        )
+    return f'<p class="z2m-missing-figure-warning" role="note">{text}</p>'
+
+
+def _insert_missing_figure_warnings(
+    html: str,
+    *,
+    figure_caption_language: str = "en",
+) -> tuple[str, int]:
     nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
     if not nodes:
         return html, 0
 
     insert_before: dict[int, str] = {}
+    drop_indices: set[int] = set()
     warnings = 0
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _image_node_can_belong_to_fig(raw: str, fig_num: str) -> bool:
+        node_id = _node_id_value(raw) or ""
+        id_match = re.fullmatch(r"fig-(\d+)", node_id, re.IGNORECASE)
+        return id_match is None or id_match.group(1) == fig_num
+
+    def _is_previous_compound_caption(raw: str, fig_num: str) -> bool:
+        previous_num = _figure_caption_num_from_visible(_visible_text(raw))
+        if previous_num is None:
+            return False
+        try:
+            return int(previous_num) < int(fig_num)
+        except ValueError:
+            return False
+
+    def _associated_image_indices(caption_idx: int, fig_num: str) -> list[int]:
+        associated: list[int] = []
+
+        caption_run_start = caption_idx
+        while (
+            caption_run_start > 0
+            and _between_is_whitespace(caption_run_start - 1, caption_run_start)
+            and _is_figure_caption_node(nodes[caption_run_start - 1].group(0))
+        ):
+            caption_run_start -= 1
+
+        caption_run_end = caption_idx
+        while (
+            caption_run_end + 1 < len(nodes)
+            and _between_is_whitespace(caption_run_end, caption_run_end + 1)
+            and _is_figure_caption_node(nodes[caption_run_end + 1].group(0))
+        ):
+            caption_run_end += 1
+
+        image_run: list[int] = []
+        image_idx = caption_run_start - 1
+        while image_idx >= 0 and _between_is_whitespace(image_idx, image_idx + 1):
+            image_raw = nodes[image_idx].group(0)
+            if not _node_image_srcs(image_raw):
+                break
+            image_run.insert(0, image_idx)
+            image_idx -= 1
+
+        if image_run:
+            caption_offset = caption_idx - caption_run_start
+            if len(image_run) >= (caption_run_end - caption_run_start + 1):
+                candidate_idx = image_run[caption_offset]
+                if _image_node_can_belong_to_fig(nodes[candidate_idx].group(0), fig_num):
+                    return [candidate_idx]
+            if len(image_run) == 1 and _image_node_can_belong_to_fig(nodes[image_run[0]].group(0), fig_num):
+                return [image_run[0]]
+
+        prev_idx = caption_idx - 1
+        scanned = 0
+        while prev_idx >= 0 and scanned < 6 and _between_is_whitespace(prev_idx, prev_idx + 1):
+            prev_raw = nodes[prev_idx].group(0)
+            if _node_image_srcs(prev_raw):
+                if _image_node_can_belong_to_fig(prev_raw, fig_num):
+                    associated.append(prev_idx)
+                break
+            if _is_figure_caption_node(prev_raw):
+                if _is_previous_compound_caption(prev_raw, fig_num):
+                    prev_idx -= 1
+                    scanned += 1
+                    continue
+                break
+            if not (
+                _looks_like_figure_caption_fragment(prev_raw)
+                or _looks_like_figure_panel_caption_continuation(prev_raw)
+            ):
+                break
+            prev_idx -= 1
+            scanned += 1
+
+        next_idx = caption_idx + 1
+        scanned = 0
+        while next_idx < len(nodes) and scanned < 6 and _between_is_whitespace(next_idx - 1, next_idx):
+            next_raw = nodes[next_idx].group(0)
+            if _is_figure_caption_node(next_raw):
+                break
+            if _node_image_srcs(next_raw):
+                if _image_node_can_belong_to_fig(next_raw, fig_num):
+                    associated.append(next_idx)
+                break
+            if not (
+                _looks_like_figure_caption_fragment(next_raw)
+                or _looks_like_figure_panel_caption_continuation(next_raw)
+            ):
+                break
+            next_idx += 1
+            scanned += 1
+
+        return associated
 
     for idx, node in enumerate(nodes):
         raw = node.group(0)
@@ -9907,16 +10104,20 @@ def _insert_missing_figure_warnings(html: str) -> tuple[str, int]:
         start = max(0, idx - 6)
         stop = min(len(nodes), idx + 7)
         nearby_raw = "\n".join(nodes[j].group(0) for j in range(start, stop))
-        if "<img" in nearby_raw.lower():
+        fig_num = _figure_caption_num_from_visible(_visible_text(raw)) or "?"
+        image_indices = _associated_image_indices(idx, fig_num)
+        nearby_renderable_image = any(_node_has_renderable_image(nodes[j].group(0)) for j in image_indices)
+        if nearby_renderable_image:
             continue
         if "z2m-missing-figure-warning" in nearby_raw:
             continue
-        fig_num = _figure_caption_num_from_visible(_visible_text(raw)) or "?"
-        insert_before[idx] = (
-            '<p class="z2m-missing-figure-warning" role="note">'
-            f"Figure {fig_num} image was not extracted into this HTML. "
-            "Please check the original PDF for the missing visual content."
-            "</p>"
+        insert_before[idx] = _missing_figure_warning_html(
+            fig_num,
+            figure_caption_language=figure_caption_language,
+        )
+        drop_indices.update(
+            j for j in image_indices
+            if _node_has_broken_data_image(nodes[j].group(0))
         )
         warnings += 1
 
@@ -9927,13 +10128,76 @@ def _insert_missing_figure_warnings(html: str) -> tuple[str, int]:
     cursor = 0
     for idx, node in enumerate(nodes):
         out_parts.append(html[cursor:node.start()])
-        if idx in insert_before:
+        if idx in drop_indices:
+            pass
+        elif idx in insert_before:
             out_parts.append(insert_before[idx])
             out_parts.append("\n")
-        out_parts.append(node.group(0))
+            out_parts.append(node.group(0))
+        else:
+            out_parts.append(node.group(0))
         cursor = node.end()
     out_parts.append(html[cursor:])
     return "".join(out_parts), warnings
+
+
+def _drop_compound_caption_missing_warnings(html: str) -> tuple[str, int]:
+    nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
+    if not nodes:
+        return html, 0
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _previous_caption_has_shared_image(caption_idx: int, fig_num: str) -> bool:
+        prev_idx = caption_idx - 1
+        scanned = 0
+        while prev_idx >= 0 and scanned < 6 and _between_is_whitespace(prev_idx, prev_idx + 1):
+            prev_raw = nodes[prev_idx].group(0)
+            if _node_image_srcs(prev_raw):
+                return _node_has_renderable_image(prev_raw)
+            previous_num = _figure_caption_num_from_visible(_visible_text(prev_raw))
+            if previous_num is not None:
+                try:
+                    if int(previous_num) < int(fig_num):
+                        prev_idx -= 1
+                        scanned += 1
+                        continue
+                except ValueError:
+                    pass
+            break
+        return False
+
+    drop_indices: set[int] = set()
+    for idx, node in enumerate(nodes):
+        raw = node.group(0)
+        if not _node_has_class(raw, "z2m-missing-figure-warning"):
+            continue
+        if idx == 0 or idx + 1 >= len(nodes):
+            continue
+        if not _between_is_whitespace(idx, idx + 1) or not _between_is_whitespace(idx - 1, idx):
+            continue
+        next_raw = nodes[idx + 1].group(0)
+        if not _is_figure_caption_node(next_raw):
+            continue
+        fig_num = _figure_caption_num_from_visible(_visible_text(next_raw))
+        if fig_num is None:
+            continue
+        if _is_figure_caption_node(nodes[idx - 1].group(0)) and _previous_caption_has_shared_image(idx - 1, fig_num):
+            drop_indices.add(idx)
+
+    if not drop_indices:
+        return html, 0
+
+    out_parts: list[str] = []
+    cursor = 0
+    for idx, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        if idx not in drop_indices:
+            out_parts.append(node.group(0))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), len(drop_indices)
 
 
 def _extract_caption_intrusion_tail(caption_body: str) -> tuple[str, str] | None:
@@ -11585,6 +11849,22 @@ def _wrap_float_units(html: str) -> str:
     return "".join(out_parts)
 
 
+def _mark_missing_figure_units(html: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if "z2m-figure-unit" not in raw or "z2m-missing-figure-warning" not in raw:
+            return raw
+        if _node_has_renderable_image(raw):
+            return raw
+        open_end = raw.find(">")
+        if open_end < 0:
+            return raw
+        open_tag = _add_class_attr(raw[: open_end + 1], "z2m-missing-figure-unit")
+        return open_tag + raw[open_end + 1:]
+
+    return _FLOAT_UNIT_DIV_PATTERN.sub(_replace, html)
+
+
 def _repair_sentence_breaks_around_float_units(html: str) -> tuple[str, int]:
     """Move prose continuations back across already wrapped figure/table/box units."""
     nodes = list(_FLOAT_AWARE_SENTENCE_NODE_PATTERN.finditer(html))
@@ -11939,6 +12219,7 @@ def polish_html_document(
     polished = _repair_page_footnote_ref_links(polished)
     polished = _strip_reference_links_in_protected_blocks(polished)
     polished = _strip_pdf_line_number_artifacts(polished)
+    polished = _normalize_numeric_section_heading_levels(polished)
     polished, found_sections = _add_section_anchors(polished)
     polished, found_figures = _add_figure_anchors(polished)
     polished, _ = _split_trailing_table_captions_before_tables(polished)
@@ -11981,9 +12262,18 @@ def polish_html_document(
     polished = _normalize_figure_caption_style(polished, figure_caption_language=table_caption_language)
     polished, _ = _merge_biorender_caption_fragments(polished)
     polished, _ = _repair_caption_suffix_left_body_tail_right(polished)
-    polished, _ = _insert_missing_figure_warnings(polished)
+    ru_caption_context = (
+        table_caption_language == "ru"
+        and (not enable_citation_linkify or _looks_like_ru_html_content(polished))
+    )
+    polished, _ = _insert_missing_figure_warnings(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
+    polished, _ = _drop_compound_caption_missing_warnings(polished)
     polished = _wrap_box_units(polished)
     polished = _wrap_float_units(polished)
+    polished = _mark_missing_figure_units(polished)
     polished = _repair_remaining_table_caption_units(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)
@@ -11991,8 +12281,9 @@ def polish_html_document(
     polished = _repair_safe_text_artifacts(polished)
     polished = _mark_consecutive_float_runs(polished)
     polished, _ = _merge_biorender_caption_fragments(polished)
-    if table_caption_language == "ru" and not enable_citation_linkify:
+    if ru_caption_context:
         polished = _normalize_ru_reference_lexemes(polished)
+    if table_caption_language == "ru" and not enable_citation_linkify:
         polished = _strip_english_heading_prefix_in_ru(polished)
         polished = _strip_long_english_runs_in_ru_text(polished)
     polished = _normalize_spacing_after_z2m_links(polished)
@@ -12046,6 +12337,19 @@ def _restore_abbreviations(html: str) -> str:
         out.append(restored_part)
 
     return "".join(out)
+
+
+def _looks_like_ru_html_artifact(html_path: Path) -> bool:
+    name = html_path.name.lower()
+    if name.endswith(".ru.html") or name.endswith("_ru.html") or name.endswith("-ru.html"):
+        return True
+    return bool(
+        re.search(
+            r"(?:^|[\s._\-\[\(])ru(?:ssian)?(?:[\s._\-\]\)]|$)",
+            name,
+            re.IGNORECASE,
+        )
+    )
 
 
 def inline_images_from_html_file(html_path: Path, citation_profile: Any | None = None) -> InlineHtmlResult:
@@ -12143,7 +12447,7 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
         return f"{prefix}{quote}{data_url}{suffix}"
 
     inlined_html = _IMG_SRC_PATTERN.sub(replace, text)
-    is_ru_html = html_path.name.lower().endswith(".ru.html")
+    is_ru_html = _looks_like_ru_html_artifact(html_path)
     inlined_html = polish_html_document(
         inlined_html,
         table_caption_language=("ru" if is_ru_html else "en"),

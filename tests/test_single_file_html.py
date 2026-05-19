@@ -70,6 +70,40 @@ def test_inline_images_refreshes_existing_data_uri_from_sidecar_hint() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_inline_images_repairs_broken_data_uri_from_sidecar_before_missing_warning() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        valid_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        )
+        broken_png = base64.b64encode(b"\x89PNG\r\n\x1a\ntruncated").decode("ascii").rstrip("=")
+        html_path = tmp_path / "doc.html"
+        image_path = tmp_path / "fig5.png"
+        image_path.write_bytes(valid_png)
+        html_path.write_text(
+            "<html><body>"
+            f'<p id="fig-5"><img data-z2m-src="fig5.png" src="data:image/png;base64,{broken_png}"/></p>'
+            "<p>Figure 5. Caption should keep the repaired sidecar image.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = inline_images_from_html_file(html_path)
+
+        assert result.inlined_images == 1
+        assert '<p class="z2m-missing-figure-warning"' not in result.html
+        assert re.search(r"<[^>]+class=(['\"])[^'\"]*z2m-missing-figure-unit", result.html) is None
+        assert broken_png not in result.html
+        src_match = re.search(r"<img[^>]*\ssrc=(['\"])(.*?)\1", result.html, flags=re.IGNORECASE)
+        assert src_match is not None
+        src_value = src_match.group(2)
+        assert src_value.startswith("data:image/png;base64,")
+        payload = src_value.split(",", 1)[1]
+        assert base64.b64decode(payload) == valid_png
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_inline_images_polish_uses_en_mode_for_non_ru_html() -> None:
     tmp_path = _make_temp_dir()
     try:
@@ -82,6 +116,23 @@ def test_inline_images_polish_uses_en_mode_for_non_ru_html() -> None:
         result = inline_images_from_html_file(html_path)
         assert "TABLE I." in result.html
         assert "Таблица I." not in result.html
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_inline_images_polish_detects_zotero_ru_html_filename() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        html_path = tmp_path / "Paper [RU HTML].html"
+        html_path.write_text(
+            "<html><body><p>Figure 1 | caption text</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = inline_images_from_html_file(html_path)
+
+        assert "Рисунок 1" in result.html
+        assert "Figure 1" not in result.html
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -751,6 +802,20 @@ def test_polish_html_document_normalizes_english_ru_figure_caption_label() -> No
     assert "Рисунок 5" in polished
 
 
+def test_polish_html_document_normalizes_ru_figure_labels_with_linkify_enabled() -> None:
+    html = (
+        "<html><body>"
+        "<p>Как показано на Figure 5.</p>"
+        "<p>Figure 5 | подпись к рисунку</p>"
+        "</body></html>"
+    )
+    polished = polish_html_document(html, table_caption_language="ru")
+
+    assert "Figure 5" not in polished
+    assert "Figure\xa05" not in polished
+    assert "Рисунок 5" in polished
+
+
 def test_polish_html_document_normalizes_ru_figure_caption_with_leading_inline_tag() -> None:
     html = (
         "<html><body>"
@@ -827,6 +892,23 @@ def test_polish_html_document_strips_english_prefix_from_ru_heading() -> None:
     polished = polish_html_document(html, table_caption_language="ru", enable_citation_linkify=False)
     assert "Shape memory polymers" not in polished
     assert "изменяют форму под воздействием стимулов" in polished
+
+
+def test_polish_html_document_normalizes_numeric_section_heading_levels() -> None:
+    html = (
+        "<html><body>"
+        "<h4>2 СВЯЗАННАЯ РАБОТА</h4>"
+        "<h1>2.1 Создание тактильных изображений</h1>"
+        "<h2>3 Pic2Tac: FROM PICTURE TO TACTILE</h2>"
+        "<h1>4 ПОЛЬЗОВАТЕЛЬСКИЕ ИССЛЕДОВАНИЯ</h1>"
+        "</body></html>"
+    )
+    polished = polish_html_document(html, table_caption_language="ru")
+
+    assert re.search(r"<h2[^>]*>2 СВЯЗАННАЯ РАБОТА</h2>", polished)
+    assert re.search(r"<h3[^>]*>2\.1 Создание тактильных изображений</h3>", polished)
+    assert re.search(r"<h2[^>]*>3 Pic2Tac: FROM PICTURE TO TACTILE</h2>", polished)
+    assert re.search(r"<h2[^>]*>4 ПОЛЬЗОВАТЕЛЬСКИЕ ИССЛЕДОВАНИЯ</h2>", polished)
 
 
 def test_polish_html_document_strips_long_english_run_in_ru_paragraph() -> None:
@@ -2469,6 +2551,53 @@ def test_polish_html_document_discloses_caption_without_image_and_adds_target_st
     assert '<p class="z2m-figure-caption">Figure 1. Caption survived, but the image did not.</p>' in polished
     assert "scroll-margin-top" in polished
     assert ":target" in polished
+
+
+def test_polish_html_document_discloses_missing_figure_in_ru() -> None:
+    html = (
+        "<html><body>"
+        "<p>Описание см. на Figure 1.</p>"
+        "<p>Figure 1. Подпись есть, картинки нет.</p>"
+        "</body></html>"
+    )
+    polished = polish_html_document(html, table_caption_language="ru")
+
+    assert "z2m-missing-figure-warning" in polished
+    assert "Рисунок 1 не был извлечен" in polished
+    assert "Figure 1" not in polished
+
+
+def test_polish_html_document_treats_truncated_data_image_as_missing_figure() -> None:
+    broken_jpeg = base64.b64encode(b"\xff\xd8\xff\xe0truncated").decode("ascii").rstrip("=")
+    html = (
+        "<html><body>"
+        f'<p id="fig-5"><img src="data:image/jpeg;base64,{broken_jpeg}"/></p>'
+        "<p>Figure 5. Caption survived, but the image is truncated.</p>"
+        "</body></html>"
+    )
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 5 image was not extracted" in polished
+    assert "data:image/jpeg;base64" not in polished
+    assert '<div id="fig-5" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">' in polished
+    assert '<p class="z2m-figure-caption">Figure 5. Caption survived, but the image is truncated.</p>' in polished
+
+
+def test_polish_html_document_marks_existing_unit_with_broken_data_image_as_missing() -> None:
+    broken_jpeg = base64.b64encode(b"\xff\xd8\xff\xe0truncated").decode("ascii").rstrip("=")
+    html = (
+        "<html><body>"
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        f'<p class="z2m-figure-target"><img src="data:image/jpeg;base64,{broken_jpeg}"/></p>'
+        '<p class="z2m-figure-caption">Figure 5. Caption survived, but the image is truncated.</p>'
+        "</div>"
+        "</body></html>"
+    )
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 5 image was not extracted" in polished
+    assert "z2m-missing-figure-unit" in polished
+    assert "data:image/jpeg;base64" not in polished
 
 
 def test_polish_html_document_bracket_citations_not_linked_inside_references() -> None:
