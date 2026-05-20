@@ -1,6 +1,14 @@
 from pathlib import Path
+import json
 
-from zoteropdf2md.marker_runner import MarkerRunner, ProgressContext, RunResult
+from zoteropdf2md.marker_runner import (
+    MarkerRunner,
+    ProgressContext,
+    RunResult,
+    _append_progress_jsonl,
+    _marker_status,
+    _output_dir_snapshot,
+)
 
 
 class _CapturingMarkerRunner(MarkerRunner):
@@ -37,3 +45,72 @@ def test_marker_runner_uses_300dpi_for_batch_and_single() -> None:
     for command in runner.commands:
         assert command[command.index("--lowres_image_dpi") + 1] == "300"
         assert command[command.index("--highres_image_dpi") + 1] == "300"
+
+
+def test_marker_progress_writes_jsonl_and_current_status(tmp_path: Path) -> None:
+    progress = ProgressContext(
+        input_files=1,
+        pages_total=12,
+        output_dir=tmp_path,
+        artifact_extension=".html",
+    )
+    payload = {
+        "schema_version": 1,
+        "kind": "process_alive",
+        "status": "running",
+        "heartbeat_index": 3,
+    }
+
+    _append_progress_jsonl(progress, payload)
+
+    jsonl_lines = (tmp_path / "marker_progress.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(jsonl_lines) == 1
+    assert json.loads(jsonl_lines[0])["heartbeat_index"] == 3
+    assert json.loads((tmp_path / "marker_status.json").read_text(encoding="utf-8")) == payload
+
+
+def test_output_dir_snapshot_tracks_artifacts_and_bytes(tmp_path: Path) -> None:
+    (tmp_path / "paper.html").write_text("<html></html>", encoding="utf-8")
+    (tmp_path / "image.png").write_bytes(b"12345")
+    (tmp_path / "marker_progress.jsonl").write_text("ignored", encoding="utf-8")
+    (tmp_path / "marker_status.json").write_text("ignored", encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "extra.html").write_text("x", encoding="utf-8")
+
+    snapshot = _output_dir_snapshot(
+        ProgressContext(
+            input_files=1,
+            pages_total=1,
+            output_dir=tmp_path,
+            artifact_extension=".html",
+        )
+    )
+
+    assert snapshot["output_artifacts"] == 2
+    assert snapshot["output_total_files"] == 3
+    assert snapshot["output_total_bytes"] >= 18
+    assert isinstance(snapshot["output_newest_mtime_epoch"], float)
+
+
+def test_marker_status_marks_long_idle_process() -> None:
+    assert (
+        _marker_status(
+            kind="process_alive",
+            exit_code=None,
+            elapsed_seconds=900,
+            output_idle_seconds=900,
+            first_output_seen=True,
+        )
+        == "running_idle"
+    )
+    assert (
+        _marker_status(
+            kind="complete",
+            exit_code=0,
+            elapsed_seconds=3,
+            output_idle_seconds=1,
+            first_output_seen=True,
+        )
+        == "completed"
+    )

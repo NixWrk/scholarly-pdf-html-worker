@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
@@ -13,6 +14,13 @@ try:
     import psutil
 except Exception:  # pragma: no cover - optional runtime dependency
     psutil = None
+
+
+_PROGRESS_FILE_NAMES = {
+    "marker_progress.jsonl",
+    "marker_status.json",
+    "marker_status.json.tmp",
+}
 
 
 @dataclass(frozen=True)
@@ -155,30 +163,57 @@ class MarkerRunner:
 
         first_output_at: float | None = None
         last_output_at: float | None = None
+        last_filesystem_activity_at = run_started_at
+        last_output_signature: tuple[object, ...] | None = None
+        heartbeat_index = 0
         max_output_gap = 0.0
         line_count = 0
         last_marker_line = ""
         heartbeat_stop = threading.Event()
 
-        def log_progress(kind: str) -> None:
+        def log_progress(kind: str, exit_code: int | None = None) -> None:
+            nonlocal heartbeat_index
+            nonlocal last_filesystem_activity_at
+            nonlocal last_output_signature
+
+            heartbeat_index += 1
             elapsed = perf_counter() - run_started_at
             since_last_output = None if last_output_at is None else perf_counter() - last_output_at
             snapshot = _process_tree_snapshot(process.pid)
-            artifact_count = _count_output_artifacts(
-                progress.output_dir,
-                progress.artifact_extension,
-            ) if progress is not None else None
+            output_snapshot = _output_dir_snapshot(progress)
+            output_signature = _output_activity_signature(output_snapshot)
+            if last_output_signature is None:
+                last_output_signature = output_signature
+            elif output_signature != last_output_signature:
+                last_filesystem_activity_at = perf_counter()
+                last_output_signature = output_signature
+
+            output_idle_seconds = perf_counter() - last_filesystem_activity_at
+            status = _marker_status(
+                kind=kind,
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+                output_idle_seconds=output_idle_seconds,
+                first_output_seen=first_output_at is not None,
+            )
             payload = {
+                "schema_version": 1,
                 "kind": kind,
+                "status": status,
+                "updated_at": _utc_now_iso(),
+                "heartbeat_index": heartbeat_index,
                 "elapsed_seconds": round(elapsed, 2),
                 "since_last_output_seconds": (
                     None if since_last_output is None else round(since_last_output, 2)
                 ),
+                "output_idle_seconds": round(output_idle_seconds, 2),
+                "possibly_stalled": status == "running_idle",
+                "exit_code": exit_code,
                 "stdout_lines": line_count,
                 "last_marker_line": last_marker_line,
                 "input_files": progress.input_files if progress is not None else None,
                 "pages_total": progress.pages_total if progress is not None else None,
-                "output_artifacts": artifact_count,
+                **output_snapshot,
                 **snapshot,
             }
             log(_format_progress_payload(payload))
@@ -194,6 +229,7 @@ class MarkerRunner:
 
         heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
         heartbeat_thread.start()
+        log_progress("started")
 
         try:
             assert process.stdout is not None
@@ -248,7 +284,7 @@ class MarkerRunner:
                 f"stdout_lines={line_count}, "
                 f"max_gap_between_lines={max_output_gap:.2f}s"
             )
-            log_progress("complete")
+            log_progress("complete", exit_code=exit_code)
             return RunResult(command=command, exit_code=exit_code)
         finally:
             heartbeat_stop.set()
@@ -372,13 +408,78 @@ def _count_pdf_pages(path: Path) -> int | None:
         return None
 
 
-def _count_output_artifacts(output_dir: Path | None, extension: str) -> int | None:
-    if output_dir is None:
-        return None
+def _output_dir_snapshot(progress: ProgressContext | None) -> dict[str, object]:
+    empty = {
+        "output_artifacts": None,
+        "output_total_files": None,
+        "output_total_bytes": None,
+        "output_newest_mtime_epoch": None,
+    }
+    if progress is None or progress.output_dir is None:
+        return empty
+
     try:
-        return sum(1 for path in output_dir.rglob(f"*{extension}") if path.is_file())
+        artifact_extension = progress.artifact_extension.lower()
+        output_artifacts = 0
+        output_total_files = 0
+        output_total_bytes = 0
+        newest_mtime: float | None = None
+        for path in progress.output_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name in _PROGRESS_FILE_NAMES:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            output_total_files += 1
+            output_total_bytes += int(stat.st_size)
+            newest_mtime = (
+                stat.st_mtime
+                if newest_mtime is None
+                else max(newest_mtime, stat.st_mtime)
+            )
+            if path.name.lower().endswith(artifact_extension):
+                output_artifacts += 1
+        return {
+            "output_artifacts": output_artifacts,
+            "output_total_files": output_total_files,
+            "output_total_bytes": output_total_bytes,
+            "output_newest_mtime_epoch": newest_mtime,
+        }
     except OSError:
-        return None
+        return empty
+
+
+def _output_activity_signature(snapshot: dict[str, object]) -> tuple[object, ...]:
+    return (
+        snapshot.get("output_artifacts"),
+        snapshot.get("output_total_files"),
+        snapshot.get("output_total_bytes"),
+        snapshot.get("output_newest_mtime_epoch"),
+    )
+
+
+def _marker_status(
+    *,
+    kind: str,
+    exit_code: int | None,
+    elapsed_seconds: float,
+    output_idle_seconds: float,
+    first_output_seen: bool,
+) -> str:
+    if kind == "complete":
+        return "completed" if exit_code == 0 else "failed"
+    if not first_output_seen and elapsed_seconds < 60:
+        return "starting"
+    if output_idle_seconds >= 600:
+        return "running_idle"
+    return "running"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _process_tree_snapshot(root_pid: int) -> dict[str, object]:
@@ -462,5 +563,12 @@ def _append_progress_jsonl(progress: ProgressContext | None, payload: dict[str, 
         path = progress.output_dir / "marker_progress.jsonl"
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        status_path = progress.output_dir / "marker_status.json"
+        temp_path = progress.output_dir / "marker_status.json.tmp"
+        temp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temp_path.replace(status_path)
     except OSError:
         return
