@@ -368,6 +368,9 @@ _EQUATION_REF_PATTERN = re.compile(
     r'\b(Eq(?:uation)?s?\.?|Equations?)\s+(\d{1,3})\b',
     re.IGNORECASE,
 )
+
+_FIG_KEY_TOKEN = r"\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*"
+_FIG_PANEL_SUFFIX_TOKEN = r"[a-z]"
 # In-text figure references: "Fig. 3" / "рис. 3" / "фиг. 3" NOT followed by ". <text>"
 # (that would be a figure caption).  We distinguish "Fig. 3. Caption..." from "...Fig. 3."
 # (end of sentence) by requiring whitespace after the dot, i.e. ".\s" → caption lookahead.
@@ -382,7 +385,21 @@ _FIG_REF_CHAIN_CONT_PATTERN = re.compile(
 _EXT_FIG_REF_PATTERN = re.compile(
     r'\b((?:FIGS?|FIGURES?|Figs?|Figures?'
     r'|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)\.?)'
-    r'\s*(\d+)([a-z])?\b(?!\s*(?:\.\s|\|))',
+    rf'\s*({_FIG_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?\b(?!\s*(?:\.\s|\|))',
+    re.IGNORECASE,
+)
+_FIG_REF_LABEL_TOKEN = (
+    r"(?:Figs?|Figures?|FIGS?|FIGURES?"
+    r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
+    r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
+)
+_FIG_REF_PATTERN = re.compile(
+    rf"\b({_FIG_REF_LABEL_TOKEN}\.?)\s*({_FIG_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?\b(?!\s*(?:\.\s|\|))",
+    re.IGNORECASE,
+)
+_FIG_REF_CHAIN_CONT_PATTERN = re.compile(
+    rf"(?P<sep>\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)"
+    rf"(?P<num>{_FIG_KEY_TOKEN})(?P<suf>{_FIG_PANEL_SUFFIX_TOKEN})?\b",
     re.IGNORECASE,
 )
 _PAGE_ANCHOR_PATTERN = re.compile(
@@ -393,10 +410,10 @@ _PAGE_ANCHOR_PATTERN = re.compile(
 _SPLIT_PAGE_FIG_LINK_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
     r'(?P<body>\s*[\(\[]?\s*(?:FIG(?:URE)?|Fig(?:ure)?|Figs?|Figures?)\.?\s*)</a>'
-    r'\s*(?P<num>\d+)(?P<suffix>[a-z]?[\)\]\.,;:]*)',
+    rf'\s*(?P<num>{_FIG_KEY_TOKEN})(?P<suffix>{_FIG_PANEL_SUFFIX_TOKEN}?[\)\]\.,;:]*)',
     re.IGNORECASE,
 )
-_TABLE_KEY_TOKEN = r"(?:[A-Z]\d+|[IVXLCM]+|\d+)"
+_TABLE_KEY_TOKEN = r"(?:[A-Z]\d+|[IVXLCM]+|\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*)"
 _SPLIT_PAGE_TABLE_LINK_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
     r'(?P<body>\s*[\(\[]?\s*(?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s*)</a>'
@@ -533,7 +550,7 @@ _H_BLOCK_PATTERN = re.compile(
 _TABLE_CAPTION_PARA_PATTERN = re.compile(
     r'(<p\b[^>]*>\s*)'
     r'((?:(?:<(?:span|strong|em|b|i|sup|sub)\b[^>]*>|</(?:span|strong|em|b|i|sup|sub)>)\s*)*)'
-    r'(TABLE|Table|Таблица)\s+([IVXLCM\d]+)\s*[\.\-:]?\s*([^<]*?)(\s*</p>)',
+    rf'(TABLE|Table|Таблица)\s+({_TABLE_KEY_TOKEN})\s*[\.\-:]?\s*([^<]*?)(\s*</p>)',
     re.IGNORECASE,
 )
 _FIGURE_CAPTION_STYLE_PATTERN = re.compile(
@@ -544,7 +561,7 @@ _FIGURE_CAPTION_STYLE_PATTERN = re.compile(
     r'|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a|\u0443\u043d\u043e\u0433|\u0443\u043d\u043a|\u0443\u043d\u043e)?'
     r'|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a|\u0443\u043d\u043e\u0433|\u0443\u043d\u043a|\u0443\u043d\u043e)?'
     r'|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)'
-    r'\.?\s*([IVXLCM\d]+)\s*([.\|:\-]?)\s*([^<]*?)'
+    rf'\.?\s*({_FIG_KEY_TOKEN})\s*([.\|:\-]?)\s*([^<]*?)'
     r'(\s*</p>)',
     re.IGNORECASE,
 )
@@ -4989,6 +5006,29 @@ def _looks_like_uppercase_reference_continuation(prev_body: str, body: str) -> b
     return bool(re.search(r"(?:\b[A-Z]\.\s*){1,4}$", prev_text))
 
 
+def _looks_like_unnumbered_reference_title_continuation(prev_body: str, body: str) -> bool:
+    if _reference_visible_number(body) is not None:
+        return False
+    text = _visible_text(_strip_reference_visible_number(body)).strip()
+    prev_text = _visible_text(_strip_reference_visible_number(prev_body)).strip()
+    if not text or not prev_text:
+        return False
+    if re.search(r"[.!?][\"')\]]?\s*$", prev_text):
+        return False
+    has_open_quote = (
+        prev_text.count('"') % 2 == 1
+        or prev_text.count("\u201c") > prev_text.count("\u201d")
+    )
+    if not has_open_quote:
+        return False
+    return bool(
+        re.match(
+            r"^[A-Z][A-Za-z-]{2,}\b(?:[,\"]|\s+\b(?:and|or|of|for|in|to|on)\b)",
+            text,
+        )
+    )
+
+
 def _normalize_reference_list_items(html: str) -> str:
     """Merge reference continuation ``<li>`` nodes before assigning IDs."""
     matches = list(_LI_BLOCK_PATTERN.finditer(html))
@@ -5012,10 +5052,16 @@ def _normalize_reference_list_items(html: str) -> str:
         ):
             prev_body = replacement_bodies.get(last_real_index, matches[last_real_index].group(2) or "")
             starts_like_continuation = _looks_like_uppercase_reference_continuation(prev_body, body)
+        unnumbered_title_continuation = False
+        if last_real_index is not None and not numbered_mode and visible_number is None:
+            prev_body = replacement_bodies.get(last_real_index, matches[last_real_index].group(2) or "")
+            unnumbered_title_continuation = _looks_like_unnumbered_reference_title_continuation(prev_body, body)
         is_continuation = (
             last_real_index is not None
-            and numbered_mode
-            and starts_like_continuation
+            and (
+                (numbered_mode and starts_like_continuation)
+                or unnumbered_title_continuation
+            )
         )
 
         if is_continuation:
@@ -5099,17 +5145,76 @@ def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
     return _LI_BLOCK_PATTERN.sub(replace, html), max_ref_id
 
 
+def _looks_like_standalone_reference_paragraph_body(body: str) -> bool:
+    text = _visible_text(_strip_reference_visible_number(body)).strip()
+    if len(text) < 24:
+        return False
+    if re.match(r"^(?:fig(?:ure)?|table|supplement|appendix|acknowledg|funding)\b", text, re.IGNORECASE):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:18|19|20)\d{2}[a-z]?\b|"
+            r"\b(?:doi|https?://|www\.|journal|proceedings|conference|publisher|press|"
+            r"vol\.|pp\.|arxiv|pmid)\b|"
+            r";\s*[A-Z][A-Za-z-]+",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _add_reference_ids_to_standalone_reference_paragraphs(html: str) -> tuple[str, int]:
+    used_ids = {int(match.group(1)) for match in _LI_ID_PATTERN.finditer(html)}
+    max_ref_id = max(used_ids, default=0)
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal max_ref_id
+        open_tag = match.group("open")
+        body = match.group("body") or ""
+        if _has_id_attr(open_tag):
+            return match.group(0)
+        visible_number = _reference_visible_number(body)
+        if visible_number is None or visible_number <= 0 or visible_number in used_ids:
+            return match.group(0)
+        if not _looks_like_standalone_reference_paragraph_body(body):
+            return match.group(0)
+        used_ids.add(visible_number)
+        max_ref_id = max(max_ref_id, visible_number)
+        return f'{_add_id_attr(open_tag, f"ref-{visible_number}")}{body}{match.group("close")}'
+
+    return _P_BLOCK_PATTERN.sub(replace, html), max_ref_id
+
+
 def _reference_page_anchor_map(references_html: str) -> dict[str, str]:
     page_to_ref: dict[str, str] = {}
-    for match in _LI_BLOCK_PATTERN.finditer(references_html):
-        attrs = match.group(1) or ""
-        id_match = _LI_ID_PATTERN.search(attrs)
+    blocks = [*_LI_BLOCK_PATTERN.finditer(references_html), *_P_BLOCK_PATTERN.finditer(references_html)]
+    for match in blocks:
+        id_match = _LI_ID_PATTERN.search(match.group(0))
         if id_match is None:
             continue
         ref_target = f"ref-{id_match.group(1)}"
         for page_match in _REFERENCE_PAGE_ID_PATTERN.finditer(match.group(0)):
             page_to_ref[page_match.group(2)] = ref_target
     return page_to_ref
+
+
+def _unwrap_broken_reference_links(html: str) -> str:
+    if "#ref-" not in html:
+        return html
+    ref_numbers = {int(match.group(1)) for match in _LI_ID_PATTERN.finditer(html)}
+    if not ref_numbers:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        try:
+            target = int(match.group("num"))
+        except ValueError:
+            return match.group(0)
+        if target in ref_numbers:
+            return match.group(0)
+        return match.group("body")
+
+    return _REF_ANCHOR_PATTERN.sub(replace, html)
 
 
 def _rewrite_page_links_to_reference_targets(html: str, page_to_ref: dict[str, str]) -> str:
@@ -5406,6 +5511,13 @@ def _citation_profile_is_high_confidence_superscript_numeric(citation_profile: A
     return (
         _citation_profile_style(citation_profile) == "superscript_numeric"
         and _citation_profile_confidence(citation_profile) == "high"
+    )
+
+
+def _citation_profile_is_bracket_numeric(citation_profile: Any | None) -> bool:
+    return (
+        _citation_profile_style(citation_profile) == "bracket_numeric"
+        and _citation_profile_confidence(citation_profile) in {"medium", "high"}
     )
 
 
@@ -5775,6 +5887,52 @@ def _wrap_pdf_annotation_ref_runs_as_superscripts(
         if _node_protects_citations(raw):
             return raw
         return _REF_ANCHOR_RUN_PATTERN.sub(replace_run, raw)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
+def _wrap_plain_ref_links_as_superscript_citations(html: str) -> str:
+    if "#ref-" not in html:
+        return html
+
+    def is_inside_sup(raw: str, position: int) -> bool:
+        left = raw[:position].lower()
+        return left.rfind("<sup") > left.rfind("</sup")
+
+    def numeric_label(body: str) -> tuple[bool, str] | None:
+        visible = _visible_text(body).strip()
+        leading_dot = bool(re.match(r"^\.\s*", visible))
+        if leading_dot:
+            visible = re.sub(r"^\.\s*", "", visible, count=1)
+        if not re.fullmatch(
+            r"\d{1,3}(?:\s*(?:[,;]|\-|\u2010|\u2011|\u2012|\u2013|\u2014)\s*\d{1,3}){0,12}",
+            visible,
+        ):
+            return None
+        label = re.sub(r"\s*([,;\-\u2010\u2011\u2012\u2013\u2014])\s*", r"\1", visible)
+        return leading_dot, label
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        out: list[str] = []
+        cursor = 0
+        for anchor_match in _REF_ANCHOR_PATTERN.finditer(raw):
+            out.append(raw[cursor:anchor_match.start()])
+            replacement = anchor_match.group(0)
+            if not is_inside_sup(raw, anchor_match.start()):
+                label = numeric_label(anchor_match.group("body"))
+                if label is not None:
+                    leading_dot, text = label
+                    replacement = f'<a{anchor_match.group("attrs")}>{text}</a>'
+                    replacement = f"<sup>{replacement}</sup>"
+                    if leading_dot:
+                        replacement = f".{replacement}"
+            out.append(replacement)
+            cursor = anchor_match.end()
+        out.append(raw[cursor:])
+        return "".join(out)
 
     return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
 
@@ -6255,6 +6413,18 @@ def _looks_like_flattened_superscript_numeric_document(html: str, ref_index: int
     return count >= 5
 
 
+def _looks_like_bracket_numeric_document(html: str, ref_index: int) -> bool:
+    if ref_index <= 0:
+        return False
+    count = 0
+    text = _visible_text(html)
+    for match in _BRACKET_CITATION_PATTERN.finditer(text):
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", match.group(1))]
+        if numbers and all(1 <= number <= ref_index for number in numbers):
+            count += 1
+    return count >= 2
+
+
 def _link_numeric_superscript_body(body: str, ref_index: int) -> str | None:
     visible = _visible_text(body)
     tokens = re.findall(r"\d{1,3}", visible)
@@ -6384,6 +6554,23 @@ def _normalize_spacing_after_ref_superscripts(html: str) -> str:
     return _REF_SUP_NO_SPACE_AFTER_PATTERN.sub(r"\g<sup> \g<next>", html)
 
 
+def _unlink_sup_ref_links(html: str) -> str:
+    def replace_sup(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if "z2m-ref-link" not in raw:
+            return raw
+        inner = match.group(1)
+        inner = re.sub(
+            r'<a\b[^>]*\bhref\s*=\s*["\']#ref-\d+["\'][^>]*\bz2m-ref-link\b[^>]*>([\s\S]*?)</a>',
+            r"\1",
+            inner,
+            flags=re.IGNORECASE,
+        )
+        return f"<sup>{inner}</sup>"
+
+    return _SUP_PATTERN.sub(replace_sup, html)
+
+
 _PAGE_ANCHOR_INLINE_NUMERIC_GROUP_PATTERN = re.compile(
     r"(?P<group>(?:"
     r"<a\b(?=[^>]*\bhref\s*=\s*['\"]#page-)[^>]*>[\s\d,;\(\)\-\u2013\u2014]*</a>"
@@ -6505,6 +6692,8 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     references_and_after = _flatten_nested_reference_list_items(references_and_after)
     references_and_after = _normalize_reference_list_items(references_and_after)
     references_with_ids, ref_index = _add_reference_ids_to_list_items(references_and_after)
+    references_with_ids, paragraph_ref_index = _add_reference_ids_to_standalone_reference_paragraphs(references_with_ids)
+    ref_index = max(ref_index, paragraph_ref_index)
     if ref_index == 0:
         return html
 
@@ -6525,6 +6714,14 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
         _citation_profile_is_high_confidence_superscript_numeric(citation_profile)
         or profile_is_flattened_superscript_numeric
         or profile_has_zotero_overlay_citations
+    )
+    profile_is_bracket_numeric = (
+        not profile_is_paren_numeric
+        and not profile_is_superscript_numeric
+        and (
+            _citation_profile_is_bracket_numeric(citation_profile)
+            or _looks_like_bracket_numeric_document(before_references, ref_index)
+        )
     )
 
     page_to_ref = _reference_page_anchor_map(references_with_ids)
@@ -6571,6 +6768,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             allow_single=False,
             linked_ref_numbers=_linked_reference_numbers_in_html(before_references),
         )
+        before_references = _wrap_plain_ref_links_as_superscript_citations(before_references)
         before_references = _normalize_spacing_after_ref_superscripts(before_references)
 
     if not re.search(r"<ol\b", references_with_ids, re.IGNORECASE):
@@ -6677,7 +6875,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
 
         return pair_pattern.sub(repl, text)
 
-    if not profile_is_paren_numeric and not profile_is_superscript_numeric:
+    if not profile_is_paren_numeric and not profile_is_superscript_numeric and not profile_is_bracket_numeric:
         # Recover citation superscripts that leaked into TeX unit exponents:
         # "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}^{24}}\)" -> "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}}\)<sup>24</sup>"
         before_references = _recover_citations_leaked_into_tex_units(before_references, ref_index)
@@ -6692,10 +6890,15 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     # Link <sup>N</sup> citations first, then [N] bracket-style, then (ref. N).
     if profile_is_paren_numeric or profile_is_superscript_numeric:
         before_with_citation_links = before_references
+    elif profile_is_bracket_numeric:
+        before_with_citation_links = _unlink_sup_ref_links(before_references)
+        before_with_citation_links = _unwrap_numeric_page_links_for_citation_recovery(before_with_citation_links)
+        before_with_citation_links = _link_bracket_citations(before_with_citation_links, ref_index)
     else:
         before_with_citation_links = _link_sup_citations_in_safe_blocks(before_references, link_sup)
         before_with_citation_links = _link_bracket_citations(before_with_citation_links, ref_index)
-    before_with_citation_links = _link_paren_ref_citations(before_with_citation_links, ref_index)
+    if not profile_is_bracket_numeric:
+        before_with_citation_links = _link_paren_ref_citations(before_with_citation_links, ref_index)
     before_with_citation_links = normalize_linked_ocr_pairs(before_with_citation_links)
     before_with_citation_links = _repair_ocr_letter_glued_ref_links(before_with_citation_links, ref_index)
     linked_document = before_with_citation_links + references_with_ids
@@ -6709,6 +6912,10 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             ref_index,
         )
         linked_document = _normalize_spacing_after_ref_superscripts(linked_document)
+    if profile_is_superscript_numeric:
+        linked_document = _wrap_plain_ref_links_as_superscript_citations(linked_document)
+        linked_document = _normalize_spacing_after_ref_superscripts(linked_document)
+    linked_document = _unwrap_broken_reference_links(linked_document)
     return linked_document
 
 
@@ -7234,7 +7441,7 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
 
         for pattern in (_FIG_REF_PATTERN, _EXT_FIG_REF_PATTERN):
             for match in pattern.finditer(visible):
-                _add(match.group(2))
+                _add(_figure_key_from_visible_number(match.group(2)))
         return nums
 
     def _nearby_missing_refs_after(index: int, *, window: int = 7) -> list[str]:
@@ -7280,7 +7487,7 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
                 break
             raw = _node_raw(scan)
             node_id = _node_id_value(raw)
-            node_id_match = re.fullmatch(r"fig-(\d+)", node_id or "", re.IGNORECASE)
+            node_id_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", node_id or "", re.IGNORECASE)
             if node_id_match is not None:
                 return node_id_match.group(1)
             caption_num = _figure_caption_num_from_visible(_visible_text(raw))
@@ -7418,6 +7625,27 @@ def _add_table_anchors(html: str) -> tuple[str, set[str]]:
 
     result = _P_BLOCK_PATTERN.sub(_add_id, html)
     result = _H_BLOCK_PATTERN.sub(_add_id, result)
+    table_block = re.compile(
+        r'(?P<open><table\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></table>)',
+        re.IGNORECASE,
+    )
+
+    def _add_table_id(m: re.Match[str]) -> str:
+        raw = m.group(0)
+        table_key = _table_caption_key_from_visible(_visible_text(raw))
+        if table_key is None:
+            first_row = re.search(r"<tr\b[\s\S]*?</tr>", raw, re.IGNORECASE)
+            if first_row is not None:
+                table_key = _embedded_table_caption_key_from_visible(_visible_text(first_row.group(0)))
+        if table_key is None:
+            return raw
+        found.add(table_key)
+        table_open = m.group("open")
+        if _has_id_attr(table_open):
+            return raw
+        return f'{_add_id_attr(table_open, f"table-{table_key}")}{m.group("body")}{m.group("close")}'
+
+    result = table_block.sub(_add_table_id, result)
     return result, found
 
 
@@ -7637,11 +7865,12 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
         prefix = m.group(1)
         num = m.group(2)
         suffix = m.group(3) or ""
+        key = _figure_key_from_visible_number(num)
         if scan_text and _is_inside_fig_link(scan_text, m.start(), m.end()):
             return m.group(0)
-        if num not in found_figures:
+        if key not in found_figures:
             return m.group(0)
-        return f'<a href="#fig-{num}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
+        return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
 
     for part in parts:
         if not part:
@@ -7650,7 +7879,7 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             raw_tag = part.strip().lower()
             if re.match(r"</p\b", raw_tag):
                 inside_fig_caption = False
-            elif re.match(r"<p\b", raw_tag) and re.search(r'\bid\s*=\s*["\']fig-\d+', raw_tag):
+            elif re.match(r"<p\b", raw_tag) and re.search(r'\bid\s*=\s*["\']fig-[A-Za-z0-9-]+', raw_tag):
                 inside_fig_caption = True
             _update_skip_stack(part, skip_stack)
             out.append(part)
@@ -7665,15 +7894,21 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
 
         # Handle compact chained subfigure refs: "Figure 1c and 1d" / "Fig. 2a-2c".
         def _replace_chain(m: re.Match[str]) -> str:
+            tag_open = linked.rfind("<", 0, m.start())
+            tag_close = linked.rfind(">", 0, m.start())
+            if tag_open > tag_close or _is_inside_fig_link(linked, m.start(), m.end()):
+                return m.group(0)
             num = m.group("num")
-            if num not in found_figures:
+            suffix = m.group("suf") or ""
+            key = _figure_key_from_visible_number(num)
+            if key not in found_figures:
                 return m.group(0)
             left_ctx = linked[max(0, m.start() - 160):m.start()]
             if 'class="z2m-fig-link"' not in left_ctx:
                 return m.group(0)
             return (
                 f'{m.group("sep")}'
-                f'<a href="#fig-{num}" class="z2m-fig-link">{num}{m.group("suf")}</a>'
+                f'<a href="#fig-{key}" class="z2m-fig-link">{num}{suffix}</a>'
             )
 
         linked = _FIG_REF_CHAIN_CONT_PATTERN.sub(_replace_chain, linked)
@@ -7728,18 +7963,19 @@ def _rewrite_existing_page_figure_links(html: str, found_figures: set[str]) -> s
         return html
     fig_tail = (
         r"(?:(?:[a-z]|\([a-z]\))(?:\s*(?:,|[-\u2010\u2011\u2012\u2013\u2014])\s*(?:[a-z]|\([a-z]\)))*)?"
-        r"(?:\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*\d+(?:[a-z]|\([a-z]\))?)*"
+        rf"(?:\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?)*"
     )
     fig_left_context = (
         r"(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
-        r"\.?\s*(?:\d+(?:[a-z]|\([a-z]\))?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
+        rf"\.?\s*(?:{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
     )
 
     def _replace_split(m: re.Match[str]) -> str:
         number = m.group("num")
-        if number not in found_figures:
+        key = _figure_key_from_visible_number(number)
+        if key not in found_figures:
             return m.group(0)
-        attrs = _replace_anchor_href_and_class(m.group("attrs"), f"#fig-{number}", "z2m-fig-link")
+        attrs = _replace_anchor_href_and_class(m.group("attrs"), f"#fig-{key}", "z2m-fig-link")
         return f"<a{attrs}>{m.group('body')}{number}{m.group('suffix')}</a>"
 
     html = _SPLIT_PAGE_FIG_LINK_PATTERN.sub(_replace_split, html)
@@ -7749,13 +7985,13 @@ def _rewrite_existing_page_figure_links(html: str, found_figures: set[str]) -> s
         body_text = _visible_text(body)
         direct = re.match(
             r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
-            rf"\.?\s*(\d+){fig_tail}[\(\)\]\.,;:]*$",
+            rf"\.?\s*({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
             body_text,
             re.IGNORECASE,
         )
         number = direct.group(1) if direct is not None else None
         if number is None:
-            num_only = re.match(rf"^(\d+){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            num_only = re.match(rf"^({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
             if num_only is not None:
                 left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
                 if re.search(fig_left_context, left_text, re.IGNORECASE):
@@ -7766,9 +8002,10 @@ def _rewrite_existing_page_figure_links(html: str, found_figures: set[str]) -> s
                     re.IGNORECASE,
                 ) and re.match(r"^\d+[a-z]", body_text, re.IGNORECASE):
                     number = num_only.group(1)
-        if number is None or number not in found_figures:
+        key = _figure_key_from_visible_number(number) if number is not None else None
+        if key is None or key not in found_figures:
             return m.group(0)
-        attrs = _replace_anchor_href_and_class(m.group("attrs"), f"#fig-{number}", "z2m-fig-link")
+        attrs = _replace_anchor_href_and_class(m.group("attrs"), f"#fig-{key}", "z2m-fig-link")
         return f"<a{attrs}>{body}</a>"
 
     return _PAGE_ANCHOR_PATTERN.sub(_replace, html)
@@ -7863,11 +8100,11 @@ def _unwrap_unresolved_semantic_page_links(
 
     fig_tail = (
         r"(?:(?:[a-z]|\([a-z]\))(?:\s*(?:,|[-\u2010\u2011\u2012\u2013\u2014])\s*(?:[a-z]|\([a-z]\)))*)?"
-        r"(?:\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*\d+(?:[a-z]|\([a-z]\))?)*"
+        rf"(?:\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?)*"
     )
     fig_left_context = (
         r"(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
-        r"\.?\s*(?:\d+(?:[a-z]|\([a-z]\))?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
+        rf"\.?\s*(?:{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
     )
     table_left_context = (
         rf"(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s*"
@@ -7894,22 +8131,22 @@ def _unwrap_unresolved_semantic_page_links(
 
         fig_direct = re.match(
             r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
-            rf"\.?\s*(\d+){fig_tail}[\(\)\]\.,;:]*$",
+            rf"\.?\s*({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
             body_text,
             re.IGNORECASE,
         )
         if fig_number is None and fig_direct is not None:
-            fig_number = fig_direct.group(1)
+            fig_number = _figure_key_from_visible_number(fig_direct.group(1))
         else:
-            fig_num_only = re.match(rf"^(\d+){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            fig_num_only = re.match(rf"^({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
             if fig_number is None and fig_num_only is not None and re.search(fig_left_context, left_text, re.IGNORECASE):
-                fig_number = fig_num_only.group(1)
+                fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
             elif fig_number is None and fig_num_only is not None and re.search(
                 r"(?:\b(?:image|photograph|picture|panel)\s*\(\s*in\s*|\b(?:image|photograph|picture|panel|in)\s*)$",
                 left_text,
                 re.IGNORECASE,
             ) and re.match(r"^\d+[a-z]", body_text, re.IGNORECASE):
-                fig_number = fig_num_only.group(1)
+                fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
         if fig_number is not None and fig_number not in found_figures:
             return body
 
@@ -9382,27 +9619,37 @@ def _caption_tail_opens_caption(tail: str) -> bool:
     return word not in prose_verbs
 
 
+def _normalize_semantic_key(value: str) -> str:
+    normalized = value.strip().strip(".")
+    normalized = re.sub(r"\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*", "-", normalized)
+    return normalized.strip("-").lower()
+
+
+def _figure_key_from_visible_number(value: str) -> str:
+    return _normalize_semantic_key(value)
+
+
 def _figure_caption_num_from_visible(visible: str) -> str | None:
     match = re.match(
         r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
         r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
         r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-        r"\.?\s*(\d+)([\s\S]*)$",
+        rf"\.?\s*({_FIG_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
         visible,
         re.IGNORECASE,
     )
     if match is None:
         return None
-    tail = match.group(2)
+    tail = match.group(3)
     if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
         return None
     if not _caption_tail_opens_caption(tail):
         return None
-    return match.group(1)
+    return _figure_key_from_visible_number(match.group(1))
 
 
 def _normalize_table_key(label: str) -> str:
-    return label.strip().lower()
+    return _normalize_semantic_key(label)
 
 
 def _table_caption_key_from_visible(visible: str) -> str | None:
@@ -9415,6 +9662,18 @@ def _table_caption_key_from_visible(visible: str) -> str | None:
     if match is None:
         return None
     if not _caption_tail_opens_caption(match.group(2)):
+        return None
+    return _normalize_table_key(match.group(1))
+
+
+def _embedded_table_caption_key_from_visible(visible: str) -> str | None:
+    match = re.search(
+        rf"\b(?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+({_TABLE_KEY_TOKEN})"
+        r"(?=\s|[.\-:;]|$)",
+        visible[:4000],
+        re.IGNORECASE,
+    )
+    if match is None:
         return None
     return _normalize_table_key(match.group(1))
 
@@ -10147,7 +10406,7 @@ def _insert_missing_figure_warnings(
 
     def _image_node_can_belong_to_fig(raw: str, fig_num: str) -> bool:
         node_id = _node_id_value(raw) or ""
-        id_match = re.fullmatch(r"fig-(\d+)", node_id, re.IGNORECASE)
+        id_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", node_id, re.IGNORECASE)
         return id_match is None or id_match.group(1) == fig_num
 
     def _is_previous_compound_caption(raw: str, fig_num: str) -> bool:
@@ -11779,7 +12038,7 @@ def _wrap_float_units(html: str) -> str:
         if node_id is None:
             continue
 
-        fig_match = re.fullmatch(r"fig-(\d+)", node_id, re.IGNORECASE)
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", node_id, re.IGNORECASE)
         if fig_match is not None and re.search(r"<img\b", raw, re.IGNORECASE):
             fig_num = fig_match.group(1)
             before: list[int] = []
@@ -11814,7 +12073,7 @@ def _wrap_float_units(html: str) -> str:
                 if not re.search(r"<img\b", next_raw, re.IGNORECASE):
                     break
                 next_id = _node_id_value(next_raw) or ""
-                if re.fullmatch(r"fig-\d+", next_id, re.IGNORECASE):
+                if re.fullmatch(r"fig-[A-Za-z0-9-]+", next_id, re.IGNORECASE):
                     break
                 candidate_following_images.append(next_idx)
                 next_idx += 1
@@ -11868,7 +12127,7 @@ def _wrap_float_units(html: str) -> str:
                 f'<span id="{alias_id}" class="z2m-float-alias"></span>'
                 for idx in before + after
                 for alias_id in [_node_id_value(nodes[idx].group(0))]
-                if alias_id is not None and re.fullmatch(r"fig-\d+", alias_id, re.IGNORECASE) and alias_id != node_id
+                if alias_id is not None and re.fullmatch(r"fig-[A-Za-z0-9-]+", alias_id, re.IGNORECASE) and alias_id != node_id
             )
             image_html = "".join(
                 _strip_node_id_and_add_class(nodes[idx].group(0), "z2m-figure-target")
@@ -11930,10 +12189,24 @@ def _wrap_float_units(html: str) -> str:
             continue
         table_key = table_match.group(1)
         table_index: int | None = None
-        if index > 0 and _between_is_whitespace(index - 1, index) and re.match(r"<table\b", nodes[index - 1].group(0), re.IGNORECASE):
-            table_index = index - 1
-        elif index + 1 < len(nodes) and _between_is_whitespace(index, index + 1) and re.match(r"<table\b", nodes[index + 1].group(0), re.IGNORECASE):
-            table_index = index + 1
+        previous_table_index = (
+            index - 1
+            if index > 0
+            and _between_is_whitespace(index - 1, index)
+            and re.match(r"<table\b", nodes[index - 1].group(0), re.IGNORECASE)
+            else None
+        )
+        following_table_index = (
+            index + 1
+            if index + 1 < len(nodes)
+            and _between_is_whitespace(index, index + 1)
+            and re.match(r"<table\b", nodes[index + 1].group(0), re.IGNORECASE)
+            else None
+        )
+        if previous_table_index is not None and previous_table_index not in consumed:
+            table_index = previous_table_index
+        elif following_table_index is not None and following_table_index not in consumed:
+            table_index = following_table_index
         if table_index is None:
             continue
 
@@ -12326,6 +12599,39 @@ def _repair_remaining_table_caption_units(html: str) -> str:
     return orphan_caption.sub(_replace_orphan, current)
 
 
+def _split_table_units_before_section_headings(html: str) -> str:
+    """Close loose table wrappers before the next numbered section heading."""
+    table_unit = re.compile(
+        r'(?P<open><div\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\bz2m-table-unit\b)[^>]*>)'
+        r'(?P<body>[\s\S]*?)(?P<close></div>)',
+        re.IGNORECASE,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        body = match.group("body")
+        for heading in _H_BLOCK_PATTERN.finditer(body):
+            heading_raw = heading.group(0)
+            visible = _visible_text(heading_raw)
+            if _figure_caption_num_from_visible(visible) is not None:
+                continue
+            if _table_caption_key_from_visible(visible) is not None:
+                continue
+            if _NUMERIC_SECTION_HEADING_VISIBLE_PATTERN.match(visible) is None:
+                continue
+            before = body[: heading.start()]
+            if not before.strip():
+                return match.group(0)
+            return f"{match.group('open')}{before}{match.group('close')}{body[heading.start():]}"
+        return match.group(0)
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = table_unit.sub(_replace, current)
+    return current
+
+
 def polish_html_document(
     html: str,
     *,
@@ -12433,6 +12739,9 @@ def polish_html_document(
         polished = _mark_unit_exponent_superscripts(polished)
         polished = _repair_nested_reference_links(polished)
         polished = _fix_false_sup_citations_in_decimals_and_figure_labels(polished)
+        if _citation_profile_is_high_confidence_superscript_numeric(citation_profile):
+            polished = _wrap_plain_ref_links_as_superscript_citations(polished)
+            polished = _normalize_spacing_after_ref_superscripts(polished)
     else:
         polished = _rewrite_existing_page_table_links(polished, found_tables)
         polished = _link_table_refs(polished, found_tables)
@@ -12456,6 +12765,7 @@ def polish_html_document(
     polished = _collapse_duplicate_nested_float_units(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _repair_remaining_table_caption_units(polished)
+    polished = _split_table_units_before_section_headings(polished)
     polished = _collapse_duplicate_nested_float_units(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)

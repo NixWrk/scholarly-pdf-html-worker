@@ -2299,6 +2299,103 @@ def test_polish_html_document_links_bracket_citations_to_references() -> None:
     assert 'id="ref-3"' in polished
 
 
+def test_polish_html_document_keeps_single_citation_style_in_bracket_numeric_article() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior museum accessibility work [1] and user studies [2] support the framework.</p>"
+        "<p>A stray translated marker<sup>3</sup> should not become a second citation style.</p>"
+        "<h4>References</h4>"
+        "<ul>"
+        "<li>Ref one.</li>"
+        "<li>Ref two.</li>"
+        "<li>Ref three.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in body
+    assert '<a href="#ref-2" class="z2m-ref-link">[2]</a>' in body
+    assert '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>' not in body
+    assert "marker<sup>3</sup> should not become" in body
+
+
+def test_polish_html_document_ids_standalone_reference_paragraphs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior museum accessibility work [1] and later network graphics [50] are relevant.</p>"
+        "<h4>References</h4>"
+        "<p>1. Luo Y. Tangible museum exhibits and accessibility. Journal of Access. 2019.</p>"
+        "<ul>"
+        "<li>2. Brule E. Assistive technologies for museums. 2020.</li>"
+        "</ul>"
+        "<p>50. Yang S. Network graphics for interactive cultural heritage. 2021.</p>"
+        "<ul>"
+        "<li>51. Engel C. Haptic interfaces in exhibitions. 2022.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+
+    assert '<p id="ref-1">' in polished
+    assert '<p id="ref-50">' in polished
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in polished
+    assert '<a href="#ref-50" class="z2m-ref-link">[50]</a>' in polished
+
+
+def test_polish_html_document_merges_unnumbered_reference_continuation() -> None:
+    html = (
+        "<html><body>"
+        "<p>Way and Barner, 1997 and Cantoni et al., 2018 describe tactile access.</p>"
+        "<h4>References</h4>"
+        "<ul>"
+        "<li>Canny J. A computational approach to edge detection. IEEE TPAMI. 1986.</li>"
+        '<li>Cantoni V, Lombardi L. "Art Masterpieces Accessibility for Blind and Visually Impaired</li>'
+        '<li>People," in International Conference on Image Analysis and Processing. 2018.</li>'
+        "<li>Carion N. End-to-end object detection with transformers. 2020.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="ref-2"' in polished
+    assert "Visually Impaired People" in polished
+    assert re.search(r'id="ref-3"[\s\S]{0,120}Carion N\.', polished) is not None
+    assert re.search(r'id="ref-\d+">People,"', polished) is None
+
+
+def test_polish_html_document_wraps_superscript_profile_page_ref_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>Rapid postvoiding<a href="#page-9-0">.1</a> Follow-up data <a href="#page-9-1">2-4</a> support it.</p>'
+        "<h4>References</h4>"
+        "<ul>"
+        '<li><span id="page-9-0"></span>First reference.</li>'
+        '<li><span id="page-9-1"></span>Second reference.</li>'
+        "<li>Third reference.</li>"
+        "<li>Fourth reference.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert 'postvoiding.<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>' in polished
+    assert '<sup><a href="#ref-2" class="z2m-ref-link">2-4</a></sup>' in polished
+
+
 def test_polish_html_document_links_bracket_refs_after_numbered_references_heading() -> None:
     html = (
         "<html><body>"
@@ -4103,6 +4200,16 @@ def test_link_figure_refs_wraps_figure_word_and_subfigure_suffixes() -> None:
     assert ">1d</a>" in linked
 
 
+def test_link_figure_refs_wraps_decimal_and_chapter_style_numbers() -> None:
+    html = "<p>See Figure 3.24 and Figure 57-5 for details.</p>"
+    linked = _link_figure_refs(html, {"3-24", "57-5"})
+
+    assert '<a href="#fig-3-24" class="z2m-fig-link">Figure\xa03.24</a>' in linked
+    assert '<a href="#fig-57-5" class="z2m-fig-link">Figure\xa057-5</a>' in linked
+    assert 'href="#fig-3"' not in linked
+    assert 'href="#fig-57"' not in linked
+
+
 def test_link_figure_refs_wraps_plural_multipanel_refs() -> None:
     html = "<p>The lack of distortion (figures 4(A), (B)) suggests stable shape.</p>"
     linked = _link_figure_refs(html, {"4"})
@@ -4176,6 +4283,23 @@ def test_polish_html_document_adds_figure_anchor_links_for_figure_keyword() -> N
     assert 'id="fig-1"' in polished
     assert 'href="#fig-1"' in polished
     assert "Figure\xa01c" in polished
+
+
+def test_polish_html_document_links_panel_suffix_to_base_figure_only() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 2D shows the final tactile rendering.</p>"
+        "<p>A 2D tactile image remains ordinary prose.</p>"
+        "<p>Figure 2. Multichannel panel overview.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-2"' in polished
+    assert '<a href="#fig-2" class="z2m-fig-link">Figure\xa02D</a>' in polished
+    assert 'href="#fig-2-d"' not in polished
+    assert "A 2D tactile image remains ordinary prose." in polished
 
 
 def test_polish_html_document_puts_figure_anchor_on_nearby_image() -> None:
@@ -4619,6 +4743,86 @@ def test_polish_html_document_retargets_page_table_pair_and_appendix_label() -> 
     assert 'href="#page-9-0"' not in polished
 
 
+def test_polish_html_document_preserves_compound_figure_and_table_numbers() -> None:
+    image = _valid_tiny_png_data_url()
+    html = (
+        "<html><body>"
+        "<p>See Figure 3.24 and Table 3.1 for the extracted features.</p>"
+        f'<p><img src="{image}"/></p>'
+        "<p>Figure 3.24: MATLAB Uroflow algorithm.</p>"
+        "<p><b>Table 3.1:</b> The features used by the classifier.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-3-24"' in polished
+    assert 'href="#fig-3-24"' in polished
+    assert 'id="fig-3"' not in polished
+    assert 'id="table-3-1"' in polished
+    assert 'href="#table-3-1"' in polished
+    assert 'id="table-3"' not in polished
+
+
+def test_polish_html_document_preserves_chapter_style_figure_and_table_numbers() -> None:
+    html = (
+        "<html><body>"
+        "<p>See Figure 57-5 and Table 57-1 for the measurement setup.</p>"
+        "<p>Figure 57-5. Multichannel urodynamic study.</p>"
+        "<p>Table 57-1. Urodynamic parameters.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-57-5"' in polished
+    assert 'href="#fig-57-5"' in polished
+    assert 'id="fig-57"' not in polished
+    assert 'id="table-57-1"' in polished
+    assert 'href="#table-57-1"' in polished
+    assert 'id="table-57"' not in polished
+
+
+def test_polish_html_document_anchors_table_caption_inside_first_header_cell() -> None:
+    html = (
+        "<html><body>"
+        "<p>The classification is described in Table 57-1.</p>"
+        "<table><tbody>"
+        '<tr><th colspan="2">Table 57-1<br/>Radiologic Type of Stress Incontinence</th></tr>'
+        "<tr><th>Type</th><th>Description</th></tr>"
+        "<tr><td>I</td><td>Incontinence is seen.</td></tr>"
+        "</tbody></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<table id="table-57-1">' in polished
+    assert 'href="#table-57-1"' in polished
+    assert 'id="table-57"' not in polished
+
+
+def test_polish_html_document_anchors_table_caption_inside_header_row() -> None:
+    html = (
+        "<html><body>"
+        "<p>The included studies are summarized in Table 3.</p>"
+        "<table><tbody>"
+        "<tr>"
+        "<th>Arif25<br/>Raja50<br/>Salinas50</th>"
+        "<th>Table 3</th>"
+        "<th>Included studies and clinical outcomes.</th>"
+        "</tr>"
+        "<tr><td>Study</td><td>Design</td><td>Outcome</td></tr>"
+        "</tbody></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<table id="table-3">' in polished
+    assert 'href="#table-3"' in polished
+
+
 def test_polish_html_document_preserves_table_caption_above_source_table() -> None:
     html = (
         "<html><body>"
@@ -4648,6 +4852,51 @@ def test_polish_html_document_wraps_loose_table_caption_targets() -> None:
     assert '<p id="table-4"' not in polished
     assert '<div id="table-4" class="z2m-float-unit z2m-table-unit">' in polished
     assert '<div id="table-5" class="z2m-float-unit z2m-table-unit">' in polished
+
+
+def test_polish_html_document_pairs_caption_with_following_table_after_consumed_table() -> None:
+    html = (
+        "<html><body>"
+        "<p>Table 6. Database coverage.</p><table><tr><td>Scopus</td></tr></table>"
+        "<p>Table 7. Geographic distribution per country.</p>"
+        "<table><tr><th>Country</th></tr><tr><td>Italy</td></tr></table>"
+        "<p>Table 8. Common number of participants for evaluation.</p>"
+        "<table><tr><th>Participants</th></tr><tr><td>1-5</td></tr></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    table7_start = polished.index('<div id="table-7"')
+    table7 = polished[table7_start:polished.index("</div>", table7_start)]
+    table8_start = polished.index('<div id="table-8"')
+    table8 = polished[table8_start:polished.index("</div>", table8_start)]
+
+    assert "Geographic distribution per country" in table7
+    assert "Italy" in table7
+    assert "Common number of participants" not in table7
+    assert "Common number of participants" in table8
+    assert "Participants" in table8
+    assert "Italy" not in table8
+
+
+def test_polish_html_document_closes_loose_table_unit_before_numbered_section() -> None:
+    html = (
+        "<html><body>"
+        '<div id="table-3-1" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">TABLE 3.1. The features used by the classifier.</p>'
+        "<p>The First curve peak is listed here.</p>"
+        '<h3 id="section-3-8">3.8. Data Acquisition</h3>'
+        "<p>The uroflowmetry device records the signal.</p>"
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    table_start = polished.index('<div id="table-3-1"')
+    table_end = polished.index("</div>", table_start)
+
+    assert 'id="section-3-8"' not in polished[table_start:table_end]
+    assert polished.index('id="section-3-8"') > table_end
 
 
 def test_table_anchors_and_links_handle_heading_captions() -> None:
