@@ -1,0 +1,95 @@
+# LLM Quality Loop
+
+This repository keeps the LLM in the loop, not in charge of the loop. The
+workflow is:
+
+1. Regenerate EN polish from cached raw HTML and citation profiles.
+2. Run the full EN polish audit.
+3. Record all quality metrics and compare them with a previous run.
+4. Evaluate gates for lower-is-better metrics.
+5. Build a compact LLM analysis packet and prompt.
+6. Let an engineer or coding agent make a small patch plus tests.
+7. Repeat the loop before committing.
+
+## Branch Workflow
+
+Create a feature branch before experiments:
+
+```powershell
+git switch -c feature/llm-quality-loop
+```
+
+## Observe A Cached Run
+
+Use a previous run directory that already contains `raw_cache/` and `profiles/`.
+The command writes a new run directory with `polish/`, `audit_tree/`,
+`audit_full_checks.json`, `quality_history_entry.json`, `quality_compare.json`,
+`quality_gate_report.json`, `llm_analysis_pack.json`, and
+`llm_analysis_prompt.md`.
+
+```powershell
+python scripts\llm_quality_loop.py observe `
+  --source-run-dir .tmp_local2\source_exports_full_pdf_profile_rerun_d1100b3_2026-05-20 `
+  --out-dir .tmp_local2\llm_runs\experiment_001 `
+  --previous-entry .tmp_local2\source_exports_full_pdf_profile_rerun_d1100b3_2026-05-20\quality_history_entry.json `
+  --run-id experiment_001 `
+  --no-append-history
+```
+
+Add `--run-tests` when the loop should run the configured test command before
+audit/history/gates.
+
+## Build Or Rebuild Only The LLM Pack
+
+```powershell
+python scripts\llm_quality_loop.py pack `
+  --run-dir .tmp_local2\llm_runs\experiment_001 `
+  --max-articles 15
+```
+
+The default pack ignores image-only defect ids from
+`configs/llm_quality_gates.json`. This keeps the review focused on text,
+citations, tables, structure, and OCR residue.
+
+## Gate Only
+
+```powershell
+python scripts\llm_quality_loop.py gate `
+  --run-dir .tmp_local2\llm_runs\experiment_001 `
+  --fail-on-gate
+```
+
+The gate config is in `configs/llm_quality_gates.json`. It fails on new
+regressions and positive deltas for critical lower-is-better metrics such as
+broken internal links, mixed citation style, replacement characters, and
+table-unit section id leaks.
+
+## Optional External LLM Command
+
+The loop can pass the generated prompt to an explicit command. Nothing is run
+unless the command is provided after `--`.
+
+```powershell
+python scripts\llm_quality_loop.py run-llm `
+  --prompt .tmp_local2\llm_runs\experiment_001\llm_analysis_prompt.md `
+  --out .tmp_local2\llm_runs\experiment_001\llm_analysis.md `
+  -- codex exec
+```
+
+The expected LLM output is a patch plan, not blind edits:
+
+- critical findings by article;
+- cross-article patterns;
+- production file/function targets;
+- regression tests to add;
+- risks and gates to rerun.
+
+## Patch Policy
+
+Each fix should be small:
+
+- one production repair layer;
+- tests for the real symptom and at least one non-regression edge case;
+- targeted repolish for affected articles;
+- full corpus repolish before commit;
+- gate must pass or the regression must be explicitly understood.

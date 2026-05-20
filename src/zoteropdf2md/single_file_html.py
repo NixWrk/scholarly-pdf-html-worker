@@ -169,9 +169,10 @@ _AFFILIATION_LABEL_OCR_PATTERN = re.compile(
 )
 _NONCITATION_NUMERIC_CONTEXT_PATTERN = re.compile(
     r"(?:"
-    r"\bpH\s+(?:of\s+)?$|"
+    r"\bpH(?:\s+of)?\s*$|"
     r"\bD\s*$|"
-    r"\b(?:monkey|week|month|unit|units|animal|female|male|sp|kg|cm|mm|um|nm|mA|uA|A|V|Hz|MHz|GHz|kHz)\b[\s\S]{0,24}$|"
+    r"\b(?:monkey|week|month|unit|units|animal|female|male|sp|kg|cm|mm|um|nm|mA|uA|Hz|MHz|GHz|kHz)\b[\s\S]{0,24}$|"
+    r"\b(?-i:[AV])\b[\s\S]{0,24}$|"
     r"\b(?:fig|figure|table|section|eq|equation)\.?\s*$"
     r")",
     re.IGNORECASE,
@@ -431,7 +432,10 @@ _REF_ANCHOR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _AUTHOR_YEAR_CITATION_TEXT_PATTERN = re.compile(
-    r"\b[A-Z][A-Za-z'’.-]+(?:\s+et\s+al\.?)?(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
+    r"\b"
+    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    r"(?:\s+(?:et\s+al\.?|and\s+[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+|&\s*[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+))?"
+    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
     re.IGNORECASE,
 )
 _STAT_FALSE_REF_CONTEXT_PATTERN = re.compile(
@@ -6113,7 +6117,7 @@ _NUMERIC_SUPERSCRIPT_OPERATOR_CHARS = "=+*/^<>≤≥±"
 
 
 _UNIT_SENTENCE_LEFT_CONTEXT_PATTERN = re.compile(
-    r"\b(?:kg|cm|mm|um|nm|mA|uA|A|V|Hz|MHz|GHz|kHz)\.?\s*$",
+    r"(?:\b(?:kg|cm|mm|um|nm|mA|uA|Hz|MHz|GHz|kHz)\.?\s*|\b(?-i:[AV])\.?\s*)$",
     re.IGNORECASE,
 )
 
@@ -6147,8 +6151,14 @@ def _lowercase_after_superscript_still_looks_citation(left_visible: str, right_v
         return False
     if left[-1] in {",", ";", "."}:
         return True
-    if not re.match(r"(?:and|or|with|for|in|to|from|of)\b", right, re.IGNORECASE):
+    if not re.match(
+        r"(?:and|or|with|for|in|to|from|of|was|were|is|are|has|have|had|can|may|might|would|should)\b",
+        right,
+        re.IGNORECASE,
+    ):
         return False
+    if re.search(r"\bet\s+al\.?$", left, re.IGNORECASE):
+        return True
     word_match = re.search(r"([A-Za-z][A-Za-z-]{2,})\s*$", left)
     return word_match is not None
 
@@ -8711,6 +8721,12 @@ def _repair_nested_reference_links(html: str) -> str:
         r'\s*</a>',
         re.IGNORECASE,
     )
+    same_href_nested_ref = re.compile(
+        r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<num>\d+)["\'][^>]*>\s*'
+        r'(?P<inner><a\b[^>]*\bhref\s*=\s*["\']#ref-(?P=num)["\'][^>]*>[\s\S]{1,160}?</a>)'
+        r'(?P<trail>[\)\]\.,;:]*)\s*</a>',
+        re.IGNORECASE,
+    )
     double_closed_ref = re.compile(
         r'(?P<anchor><a\b[^>]*\bhref\s*=\s*["\']#ref-\d+["\'][^>]*>[\s\S]{0,80}?</a>)\s*</a>',
         re.IGNORECASE,
@@ -8721,6 +8737,7 @@ def _repair_nested_reference_links(html: str) -> str:
         previous = current
         current = dangling_outer_linked_bracket.sub("", current)
         current = linked_bracket_inside_anchor.sub(lambda m: m.group("body"), current)
+        current = same_href_nested_ref.sub(lambda m: f'{m.group("inner")}{m.group("trail")}', current)
         current = double_closed_ref.sub(lambda m: m.group("anchor"), current)
         current = empty_anchor.sub("", current)
     return current
@@ -12806,6 +12823,7 @@ def polish_html_document(
         polished = _add_reference_ids_and_citation_links(polished, citation_profile=citation_profile)
         polished = _retarget_mismatched_ref_link_labels(polished)
         polished = _repair_ref_links_absorbed_decimal_or_unit_text(polished)
+        polished = _repair_nested_reference_links(polished)
         polished = _unwrap_author_year_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_acronym_footnote_ref_citations(polished)

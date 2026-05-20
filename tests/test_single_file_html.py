@@ -5395,6 +5395,24 @@ def test_polish_html_document_repairs_empty_and_nested_reference_anchors() -> No
     assert '[<a href="#ref-13" class="z2m-ref-link">13</a>, <a href="#ref-52" class="z2m-ref-link">52</a>]' in body
 
 
+def test_polish_html_document_repairs_nested_author_year_reference_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>Objects represented in 3D are costly (<a href="#ref-3" class="z2m-ref-link">'
+        '<a href="#ref-3" class="z2m-ref-link">Biederman, 1987</a>)</a>.</p>'
+        "<h4>References</h4>"
+        "<ul>" + "".join(f"<li>Ref {i}.</li>" for i in range(1, 4)) + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-3" class="z2m-ref-link"><a' not in body
+    assert 'href="#ref-3"' not in body
+    assert "(Biederman, 1987)." in body
+
+
 def test_polish_html_document_repairs_dangling_outer_reference_anchor() -> None:
     html = (
         "<html><body>"
@@ -5764,6 +5782,32 @@ def test_polish_html_document_keeps_numeric_citations_in_mixed_author_year_docs(
     assert 'impedance<sup>2</sup> for recording' in polished
 
 
+def test_polish_html_document_unwraps_author_year_ref_links_with_multiple_authors() -> None:
+    html = (
+        "<html><body>"
+        '<p>Earlier numeric work<sup>2</sup> and later reviews were combined.</p>'
+        '<p>These results follow prior studies (<a href="#ref-49" class="z2m-ref-link">'
+        'Way and Barner, 1997)</a> and (<a href="#ref-6" class="z2m-ref-link">'
+        'B\u00fcchel et al., 1998)</a>.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 51))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-49"' not in body
+    assert 'href="#ref-6"' not in body
+    assert "(Way and Barner, 1997)" in body
+    assert "(B\u00fcchel et al., 1998)" in body
+    assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> and' in body
+
+
 def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
     html = (
         "<html><body>"
@@ -5779,6 +5823,35 @@ def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
     assert 'href="#ref-2"' not in polished
     assert '\u03bcC cm<sup class="z2m-unit-exp">-2</sup>' in polished
     assert 'href="#ref-13"' in polished
+
+
+def test_polish_html_document_links_superscript_citations_before_lowercase_continuations() -> None:
+    html = (
+        "<html><body>"
+        "<p>Data generated from a previous study<sup>7,8</sup> was reanalyzed. "
+        "Griffiths et al<sup>6</sup> in the form. "
+        "Area was 20 cm<sup>2</sup> and remained stable. "
+        "Current was 10 A<sup>2</sup> and remained stable.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 9))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-7"' in body
+    assert 'href="#ref-8"' in body
+    assert 'href="#ref-6"' in body
+    assert 'previous study<sup><a href="#ref-7" class="z2m-ref-link">7</a>,<a href="#ref-8"' in body
+    assert 'Griffiths et al<sup><a href="#ref-6" class="z2m-ref-link">6</a></sup> in' in body
+    assert 'href="#ref-2"' not in body
+    assert 'cm<sup class="z2m-unit-exp">2</sup> and' in body
+    assert 'A<sup><a href="#ref-2"' not in body
 
 
 def test_polish_html_document_unlinks_numeric_dimension_and_degree_refs() -> None:
