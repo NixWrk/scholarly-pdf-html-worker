@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from zoteropdf2md.marker_runner import MarkerRunner, RunResult
+from zoteropdf2md.marker_runner import MarkerRunner, ProgressContext, RunResult
 
 
 class _CapturingMarkerRunner(MarkerRunner):
@@ -8,8 +8,9 @@ class _CapturingMarkerRunner(MarkerRunner):
         super().__init__(marker_cmd="marker", marker_single_cmd="marker_single")
         self.commands: list[list[str]] = []
 
-    def _run(self, command, env, log):  # type: ignore[override]
+    def _run(self, command, env, log, progress=None):  # type: ignore[override]
         self.commands.append(command)
+        assert progress is None or isinstance(progress, ProgressContext)
         return RunResult(command=command, exit_code=0)
 
 
