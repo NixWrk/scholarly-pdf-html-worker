@@ -21,6 +21,16 @@ LINK_METRIC_WEIGHT = {
     "internal_page_anchor_links": 1.0,
     "external_page_query_links": 1.0,
     "table_units_with_section_ids": 5.0,
+    "polish_replacement_chars": 1.0,
+}
+
+DERIVED_METRIC_PAIRS = {
+    "block_delta": ("raw_blocks", "polish_blocks"),
+    "image_delta": ("raw_img_tags", "polish_img_tags"),
+    "ref_link_delta": ("raw_ref_links", "ref_links"),
+    "fig_link_delta": ("raw_fig_links", "fig_links"),
+    "table_link_delta": ("raw_table_links", "table_links"),
+    "page_link_delta": ("raw_page_links", "page_links"),
 }
 
 
@@ -62,24 +72,79 @@ def _audit_articles(audit: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     }
 
 
-def _link_metrics(article: dict[str, Any], audit_article: dict[str, Any] | None) -> dict[str, int]:
-    href_counts = article.get("href_counts") if isinstance(article.get("href_counts"), dict) else {}
+def _numeric_value(value: Any) -> int | float | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    return None
+
+
+def _copy_numeric_values(source: dict[str, Any]) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {}
+    for key, value in source.items():
+        numeric = _numeric_value(value)
+        if numeric is not None:
+            metrics[key] = numeric
+    return metrics
+
+
+def _article_labels(article: dict[str, Any], audit_article: dict[str, Any] | None) -> dict[str, str]:
     summary = audit_article.get("summary") if audit_article and isinstance(audit_article.get("summary"), dict) else {}
     return {
-        "broken_internal_links": int(href_counts.get("broken_internal_links") or 0),
-        "internal_page_anchor_links": int(href_counts.get("internal_page_anchor_links") or 0),
-        "external_page_query_links": int(href_counts.get("external_page_query_links") or 0),
-        "page_links": int(href_counts.get("page_links") or summary.get("polish_page_links") or 0),
-        "ref_links": int(href_counts.get("ref_links") or summary.get("polish_ref_links") or 0),
-        "fig_links": int(href_counts.get("fig_links") or summary.get("polish_fig_links") or 0),
-        "table_links": int(href_counts.get("table_links") or summary.get("polish_table_links") or 0),
-        "table_units_with_section_ids": int(article.get("table_units_with_section_ids") or 0),
-        "missing_warning_count": int(article.get("missing_warning_count") or 0),
-        "missing_local_images": int(summary.get("polish_missing_local_images") or 0),
+        "profile_style": str(article.get("profile_style") or ""),
+        "profile_confidence": str(article.get("profile_confidence") or ""),
+        "profile_status": str(article.get("profile_status") or ""),
+        "pdf_text_status": str(summary.get("pdf_text_status") or ""),
+        "source_pdf_origin": str(summary.get("source_pdf_origin") or ""),
     }
 
 
-def _article_score(defects: list[dict[str, Any]], metrics: dict[str, int]) -> float:
+def _article_metrics(article: dict[str, Any], audit_article: dict[str, Any] | None) -> dict[str, int | float]:
+    href_counts = article.get("href_counts") if isinstance(article.get("href_counts"), dict) else {}
+    summary = audit_article.get("summary") if audit_article and isinstance(audit_article.get("summary"), dict) else {}
+    metrics = _copy_numeric_values(summary)
+    metrics.update(
+        {
+            "broken_internal_links": int(href_counts.get("broken_internal_links") or 0),
+            "internal_page_anchor_links": int(href_counts.get("internal_page_anchor_links") or 0),
+            "external_page_query_links": int(href_counts.get("external_page_query_links") or 0),
+            "page_links": int(href_counts.get("page_links") or summary.get("polish_page_links") or 0),
+            "ref_links": int(href_counts.get("ref_links") or summary.get("polish_ref_links") or 0),
+            "fig_links": int(href_counts.get("fig_links") or summary.get("polish_fig_links") or 0),
+            "table_links": int(href_counts.get("table_links") or summary.get("polish_table_links") or 0),
+            "table_units_with_section_ids": int(article.get("table_units_with_section_ids") or 0),
+            "sup_ref_links": int(article.get("sup_ref_links") or 0),
+            "bracket_ref_links": int(article.get("bracket_ref_links") or 0),
+            "mixed_citation_style": int(bool(article.get("mixed_citation_style"))),
+            "missing_warning_count": int(article.get("missing_warning_count") or 0),
+            "missing_local_images": int(summary.get("polish_missing_local_images") or 0),
+        }
+    )
+    aliases = {
+        "raw_ref_links": "raw_ref_links",
+        "polish_ref_links": "ref_links",
+        "raw_fig_links": "raw_fig_links",
+        "polish_fig_links": "fig_links",
+        "raw_table_links": "raw_table_links",
+        "polish_table_links": "table_links",
+        "raw_page_links": "raw_page_links",
+        "polish_page_links": "page_links",
+    }
+    for summary_key, metric_key in aliases.items():
+        if summary_key in summary and metric_key not in metrics:
+            numeric = _numeric_value(summary.get(summary_key))
+            if numeric is not None:
+                metrics[metric_key] = numeric
+    for derived_key, (before_key, after_key) in DERIVED_METRIC_PAIRS.items():
+        if before_key in metrics or after_key in metrics:
+            metrics[derived_key] = metrics.get(after_key, 0) - metrics.get(before_key, 0)
+    return dict(sorted(metrics.items()))
+
+
+def _article_score(defects: list[dict[str, Any]], metrics: dict[str, int | float]) -> float:
     severity_counts = _severity_counts(defects)
     score = sum(SEVERITY_WEIGHT.get(severity, 0.5) * count for severity, count in severity_counts.items())
     score += len({str(defect.get("id") or "") for defect in defects if defect.get("id")}) * 0.25
@@ -99,17 +164,12 @@ def build_entry(
     audit_by_article = _audit_articles(audit)
     article_names = sorted(set(assessment_by_article) | set(audit_by_article))
     articles: dict[str, dict[str, Any]] = {}
-    totals = {
+    totals: dict[str, int | float] = {
         "score": 0.0,
         "defects": 0,
         "errors": 0,
         "warnings": 0,
         "infos": 0,
-        "broken_internal_links": 0,
-        "internal_page_anchor_links": 0,
-        "external_page_query_links": 0,
-        "table_units_with_section_ids": 0,
-        "missing_warning_count": 0,
     }
 
     for article_name in article_names:
@@ -117,7 +177,8 @@ def build_entry(
         audit_article = audit_by_article.get(article_name, {})
         defects = list(audit_article.get("defects_found") or [])
         severities = _severity_counts(defects)
-        metrics = _link_metrics(assessment_article, audit_article)
+        metrics = _article_metrics(assessment_article, audit_article)
+        labels = _article_labels(assessment_article, audit_article)
         defect_ids: dict[str, int] = {}
         for defect in defects:
             defect_id = str(defect.get("id") or "unknown")
@@ -132,6 +193,8 @@ def build_entry(
             "infos": severities.get("info", 0),
             "unique_defect_ids": len(defect_ids),
             "defect_ids": dict(sorted(defect_ids.items())),
+            "labels": labels,
+            "metrics": metrics,
             **metrics,
         }
         articles[article_name] = record
@@ -140,14 +203,8 @@ def build_entry(
         totals["errors"] += record["errors"]
         totals["warnings"] += record["warnings"]
         totals["infos"] += record["infos"]
-        for metric in (
-            "broken_internal_links",
-            "internal_page_anchor_links",
-            "external_page_query_links",
-            "table_units_with_section_ids",
-            "missing_warning_count",
-        ):
-            totals[metric] += record[metric]
+        for metric, value in metrics.items():
+            totals[metric] = round(float(totals.get(metric, 0)) + float(value), 2)
 
     ranking = sorted(articles.values(), key=lambda item: (-item["score"], item["article"]))
     return {
@@ -172,6 +229,32 @@ def _read_last_history_entry(history_path: Path) -> dict[str, Any] | None:
     return json.loads(last_line) if last_line else None
 
 
+def _record_metrics(record: dict[str, Any]) -> dict[str, int | float]:
+    metrics = record.get("metrics")
+    if isinstance(metrics, dict):
+        return {
+            str(key): value
+            for key, value in metrics.items()
+            if _numeric_value(value) is not None
+        }
+    excluded = {
+        "article",
+        "score",
+        "defects",
+        "errors",
+        "warnings",
+        "infos",
+        "unique_defect_ids",
+        "defect_ids",
+        "labels",
+    }
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in excluded and _numeric_value(value) is not None
+    }
+
+
 def compare_entries(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
     if previous is None:
         return {
@@ -187,21 +270,24 @@ def compare_entries(previous: dict[str, Any] | None, current: dict[str, Any]) ->
     for article in all_articles:
         old = previous_articles.get(article, {})
         new = current_articles.get(article, {})
+        old_metrics = _record_metrics(old)
+        new_metrics = _record_metrics(new)
+        metric_deltas = {
+            key: round(float(new_metrics.get(key, 0)) - float(old_metrics.get(key, 0)), 2)
+            for key in sorted(set(old_metrics) | set(new_metrics))
+        }
         delta = {
             "article": article,
             "score_delta": round(float(new.get("score", 0)) - float(old.get("score", 0)), 2),
             "defects_delta": int(new.get("defects", 0)) - int(old.get("defects", 0)),
             "errors_delta": int(new.get("errors", 0)) - int(old.get("errors", 0)),
             "warnings_delta": int(new.get("warnings", 0)) - int(old.get("warnings", 0)),
-            "broken_internal_links_delta": int(new.get("broken_internal_links", 0))
-            - int(old.get("broken_internal_links", 0)),
-            "internal_page_anchor_links_delta": int(new.get("internal_page_anchor_links", 0))
-            - int(old.get("internal_page_anchor_links", 0)),
-            "external_page_query_links_delta": int(new.get("external_page_query_links", 0))
-            - int(old.get("external_page_query_links", 0)),
+            "metrics_delta": metric_deltas,
             "old_score": old.get("score", 0),
             "new_score": new.get("score", 0),
         }
+        for key, value in metric_deltas.items():
+            delta[f"{key}_delta"] = value
         article_deltas.append(delta)
 
     totals_delta = {
