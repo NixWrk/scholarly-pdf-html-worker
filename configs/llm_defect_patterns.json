@@ -1,0 +1,52 @@
+{
+  "P04": {
+    "pattern": "reference-order-or-identity",
+    "criticality": "high",
+    "fix_layer": "reference list normalization and identity checks"
+  },
+  "P05": {
+    "pattern": "mixed-or-wrong-citation-style",
+    "criticality": "high",
+    "fix_layer": "citation profile driven linkification"
+  },
+  "P36": {
+    "pattern": "citation-link-target-or-format-drift",
+    "criticality": "high",
+    "fix_layer": "reference link repair"
+  },
+  "P59": {
+    "pattern": "false-reference-link-from-numeric-prose",
+    "criticality": "high",
+    "fix_layer": "citation/non-citation disambiguation"
+  },
+  "P67": {
+    "pattern": "text-structure-or-ocr-residue",
+    "criticality": "medium",
+    "fix_layer": "EN polish text cleanup"
+  },
+  "P71": {
+    "pattern": "layout-or-block-structure-residue",
+    "criticality": "medium",
+    "fix_layer": "block segmentation cleanup"
+  },
+  "P77": {
+    "pattern": "table-link-or-table-boundary",
+    "criticality": "high",
+    "fix_layer": "table caption and table boundary recovery"
+  },
+  "P78": {
+    "pattern": "url-or-reference-text-breakage",
+    "criticality": "medium",
+    "fix_layer": "URL/reference text normalization"
+  },
+  "P83": {
+    "pattern": "front-matter-or-page-furniture-residue",
+    "criticality": "medium",
+    "fix_layer": "front matter and running header cleanup"
+  },
+  "P90": {
+    "pattern": "manual-blind-spot",
+    "criticality": "medium",
+    "fix_layer": "targeted regression fixture from manual review"
+  }
+}
