@@ -35,10 +35,8 @@ DEFAULT_DEFECT_PATTERNS = ROOT / "configs" / "llm_defect_patterns.json"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
-SUP_REF_RE = re.compile(
-    r"<sup\b[^>]*>[\s\S]{0,500}?href\s*=\s*[\"']#ref-\d+[\"'][\s\S]{0,500}?</sup>",
-    re.IGNORECASE,
-)
+SUP_BLOCK_RE = re.compile(r"<sup\b[^>]*>[\s\S]{0,500}?</sup>", re.IGNORECASE)
+REF_HREF_RE = re.compile(r"\bhref\s*=\s*[\"']#ref-\d+[\"']", re.IGNORECASE)
 REF_ANCHOR_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*[\"']#ref-\d+[\"'][^>]*>(?P<body>[\s\S]{0,120}?)</a>",
     re.IGNORECASE,
@@ -105,7 +103,7 @@ def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict
             href_counts["broken_internal_links"] = href_counts.get("broken_internal_links", 0) + 1
             broken_targets.append(href[1:])
 
-    sup_ref_links = len(SUP_REF_RE.findall(html))
+    sup_ref_links = sum(1 for sup_match in SUP_BLOCK_RE.finditer(html) if REF_HREF_RE.search(sup_match.group(0)))
     bracket_ref_links = sum(
         1
         for ref_match in REF_ANCHOR_RE.finditer(html)

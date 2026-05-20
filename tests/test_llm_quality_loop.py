@@ -164,3 +164,22 @@ def test_assessment_warning_count_ignores_css_selector_without_body_warning() ->
     assessment = assess_polish_html("article_a", html, {"status": "ok", "style": "unknown", "confidence": "low"})
 
     assert assessment["missing_warning_count"] == 0
+
+
+def test_assessment_does_not_count_bracket_link_after_unit_sup_as_mixed_style() -> None:
+    html = (
+        "<html><body>"
+        '<p>Volume was 20 cm <sup>3</sup> [<a href="#ref-6" class="z2m-ref-link">6</a>].</p>'
+        '<ol><li id="ref-6">Reference.</li></ol>'
+        "</body></html>"
+    )
+
+    assessment = assess_polish_html(
+        "article_a",
+        html,
+        {"status": "ok", "style": "bracket_numeric", "confidence": "medium"},
+    )
+
+    assert assessment["sup_ref_links"] == 0
+    assert assessment["href_counts"]["ref_links"] == 1
+    assert assessment["mixed_citation_style"] is False
