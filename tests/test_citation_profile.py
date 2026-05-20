@@ -452,6 +452,58 @@ def test_superscript_numeric_profile_links_comma_before_range_citation() -> None
     ) in polished
 
 
+def test_superscript_numeric_profile_retargets_space_separated_ref_run_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>Reference tests were reported <a href="#ref-9" class="z2m-ref-link">'
+        "22-25 28 29 34 35 37-39 41 44 47 50 51 55-57"
+        "</a>. Criterion validity was "
+        '<a href="#ref-32" class="z2m-ref-link">44 51 55 56</a>.</p>'
+        f"{_refs(60)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert 'href="#ref-9" class="z2m-ref-link">22-25' not in polished
+    assert (
+        '<sup><a href="#ref-22" class="z2m-ref-link">22</a>-'
+        '<a href="#ref-25" class="z2m-ref-link">25</a> '
+        '<a href="#ref-28" class="z2m-ref-link">28</a>'
+    ) in polished
+    assert (
+        'Criterion validity was <sup><a href="#ref-44" class="z2m-ref-link">44</a> '
+        '<a href="#ref-51" class="z2m-ref-link">51</a> '
+        '<a href="#ref-55" class="z2m-ref-link">55</a> '
+        '<a href="#ref-56" class="z2m-ref-link">56</a></sup>.'
+    ) in polished
+
+
+def test_superscript_numeric_profile_moves_closing_paren_out_of_ref_link() -> None:
+    html = (
+        "<html><body>"
+        '<p>The value was r=0.29 <a href="#ref-56" class="z2m-ref-link">56)</a> '
+        'and specificity was 92% <a href="#ref-51" class="z2m-ref-link">51)</a>.</p>'
+        f"{_refs(60)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert 'r=0.29 <sup><a href="#ref-56" class="z2m-ref-link">56</a></sup>)' in polished
+    assert '92% <sup><a href="#ref-51" class="z2m-ref-link">51</a></sup>)' in polished
+    assert '>56)</a>' not in polished
+    assert '>51)</a>' not in polished
+
+
 def test_superscript_numeric_profile_does_not_link_comma_measurement_series() -> None:
     html = (
         "<html><body>"

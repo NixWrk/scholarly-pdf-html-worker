@@ -2393,7 +2393,10 @@ def test_polish_html_document_wraps_superscript_profile_page_ref_links() -> None
     )
 
     assert 'postvoiding.<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>' in polished
-    assert '<sup><a href="#ref-2" class="z2m-ref-link">2-4</a></sup>' in polished
+    assert (
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a>-'
+        '<a href="#ref-4" class="z2m-ref-link">4</a></sup>'
+    ) in polished
 
 
 def test_polish_html_document_links_bracket_refs_after_numbered_references_heading() -> None:
@@ -3320,6 +3323,29 @@ def test_polish_html_document_repairs_decimal_digit_absorbed_into_ref_link() -> 
     assert 'r=0.21<a href="#ref-39" class="z2m-ref-link">39</a>' in body
 
 
+def test_polish_html_document_repairs_sup_wrapped_decimal_absorbed_ref_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>Correlations were r=0.2 <sup><a href="#ref-56" class="z2m-ref-link">255</a></sup> '
+        'and r=0.2 <sup><a href="#ref-32" class="z2m-ref-link">139</a></sup>.</p>'
+        "<h4>References</h4>"
+        "<ul>" + "".join(f"<li>Ref {i}.</li>" for i in range(1, 60)) + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+    body = polished[: polished.index("References")]
+
+    assert 'r=0.22<sup><a href="#ref-55" class="z2m-ref-link">55</a></sup>' in body
+    assert 'r=0.21<sup><a href="#ref-39" class="z2m-ref-link">39</a></sup>' in body
+    assert 'href="#ref-56" class="z2m-ref-link">255</a>' not in body
+    assert 'href="#ref-32" class="z2m-ref-link">139</a>' not in body
+
+
 def test_polish_html_document_repairs_unit_letter_absorbed_into_ref_link() -> None:
     html = (
         "<html><body>"
@@ -3337,6 +3363,53 @@ def test_polish_html_document_repairs_unit_letter_absorbed_into_ref_link() -> No
     assert 'mL/s<a href="#ref-28" class="z2m-ref-link">28</a>)' in body
     assert "%28" not in body
     assert "s28" not in body
+
+
+def test_polish_html_document_does_not_treat_datasheet_feature_lists_as_references() -> None:
+    html = (
+        "<html><body>"
+        "<p><b>Tables 2,1:</b> Uroflow specific quantitative parameters of the curve.</p>"
+        "<h2>REFERENCES</h2>"
+        "<p>Abdelmagid, M. E. and Gajewski, J. B. 1998. Critical Review of the Uroflowmetry.</p>"
+        "<p>Abrams, P. (2003). Urodynamics Second Edition. Springer Publishing.</p>"
+        "<h4>TS912N Data Sheet</h4>"
+        "<h4>Features</h4>"
+        "<ul><li>Rail-to-rail input and output voltage ranges</li>"
+        "<li>Single supply operation from 2.7 to 16 V</li></ul>"
+        "<h4>PIC16F887 Data Sheet</h4>"
+        "<h4>High-Performance RISC CPU:</h4>"
+        "<ul><li>Only 35 instructions to learn:</li>"
+        "<li>All single-cycle instructions except branches</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="ref-1"' not in polished
+    assert 'id="ref-2"' not in polished
+    assert 'href="#ref-' not in polished
+    assert "<b>Tables 2,1:</b>" in polished
+
+
+def test_polish_html_document_keeps_references_after_earlier_appendix_heading() -> None:
+    html = (
+        "<html><body>"
+        "<h2>Appendix A</h2>"
+        "<p>Supplementary setup details.</p>"
+        "<p>The method was validated [1].</p>"
+        "<h2>References</h2>"
+        "<ul><li>Smith J. A useful validation study. Journal. 2020.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+
+    assert 'id="ref-1"' in polished
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in polished
 
 
 def test_polish_html_document_recovers_bare_citations_as_sup() -> None:

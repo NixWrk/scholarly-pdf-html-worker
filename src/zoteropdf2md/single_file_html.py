@@ -4849,6 +4849,30 @@ def _looks_reference_front_matter_list_item(body: str) -> bool:
     return False
 
 
+_HTML_HEADING_BLOCK_PATTERN = re.compile(
+    r"<h[1-6]\b[^>]*>[\s\S]{0,500}?</h[1-6]>",
+    re.IGNORECASE,
+)
+_POST_REFERENCES_NON_BIBLIOGRAPHY_HEADING_TEXT_PATTERN = re.compile(
+    r"^(?:appendix|appendices)\b|"
+    r"\b(?:data\s+sheet|datasheet|program\s+codes?|related\s+products|features|description)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_post_references_non_bibliography_heading(html: str, end: int) -> bool:
+    for heading_match in _HTML_HEADING_BLOCK_PATTERN.finditer(html[:end]):
+        heading = heading_match.group(0)
+        if _references_heading_match(heading):
+            continue
+        heading_text = _visible_text(heading).strip()
+        if not heading_text:
+            continue
+        if _POST_REFERENCES_NON_BIBLIOGRAPHY_HEADING_TEXT_PATTERN.search(heading_text) is not None:
+            return True
+    return False
+
+
 def _find_matching_html_tag(html: str, open_start: int, tag_name: str) -> tuple[int, int] | None:
     pattern = _UL_TAG_PATTERN if tag_name.lower() == "ul" else _LI_TAG_PATTERN
     depth = 0
@@ -5133,6 +5157,8 @@ def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
             started_references = True
             return match.group(0)
 
+        if not started_references and _has_post_references_non_bibliography_heading(html, match.start()):
+            return match.group(0)
         if not started_references and _looks_reference_front_matter_list_item(body):
             return match.group(0)
 
@@ -5894,6 +5920,7 @@ def _wrap_pdf_annotation_ref_runs_as_superscripts(
 def _wrap_plain_ref_links_as_superscript_citations(html: str) -> str:
     if "#ref-" not in html:
         return html
+    ref_numbers = {int(match.group(1)) for match in _LI_ID_PATTERN.finditer(html)}
 
     def is_inside_sup(raw: str, position: int) -> bool:
         left = raw[:position].lower()
@@ -5912,6 +5939,38 @@ def _wrap_plain_ref_links_as_superscript_citations(html: str) -> str:
         label = re.sub(r"\s*([,;\-\u2010\u2011\u2012\u2013\u2014])\s*", r"\1", visible)
         return leading_dot, label
 
+    def linked_numeric_run(body: str) -> tuple[str, str] | None:
+        if not ref_numbers:
+            return None
+        visible = _visible_text(body).strip()
+        trail_match = re.search(r"(?P<trail>[\)\]]+)\s*$", visible)
+        trail = ""
+        if trail_match is not None:
+            trail = trail_match.group("trail")
+            visible = visible[: trail_match.start()].rstrip()
+        if not visible:
+            return None
+        if any(value.startswith("0") for value in re.findall(r"\d{2,3}", visible)):
+            return None
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", visible)]
+        if not numbers or any(number not in ref_numbers or 1800 <= number <= 2099 for number in numbers):
+            return None
+        if re.fullmatch(
+            r"\d{1,3}(?:\s*(?:[,;]|\-|\u2010|\u2011|\u2012|\u2013|\u2014|\s)\s*\d{1,3}){0,24}",
+            visible,
+        ) is None:
+            return None
+
+        def link_number(num_match: re.Match[str]) -> str:
+            number_text = num_match.group(0)
+            number = int(number_text)
+            return f'<a href="#ref-{number}" class="z2m-ref-link">{number_text}</a>'
+
+        body_without_trail = body
+        if trail:
+            body_without_trail = re.sub(r"[\)\]\s]+$", "", body, count=1)
+        return re.sub(r"\d{1,3}", link_number, body_without_trail), trail
+
     def replace_node(match: re.Match[str]) -> str:
         raw = match.group(0)
         if _node_protects_citations(raw):
@@ -5922,13 +5981,23 @@ def _wrap_plain_ref_links_as_superscript_citations(html: str) -> str:
             out.append(raw[cursor:anchor_match.start()])
             replacement = anchor_match.group(0)
             if not is_inside_sup(raw, anchor_match.start()):
-                label = numeric_label(anchor_match.group("body"))
-                if label is not None:
-                    leading_dot, text = label
-                    replacement = f'<a{anchor_match.group("attrs")}>{text}</a>'
-                    replacement = f"<sup>{replacement}</sup>"
-                    if leading_dot:
-                        replacement = f".{replacement}"
+                linked_run = linked_numeric_run(anchor_match.group("body"))
+                if linked_run is not None:
+                    linked, trail = linked_run
+                    replacement = f"<sup>{linked}</sup>{trail}"
+                else:
+                    label = numeric_label(anchor_match.group("body"))
+                    if label is not None:
+                        leading_dot, text = label
+                        replacement = f'<a{anchor_match.group("attrs")}>{text}</a>'
+                        replacement = f"<sup>{replacement}</sup>"
+                        if leading_dot:
+                            replacement = f".{replacement}"
+            elif ref_numbers:
+                linked_run = linked_numeric_run(anchor_match.group("body"))
+                if linked_run is not None:
+                    linked, trail = linked_run
+                    replacement = f"{linked}{trail}"
             out.append(replacement)
             cursor = anchor_match.end()
         out.append(raw[cursor:])
@@ -8243,7 +8312,13 @@ def _repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
     if not ref_numbers:
         return html
 
-    def _valid_cite(cite_text: str, target_text: str, *, allow_near_target: bool = False) -> int | None:
+    def _valid_cite(
+        cite_text: str,
+        target_text: str,
+        *,
+        allow_near_target: bool = False,
+        allow_wrong_target: bool = False,
+    ) -> int | None:
         if not cite_text or cite_text.startswith("0"):
             return None
         try:
@@ -8253,14 +8328,16 @@ def _repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
             return None
         if cite not in ref_numbers or 1800 <= cite <= 2099:
             return None
-        if target == cite or (allow_near_target and abs(target - cite) <= 1):
+        if target == cite or (allow_near_target and abs(target - cite) <= 1) or allow_wrong_target:
             return cite
         return None
 
     decimal_pattern = re.compile(
         r"(?P<prefix>(?<![\w.])[-\u2212]?\d+\.\d+)\s+"
+        r"(?P<sup_open><sup\b[^>]*>\s*)?"
         r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"][^>]*)>"
-        r"\s*(?P<lead>\d)(?P<cite>\d{2,3})(?P<trail>[\)\]\.,;:]*)\s*</a>",
+        r"\s*(?P<lead>\d)(?P<cite>\d{2,3})(?P<trail>[\)\]\.,;:]*)\s*</a>"
+        r"(?P<sup_close>\s*</sup>)?",
         re.IGNORECASE | re.DOTALL,
     )
     percent_pattern = re.compile(
@@ -8281,12 +8358,30 @@ def _repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
         return f"<a{fixed_attrs}>{label}</a>"
 
     def _replace_decimal(match: re.Match[str]) -> str:
+        full_text = f"{match.group('lead')}{match.group('cite')}"
+        try:
+            full_number = int(full_text)
+            target_number = int(match.group("target"))
+        except ValueError:
+            full_number = -1
+            target_number = -1
+        if full_number in ref_numbers and abs(target_number - full_number) <= 1:
+            return match.group(0)
         cite = _valid_cite(match.group("cite"), match.group("target"), allow_near_target=True)
         if cite is None:
+            cite = _valid_cite(
+                match.group("cite"),
+                match.group("target"),
+                allow_wrong_target=full_number not in ref_numbers,
+            )
+        if cite is None:
             return match.group(0)
+        anchor = _anchor(match.group("attrs"), cite, str(cite))
+        if match.group("sup_open") and match.group("sup_close"):
+            anchor = f"{match.group('sup_open')}{anchor}{match.group('sup_close')}"
         return (
             f"{match.group('prefix')}{match.group('lead')}"
-            f"{_anchor(match.group('attrs'), cite, str(cite))}{match.group('trail')}"
+            f"{anchor}{match.group('trail')}"
         )
 
     def _replace_percent(match: re.Match[str]) -> str:
