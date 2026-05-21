@@ -8,8 +8,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl build-essential nodejs \
+    && apt-get install -y --no-install-recommends git curl build-essential nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# The Zotero/pdf.js overlay probe may be run against a bind-mounted Windows
+# zotero-pdfjs checkout. Its node_modules contains Windows native packages, so
+# keep the Linux canvas binding inside the image and point @napi-rs/canvas at it.
+RUN --mount=type=cache,target=/root/.npm \
+    mkdir -p /opt/z2m-node \
+    && cd /opt/z2m-node \
+    && npm init -y \
+    && npm install --omit=dev @napi-rs/canvas-linux-x64-gnu@0.1.100
+
+ENV NAPI_RS_NATIVE_LIBRARY_PATH=/opt/z2m-node/node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node
 
 COPY pyproject.toml README.md ./
 
