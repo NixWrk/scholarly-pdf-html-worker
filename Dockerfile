@@ -34,6 +34,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "pymupdf>=1.24" \
         "pypdf>=4"
 
+# Marker downloads this font lazily at runtime if it is missing. Runtime
+# containers must stay offline-safe, so warm the exact cache path in the image.
+RUN --mount=type=cache,target=/root/.cache/marker \
+    python -c "from marker.util import download_font; download_font()"
+
 COPY src ./src
 COPY tools ./tools
 COPY experiments/lmstudio_instruct_translation ./experiments/lmstudio_instruct_translation
