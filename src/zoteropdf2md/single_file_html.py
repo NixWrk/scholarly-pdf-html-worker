@@ -1346,6 +1346,83 @@ _DETACHED_MOJIBAKE_CEDILLA_INITIAL_PATTERN = re.compile(r"\bC\u0412\u0451\s*\.\s
 _DETACHED_MOJIBAKE_DIAERESIS_SPACE_PATTERN = re.compile(r"\s+\u0412\u0401\s+(?=intraocular\b)")
 _DETACHED_MOJIBAKE_DIAERESIS_POWERED_PATTERN = re.compile(r"\s+\u0412\u0401\s+(?=powered\b)")
 _DETACHED_MOJIBAKE_SYD_DIAERESIS_PATTERN = re.compile(r"\bSyd\s+\u0412\u0401\s+anheimo\b")
+_PUBLISHED_DOWNLOADED_PAGE_FURNITURE_PATTERN = re.compile(
+    r"\bPublished\s+on\s+\d{1,2}\s+[A-Z][a-z]+\s+\d{4}\.\s+Downloaded\s+by\s+"
+    r".{3,180}?\s+on\s+\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\s*",
+    re.IGNORECASE,
+)
+_PAGE_FURNITURE_TEXT_REPAIRS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (_PUBLISHED_DOWNLOADED_PAGE_FURNITURE_PATTERN, " "),
+    (
+        re.compile(
+            r"\bPublished\s+on\s+20\s+July\s+2015\.\s+Downloaded\s+by\s+"
+            r"California\s+State\s+University\s+at\s+Fresno\s+on\s+"
+            r"\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\s*",
+            re.IGNORECASE,
+        ),
+        " ",
+    ),
+    (
+        re.compile(
+            r"\bManuscript\s+received\s+on\s+April\s+17,\s+2021\.\s+"
+            r"Revised\s+Manuscript\s+received\s+on\s+April\s+15,\s+2021\.\s+"
+            r"Manuscript\s+published\s+on\s+April\s+30,\s+2021\.?"
+            r"(?:\s*\*\s*Correspondence\s+Author)?\s*",
+            re.IGNORECASE,
+        ),
+        " ",
+    ),
+    (re.compile(r"\bAlrabadi\s+et\s+al\.\s+\d+\s+(?=each\b)", re.IGNORECASE), ""),
+    (re.compile(r"\bChemComm\s+Accepted\s+Manuscript\s+", re.IGNORECASE), ""),
+    (re.compile(r"\s*\bFRANCO\s+ET\s+AL\.\s*\|\s*\d{3,5}\b\s*", re.IGNORECASE), " "),
+    (re.compile(r"\b\d{2,3}\s+Y\.\s+Volpe\s+et\s+al\.\s+", re.IGNORECASE), ""),
+)
+_PAGE_FURNITURE_HTML_NODE_PATTERN = re.compile(
+    r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</(?P=tag)>",
+    re.IGNORECASE,
+)
+_PAGE_FURNITURE_VISIBLE_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    _PUBLISHED_DOWNLOADED_PAGE_FURNITURE_PATTERN,
+    re.compile(
+        r"Published\s+By:\s+Blue\s+Eyes\s+Intelligence\s+Engineering\s+&\s+"
+        r"Sciences\s+Publication\s+©\s+Copyright:\s+All\s+rights\s+reserved\.",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"Retrieval\s+Number:100\.1/ijmh\.E1208015521\s+doi:"
+        r"10\.35940/ijmh\.E1208\.045821\s+Journal\s+Website\s*:?\s*www\.ijmh\.org",
+        re.IGNORECASE,
+    ),
+    re.compile(r"Alrabadi\s+et\s+al\.\s+\d+", re.IGNORECASE),
+    re.compile(r"Accepted\s+Manuscript", re.IGNORECASE),
+    re.compile(r"ChemComm\s+Accepted\s+Manuscrip(?:t)?", re.IGNORECASE),
+    re.compile(r"FRANCO\s+ET\s+AL\.\s*\|\s*\d{3,5}", re.IGNORECASE),
+    re.compile(r"\d{2,3}\s+Y\.\s+Volpe\s+et\s+al\.", re.IGNORECASE),
+)
+_CHEMCOMM_ACCEPTED_MANUSCRIPT_HEADER_PATTERN = re.compile(
+    r"\s*<h1\b[^>]*>\s*ChemComm\s*</h1>\s*"
+    r"<p\b[^>]*>\s*Accepted\s+Manuscript\s*</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+_ALRABADI_INLINE_PAGE_FURNITURE_PATTERN = re.compile(
+    r"\s*<i\b[^>]*>\s*Alrabadi\s+et\s+al\.\s*</i>\s*\d+\s+(?=each\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+_FRANCO_INLINE_PAGE_FURNITURE_PATTERN = re.compile(
+    r"(?:<span\b[^>]*\bid\s*=\s*([\"'])page-[^\"']+\1[^>]*>\s*</span>\s*)?"
+    r"FRANCO\s+ET\s+AL\.\s*"
+    r"<sup\b[^>]*>\s*\|\s*</sup>\s*<sup\b[^>]*>\s*\d{3,5}\s*</sup>\s*"
+    r"(?=(?:USA\)|persistence\b))",
+    re.IGNORECASE | re.DOTALL,
+)
+_FRANCO_SPLIT_SENTENCE_PATTERN = re.compile(
+    r"(Microsoft\s+Redmond\s+Washington,\s*)</p>\s*<p\b[^>]*>\s*(USA\))",
+    re.IGNORECASE | re.DOTALL,
+)
+_EMPTY_BLOCKQUOTE_PATTERN = re.compile(
+    r"<blockquote\b[^>]*>\s*</blockquote>",
+    re.IGNORECASE | re.DOTALL,
+)
 _LATIN_MOJIBAKE_ACCENT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("\u0412\u0401", "\u00a8"),
     ("\u0412\u0451", "\u00b8"),
@@ -4388,7 +4465,27 @@ def _repair_known_word_glue(html: str) -> str:
     return "".join(out)
 
 
+def _repair_page_furniture_html_artifacts(html: str) -> str:
+    html = _CHEMCOMM_ACCEPTED_MANUSCRIPT_HEADER_PATTERN.sub(" ", html)
+    html = _ALRABADI_INLINE_PAGE_FURNITURE_PATTERN.sub(" ", html)
+    html = _FRANCO_INLINE_PAGE_FURNITURE_PATTERN.sub("", html)
+
+    def _replace_node(match: re.Match[str]) -> str:
+        visible = html_lib.unescape(_visible_text(match.group("body")))
+        if not visible:
+            return match.group(0)
+        for pattern in _PAGE_FURNITURE_VISIBLE_BLOCK_PATTERNS:
+            if pattern.fullmatch(visible):
+                return ""
+        return match.group(0)
+
+    repaired = _PAGE_FURNITURE_HTML_NODE_PATTERN.sub(_replace_node, html)
+    repaired = _FRANCO_SPLIT_SENTENCE_PATTERN.sub(r"\1\2", repaired)
+    return _EMPTY_BLOCKQUOTE_PATTERN.sub("", repaired)
+
+
 def _repair_safe_text_artifacts(html: str) -> str:
+    html = _repair_page_furniture_html_artifacts(html)
     parts = _TAG_SPLIT_PATTERN.split(html)
     out: list[str] = []
     skip_stack: list[str] = []
@@ -4407,6 +4504,8 @@ def _repair_safe_text_artifacts(html: str) -> str:
         repaired = _DETACHED_MOJIBAKE_SYD_DIAERESIS_PATTERN.sub("Syd\u00e4nheimo", repaired)
         repaired = _repair_latin_detached_accent_artifacts_text(repaired)
         repaired = _CHECK_FOR_UPDATES_PATTERN.sub(" ", repaired)
+        for pattern, replacement in _PAGE_FURNITURE_TEXT_REPAIRS:
+            repaired = pattern.sub(replacement, repaired)
         return re.sub(r"(?<=\S) {2,}(?=\S)", " ", repaired)
 
     for part in parts:
@@ -4421,7 +4520,8 @@ def _repair_safe_text_artifacts(html: str) -> str:
             continue
         out.append(_repair_text(part))
 
-    return _repair_latin_detached_accent_artifacts_html("".join(out))
+    repaired_html = _repair_latin_detached_accent_artifacts_html("".join(out))
+    return _repair_page_furniture_html_artifacts(repaired_html)
 
 
 _PDF_LINE_NUMBER_TOKEN_PATTERN = re.compile(

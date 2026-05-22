@@ -1140,6 +1140,69 @@ def test_polish_html_document_drops_page_footer_paragraphs() -> None:
     assert "Real article text continues here." in polished
 
 
+def test_polish_html_document_removes_page_furniture_inside_text_nodes() -> None:
+    html = (
+        "<html><body>"
+        "<p>References ended. Published on 20 July 2015. Downloaded by California State "
+        "University at Fresno on 25/07/2015 20:19:39 Entry for the Table of Contents.</p>"
+        "<p>Published on 03 August 2015. Downloaded by Emory University on "
+        "04/08/2015 04:19:33</p>"
+        "<p>The acknowledgments stay readable.</p>"
+        "<p>Map study context Manuscript received on April 17, 2021. Revised Manuscript "
+        "received on April 15, 2021. Manuscript published on April 30, 2021. "
+        "* Correspondence Author participants completed the task.</p>"
+        "<p>Groups were compared for Alrabadi et al. 3 each position using a test.</p>"
+        "<p>Groups were compared for <i> Alrabadi et al. </i> 3 each position again.</p>"
+        "<p><i> Alrabadi et al. </i> 5</p>"
+        "<p>ChemComm Accepted Manuscript This article can be cited before page numbers.</p>"
+        "<h1>ChemComm </h1><p block-type=\"Text\">Accepted Manuscript </p>"
+        "<p>This article can be cited before page numbers have been issued.</p>"
+        "<p block-type=\"Text\">ChemComm Accepted Manuscrip </p>"
+        "<p>photostability remains the real sentence.</p>"
+        "<p>Microsoft Redmond Washington, FRANCO ET AL. | 1915 USA and XLSTAT.</p>"
+        "<p>Data analysis was run on excel (Microsoft Redmond Washington, </p>"
+        "<p block-type=\"Text\"> FRANCO ET AL. <sup> | </sup> <sup> 1915 </sup> </p>"
+        "<p block-type=\"Text\"> USA) and XLSTAT.</p>"
+        "<p><span id=\"page-10-0\"> </span> FRANCO ET AL. <sup> | </sup> "
+        "<sup> 1923 </sup> persistence of the pattern can continue.</p>"
+        "<p>Figure caption text 106 Y. Volpe et al. Tactile assessment continued.</p>"
+        "<h4>106 <i>Y. Volpe et al.</i></h4><p>Tactile assessment starts cleanly.</p>"
+        "<blockquote><p block-type=\"Text\"><i>Published By: Blue Eyes Intelligence Engineering "
+        "&amp; Sciences Publication © Copyright: All rights reserved.</i></p></blockquote>"
+        "<p block-type=\"Text\"><i>Retrieval Number:100.1/ijmh.E1208015521 "
+        "doi:10.35940/ijmh.E1208.045821 Journal Website : www.ijmh.org</i></p>"
+        '<code>ChemComm Accepted Manuscript FRANCO ET AL. | 1915</code>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Downloaded by California State University" not in polished
+    assert "Downloaded by Emory University" not in polished
+    assert "Entry for the Table of Contents" in polished
+    assert "The acknowledgments stay readable" in polished
+    assert "Manuscript received on April 17, 2021" not in polished
+    assert "Map study context participants completed the task" in polished
+    assert "for each position using a test" in polished
+    assert "for each position again" in polished
+    assert "Alrabadi et al. </i> 5" not in polished
+    assert "ChemComm Accepted Manuscript This article" not in polished
+    assert "<h1>ChemComm" not in polished
+    assert "This article can be cited before page numbers" in polished
+    assert "ChemComm Accepted Manuscrip </p>" not in polished
+    assert "photostability remains the real sentence" in polished
+    assert "Washington, USA and XLSTAT" in polished
+    assert "Microsoft Redmond Washington, USA) and XLSTAT" in polished
+    assert "persistence of the pattern can continue" in polished
+    assert "Figure caption text Tactile assessment continued" in polished
+    assert "Tactile assessment starts cleanly" in polished
+    assert "Blue Eyes Intelligence Engineering" not in polished
+    assert "Retrieval Number:100.1/ijmh.E1208015521" not in polished
+    assert "Y. Volpe et al." not in polished
+    assert "FRANCO ET AL. <sup>" not in polished
+    assert "<code>ChemComm Accepted Manuscript FRANCO ET AL. | 1915</code>" in polished
+
+
 def test_polish_html_document_drops_repeated_running_headers_and_repairs_text() -> None:
     html = (
         "<html><body>"
