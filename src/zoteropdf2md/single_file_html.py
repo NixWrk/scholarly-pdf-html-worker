@@ -1133,6 +1133,51 @@ _DETACHED_MOJIBAKE_CEDILLA_INITIAL_PATTERN = re.compile(r"\bC\u0412\u0451\s*\.\s
 _DETACHED_MOJIBAKE_DIAERESIS_SPACE_PATTERN = re.compile(r"\s+\u0412\u0401\s+(?=intraocular\b)")
 _DETACHED_MOJIBAKE_DIAERESIS_POWERED_PATTERN = re.compile(r"\s+\u0412\u0401\s+(?=powered\b)")
 _DETACHED_MOJIBAKE_SYD_DIAERESIS_PATTERN = re.compile(r"\bSyd\s+\u0412\u0401\s+anheimo\b")
+_LATIN_MOJIBAKE_ACCENT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("\u0412\u0401", "\u00a8"),
+    ("\u0412\u0451", "\u00b8"),
+    ("\u0412\u0491", "\u00b4"),
+    ("\u041b\u2122", "\u02d9"),
+    ("\u041b\u045a", "\u02dc"),
+    ("\u041b\u2020", "\u02c6"),
+    ("\u041b\u2021", "\u02c7"),
+    ("\u0415\u0455", "\u017e"),
+    ("\u0415\u040e", "\u0161"),
+    ("\u0415\u00a0", "\u0160"),
+)
+_LATIN_DETACHED_ACCENT_REPAIRS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bfac[\u00b8]\s*ade\b", re.IGNORECASE), "fa\u00e7ade"),
+    (re.compile(r"\bfa[\u00b8]\s*cades\b", re.IGNORECASE), "fa\u00e7ades"),
+    (re.compile(r"\bfa[\u00b8]\s*cade\b", re.IGNORECASE), "fa\u00e7ade"),
+    (re.compile(r"\bO[\u00b4]\s*Donnell\b"), "O'Donnell"),
+    (re.compile(r"\bconsumer[\u00b4]\s*s\b", re.IGNORECASE), "consumer's"),
+    (re.compile(r"\bwould\s+[\u00b4]\s+be\b", re.IGNORECASE), "would be"),
+    (re.compile(r"\bPakenait\s+[\u02d9]\s*e[\u02d9]?\b"), "Pakenait\u0117"),
+    (re.compile(r"\bBRICENO\s*[\u02dc~]"), "BRICE\u00d1O"),
+    (re.compile(r"\bHOLLERER\s*[\u02dc~]\s*,"), "HOLLERER,"),
+    (re.compile(r"\bHOLLERER\s+[\u00a8]\s*,"), "HOLLERER,"),
+    (re.compile(r"\bSusstrunk\s+[\u00a8]"), "S\u00fcsstrunk"),
+    (re.compile(r"\bBezi[\u00b4]\s*er\b", re.IGNORECASE), "B\u00e9zier"),
+    (re.compile(r"\bBros-\s*[\u00b4]\s*tow\b"), "Brostow"),
+    (re.compile(r"\bWabi\s+[\u00b4]\s*nski\b"), "Wabi\u0144ski"),
+    (re.compile(r"\bMo[\u00b4]\s*scicka\b"), "Mo\u015bcicka"),
+    (re.compile(r"\bmoir[\u00b4]\s*e\b", re.IGNORECASE), "moir\u00e9"),
+    (re.compile(r"\bmany\s+[\u00a8]\s+insightful\b", re.IGNORECASE), "many insightful"),
+    (re.compile(r"\bMicrosoft\s+[\u00b4]\s+coco\b", re.IGNORECASE), "Microsoft COCO"),
+    (re.compile(r"\bPeter\s+M\s+[\u02d9]\s+Hall\b"), "Peter M. Hall"),
+    (re.compile(r"\bOA(?:\u041b\u2020|\u02c6)\s+(?:\u041b\u2021|\u02c7)SModhrain\b"), "O'Modhrain"),
+    (re.compile(r"\b([A-Z]{3,})\s+[\u00b4]\s*,"), r"\1,"),
+    (re.compile(r"\b([A-Z][a-z]{2,})\s+[\u00b4]\s+([A-Z][a-z]{2,})\b"), r"\1 \2"),
+    (re.compile(r"\b([A-Z][a-z]{2,})\s+[\u00a8]\s+([A-Z][a-z]{2,})\b"), r"\1 \2"),
+    (re.compile(r"\b([a-z]{3,})\s+[\u00b4]\s+(for|to|be|and|of|in|with|the)\b", re.IGNORECASE), r"\1 \2"),
+    (re.compile(r"\bRadim\s+[\u02c7]\s+S[\u02c7]\s*ara\b"), "Radim \u0160\u00e1ra"),
+    (re.compile(r"\bBAijhler,\s+[\u02dc]\s+and\b"), "B\u00fchler, and"),
+)
+_PAKENAIT_ORCID_DOT_SUFFIX_PATTERN = re.compile(
+    r"(?P<open><a\b(?=[^>]*\bhref\s*=\s*['\"]https?://orcid\.org/)[^>]*>\s*Karolina\s+Pakenait)"
+    r"\s*(?P<close></a>)\s*(?:\u041b\u2122|\u02d9)\s*e(?:\u041b\u2122|\u02d9)?",
+    re.IGNORECASE,
+)
 _CHECK_FOR_UPDATES_PATTERN = re.compile(r"\s*\bCheck\s+for\s+updates\b\s*", re.IGNORECASE)
 _MG_KG_H_NEG_PATTERN = re.compile(r"\bmg\s+kg\s+h\s*[-\u2212]\s*1\b", re.IGNORECASE)
 _MG_KG_H_NEG_HTML_PATTERN = re.compile(
@@ -3991,6 +4036,57 @@ def _repair_english_ocr_text_artifacts(html: str) -> str:
     return "".join(out)
 
 
+def _with_diaeresis(match: re.Match[str]) -> str:
+    vowel = match.group("vowel")
+    replacements = {
+        "a": "\u00e4",
+        "e": "\u00eb",
+        "i": "\u00ef",
+        "o": "\u00f6",
+        "u": "\u00fc",
+        "y": "\u00ff",
+        "A": "\u00c4",
+        "E": "\u00cb",
+        "I": "\u00cf",
+        "O": "\u00d6",
+        "U": "\u00dc",
+        "Y": "\u0178",
+    }
+    return f"{match.group('left')}{replacements.get(vowel, vowel)}"
+
+
+def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
+    for bad, good in _LATIN_MOJIBAKE_ACCENT_REPLACEMENTS:
+        text = text.replace(bad, good)
+    for pattern, replacement in _LATIN_DETACHED_ACCENT_REPAIRS:
+        text = pattern.sub(replacement, text)
+    text = re.sub(r"(?P<left>[A-Za-z])\u00a8\s*(?P<vowel>[AEIOUaeiouyY])", _with_diaeresis, text)
+    text = re.sub(
+        r"(?i)(?P<prefix>\b[A-Z][A-Za-z\u017e\u0161]+[ai])\u00b4\s*c\b",
+        lambda m: f"{m.group('prefix')}\u0107",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(?P<prefix>\bMa)\u00b4\s*ckowski\b",
+        lambda m: f"{m.group('prefix')}\u0107kowski",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(?P<prefix>\bNiccol)\u00b4\s*o\b",
+        lambda m: f"{m.group('prefix')}\u00f3",
+        text,
+    )
+    text = re.sub(r"(?P<left>[cC])\u00b8(?=[A-Za-z])", lambda m: "\u00c7" if m.group("left") == "C" else "\u00e7", text)
+    return text
+
+
+def _repair_latin_detached_accent_artifacts_html(html: str) -> str:
+    return _PAKENAIT_ORCID_DOT_SUFFIX_PATTERN.sub(
+        lambda m: f"{m.group('open')}\u0117{m.group('close')}",
+        html,
+    )
+
+
 def _compact_effective_variable_html(match: re.Match[str]) -> str:
     var_tag = re.sub(r">\s*([A-Z])\s*<", r">\1<", match.group("var"))
     return f"{var_tag}<sub>eff</sub>"
@@ -4034,6 +4130,7 @@ def _repair_safe_text_artifacts(html: str) -> str:
         repaired = _DETACHED_MOJIBAKE_DIAERESIS_SPACE_PATTERN.sub(" ", repaired)
         repaired = _DETACHED_MOJIBAKE_DIAERESIS_POWERED_PATTERN.sub(" ", repaired)
         repaired = _DETACHED_MOJIBAKE_SYD_DIAERESIS_PATTERN.sub("Syd\u00e4nheimo", repaired)
+        repaired = _repair_latin_detached_accent_artifacts_text(repaired)
         repaired = _CHECK_FOR_UPDATES_PATTERN.sub(" ", repaired)
         return re.sub(r"(?<=\S) {2,}(?=\S)", " ", repaired)
 
@@ -4049,7 +4146,7 @@ def _repair_safe_text_artifacts(html: str) -> str:
             continue
         out.append(_repair_text(part))
 
-    return "".join(out)
+    return _repair_latin_detached_accent_artifacts_html("".join(out))
 
 
 _PDF_LINE_NUMBER_TOKEN_PATTERN = re.compile(

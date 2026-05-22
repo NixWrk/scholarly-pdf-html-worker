@@ -6340,6 +6340,66 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "iskandar@neurosurgery.wisc.edu" in polished
 
 
+def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_nodes() -> None:
+    html = (
+        "<html><body>"
+        "<p>The relief climbs the fac\u0412\u0451ade. "
+        "O\u0412\u0491Donnell wrote a consumer\u0412\u0491s guide. "
+        "Pogoreli\u0412\u0491c, Huski\u0412\u0491c, Cohad\u0415\u0455i\u0412\u0491c, "
+        "Juki\u0412\u0491c, Ma\u0412\u0491ckowski, Neum\u0412\u0401uller, "
+        "Sch\u0412\u0401afer, Bezi\u0412\u0491er, Niccol\u0412\u0491o, "
+        "Karolina Pakenait \u041b\u2122 e\u041b\u2122, BRICENO\u041b\u045a, "
+        "Sabine Susstrunk \u0412\u0401 School, fa\u0412\u0451cades, Bros- \u0412\u0491 tow, "
+        "Wabi \u0412\u0491nski, Mo\u0412\u0491scicka, moir\u0412\u0491e-like, "
+        "HOLLERER \u0412\u0401 , would \u0412\u0491 be, many \u0412\u0401 insightful, "
+        "Microsoft \u0412\u0491 coco, Peter M \u041b\u2122 Hall, and "
+        "S. OA\u041b\u2020 \u041b\u2021SModhrain were present. "
+        "SEQUIN \u0412\u0491 , C., Konrad \u0412\u0491 Schindler, and "
+        "Adarsh \u0412\u0401 Kowdle, Radim \u041b\u2021 S\u041b\u2021 ara, "
+        "templates \u0412\u0491 for objects, and C. BAijhler, \u041b\u045a and P. Penaz were cited.</p>"
+        '<p><a href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait</a> '
+        "\u041b\u2122 e\u041b\u2122 University of Bath.</p>"
+        '<p data-name="fac\u0412\u0451ade">The visible name is Neum\u0412\u0401uller.</p>'
+        "<code>fac\u0412\u0451ade O\u0412\u0491Donnell</code>"
+        "<pre>Sch\u0412\u0401afer</pre>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "fa\u00e7ade" in polished
+    assert "O'Donnell" in polished
+    assert "consumer's guide" in polished
+    assert "Pogoreli\u0107, Huski\u0107, Cohad\u017ei\u0107, Juki\u0107" in polished
+    assert "Ma\u0107kowski" in polished
+    assert "Neum\u00fcller" in polished
+    assert "Sch\u00e4fer" in polished
+    assert "B\u00e9zier" in polished
+    assert "Niccol\u00f3" in polished
+    assert "Pakenait\u0117" in polished
+    assert "BRICE\u00d1O" in polished
+    assert "S\u00fcsstrunk School" in polished
+    assert "fa\u00e7ades" in polished
+    assert "Brostow" in polished
+    assert "Wabi\u0144ski" in polished
+    assert "Mo\u015bcicka" in polished
+    assert "moir\u00e9-like" in polished
+    assert "HOLLERER, would be, many insightful" in polished
+    assert "Microsoft COCO" in polished
+    assert "Peter M. Hall" in polished
+    assert "S. O'Modhrain" in polished
+    assert "SEQUIN, C." in polished
+    assert "Konrad Schindler" in polished
+    assert "Adarsh Kowdle" in polished
+    assert "Radim \u0160\u00e1ra" in polished
+    assert "templates for objects" in polished
+    assert "C. B\u00fchler, and P. Penaz" in polished
+    assert 'href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait\u0117</a>' in polished
+    assert 'data-name="fac\u0412\u0451ade"' in polished
+    assert "<code>fac\u0412\u0451ade O\u0412\u0491Donnell</code>" in polished
+    assert "<pre>Sch\u0412\u0401afer</pre>" in polished
+
+
 def test_polish_html_document_keeps_english_ocr_repairs_en_only() -> None:
     html = (
         "<html><body>"
