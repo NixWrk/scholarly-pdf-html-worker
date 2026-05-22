@@ -5345,7 +5345,7 @@ def _merge_adjacent_same_href_url_anchors(html: str) -> str:
         if _looks_like_split_same_href_text_label(text_label):
             return f'<a{match.group("attrs")}>{_escape_html_text(text_label)}</a>'
 
-        compact_body = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(body + next_body))
+        compact_body = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(body + next_body)).strip("()[]")
         if not compact_body:
             return match.group(0)
         if not (

@@ -349,6 +349,22 @@ def test_polish_html_document_merges_adjacent_same_doi_anchors() -> None:
     assert "https://doi.org/</a> <a" not in polished
 
 
+def test_polish_html_document_merges_parenthesized_split_same_href_url_anchors() -> None:
+    href = "https://creativecommons.org/licenses/by/4.0/"
+    html = (
+        "<html><body><p>License "
+        f'<a href="{href}">(https://creativecommons.org/</a> '
+        f'<a href="{href}">licenses/by/4.0/)</a>.</p></body></html>'
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count(f'href="{href}"') == 1
+    assert f">{href}</a>" in polished
+    assert "creativecommons.org/</a>" not in polished
+    assert "licenses/by/4.0/)</a>" not in polished
+
+
 def test_polish_html_document_restores_hyphens_when_merging_split_url_anchors() -> None:
     href = (
         "https://www.gensight-biologics.com/2018/10/26/"
@@ -692,14 +708,20 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     html = (
         "<html><body>"
         "<p>License (https:// creativecommons.org/licenses/by/ 4.0/)</p>"
+        "<p>Article https:// doi.org/10.1038/s41598-019-45416-4</p>"
+        "<p>Package https://github.com/albertorestifo/ node-dijkstra</p>"
         "</body></html>"
     )
 
     polished = polish_html_document(html, table_caption_language="en")
 
     assert 'href="https://creativecommons.org/licenses/by/4.0/"' in polished
+    assert 'href="https://doi.org/10.1038/s41598-019-45416-4"' in polished
+    assert 'href="https://github.com/albertorestifo/node-dijkstra"' in polished
     assert ">https://creativecommons.org/licenses/by/4.0/</a>" in polished
     assert "https:// creativecommons.org" not in polished
+    assert "https:// doi.org" not in polished
+    assert "albertorestifo/ node-dijkstra" not in polished
     assert "by/ 4.0" not in polished
 
 
