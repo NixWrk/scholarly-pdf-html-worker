@@ -7,6 +7,7 @@ from scripts.llm_quality_loop import (
     build_analysis_pack,
     evaluate_quality_gate,
     normalize_converted_audit_article_ids,
+    prepare_converted_raw_cache,
     parse_args,
     prepare_converted_run,
     repolish_cached_run,
@@ -190,6 +191,24 @@ def test_observe_runs_configured_tests_by_default() -> None:
     assert args.run_tests is False
 
 
+def test_observe_accepts_converted_raw_repolish_mode() -> None:
+    args = parse_args(
+        [
+            "observe",
+            "--converted-roots",
+            "converted_root",
+            "--repolish-converted-raw",
+            "--out-dir",
+            "out_run",
+        ]
+    )
+
+    assert args.converted_roots == [Path("converted_root")]
+    assert args.repolish_converted_raw is True
+    assert args.skip_non_target_language is True
+    assert args.polish_language == "auto"
+
+
 def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     prompt = render_llm_prompt(
         {
@@ -260,6 +279,33 @@ def test_prepare_converted_run_preserves_duplicate_articles_as_unique_ids(tmp_pa
     assert assessment["article_count"] == 2
     assert [article["article"] for article in assessment["articles"]] == article_ids
     assert {article["source_article"] for article in assessment["articles"]} == {"Doc"}
+
+
+def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    for mtime in ("111", "222"):
+        stage_dir = root / "lib" / "KEY" / mtime / "Doc" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "01.en.raw.html").write_text(
+            f"<html><body><p>Raw {mtime}</p><p><img src=\"fig1.png\"/></p></body></html>",
+            encoding="utf-8",
+        )
+        (stage_dir / "02.en.polish.html").write_text(
+            '<html><body><p><img data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"/></p></body></html>',
+            encoding="utf-8",
+        )
+
+    manifest = prepare_converted_raw_cache([root], tmp_path / "source")
+
+    article_ids = [article["article_id"] for article in manifest["articles"]]
+    assert manifest["source_kind"] == "converted_raw_cache"
+    assert manifest["raw_count"] == 2
+    assert len(set(article_ids)) == 2
+    assert sorted(path.name for path in (tmp_path / "source" / "raw_cache").glob("*.01.en.raw.html")) == [
+        f"{article_id}.01.en.raw.html" for article_id in article_ids
+    ]
+    assert all(Path(article["source_polish_path"]).name == "02.en.polish.html" for article in manifest["articles"])
+    assert all(Path(article["raw_stage_path"]).name == "01.en.raw.html" for article in manifest["articles"])
 
 
 def test_normalize_converted_audit_article_ids_uses_manifest_paths(tmp_path: Path) -> None:

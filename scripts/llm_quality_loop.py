@@ -274,6 +274,71 @@ def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
     return manifest
 
 
+def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, Any]:
+    """Build a cached-run source directory from production converted stages.
+
+    The generated directory is intentionally shaped like a normal cached run:
+    ``raw_cache/<article>.01.en.raw.html`` plus
+    ``profiles/<article>.citation_profile.json``.  It lets the loop repolish
+    production raw artifacts without writing back into the Zotero converted
+    tree.  The manifest keeps the original stage paths so image restoration can
+    reuse already inlined production polish or local sidecar files.
+    """
+
+    out_dir = out_dir.resolve(strict=False)
+    raw_cache = out_dir / "raw_cache"
+    profiles = out_dir / "profiles"
+    for path in (raw_cache, profiles):
+        path.mkdir(parents=True, exist_ok=True)
+
+    roots = [root.resolve(strict=False) for root in roots]
+    pairs = find_converted_stage_pairs(roots)
+    profile = {"status": "not_applicable_converted_stage", "style": "unknown", "confidence": "low"}
+    articles: list[dict[str, Any]] = []
+    for index, (raw_path, polish_path) in enumerate(pairs, start=1):
+        article = _article_name_from_stage(raw_path)
+        article_id = _converted_article_id(raw_path, index)
+        out_raw = raw_cache / f"{article_id}.{RAW_STAGE}"
+        out_profile = profiles / f"{article_id}.citation_profile.json"
+        shutil.copy2(raw_path, out_raw)
+        _write_json(out_profile, profile)
+        articles.append(
+            {
+                "index": index,
+                "article_id": article_id,
+                "article": article,
+                "article_dir": str(_article_dir_from_stage(raw_path)),
+                "raw_stage_path": str(raw_path),
+                "source_polish_path": str(polish_path),
+                "polish_stage_path": str(polish_path),
+                "raw_cache_path": str(out_raw),
+                "profile_path": str(out_profile),
+                "artifact_hint": _artifact_hint(raw_path),
+                "profile_status": profile["status"],
+                "citation_style": profile["style"],
+                "citation_confidence": profile["confidence"],
+            }
+        )
+
+    manifest = {
+        "generated_at": _now(),
+        "source_kind": "converted_raw_cache",
+        "source_roots": [str(root) for root in roots],
+        "out_dir": str(out_dir),
+        "code_commit": _git_short_head(),
+        "working_tree_dirty": _git_dirty(),
+        "raw_count": len(articles),
+        "article_count": len(articles),
+        "raw_cache_dir": str(raw_cache),
+        "profile_dir": str(profiles),
+        "profile_status_counts": {profile["status"]: len(articles)} if articles else {},
+        "profile_style_counts": {f"{profile['style']}:{profile['confidence']}": len(articles)} if articles else {},
+        "articles": articles,
+    }
+    _write_json(out_dir / "manifest.json", manifest)
+    return manifest
+
+
 def _manifest_article_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
     articles: dict[str, dict[str, Any]] = {}
     for article in manifest.get("articles") or []:
@@ -1612,14 +1677,34 @@ def observe(args: argparse.Namespace) -> int:
             f"changed={manifest['changed_count']}"
         )
     elif converted_roots:
-        manifest = prepare_converted_run(converted_roots, run_dir)
-        print(f"Prepared converted stage run: articles={manifest['article_count']}")
+        if args.repolish_converted_raw:
+            source_cache_dir = run_dir / "_converted_raw_source"
+            source_manifest = prepare_converted_raw_cache(converted_roots, source_cache_dir)
+            manifest = repolish_cached_run(
+                source_cache_dir,
+                run_dir,
+                polish_language=args.polish_language,
+                target_language=args.target_language,
+                skip_non_target_language=args.skip_non_target_language,
+                skip_unknown_language=args.skip_unknown_language,
+            )
+            print(
+                "Repolished converted raw stages: "
+                f"raw={source_manifest['raw_count']} "
+                f"articles={manifest['article_count']} "
+                f"skipped={manifest['skipped_count']} "
+                f"changed={manifest['changed_count']}"
+            )
+        else:
+            manifest = prepare_converted_run(converted_roots, run_dir)
+            print(f"Prepared converted stage run: articles={manifest['article_count']}")
     if args.run_tests:
         gate_config = load_gate_config(args.gate_config)
         run_test_command(args.test_command or gate_config.get("required_test_command") or "python -m pytest -q", run_dir)
     if not args.skip_audit:
-        run_audit(run_dir, roots=converted_roots if converted_roots else None)
-        if converted_roots:
+        audit_existing_converted = bool(converted_roots and not args.repolish_converted_raw)
+        run_audit(run_dir, roots=converted_roots if audit_existing_converted else None)
+        if audit_existing_converted:
             normalize_converted_audit_article_ids(run_dir)
     if not args.skip_history:
         run_quality_history(
@@ -1709,6 +1794,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         nargs="+",
         type=Path,
         help="Production converted roots or direct _z2m_stages files to audit without repolishing.",
+    )
+    observe_parser.add_argument(
+        "--repolish-converted-raw",
+        action="store_true",
+        help=(
+            "With --converted-roots, copy production 01.en.raw.html stages into an internal "
+            "raw_cache and run the normal EN repolish loop without writing back to converted roots."
+        ),
     )
     observe_parser.add_argument("--out-dir", type=Path, required=True)
     observe_parser.add_argument("--run-id")

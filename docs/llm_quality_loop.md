@@ -104,6 +104,20 @@ Converted-stage observation is useful for manual review queues, but it is not a
 replacement for the mandatory cached raw EN repolish loop above because it does
 not regenerate `02.en.polish.html`.
 
+When the production converted tree itself is the corpus for the next loop,
+convert it into an internal cached-run source and repolish that cache. This
+uses every `01.en.raw.html` under the supplied converted roots, keeps the
+original stage paths for image restoration and review, skips confidently
+non-EN documents by default, and does not write back to `data/html/converted`:
+
+```powershell
+python scripts\llm_quality_loop.py observe `
+  --converted-roots D:\Elvis_projects\Zotero_automatization\data\html\converted\Zotero_Elvis_Data_cfd7a6f4 D:\Elvis_projects\Zotero_automatization\data\html\converted\Zotero_Heart_n_Lung_Data_745ee21a D:\Elvis_projects\Zotero_automatization\data\html\converted\Zotero_NIX_Data_ba8b3354 `
+  --repolish-converted-raw `
+  --out-dir .tmp_local2\llm_runs\converted_all3_repolish_001 `
+  --run-id converted_all3_repolish_001
+```
+
 ## Build Or Rebuild Only The LLM Pack
 
 ```powershell
