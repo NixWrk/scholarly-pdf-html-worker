@@ -3108,6 +3108,38 @@ def test_polish_html_document_does_not_warn_when_empty_spacer_separates_image_an
     assert "image was not extracted into this HTML" not in polished
 
 
+def test_polish_html_document_does_not_warn_when_short_label_separates_float_unit_and_caption() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        f'<p class="z2m-figure-target"><img src="{_valid_tiny_png_data_url()}"/></p>'
+        "</div>"
+        "<p>Translated Image CDE [20] - Translated Image</p>"
+        "<p>Figure 2: Leveraging monocular depth estimation models.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 2 image was not extracted" not in polished
+    assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
+
+
+def test_polish_html_document_does_not_warn_for_in_text_subfigure_sentence() -> None:
+    html = (
+        "<html><body>"
+        f'<p><img src="{_valid_tiny_png_data_url()}"/></p>'
+        "<p>Figure 9 (a) STL file and (b) physical prototype.</p>"
+        "<p>Figure 9(a). Such an STL model is finally printed using a rapid prototyping machine.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 9 image was not extracted" not in polished
+    assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
+
+
 def test_polish_html_document_discloses_missing_figure_in_ru() -> None:
     html = (
         "<html><body>"

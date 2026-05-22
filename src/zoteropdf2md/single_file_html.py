@@ -11378,6 +11378,70 @@ def _node_is_empty_spacer_paragraph(raw: str) -> bool:
     )
 
 
+def _node_is_caption_bridge_paragraph(raw: str) -> bool:
+    if re.match(r"<p\b", raw, re.IGNORECASE) is None:
+        return False
+    if _node_image_srcs(raw):
+        return False
+    if _node_is_empty_spacer_paragraph(raw):
+        return True
+    visible = _visible_text(raw).strip()
+    if re.fullmatch(r"[\s.,;:|/\\\-\u2010-\u2014]+", visible):
+        return True
+    if _is_figure_caption_node(raw) or _is_table_caption_node(raw):
+        return False
+    if re.match(r"^\d+(?:\.\d+)*\b", visible):
+        return False
+    if len(visible) > 90 or re.search(r"[.!?]\s*$", visible):
+        return False
+    lower = visible.lower()
+    bridge_terms = (
+        "image",
+        "input",
+        "translated",
+        "overview",
+        "module",
+        "display",
+        "board",
+        "chart",
+        "graph",
+        "screenshot",
+        "prototype",
+    )
+    return any(term in lower for term in bridge_terms)
+
+
+def _looks_like_in_text_figure_reference_node(raw: str, fig_num: str) -> bool:
+    visible = _visible_text(raw).strip()
+    if not visible:
+        return False
+    label = re.escape(fig_num).replace(r"\-", r"[\-.\u2010-\u2014]")
+    prefix = rf"(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*{label}"
+    panel = r"(?:\s*\([A-Za-z]\)|[A-Za-z])?"
+    if re.match(
+        rf"^{prefix}{panel}\s+and\s+(?:Fig(?:ure)?\.?|Figure)\s*{label}{panel}\s+"
+        r"(?:represent|represents|show|shows|depict|depicts|illustrate|illustrates)\b",
+        visible,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        rf"^{prefix}\s*\([A-Za-z]\)\.\s+"
+        r"(?:Such|The|This|These|Those|It|They|As|Starting|Using|Since|When)\b",
+        visible,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        rf"^{prefix}\s+"
+        r"(?:visually\s+)?(?:depicts|shows|illustrates|represents|presents|summarizes)\b",
+        visible,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
 def _missing_figure_warning_html(fig_num: str, *, figure_caption_language: str = "en") -> str:
     if figure_caption_language == "ru":
         text = (
@@ -11406,7 +11470,8 @@ def _insert_missing_figure_warnings(
     warnings = 0
 
     def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
-        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+        gap = html[nodes[a_idx].end():nodes[b_idx].start()]
+        return _html_gap_is_ignorable(gap) or re.fullmatch(r"\s*</div>\s*", gap, re.IGNORECASE) is not None
 
     def _image_node_can_belong_to_fig(raw: str, fig_num: str) -> bool:
         node_id = _node_id_value(raw) or ""
@@ -11445,7 +11510,7 @@ def _insert_missing_figure_warnings(
         image_idx = caption_run_start - 1
         while image_idx >= 0 and _between_is_whitespace(image_idx, image_idx + 1):
             image_raw = nodes[image_idx].group(0)
-            if _node_is_empty_spacer_paragraph(image_raw):
+            if _node_is_caption_bridge_paragraph(image_raw):
                 image_idx -= 1
                 continue
             if not _node_image_srcs(image_raw):
@@ -11466,7 +11531,7 @@ def _insert_missing_figure_warnings(
         scanned = 0
         while prev_idx >= 0 and scanned < 6 and _between_is_whitespace(prev_idx, prev_idx + 1):
             prev_raw = nodes[prev_idx].group(0)
-            if _node_is_empty_spacer_paragraph(prev_raw):
+            if _node_is_caption_bridge_paragraph(prev_raw):
                 prev_idx -= 1
                 scanned += 1
                 continue
@@ -11492,7 +11557,7 @@ def _insert_missing_figure_warnings(
         scanned = 0
         while next_idx < len(nodes) and scanned < 6 and _between_is_whitespace(next_idx - 1, next_idx):
             next_raw = nodes[next_idx].group(0)
-            if _node_is_empty_spacer_paragraph(next_raw):
+            if _node_is_caption_bridge_paragraph(next_raw):
                 next_idx += 1
                 scanned += 1
                 continue
@@ -11518,10 +11583,14 @@ def _insert_missing_figure_warnings(
             continue
         if "z2m-missing-figure-warning" in raw:
             continue
+        if _node_has_renderable_image(raw):
+            continue
         start = max(0, idx - 6)
         stop = min(len(nodes), idx + 7)
         nearby_raw = "\n".join(nodes[j].group(0) for j in range(start, stop))
         fig_num = _figure_caption_num_from_visible(_visible_text(raw)) or "?"
+        if _looks_like_in_text_figure_reference_node(raw, fig_num):
+            continue
         image_indices = _associated_image_indices(idx, fig_num)
         nearby_renderable_image = any(_node_has_renderable_image(nodes[j].group(0)) for j in image_indices)
         if nearby_renderable_image:
