@@ -6272,10 +6272,20 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "The sensor has qualify factor Q, and the worklow stayed stable.</p>"
         "<p>Clinical documentation had ofclinical and essenetial residues.</p>"
         "<p>Fudan Univerisity reported a pathologica example that deceases as the distance grows.</p>"
+        "<p>Extra ligature loss had modifcations, fowmeter hardware, "
+        "flling pressure, diffi culty voiding, and Specifi cally, the testing identifi es causes.</p>"
+        "<p>More lost ligatures had fows, fowrate, flter, cutof, fuid, signifcant, "
+        "fowmetry, ndings, fi rst, defi ciency, defi ned, Diffi cult, diffi cult, "
+        "outfl ow, urofl owmetry, urofl ow, fl uid, and fl ow.</p>"
+        "<p>Split fi/fl words included diffi culties, signifi cantly, signifi cant, "
+        "infl uence, Profi le, profi les, profi le, confi dence, Griffi ths, "
+        "defi ne, Defi nition, defi nition, fl uoroscopy, fl uoroscopic, "
+        "fl uorescent, refl ux, fl oor, Offi ce, offi ce, benefi cial, "
+        "and urofl owmeter.</p>"
         "<p>References mentioned eicient tools, eiciency, eectiveness, deining protocols, "
         "uniied inputs, simpliication, ine-grained evaluation, and ailiations.</p>"
         "<p>Lost ligatures included frst fne fgurative defned profcient beneft "
-        "difculties staf eforts confrmed clarifed infuenced fndings feld.</p>"
+        "difculties staf eforts confrmed clarifed infuenced fnger fndings feld.</p>"
         "<p>Joined words included medicineresistant customdesigned hardwareupdate easy-tolearn "
         "Attributebased thistask higherthan disabilitiessometimesface artworksis "
         "hierarchicalsegmentation webbased needsto includesinformation participantssuggested "
@@ -6289,10 +6299,10 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "safe ty c oncerns, enj oy, basrelief, populationbased cohorts, "
         "signalto-noise ratios, and advanta- \u00a8 geous settings.</p>"
         "<p>Spatial printing OCR included incl ude, b e interpreted, A dd itional "
-        "expressi ve ness, T his fact, CNC-millin g m achines, supp ort structures, "
+        "expressi ve ness, T his fact, specifi c behavior, CNC-millin g m achines, supp ort structures, "
         "a dditive production, alternati ves, pr inting services, technical ly, "
         "high ) w ere, thr ee different, straightfo rw ard, Gener al digital, "
-        "Barc elona, and supple mental notes.</p>"
+        "Barc elona, coefcient values, and supple mental notes.</p>"
         "<p>The laser components include The Cartesian linear stage provides 2 DOF motion.</p>"
         "<code>frst medicineresistant</code>"
         "<p>Reprints andpermissions information governs archiving ofthe accepted manuscript.</p>"
@@ -6315,6 +6325,16 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Fudan University" in polished
     assert "pathological example" in polished
     assert "decreases as the distance" in polished
+    assert "Extra ligature loss had modifications, flowmeter hardware" in polished
+    assert "filling pressure, difficulty voiding" in polished
+    assert "Specifically, the testing identifies causes" in polished
+    assert "More lost ligatures had flows, flow rate, filter, cutoff, fluid, significant" in polished
+    assert "flowmetry, findings, first, deficiency, defined, Difficult, difficult" in polished
+    assert "outflow, uroflowmetry, uroflow, fluid, and flow" in polished
+    assert "included difficulties, significantly, significant, influence, Profile" in polished
+    assert "profiles, profile, confidence, Griffiths, define, Definition, definition" in polished
+    assert "fluoroscopy, fluoroscopic, fluorescent, reflux, floor, Office, office, beneficial" in polished
+    assert "and uroflowmeter" in polished
     assert "efficient tools" in polished
     assert "efficiency" in polished
     assert "effectiveness" in polished
@@ -6324,7 +6344,8 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "fine-grained evaluation" in polished
     assert "affiliations" in polished
     assert "first fine figurative defined proficient benefit" in polished
-    assert "difficulties staff efforts confirmed clarified influenced findings field" in polished
+    assert "influenced finger findings field" in polished
+    assert "difficulties staff efforts confirmed clarified influenced finger findings field" in polished
     assert "medicine-resistant custom-designed hardware update easy-to-learn" in polished
     assert "Attribute-based this task higher than disabilities sometimes face artworks is" in polished
     assert "hierarchical segmentation web-based needs to includes information participants suggested" in polished
@@ -6336,10 +6357,10 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Belhumeur, Leporini, to the best of our knowledge, objects would" in polished
     assert "safety concerns, enjoy, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
     assert "and advantageous settings" in polished
-    assert "included include, be interpreted, Additional expressiveness, This fact" in polished
+    assert "included include, be interpreted, Additional expressiveness, This fact, specific behavior" in polished
     assert "CNC-milling machines, support structures, additive production, alternatives" in polished
     assert "printing services, technically, high) were, three different, straightforward" in polished
-    assert "General digital, Barcelona, and supplemental notes" in polished
+    assert "General digital, Barcelona, coefficient values, and supplemental notes" in polished
     assert "The Cartesian linear stage provides 2 DOF motion" in polished
     assert "The laser components include The Cartesian" not in polished
     assert "<code>frst medicineresistant</code>" in polished
