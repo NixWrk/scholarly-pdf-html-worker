@@ -11,6 +11,7 @@ from scripts.llm_quality_loop import (
     repolish_cached_run,
     render_llm_prompt,
     write_manual_review_queue,
+    write_pattern_observations,
 )
 
 
@@ -202,6 +203,7 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     assert "full configured project test suite" in prompt
     assert "all cached raw files are scanned" in prompt
     assert "every accepted EN article is repolished" in prompt
+    assert "Pattern observations must be accumulated globally across loop iterations" in prompt
 
 
 def test_assessment_warning_count_ignores_css_selector_without_body_warning() -> None:
@@ -341,6 +343,96 @@ def test_write_manual_review_queue_keeps_all_artifacts_and_filters_ignored(tmp_p
     assert queue[1]["defect_ids"] == {"P20": 1}
     assert queue[1]["non_ignored_defect_ids"] == {}
     assert queue[1]["review_status"] == "pending"
+
+
+def test_write_pattern_observations_accumulates_across_loop_iterations(tmp_path: Path) -> None:
+    history_path = tmp_path / "pattern_history.jsonl"
+    defect_patterns = {
+        "P67": {
+            "pattern": "text-cleanup",
+            "criticality": "medium",
+            "fix_layer": "EN polish text cleanup",
+        }
+    }
+
+    first_run = tmp_path / "run1"
+    _write_json(first_run / "manifest.json", {"source_kind": "cached_raw_repolish", "code_commit": "abc123"})
+    _write_json(first_run / "quality_history_entry.json", {"run_id": "run1"})
+    _write_json(
+        first_run / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "raw_stage_path": "raw_a.html",
+                    "polish_stage_path": "polish_a.html",
+                    "defects_found": [
+                        {
+                            "id": "P67",
+                            "severity": "warning",
+                            "check": "Text residue",
+                            "snippet": "bad spacing",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    first_summary = write_pattern_observations(
+        first_run,
+        defect_patterns=defect_patterns,
+        history_path=history_path,
+    )
+
+    second_run = tmp_path / "run2"
+    _write_json(second_run / "manifest.json", {"source_kind": "cached_raw_repolish", "code_commit": "def456"})
+    _write_json(second_run / "quality_history_entry.json", {"run_id": "run2"})
+    _write_json(
+        second_run / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_b",
+                    "raw_stage_path": "raw_b.html",
+                    "polish_stage_path": "polish_b.html",
+                    "defects_found": [
+                        {
+                            "id": "P67",
+                            "severity": "warning",
+                            "check": "Text residue",
+                            "snippet": "bad join",
+                        }
+                    ],
+                },
+                {
+                    "article": "article_c",
+                    "raw_stage_path": "raw_c.html",
+                    "polish_stage_path": "polish_c.html",
+                    "defects_found": [],
+                },
+            ]
+        },
+    )
+
+    second_summary = write_pattern_observations(
+        second_run,
+        defect_patterns=defect_patterns,
+        history_path=history_path,
+    )
+
+    assert first_summary["all_articles_reviewed_for_patterns"] is True
+    assert first_summary["article_count_reviewed"] == 1
+    assert second_summary["article_count_reviewed"] == 2
+    assert history_path.read_text(encoding="utf-8").count("\n") == 2
+    candidate = second_summary["problem_candidates"][0]
+    assert candidate["pattern_key"] == "text-cleanup"
+    assert candidate["problem_state"] == "problem_candidate"
+    assert candidate["run_count"] == 2
+    assert candidate["article_observation_count"] == 2
+    assert json.loads((second_run / "pattern_observations.json").read_text(encoding="utf-8"))["history_path"] == str(
+        history_path.resolve(strict=False)
+    )
 
 
 def test_repolish_cached_run_auto_policy_keeps_en_corpus_only(tmp_path: Path) -> None:

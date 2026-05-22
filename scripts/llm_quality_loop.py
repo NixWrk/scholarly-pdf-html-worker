@@ -35,6 +35,7 @@ RAW_STAGE = "01.en.raw.html"
 POLISH_STAGE = "02.en.polish.html"
 DEFAULT_GATE_CONFIG = ROOT / "configs" / "llm_quality_gates.json"
 DEFAULT_DEFECT_PATTERNS = ROOT / "configs" / "llm_defect_patterns.json"
+DEFAULT_PATTERN_HISTORY_NAME = "pattern_observation_history.jsonl"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -601,6 +602,142 @@ def _severity_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            records.append(item)
+    return records
+
+
+def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def _pattern_key_for_defect(defect: dict[str, Any], defect_patterns: dict[str, Any]) -> str:
+    defect_id = str(defect.get("id") or "unknown")
+    pattern = defect_patterns.get(defect_id) if isinstance(defect_patterns.get(defect_id), dict) else {}
+    known_pattern = str(pattern.get("pattern") or "").strip()
+    if known_pattern:
+        return known_pattern
+    check = str(defect.get("check") or "unclassified").strip()
+    return f"{defect_id}:{_slug(check, max_len=48)}"
+
+
+def _empty_pattern_record(pattern_key: str, defect_patterns: dict[str, Any]) -> dict[str, Any]:
+    matching = [
+        pattern
+        for pattern in defect_patterns.values()
+        if isinstance(pattern, dict) and pattern.get("pattern") == pattern_key
+    ]
+    known = matching[0] if matching else {}
+    return {
+        "pattern_key": pattern_key,
+        "criticality": known.get("criticality"),
+        "fix_layer": known.get("fix_layer"),
+        "occurrence_count": 0,
+        "article_count": 0,
+        "articles": [],
+        "defect_ids": {},
+        "checks": {},
+        "severity_counts": {},
+        "sample_observations": [],
+    }
+
+
+def _add_count(target: dict[str, int], key: str, amount: int = 1) -> None:
+    target[key] = int(target.get(key, 0) or 0) + amount
+
+
+def _problem_state(run_count: int, article_observation_count: int, occurrence_count: int) -> str:
+    if run_count >= 2 or article_observation_count >= 2 or occurrence_count >= 3:
+        return "problem_candidate"
+    return "pattern_observation"
+
+
+def _aggregate_pattern_history(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    aggregated: dict[str, dict[str, Any]] = {}
+    for record in records:
+        run_id = str(record.get("run_id") or "")
+        generated_at = str(record.get("generated_at") or "")
+        for pattern in record.get("patterns") or []:
+            if not isinstance(pattern, dict):
+                continue
+            pattern_key = str(pattern.get("pattern_key") or "")
+            if not pattern_key:
+                continue
+            target = aggregated.setdefault(
+                pattern_key,
+                {
+                    "pattern_key": pattern_key,
+                    "criticality": pattern.get("criticality"),
+                    "fix_layer": pattern.get("fix_layer"),
+                    "run_ids": [],
+                    "run_count": 0,
+                    "occurrence_count": 0,
+                    "article_observation_count": 0,
+                    "defect_ids": {},
+                    "checks": {},
+                    "severity_counts": {},
+                    "sample_observations": [],
+                    "first_seen_at": generated_at,
+                    "last_seen_at": generated_at,
+                },
+            )
+            if run_id and run_id not in target["run_ids"]:
+                target["run_ids"].append(run_id)
+            target["run_count"] = len(target["run_ids"])
+            target["occurrence_count"] += int(pattern.get("occurrence_count") or 0)
+            target["article_observation_count"] += int(pattern.get("article_count") or 0)
+            for key, value in dict(pattern.get("defect_ids") or {}).items():
+                _add_count(target["defect_ids"], str(key), int(value or 0))
+            for key, value in dict(pattern.get("checks") or {}).items():
+                _add_count(target["checks"], str(key), int(value or 0))
+            for key, value in dict(pattern.get("severity_counts") or {}).items():
+                _add_count(target["severity_counts"], str(key), int(value or 0))
+            for sample in pattern.get("sample_observations") or []:
+                if len(target["sample_observations"]) >= 8:
+                    break
+                if isinstance(sample, dict):
+                    target["sample_observations"].append(sample)
+            if generated_at:
+                if not target.get("first_seen_at") or generated_at < target["first_seen_at"]:
+                    target["first_seen_at"] = generated_at
+                if not target.get("last_seen_at") or generated_at > target["last_seen_at"]:
+                    target["last_seen_at"] = generated_at
+
+    for pattern in aggregated.values():
+        pattern["defect_ids"] = dict(sorted(pattern["defect_ids"].items()))
+        pattern["checks"] = dict(sorted(pattern["checks"].items()))
+        pattern["severity_counts"] = dict(sorted(pattern["severity_counts"].items()))
+        pattern["run_ids"] = sorted(pattern["run_ids"])
+        pattern["problem_state"] = _problem_state(
+            int(pattern.get("run_count") or 0),
+            int(pattern.get("article_observation_count") or 0),
+            int(pattern.get("occurrence_count") or 0),
+        )
+
+    return sorted(
+        aggregated.values(),
+        key=lambda item: (
+            item.get("problem_state") != "problem_candidate",
+            -int(item.get("article_observation_count") or 0),
+            -int(item.get("occurrence_count") or 0),
+            str(item.get("pattern_key") or ""),
+        ),
+    )
+
+
 def _existing_queue_items(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
@@ -730,6 +867,112 @@ def write_manual_review_queue(
     return queue
 
 
+def write_pattern_observations(
+    run_dir: Path,
+    *,
+    defect_patterns_path: Path = DEFAULT_DEFECT_PATTERNS,
+    defect_patterns: dict[str, Any] | None = None,
+    history_path: Path | None = None,
+) -> dict[str, Any]:
+    """Summarize current corpus manifestations and append them to pattern history."""
+
+    run_dir = run_dir.resolve(strict=False)
+    history_path = (history_path or (run_dir.parent / DEFAULT_PATTERN_HISTORY_NAME)).resolve(strict=False)
+    defect_patterns = defect_patterns or _load_json(defect_patterns_path, default={})
+    audit = _load_json(run_dir / "audit_full_checks.json", default={"articles": []})
+    manifest = _load_json(run_dir / "manifest.json", default={})
+    entry = _load_json(run_dir / "quality_history_entry.json", default={})
+    run_id = str(entry.get("run_id") or run_dir.name)
+
+    current_by_pattern: dict[str, dict[str, Any]] = {}
+    audit_articles = [article for article in audit.get("articles") or [] if isinstance(article, dict)]
+    for article in audit_articles:
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        source_article = str(article.get("source_article") or article_id)
+        artifact_hint = article.get("artifact_hint")
+        raw_stage_path = article.get("raw_stage_path")
+        polish_stage_path = article.get("polish_stage_path")
+        for defect in article.get("defects_found") or []:
+            if not isinstance(defect, dict):
+                continue
+            pattern_key = _pattern_key_for_defect(defect, defect_patterns)
+            record = current_by_pattern.setdefault(
+                pattern_key,
+                {
+                    **_empty_pattern_record(pattern_key, defect_patterns),
+                    "_article_set": set(),
+                },
+            )
+            record["occurrence_count"] += 1
+            record["_article_set"].add(article_id)
+            _add_count(record["defect_ids"], str(defect.get("id") or "unknown"))
+            _add_count(record["checks"], str(defect.get("check") or "unknown"))
+            _add_count(record["severity_counts"], str(defect.get("severity") or "info"))
+            if len(record["sample_observations"]) < 8:
+                record["sample_observations"].append(
+                    {
+                        "article": article_id,
+                        "source_article": source_article,
+                        "artifact_hint": artifact_hint,
+                        "defect_id": defect.get("id"),
+                        "severity": defect.get("severity"),
+                        "check": defect.get("check"),
+                        "snippet": defect.get("snippet"),
+                        "raw_stage_path": raw_stage_path,
+                        "polish_stage_path": polish_stage_path,
+                    }
+                )
+
+    patterns: list[dict[str, Any]] = []
+    for record in current_by_pattern.values():
+        articles = sorted(record.pop("_article_set"))
+        record["articles"] = articles
+        record["article_count"] = len(articles)
+        record["defect_ids"] = dict(sorted(record["defect_ids"].items()))
+        record["checks"] = dict(sorted(record["checks"].items()))
+        record["severity_counts"] = dict(sorted(record["severity_counts"].items()))
+        record["problem_state"] = _problem_state(1, len(articles), int(record["occurrence_count"] or 0))
+        patterns.append(record)
+
+    patterns.sort(
+        key=lambda item: (
+            item.get("problem_state") != "problem_candidate",
+            -int(item.get("article_count") or 0),
+            -int(item.get("occurrence_count") or 0),
+            str(item.get("pattern_key") or ""),
+        )
+    )
+
+    history_record = {
+        "generated_at": _now(),
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "source_kind": manifest.get("source_kind"),
+        "code_commit": manifest.get("code_commit"),
+        "working_tree_dirty": manifest.get("working_tree_dirty"),
+        "article_count_reviewed": len(audit_articles),
+        "pattern_count": len(patterns),
+        "patterns": patterns,
+    }
+    previous_history = _read_jsonl(history_path)
+    _append_jsonl(history_path, history_record)
+    cumulative_patterns = _aggregate_pattern_history([*previous_history, history_record])
+    problem_candidates = [
+        pattern for pattern in cumulative_patterns if pattern.get("problem_state") == "problem_candidate"
+    ]
+    summary = {
+        **history_record,
+        "history_path": str(history_path),
+        "all_articles_reviewed_for_patterns": True,
+        "cumulative_patterns": cumulative_patterns,
+        "problem_candidates": problem_candidates,
+    }
+    _write_json(run_dir / "pattern_observations.json", summary)
+    return summary
+
+
 def build_analysis_pack(
     run_dir: Path,
     *,
@@ -750,6 +993,7 @@ def build_analysis_pack(
     entry = _load_json(run_dir / "quality_history_entry.json", default={"articles": {}, "ranking": [], "totals": {}})
     comparison = _load_json(run_dir / "quality_compare.json", default={"status": "no_previous_entry"})
     manifest = _load_json(run_dir / "manifest.json", default={})
+    pattern_observations = _load_json(run_dir / "pattern_observations.json", default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
     assessment_by_article = {
@@ -864,6 +1108,15 @@ def build_analysis_pack(
         "regression_count": len(comparison.get("regressions") or []),
         "improvement_count": len(comparison.get("improvements") or []),
         "audit_defect_counts": audit.get("corpus_summary", {}).get("defect_counts", {}),
+        "pattern_observations": {
+            "history_path": pattern_observations.get("history_path"),
+            "article_count_reviewed": pattern_observations.get("article_count_reviewed"),
+            "pattern_count": pattern_observations.get("pattern_count"),
+            "all_articles_reviewed_for_patterns": pattern_observations.get("all_articles_reviewed_for_patterns"),
+            "problem_candidates": (pattern_observations.get("problem_candidates") or [])[:12],
+            "current_patterns": (pattern_observations.get("patterns") or [])[:12],
+            "cumulative_patterns": (pattern_observations.get("cumulative_patterns") or [])[:12],
+        },
         "articles": articles,
     }
 
@@ -878,6 +1131,8 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Do not propose broad rewrites when a local repair or guard is enough.",
         "Every production artifact fix must include a focused regression test that reproduces the observed symptom.",
         "Also add at least one guard/negative test when the repair could touch links, tags, math, code, language policy, or nearby article classes.",
+        "Pattern observations must be accumulated globally across loop iterations before local manifestations are promoted into shared problem statements.",
+        "Review the all-article current pattern summary and the cumulative pattern history before proposing a fix.",
         "The loop is incomplete until the full configured project test suite and a full cached raw EN repolish comparison have both passed.",
         "The full cached raw EN repolish comparison means all cached raw files are scanned and every accepted EN article is repolished.",
         "",
@@ -902,9 +1157,34 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- regression_count: `{pack.get('regression_count')}`",
         f"- improvement_count: `{pack.get('improvement_count')}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- pattern_history_path: `{(pack.get('pattern_observations') or {}).get('history_path')}`",
+        f"- pattern_articles_reviewed: `{(pack.get('pattern_observations') or {}).get('article_count_reviewed')}`",
         "",
-        "## Articles",
+        "## Accumulated Pattern Observations",
+        "",
+        "Use these grouped observations before judging any article-local symptom.",
     ]
+    pattern_observations = pack.get("pattern_observations") or {}
+    problem_candidates = pattern_observations.get("problem_candidates") or []
+    if problem_candidates:
+        lines.append("")
+        lines.append("### Problem Candidates")
+        for pattern in problem_candidates[:8]:
+            lines.append(
+                f"- {pattern.get('pattern_key')}: state={pattern.get('problem_state')} | "
+                f"runs={pattern.get('run_count')} | article_observations={pattern.get('article_observation_count')} | "
+                f"occurrences={pattern.get('occurrence_count')} | defects={json.dumps(pattern.get('defect_ids', {}), ensure_ascii=False, sort_keys=True)}"
+            )
+    current_patterns = pattern_observations.get("current_patterns") or []
+    if current_patterns:
+        lines.append("")
+        lines.append("### Current Run Pattern Groups")
+        for pattern in current_patterns[:8]:
+            lines.append(
+                f"- {pattern.get('pattern_key')}: articles={pattern.get('article_count')} | "
+                f"occurrences={pattern.get('occurrence_count')} | defects={json.dumps(pattern.get('defect_ids', {}), ensure_ascii=False, sort_keys=True)}"
+            )
+    lines.extend(["", "## Articles"])
     for article in pack.get("articles", []):
         title = str(article.get("article") or "")
         source_article = article.get("source_article")
@@ -1087,6 +1367,11 @@ def observe(args: argparse.Namespace) -> int:
         gate_config_path=args.gate_config,
         ignored_defect_ids=set(args.ignore_defect_id or []),
     )
+    pattern_observations = write_pattern_observations(
+        run_dir,
+        defect_patterns_path=args.defect_patterns,
+        history_path=args.pattern_history,
+    )
     gate_report = _write_gate_report(run_dir, args.gate_config)
     pack = write_analysis_pack(
         run_dir,
@@ -1098,6 +1383,8 @@ def observe(args: argparse.Namespace) -> int:
     print(
         "LLM quality loop: "
         f"gate={gate_report['status']} review_queue={len(review_queue)} "
+        f"patterns={pattern_observations['pattern_count']} "
+        f"problem_candidates={len(pattern_observations['problem_candidates'])} "
         f"articles_in_pack={len(pack['articles'])} run_dir={run_dir}"
     )
     return 1 if gate_report["status"] == "fail" and args.fail_on_gate else 0
@@ -1162,6 +1449,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     observe_parser.add_argument("--previous-entry", type=Path)
     observe_parser.add_argument("--gate-config", type=Path, default=DEFAULT_GATE_CONFIG)
     observe_parser.add_argument("--defect-patterns", type=Path, default=DEFAULT_DEFECT_PATTERNS)
+    observe_parser.add_argument(
+        "--pattern-history",
+        type=Path,
+        help=f"Append-only JSONL history for accumulated pattern observations. Defaults to out-dir parent/{DEFAULT_PATTERN_HISTORY_NAME}.",
+    )
     observe_parser.add_argument("--ignore-defect-id", action="append")
     observe_parser.add_argument("--max-articles", type=int, default=12)
     test_group = observe_parser.add_mutually_exclusive_group()

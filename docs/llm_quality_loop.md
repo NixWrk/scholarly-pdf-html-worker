@@ -8,11 +8,13 @@ workflow is:
 2. Run focused regression tests for every new artifact fix, then run the full
    configured project test suite.
 3. Run the full EN polish audit.
-4. Record all quality metrics and compare them with a previous run.
-5. Evaluate gates for lower-is-better metrics.
-6. Build a compact LLM analysis packet and prompt.
-7. Let an engineer or coding agent make a small patch plus tests.
-8. Repeat the full EN corpus loop before committing.
+4. Group every article-level manifestation into global pattern observations and
+   append them to the cumulative pattern history.
+5. Record all quality metrics and compare them with a previous run.
+6. Evaluate gates for lower-is-better metrics.
+7. Build a compact LLM analysis packet and prompt.
+8. Let an engineer or coding agent make a small patch plus tests.
+9. Repeat the full EN corpus loop before committing.
 
 ## Branch Workflow
 
@@ -27,8 +29,8 @@ git switch -c feature/llm-quality-loop
 Use a previous run directory that already contains `raw_cache/` and `profiles/`.
 The command writes a new run directory with `polish/`, `audit_tree/`,
 `audit_full_checks.json`, `quality_history_entry.json`, `quality_compare.json`,
-`quality_gate_report.json`, `llm_analysis_pack.json`, and
-`llm_analysis_prompt.md`.
+`quality_gate_report.json`, `pattern_observations.json`,
+`llm_analysis_pack.json`, and `llm_analysis_prompt.md`.
 
 This is the mandatory loop shape for code patches. By default `observe` now
 uses `--polish-language auto`, `--target-language en`, and skips confidently
@@ -41,6 +43,14 @@ detection, and the selected polish policy for every accepted document.
 (`required_test_command` in `configs/llm_quality_gates.json`, currently
 `python -m pytest -q`) before audit/history/gates. Use `--skip-tests` only for
 exploratory audit runs that do not include code changes.
+
+After every audit, `observe` must write `pattern_observations.json` and append
+the current all-article pattern summary to an accumulated JSONL history. The
+default history is `pattern_observation_history.jsonl` next to the output run
+directory; use `--pattern-history` only to choose another append-only history
+file for the same loop. Pattern history is not optional: local manifestations
+are reviewed as global pattern evidence first, then recurring groups become
+problem candidates across one or more iterations.
 
 ```powershell
 python scripts\llm_quality_loop.py observe `
@@ -132,7 +142,7 @@ python scripts\llm_quality_loop.py run-llm `
 The expected LLM output is a patch plan, not blind edits:
 
 - critical findings by article;
-- cross-article patterns;
+- cross-article and cross-iteration accumulated patterns;
 - production file/function targets;
 - regression tests to add;
 - risks and gates to rerun.
@@ -145,6 +155,9 @@ Each fix should be small:
 - a focused regression test for the real artifact symptom;
 - at least one non-regression edge case when the repair can touch links, tags,
   math, code/pre blocks, language policy, or nearby article classes;
+- all article-level manifestations grouped into `pattern_observations.json` and
+  appended to the cumulative pattern history before deciding what problem to
+  solve;
 - targeted repolish for affected articles;
 - full cached raw EN corpus repolish before commit: all cached raw files scanned
   and every accepted EN article repolished, with per-document auto policy and
