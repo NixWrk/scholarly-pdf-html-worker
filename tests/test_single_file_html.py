@@ -721,6 +721,38 @@ def test_polish_html_document_merges_split_quoted_url_anchors() -> None:
     assert 'href=\'"https://' not in polished
 
 
+def test_polish_html_document_merges_split_url_after_reference_anchor() -> None:
+    url = "http://www.annualreviews.org"
+    html = (
+        "<html><body>"
+        '<p>Figure adapted with permission from ref. <a href="#ref-277">277</a>, '
+        f'<a href="{url}">http://</a> <a href="{url}">www.annualreviews.org</a>.</p>'
+        "<ol><li id=\"ref-277\">Reference.</li></ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count(f'href="{url}"') == 1
+    assert f">{url}</a>" in polished
+    assert "http://</a>" not in polished
+
+
+def test_polish_html_document_merges_split_mailto_anchors() -> None:
+    html = (
+        "<html><body>"
+        '<p>e-mail: <a href="mailto:gyorgy.buzsaki@nyulangone.org">gyorgy.buzsaki@</a> '
+        '<a href="mailto:gyorgy.buzsaki@nyulangone.org">nyulangone.org</a></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count('href="mailto:gyorgy.buzsaki@nyulangone.org"') == 1
+    assert ">gyorgy.buzsaki@nyulangone.org</a>" in polished
+    assert "gyorgy.buzsaki@</a>" not in polished
+
+
 def test_polish_html_document_fixes_spaced_sup_and_backslash_artifacts() -> None:
     html = (
         "<html><body>"
@@ -3649,6 +3681,11 @@ def test_polish_html_document_repairs_common_scientific_word_glue() -> None:
         "<p>The backup coil is optimised for a 7 year-old child.</p>"
         "<p>WVTR = D eff (C1 - C2) / l, where D eff is effective.</p>"
         "<p>The coefficient <i> D </i> eff stays compact.</p>"
+        "<p>A specifc and identifed singleneuron model used artifcial clocks to refect fow in fxed space.</p>"
+        "<p>The efects afected specifcity and coeficient diferences in eficient diferent trials diferentially.</p>"
+        "<p>The work was timeconsuming and contentaware; an ofline metaanalysis reported sensorimotor defcits.</p>"
+        "<p>Diferential and diferent vagal aferents used inhibitionbased phaselocked crossfrequency mechanisms.</p>"
+        "<p>Online supple mental table 1 and Biobeha v. Rev. entries should be normalized.</p>"
         "</body></html>"
     )
     polished = polish_html_document(html, table_caption_language="en")
@@ -3661,6 +3698,14 @@ def test_polish_html_document_repairs_common_scientific_word_glue() -> None:
     assert "7-year-old child" in polished
     assert "D<sub>eff</sub>" in polished
     assert "<i>D</i><sub>eff</sub>" in polished
+    assert "specific and identified single-neuron model" in polished
+    assert "artificial clocks to reflect flow in fixed space" in polished
+    assert "effects affected specificity and coefficient differences in efficient different trials differentially" in polished
+    assert "time-consuming and content-aware" in polished
+    assert "offline meta-analysis reported sensorimotor deficits" in polished
+    assert "differential and different vagal afferents" in polished
+    assert "inhibition-based phase-locked cross-frequency mechanisms" in polished
+    assert "Online supplemental table 1 and Biobehav. Rev. entries" in polished
 
 
 def test_polish_html_document_normalizes_latex_micro_units_and_glued_charge_density() -> None:

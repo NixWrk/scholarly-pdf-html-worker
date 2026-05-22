@@ -936,6 +936,36 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bscientiic\b", re.IGNORECASE), "scientific"),
     (re.compile(r"\bcertiication\b", re.IGNORECASE), "certification"),
     (re.compile(r"\bfalsiications\b", re.IGNORECASE), "falsifications"),
+    (re.compile(r"\bspecifc\b", re.IGNORECASE), "specific"),
+    (re.compile(r"\bspecifcity\b", re.IGNORECASE), "specificity"),
+    (re.compile(r"\bidentifed\b", re.IGNORECASE), "identified"),
+    (re.compile(r"\bidentifes\b", re.IGNORECASE), "identifies"),
+    (re.compile(r"\befect\b", re.IGNORECASE), "effect"),
+    (re.compile(r"\befects\b", re.IGNORECASE), "effects"),
+    (re.compile(r"\befective\b", re.IGNORECASE), "effective"),
+    (re.compile(r"\befectively\b", re.IGNORECASE), "effectively"),
+    (re.compile(r"\bafect\b", re.IGNORECASE), "affect"),
+    (re.compile(r"\bafects\b", re.IGNORECASE), "affects"),
+    (re.compile(r"\bafected\b", re.IGNORECASE), "affected"),
+    (re.compile(r"\bafecting\b", re.IGNORECASE), "affecting"),
+    (re.compile(r"\bafective\b", re.IGNORECASE), "affective"),
+    (re.compile(r"\bdiferential\b", re.IGNORECASE), "differential"),
+    (re.compile(r"\bdiferentially\b", re.IGNORECASE), "differentially"),
+    (re.compile(r"\bdiferent\b", re.IGNORECASE), "different"),
+    (re.compile(r"\bdiference\b", re.IGNORECASE), "difference"),
+    (re.compile(r"\bdiferences\b", re.IGNORECASE), "differences"),
+    (re.compile(r"\bdiferentiating\b", re.IGNORECASE), "differentiating"),
+    (re.compile(r"\bcoeficient\b", re.IGNORECASE), "coefficient"),
+    (re.compile(r"\bcoefcients\b", re.IGNORECASE), "coefficients"),
+    (re.compile(r"\beficient\b", re.IGNORECASE), "efficient"),
+    (re.compile(r"\bfow\b"), "flow"),
+    (re.compile(r"\bfxed\b"), "fixed"),
+    (re.compile(r"\bartifcial\b", re.IGNORECASE), "artificial"),
+    (re.compile(r"\brefect\b", re.IGNORECASE), "reflect"),
+    (re.compile(r"\bafiliations\b", re.IGNORECASE), "affiliations"),
+    (re.compile(r"\baferents\b", re.IGNORECASE), "afferents"),
+    (re.compile(r"\bdefcits\b", re.IGNORECASE), "deficits"),
+    (re.compile(r"\bofline\b", re.IGNORECASE), "offline"),
     (re.compile(r"\beicient\b", re.IGNORECASE), "efficient"),
     (re.compile(r"\beiciency\b", re.IGNORECASE), "efficiency"),
     (re.compile(r"\beectiveness\b", re.IGNORECASE), "effectiveness"),
@@ -969,6 +999,19 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bforintracorticalstimulation\b", re.IGNORECASE), "for intracortical stimulation"),
     (re.compile(r"\bchosenasthiswasregardedasthenominal\b", re.IGNORECASE), "chosen as this was regarded as the nominal"),
     (re.compile(r"\bchosenasthiswasregardedasthe\b", re.IGNORECASE), "chosen as this was regarded as the"),
+    (re.compile(r"\btimeconsuming\b", re.IGNORECASE), "time-consuming"),
+    (re.compile(r"\bsingleneuron\b", re.IGNORECASE), "single-neuron"),
+    (re.compile(r"\bcontentaware\b", re.IGNORECASE), "content-aware"),
+    (re.compile(r"\binhibitionbased\b", re.IGNORECASE), "inhibition-based"),
+    (re.compile(r"\bphaselocked\b", re.IGNORECASE), "phase-locked"),
+    (re.compile(r"\bcrossfrequency\b", re.IGNORECASE), "cross-frequency"),
+    (re.compile(r"\bmetaanalysis\b", re.IGNORECASE), "meta-analysis"),
+    (re.compile(r"\bpremicturtion\b", re.IGNORECASE), "premicturition"),
+    (re.compile(r"\bulimate\b", re.IGNORECASE), "ultimate"),
+    (re.compile(r"\bsupple\s+mental\b", re.IGNORECASE), "supplemental"),
+    (re.compile(r"\bBiobeha\s+v\.\s+Rev\.", re.IGNORECASE), "Biobehav. Rev."),
+    (re.compile(r"\bBeha\s+v\.\s+Res\.", re.IGNORECASE), "Behav. Res."),
+    (re.compile(r"\bBeha\s+v\.\s+Sci\.", re.IGNORECASE), "Behav. Sci."),
     (re.compile(r"\bVwater\b", re.IGNORECASE), "V water"),
     (re.compile(r"\bKuznietso\s+v\b", re.IGNORECASE), "Kuznietsov"),
 )
@@ -1120,10 +1163,17 @@ _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ADJACENT_SAME_HREF_ANCHOR_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*)>'
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://)[^>]*)>'
     r'(?P<body>[\s\S]{0,260}?)</a>\s+'
-    r'<a\b(?P<next_attrs>[^>]*)>'
+    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://)[^>]*)>'
     r'(?P<next_body>[\s\S]{0,260}?)</a>',
+    re.IGNORECASE,
+)
+_ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']mailto:)[^>]*)>'
+    r'(?P<body>[\s\S]{0,160}?)</a>\s+'
+    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']mailto:)[^>]*)>'
+    r'(?P<next_body>[\s\S]{0,160}?)</a>',
     re.IGNORECASE,
 )
 _DOUBLE_QUOTED_HREF_ATTR_PATTERN = re.compile(r'\bhref\s*=\s*"(?P<href>[^"]+)"', re.IGNORECASE)
@@ -4538,6 +4588,37 @@ def _merge_adjacent_same_href_url_anchors(html: str) -> str:
     while previous != current:
         previous = current
         current = _ADJACENT_SAME_HREF_ANCHOR_PATTERN.sub(replace, current)
+    return current
+
+
+def _merge_adjacent_same_href_mailto_anchors(html: str) -> str:
+    """Merge OCR-split mailto anchors that point to the same address."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = _extract_href_attr(match.group("attrs"))
+        next_href = _extract_href_attr(match.group("next_attrs"))
+        if href is None or next_href is None:
+            return match.group(0)
+        if href.lower() != next_href.lower() or not href.lower().startswith("mailto:"):
+            return match.group(0)
+
+        label = re.sub(
+            r"\s+",
+            "",
+            _visible_text(match.group("body")) + _visible_text(match.group("next_body")),
+        )
+        address = href[len("mailto:") :]
+        if label.lower() != address.lower():
+            return match.group(0)
+        escaped_href = _escape_html_attr(href)
+        escaped_label = _escape_html_text(label)
+        return f'<a href="{escaped_href}">{escaped_label}</a>'
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = _ADJACENT_SAME_MAILTO_ANCHOR_PATTERN.sub(replace, current)
     return current
 
 
@@ -12897,6 +12978,7 @@ def polish_html_document(
     polished = _repair_split_url_anchor_block_tail(polished)
     polished = _repair_split_visible_url_anchors(polished)
     polished = _repair_miswrapped_doi_anchor_labels(polished)
+    polished = _merge_adjacent_same_href_mailto_anchors(polished)
     polished = _merge_adjacent_same_href_url_anchors(polished)
     polished = _repair_broken_plain_url_text(polished)
     polished = _autolink_plain_urls(polished)
