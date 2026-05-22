@@ -10,11 +10,13 @@ workflow is:
 3. Run the full EN polish audit.
 4. Group every article-level manifestation into global pattern observations and
    append them to the cumulative pattern history.
-5. Record all quality metrics and compare them with a previous run.
-6. Evaluate gates for lower-is-better metrics.
-7. Build a compact LLM analysis packet and prompt.
-8. Let an engineer or coding agent make a small patch plus tests.
-9. Repeat the full EN corpus loop before committing.
+5. If one `P*` defect id mixes different root causes or artifact mechanisms,
+   split or refine the classification before, or together with, the repair.
+6. Record all quality metrics and compare them with a previous run.
+7. Evaluate gates for lower-is-better metrics.
+8. Build a compact LLM analysis packet and prompt.
+9. Let an engineer or coding agent make a small patch plus tests.
+10. Repeat the full EN corpus loop before committing.
 
 ## Branch Workflow
 
@@ -158,6 +160,9 @@ Each fix should be small:
 - all article-level manifestations grouped into `pattern_observations.json` and
   appended to the cumulative pattern history before deciding what problem to
   solve;
+- `P*` classification refined whenever a current pattern summary shows that a
+  single defect id is hiding distinct mechanisms, such as plain text OCR
+  spacing, inline-tag splits, and table-footnote word splits;
 - targeted repolish for affected articles;
 - full cached raw EN corpus repolish before commit: all cached raw files scanned
   and every accepted EN article repolished, with per-document auto policy and

@@ -437,6 +437,39 @@ INTRA_WORD_SPACE_RE = re.compile(
     r"\bat\s+tached\b|\bfr\s+om\s+ye\s+elk\b|\beve\s+ly\b",
     re.IGNORECASE,
 )
+INLINE_INTRA_WORD_SPACE_HTML_RE = re.compile(
+    r"<a\b[^>]*>\s*\[?\s*Bel\s*</a>\s*humeur\b|"
+    r"\bob\s*<a\b[^>]*>\s*je\s*</a>\s*"
+    r"<a\b[^>]*>\s*ct\s*</a>\s*"
+    r"<a\b[^>]*>\s*s\s+w\s*</a>\s*ould\b|"
+    r"\bob\s+je\s+ct\s*<a\b[^>]*>\s*s\s+w\s*</a>\s*ould\b|"
+    r"\bsafe\s*<a\b[^>]*>\s*ty\s+c\s*</a>\s*oncerns\b|"
+    r"\bincl\s*<a\b[^>]*>\s*ude\s*</a>|"
+    r"<a\b[^>]*>\s*b\s*</a>\s*e\s+interpreted\b|"
+    r"\bA\s*<a\b[^>]*>\s*dd\s*</a>\s*itional\b|"
+    r"\bexpressi\s*<a\b[^>]*>\s*ve\s*</a>\s*ness\b|"
+    r"\bT\s*<a\b[^>]*>\s*his\s*</a>\s*fact\b|"
+    r"\bCNC-millin\s*<a\b[^>]*>\s*g\s+m\s*</a>\s*achines\b|"
+    r"\bsupp\s*<a\b[^>]*>\s*ort\s+structures\s+in\s+a\s*</a>\s*dditive\s+production\b|"
+    r"\balternati\s*<a\b[^>]*>\s*ves\s*</a>|"
+    r"<a\b[^>]*>\s*pr\s*</a>\s*inting\s+services\b|"
+    r"\btechnical\s*<a\b[^>]*>\s*ly\s*</a>|"
+    r"\bhigh\s*<a\b[^>]*>\s*\)\s*</a>\s*<a\b[^>]*>\s*w\s*</a>\s*ere\b|"
+    r"\bthr\s*<a\b[^>]*>\s*ee\s*</a>\s*different\b|"
+    r"\bstraightfo\s*<a\b[^>]*>\s*rw\s*</a>\s*ard\b|"
+    r"\bGener\s*<a\b[^>]*>\s*al\s*</a>\s*digital\b|"
+    r"<a\b[^>]*>\s*Barc\s*</a>\s*elona\b|"
+    r"\benj\s*<a\b[^>]*>\s*oy(?:\s+a)?\s*</a>|"
+    r"<b\b[^>]*>\s*B\s*</b>\s*rain-computer\b|"
+    r"\bIta\s*<b\b[^>]*>\s*ly\s*</b>",
+    re.IGNORECASE,
+)
+TABLE_FOOTNOTE_WORD_LETTER_HTML_RE = re.compile(
+    r"\b(?:Leporin|Ghian)\s*"
+    r"<sup\b(?=[^>]*\bclass\s*=\s*([\"'])[^\"']*\bz2m-table-fn\b[^\"']*\1)[^>]*>"
+    r"\s*i\s*</sup>",
+    re.IGNORECASE,
+)
 AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b(?:[1-9]|Institute)Department\b")
 SUSPICIOUS_EMAIL_DOMAIN_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@unfi\.it\b",
@@ -3266,8 +3299,72 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
 
-    intra_word_space_match = INTRA_WORD_SPACE_RE.search(plain)
-    if intra_word_space_match is not None:
+    specific_intra_word_matches: set[str] = set()
+
+    inline_intra_word_space_match = INLINE_INTRA_WORD_SPACE_HTML_RE.search(slim_html)
+    if inline_intra_word_space_match is not None:
+        plain_match = INTRA_WORD_SPACE_RE.search(_strip_tags(inline_intra_word_space_match.group(0)))
+        if plain_match is not None:
+            specific_intra_word_matches.add(plain_match.group(0))
+        defects.append(
+            _defect(
+                defect_id="P94",
+                cc_class="CC-04/CC-13",
+                check="Known intra-word spacing residue crosses inline markup",
+                severity="warning",
+                block=None,
+                snippet=_strip_tags(
+                    slim_html[
+                        max(0, inline_intra_word_space_match.start() - 180) : inline_intra_word_space_match.end()
+                        + 180
+                    ]
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="OCR kept a word split across anchors or inline formatting, so text-only cleanup could not see the full word.",
+                proposed_fix_layer="EN polish inline-aware OCR spacing cleanup",
+                regression_test="Inline splits such as '<b>B</b> rain-computer' and anchor-split 'ob je ct s w ould' are classified separately from plain P78 text.",
+                extra={"match": plain_match.group(0) if plain_match is not None else _strip_tags(inline_intra_word_space_match.group(0))},
+            )
+        )
+
+    table_footnote_word_letter_match = TABLE_FOOTNOTE_WORD_LETTER_HTML_RE.search(slim_html)
+    if table_footnote_word_letter_match is not None:
+        plain_match = INTRA_WORD_SPACE_RE.search(_strip_tags(table_footnote_word_letter_match.group(0)))
+        if plain_match is not None:
+            specific_intra_word_matches.add(plain_match.group(0))
+        defects.append(
+            _defect(
+                defect_id="P95",
+                cc_class="CC-04/CC-13",
+                check="Known word letter is misclassified as a table footnote marker",
+                severity="warning",
+                block=None,
+                snippet=_strip_tags(
+                    slim_html[
+                        max(0, table_footnote_word_letter_match.start() - 180) : table_footnote_word_letter_match.end()
+                        + 180
+                    ]
+                ),
+                stage=POLISH_STAGE,
+                hypothesis="A terminal letter of a known word or author name was preserved as z2m-table-fn instead of normal inline text.",
+                proposed_fix_layer="EN polish table footnote/word-boundary cleanup",
+                regression_test="Known names such as Leporini in tables are reported as table-footnote letter splits, not generic P78 spacing.",
+                extra={"match": plain_match.group(0) if plain_match is not None else _strip_tags(table_footnote_word_letter_match.group(0))},
+            )
+        )
+
+    intra_word_space_match = next(
+        (
+            match
+            for match in INTRA_WORD_SPACE_RE.finditer(plain)
+            if match.group(0) not in specific_intra_word_matches
+        ),
+        None,
+    )
+    if (
+        intra_word_space_match is not None
+        and intra_word_space_match.group(0) not in specific_intra_word_matches
+    ):
         defects.append(
             _defect(
                 defect_id="P78",

@@ -6285,8 +6285,14 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "and voiding positing.</p>"
         "<p>More OCR included significate differences, an involunatary contraction, "
         "a uroflometer, Append ix A, MDP i, B rain-computer interfaces, Ita ly, "
-        "Bel humeur, Leporin i, basrelief, populationbased cohorts, signalto-noise ratios, "
-        "and advanta- \u00a8 geous settings.</p>"
+        "Bel humeur, Leporin i, t o the best of our knowledge, ob je ct s w ould, "
+        "safe ty c oncerns, enj oy, basrelief, populationbased cohorts, "
+        "signalto-noise ratios, and advanta- \u00a8 geous settings.</p>"
+        "<p>Spatial printing OCR included incl ude, b e interpreted, A dd itional "
+        "expressi ve ness, T his fact, CNC-millin g m achines, supp ort structures, "
+        "a dditive production, alternati ves, pr inting services, technical ly, "
+        "high ) w ere, thr ee different, straightfo rw ard, Gener al digital, "
+        "Barc elona, and supple mental notes.</p>"
         "<p>The laser components include The Cartesian linear stage provides 2 DOF motion.</p>"
         "<code>frst medicineresistant</code>"
         "<p>Reprints andpermissions information governs archiving ofthe accepted manuscript.</p>"
@@ -6327,8 +6333,13 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Hands off!, best suits, all that they identified, and voiding position" in polished
     assert "significant differences, an involuntary contraction, a uroflowmeter" in polished
     assert "Appendix A, MDPI, Brain-computer interfaces, Italy" in polished
-    assert "Belhumeur, Leporini, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
+    assert "Belhumeur, Leporini, to the best of our knowledge, objects would" in polished
+    assert "safety concerns, enjoy, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
     assert "and advantageous settings" in polished
+    assert "included include, be interpreted, Additional expressiveness, This fact" in polished
+    assert "CNC-milling machines, support structures, additive production, alternatives" in polished
+    assert "printing services, technically, high) were, three different, straightforward" in polished
+    assert "General digital, Barcelona, and supplemental notes" in polished
     assert "The Cartesian linear stage provides 2 DOF motion" in polished
     assert "The laser components include The Cartesian" not in polished
     assert "<code>frst medicineresistant</code>" in polished
@@ -6338,6 +6349,49 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Syd\u00e4nheimo" in polished
     assert "wireless intraocular" in polished
     assert "iskandar@neurosurgery.wisc.edu" in polished
+
+
+def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup() -> None:
+    html = (
+        "<html><body>"
+        '<p>The surface <a href="#ref-1" class="z2m-ref-link">[Bel</a> humeur et al. 1999] '
+        "stayed visible.</p>"
+        '<p>While touching the original ob <a href="#page-7-0">je</a> '
+        '<a href="#page-7-1">ct</a> <a href="#ref-1" class="z2m-ref-link">s w</a>ould '
+        'be best, safe <a href="#ref-1" class="z2m-ref-link">ty c</a>oncerns remain.</p>'
+        '<p>People enj <a href="#page-9-0">oy a</a> painting.</p>'
+        "<p><b>B</b> rain-computer interfaces were reported in Roma, Ita <b>ly</b>.</p>"
+        '<p>We specifically incl <a href="#page-7-4">ude</a>, which has to '
+        '<a href="#page-7-5">b</a> e interpreted. A <a href="#page-7-6">dd</a> itional '
+        'expressi <a href="#page-7-5">ve</a> ness follows. T <a href="#ref-1">his</a> '
+        'fact uses CNC-millin <a href="#ref-1">g m</a> achines, supp '
+        '<a href="www.agisoft.ru">ort structures in a</a> dditive production, alternati '
+        '<a href="#page-7-9">ves</a>, <a href="#page-3-0">pr</a> inting services, '
+        'technical <a href="#page-7-5">ly</a>, high <a href="#page-5-0">)</a> '
+        '<a href="#page-5-0">w</a> ere, thr <a href="#page-2-0">ee</a> different, '
+        'straightfo <a href="#page-5-0">rw</a> ard, Gener <a href="#page-7-13">al</a> '
+        'digital, and <a href="http://www.tactileview.com/">Barc</a> elona.</p>'
+        '<table><tr><td>Leporin<sup class="z2m-table-fn">i</sup> et al.; '
+        'Ghian<sup class="z2m-table-fn">i</sup>, Leporini &amp; Paterno.</td></tr></table>'
+        '<code>ob <a href="#page-7-0">je</a> ct s w ould</code>'
+        '<a href="https://example.test/B%20rain-computer">B rain-computer</a>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<a href="#ref-1" class="z2m-ref-link">[Belhumeur</a> et al. 1999]' in polished
+    assert "original objects would be best, safety concerns remain" in polished
+    assert "People enjoy a painting" in polished
+    assert "Brain-computer interfaces were reported in Roma, Italy" in polished
+    assert "specifically include, which has to be interpreted" in polished
+    assert "Additional expressiveness follows. This fact uses CNC-milling machines" in polished
+    assert "support structures in additive production, alternatives, printing services" in polished
+    assert "technically, high) were, three different, straightforward" in polished
+    assert "General digital, and Barcelona" in polished
+    assert "Leporini et al.; Ghiani, Leporini &amp; Paterno" in polished
+    assert "<code>ob je ct s w ould</code>" in polished
+    assert '<a href="https://example.test/B%20rain-computer">B rain-computer</a>' in polished
 
 
 def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_nodes() -> None:

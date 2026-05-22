@@ -1104,6 +1104,27 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bbasrelief\b", re.IGNORECASE), "bas-relief"),
     (re.compile(r"\bAppend ix\b"), "Appendix"),
     (re.compile(r"\bMDP\s+i\b"), "MDPI"),
+    (re.compile(r"\bt\s+o\s+the\s+best\s+of\s+our\s+knowledge\b", re.IGNORECASE), "to the best of our knowledge"),
+    (re.compile(r"\bob\s+je\s+ct\s+s\s+w\s+ould\b", re.IGNORECASE), "objects would"),
+    (re.compile(r"\bsafe\s+ty\s+c\s+oncerns\b", re.IGNORECASE), "safety concerns"),
+    (re.compile(r"\bincl\s+ude\b", re.IGNORECASE), "include"),
+    (re.compile(r"\bb\s+e\s+interpreted\b", re.IGNORECASE), "be interpreted"),
+    (re.compile(r"\bA\s+dd\s+itional\b"), "Additional"),
+    (re.compile(r"\bsupple\s+mental\b", re.IGNORECASE), "supplemental"),
+    (re.compile(r"\bexpressi\s+ve\s+ness\b", re.IGNORECASE), "expressiveness"),
+    (re.compile(r"\bT\s+his\s+fact\b"), "This fact"),
+    (re.compile(r"\bCNC-millin\s+g\s+m\s+achines\b", re.IGNORECASE), "CNC-milling machines"),
+    (re.compile(r"\bsupp\s+ort\s+structures\b", re.IGNORECASE), "support structures"),
+    (re.compile(r"\ba\s+dditive\s+production\b", re.IGNORECASE), "additive production"),
+    (re.compile(r"\balternati\s+ves\b", re.IGNORECASE), "alternatives"),
+    (re.compile(r"\bpr\s+inting\s+services\b", re.IGNORECASE), "printing services"),
+    (re.compile(r"\btechnical\s+ly\b", re.IGNORECASE), "technically"),
+    (re.compile(r"\bhigh\s*\)\s*w\s+ere\b", re.IGNORECASE), "high) were"),
+    (re.compile(r"\bthr\s+ee\s+different\b", re.IGNORECASE), "three different"),
+    (re.compile(r"\bstraightfo\s+rw\s+ard\b", re.IGNORECASE), "straightforward"),
+    (re.compile(r"\bGener\s+al\s+digital\b"), "General digital"),
+    (re.compile(r"\bBarc\s+elona\b", re.IGNORECASE), "Barcelona"),
+    (re.compile(r"\benj\s+oy\b", re.IGNORECASE), "enjoy"),
     (re.compile(r"\bB rain-computer\b"), "Brain-computer"),
     (re.compile(r"\bIta ly\b"), "Italy"),
     (re.compile(r"\bBel humeur\b"), "Belhumeur"),
@@ -1117,6 +1138,124 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bHands of!"), "Hands off!"),
     (re.compile(r"\ball the they identified\b", re.IGNORECASE), "all that they identified"),
     (re.compile(r"\bvoiding positing\b", re.IGNORECASE), "voiding position"),
+)
+_EN_OCR_CROSS_TAG_SKIP_TAGS = {"script", "style", "code", "pre", "math", "svg"}
+_EN_OCR_CROSS_TAG_REPAIRS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...] = (
+    (
+        re.compile(
+            r"(?P<open><a\b[^>]*>)\s*(?P<prefix>\[?)\s*Bel\s*(?P<close></a>)\s*humeur\b",
+            re.IGNORECASE,
+        ),
+        lambda m: f"{m.group('open')}{m.group('prefix')}Belhumeur{m.group('close')}",
+    ),
+    (
+        re.compile(
+            r"\bob\s*<a\b[^>]*>\s*je\s*</a>\s*"
+            r"<a\b[^>]*>\s*ct\s*</a>\s*"
+            r"<a\b[^>]*>\s*s\s+w\s*</a>\s*ould\b",
+            re.IGNORECASE,
+        ),
+        "objects would",
+    ),
+    (
+        re.compile(
+            r"\bob\s+je\s+ct\s*<a\b[^>]*>\s*s\s+w\s*</a>\s*ould\b",
+            re.IGNORECASE,
+        ),
+        "objects would",
+    ),
+    (
+        re.compile(r"\bsafe\s*<a\b[^>]*>\s*ty\s+c\s*</a>\s*oncerns\b", re.IGNORECASE),
+        "safety concerns",
+    ),
+    (
+        re.compile(r"\bincl\s*<a\b[^>]*>\s*ude\s*</a>", re.IGNORECASE),
+        "include",
+    ),
+    (
+        re.compile(r"<a\b[^>]*>\s*b\s*</a>\s*e\s+interpreted\b", re.IGNORECASE),
+        "be interpreted",
+    ),
+    (
+        re.compile(r"\bA\s*<a\b[^>]*>\s*dd\s*</a>\s*itional\b"),
+        "Additional",
+    ),
+    (
+        re.compile(r"\bexpressi\s*<a\b[^>]*>\s*ve\s*</a>\s*ness\b", re.IGNORECASE),
+        "expressiveness",
+    ),
+    (
+        re.compile(r"\bT\s*<a\b[^>]*>\s*his\s*</a>\s*fact\b"),
+        "This fact",
+    ),
+    (
+        re.compile(r"\bCNC-millin\s*<a\b[^>]*>\s*g\s+m\s*</a>\s*achines\b", re.IGNORECASE),
+        "CNC-milling machines",
+    ),
+    (
+        re.compile(
+            r"\bsupp\s*<a\b[^>]*>\s*ort\s+structures\s+in\s+a\s*</a>\s*"
+            r"dditive\s+production\b",
+            re.IGNORECASE,
+        ),
+        "support structures in additive production",
+    ),
+    (
+        re.compile(r"\balternati\s*<a\b[^>]*>\s*ves\s*</a>", re.IGNORECASE),
+        "alternatives",
+    ),
+    (
+        re.compile(r"<a\b[^>]*>\s*pr\s*</a>\s*inting\s+services\b", re.IGNORECASE),
+        "printing services",
+    ),
+    (
+        re.compile(r"\btechnical\s*<a\b[^>]*>\s*ly\s*</a>", re.IGNORECASE),
+        "technically",
+    ),
+    (
+        re.compile(
+            r"\bhigh\s*<a\b[^>]*>\s*\)\s*</a>\s*<a\b[^>]*>\s*w\s*</a>\s*ere\b",
+            re.IGNORECASE,
+        ),
+        "high) were",
+    ),
+    (
+        re.compile(r"\bthr\s*<a\b[^>]*>\s*ee\s*</a>\s*different\b", re.IGNORECASE),
+        "three different",
+    ),
+    (
+        re.compile(r"\bstraightfo\s*<a\b[^>]*>\s*rw\s*</a>\s*ard\b", re.IGNORECASE),
+        "straightforward",
+    ),
+    (
+        re.compile(r"\bGener\s*<a\b[^>]*>\s*al\s*</a>\s*digital\b"),
+        "General digital",
+    ),
+    (
+        re.compile(r"<a\b[^>]*>\s*Barc\s*</a>\s*elona\b", re.IGNORECASE),
+        "Barcelona",
+    ),
+    (
+        re.compile(r"\benj\s*<a\b[^>]*>\s*oy(?P<trail>\s+a)?\s*</a>", re.IGNORECASE),
+        lambda m: "enjoy" + (m.group("trail") or ""),
+    ),
+    (
+        re.compile(r"<b\b[^>]*>\s*B\s*</b>\s*rain-computer\b", re.IGNORECASE),
+        "Brain-computer",
+    ),
+    (
+        re.compile(r"\bIta\s*<b\b[^>]*>\s*ly\s*</b>", re.IGNORECASE),
+        "Italy",
+    ),
+    (
+        re.compile(
+            r"\b(?P<stem>Leporin|Ghian)\s*"
+            r"<sup\b(?=[^>]*\bclass\s*=\s*([\"'])[^\"']*\bz2m-table-fn\b[^\"']*\2)[^>]*>"
+            r"\s*i\s*</sup>",
+            re.IGNORECASE,
+        ),
+        lambda m: f"{m.group('stem')}i",
+    ),
 )
 _SPLIT_EMAIL_AFTER_AT_PATTERN = re.compile(
     r"(?P<local>\b[A-Za-z0-9._%+-]{2,})@\s+(?P<domain>[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
@@ -4016,6 +4155,68 @@ def _repair_english_ocr_text_artifacts_text(text: str) -> str:
     return text
 
 
+def _repair_english_ocr_cross_tag_artifacts(html: str) -> str:
+    def _apply_repairs(fragment: str) -> str:
+        for pattern, replacement in _EN_OCR_CROSS_TAG_REPAIRS:
+            fragment = pattern.sub(replacement, fragment)
+        return fragment
+
+    def _flush_buffer() -> None:
+        if buffer:
+            out.append(_apply_repairs("".join(buffer)))
+            buffer.clear()
+
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    buffer: list[str] = []
+    skip_stack: list[str] = []
+
+    for part in parts:
+        if not part:
+            continue
+        if not part.startswith("<"):
+            if skip_stack:
+                out.append(part)
+            else:
+                buffer.append(part)
+            continue
+
+        raw = part.strip()
+        close_match = _CLOSE_TAG_PATTERN.match(raw)
+        open_match = _OPEN_TAG_PATTERN.match(raw)
+        tag_name = ""
+        if close_match is not None:
+            tag_name = close_match.group(1).lower()
+        elif open_match is not None:
+            tag_name = open_match.group(1).lower()
+
+        if skip_stack:
+            out.append(part)
+            if close_match is not None:
+                for idx in range(len(skip_stack) - 1, -1, -1):
+                    if skip_stack[idx] == tag_name:
+                        del skip_stack[idx]
+                        break
+            elif (
+                open_match is not None
+                and tag_name in _EN_OCR_CROSS_TAG_SKIP_TAGS
+                and not raw.endswith("/>")
+            ):
+                skip_stack.append(tag_name)
+            continue
+
+        if open_match is not None and tag_name in _EN_OCR_CROSS_TAG_SKIP_TAGS and not raw.endswith("/>"):
+            _flush_buffer()
+            out.append(part)
+            skip_stack.append(tag_name)
+            continue
+
+        buffer.append(part)
+
+    _flush_buffer()
+    return "".join(out)
+
+
 def _repair_english_ocr_text_artifacts(html: str) -> str:
     parts = _TAG_SPLIT_PATTERN.split(html)
     out: list[str] = []
@@ -4033,7 +4234,7 @@ def _repair_english_ocr_text_artifacts(html: str) -> str:
             continue
         out.append(_repair_english_ocr_text_artifacts_text(part))
 
-    return "".join(out)
+    return _repair_english_ocr_cross_tag_artifacts("".join(out))
 
 
 def _with_diaeresis(match: re.Match[str]) -> str:

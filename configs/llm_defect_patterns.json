@@ -48,5 +48,15 @@
     "pattern": "manual-blind-spot",
     "criticality": "medium",
     "fix_layer": "targeted regression fixture from manual review"
+  },
+  "P94": {
+    "pattern": "inline-markup-ocr-word-split",
+    "criticality": "medium",
+    "fix_layer": "EN polish inline-aware OCR spacing cleanup"
+  },
+  "P95": {
+    "pattern": "table-footnote-word-letter-split",
+    "criticality": "medium",
+    "fix_layer": "EN polish table footnote/word-boundary cleanup"
   }
 }

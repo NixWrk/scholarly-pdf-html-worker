@@ -1133,6 +1133,7 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Also add at least one guard/negative test when the repair could touch links, tags, math, code, language policy, or nearby article classes.",
         "Pattern observations must be accumulated globally across loop iterations before local manifestations are promoted into shared problem statements.",
         "Review the all-article current pattern summary and the cumulative pattern history before proposing a fix.",
+        "When one P-code groups different root causes or artifact mechanisms, refine the P classification before or alongside the repair.",
         "The loop is incomplete until the full configured project test suite and a full cached raw EN repolish comparison have both passed.",
         "The full cached raw EN repolish comparison means all cached raw files are scanned and every accepted EN article is repolished.",
         "",

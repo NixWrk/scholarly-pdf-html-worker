@@ -204,6 +204,7 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     assert "all cached raw files are scanned" in prompt
     assert "every accepted EN article is repolished" in prompt
     assert "Pattern observations must be accumulated globally across loop iterations" in prompt
+    assert "refine the P classification" in prompt
 
 
 def test_assessment_warning_count_ignores_css_selector_without_body_warning() -> None:
