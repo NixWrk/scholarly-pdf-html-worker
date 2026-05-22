@@ -6360,11 +6360,15 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "patients,were staffmembers theCreative frontto-back ecofriendly nervesparing "
         "upprojection KeunWhangbo first-inhumans Descriptionsfor realworld "
         "Refreshabletactile OFTACTILE residualnormal processingbased handassembled "
-        "staffmember selfcontrolled Qmaxurgency d)2.5D.</p>"
+        "staffmember selfcontrolled Qmaxurgency d)2.5D prostatectomy\u0394VV "
+        "groundtruth backilluminated displaycan EVERYDAYACTIVITIES ofdepression "
+        "numbergestures 99Tcmcolloids.</p>"
         "<p>OCR phrases included Hands of!, best suites, all the they identified, "
         "and voiding positing.</p>"
         "<p>More OCR included significate differences, an involunatary contraction, "
-        "a uroflometer, Append ix A, MDP i, B rain-computer interfaces, Ita ly, "
+        "a uroflometer, liverposl nomograms, an Examing Committee, urinary track, "
+        "inital shape, Bolognia, systometry, bulbocarnosus, Ncology, "
+        "and euromodulation devices, Append ix A, MDP i, B rain-computer interfaces, Ita ly, "
         "Bel humeur, Leporin i, t o the best of our knowledge, ob je ct s w ould, "
         "safe ty c oncerns, enj oy, basrelief, populationbased cohorts, "
         "signalto-noise ratios, and advanta- \u00a8 geous settings.</p>"
@@ -6428,8 +6432,12 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "up-projection Keun Whangbo first-in-humans Descriptions for real-world" in polished
     assert "Refreshable tactile OF TACTILE residual-normal processing-based hand-assembled" in polished
     assert "staff member self-controlled Qmax-urgency d) 2.5D" in polished
+    assert "prostatectomy \u0394VV ground-truth back-illuminated display can EVERYDAY ACTIVITIES" in polished
+    assert "of depression number gestures 99Tcm colloids" in polished
     assert "Hands off!, best suits, all that they identified, and voiding position" in polished
     assert "significant differences, an involuntary contraction, a uroflowmeter" in polished
+    assert "Liverpool nomograms, an Examining Committee, urinary tract, initial shape" in polished
+    assert "Bologna, cystometry, bulbocavernosus, Oncology, and neuromodulation devices" in polished
     assert "Appendix A, MDPI, Brain-computer interfaces, Italy" in polished
     assert "Belhumeur, Leporini, to the best of our knowledge, objects would" in polished
     assert "safety concerns, enjoy, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
@@ -6556,14 +6564,16 @@ def test_polish_html_document_keeps_english_ocr_repairs_en_only() -> None:
     html = (
         "<html><body>"
         "<p>Lost ligatures included frst and fne. "
-        "Joined words included medicineresistant, Attributebased, and realworld.</p>"
+        "Joined words included medicineresistant, Attributebased, realworld, "
+        "groundtruth, and displaycan. Typos included systometry and Ncology.</p>"
         "</body></html>"
     )
 
     polished = polish_html_document(html, table_caption_language="ru", polish_language="ru")
 
     assert "frst and fne" in polished
-    assert "medicineresistant, Attributebased, and realworld" in polished
+    assert "medicineresistant, Attributebased, realworld, groundtruth, and displaycan" in polished
+    assert "systometry and Ncology" in polished
 
 
 def test_polish_html_document_repairs_publication_metadata_author_marker_block() -> None:
