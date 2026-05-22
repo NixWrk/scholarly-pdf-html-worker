@@ -1051,6 +1051,73 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bVwater\b", re.IGNORECASE), "V water"),
     (re.compile(r"\bKuznietso\s+v\b", re.IGNORECASE), "Kuznietsov"),
 )
+_EN_OCR_WORD_REPAIRS = (
+    (re.compile(r"\bfrst\b", re.IGNORECASE), "first"),
+    (re.compile(r"\bfne\b", re.IGNORECASE), "fine"),
+    (re.compile(r"\bfgurative\b", re.IGNORECASE), "figurative"),
+    (re.compile(r"\bdefne\b", re.IGNORECASE), "define"),
+    (re.compile(r"\bdefned\b", re.IGNORECASE), "defined"),
+    (re.compile(r"\bprofcient\b", re.IGNORECASE), "proficient"),
+    (re.compile(r"\bbeneft\b", re.IGNORECASE), "benefit"),
+    (re.compile(r"\bdifcult\b", re.IGNORECASE), "difficult"),
+    (re.compile(r"\bdifculty\b", re.IGNORECASE), "difficulty"),
+    (re.compile(r"\bdifculties\b", re.IGNORECASE), "difficulties"),
+    (re.compile(r"\bstaf\b", re.IGNORECASE), "staff"),
+    (re.compile(r"\befort\b", re.IGNORECASE), "effort"),
+    (re.compile(r"\beforts\b", re.IGNORECASE), "efforts"),
+    (re.compile(r"\bconfrm\b", re.IGNORECASE), "confirm"),
+    (re.compile(r"\bconfrmed\b", re.IGNORECASE), "confirmed"),
+    (re.compile(r"\bconfrming\b", re.IGNORECASE), "confirming"),
+    (re.compile(r"\bclarifed\b", re.IGNORECASE), "clarified"),
+    (re.compile(r"\binfuenced\b", re.IGNORECASE), "influenced"),
+    (re.compile(r"\bfndings\b", re.IGNORECASE), "findings"),
+    (re.compile(r"\bfeld\b", re.IGNORECASE), "field"),
+    (re.compile(r"\bsignificate\b", re.IGNORECASE), "significant"),
+    (re.compile(r"\binvolunatary\b", re.IGNORECASE), "involuntary"),
+    (re.compile(r"\buroflometer\b", re.IGNORECASE), "uroflowmeter"),
+)
+_EN_OCR_PHRASE_REPAIRS = (
+    (re.compile(r"\bmedicineresistant\b", re.IGNORECASE), "medicine-resistant"),
+    (re.compile(r"\bcustomdesigned\b", re.IGNORECASE), "custom-designed"),
+    (re.compile(r"\bhardwareupdate\b", re.IGNORECASE), "hardware update"),
+    (re.compile(r"\beasy-tolearn\b", re.IGNORECASE), "easy-to-learn"),
+    (re.compile(r"\bAttributebased\b"), "Attribute-based"),
+    (re.compile(r"\battributebased\b"), "attribute-based"),
+    (re.compile(r"\bthistask\b", re.IGNORECASE), "this task"),
+    (re.compile(r"\bhigherthan\b", re.IGNORECASE), "higher than"),
+    (re.compile(r"\bdisabilitiessometimesface\b", re.IGNORECASE), "disabilities sometimes face"),
+    (re.compile(r"\bartworksis\b", re.IGNORECASE), "artworks is"),
+    (re.compile(r"\bhierarchicalsegmentation\b", re.IGNORECASE), "hierarchical segmentation"),
+    (re.compile(r"\bwebbased\b", re.IGNORECASE), "web-based"),
+    (re.compile(r"\bneedsto\b", re.IGNORECASE), "needs to"),
+    (re.compile(r"\bincludesinformation\b", re.IGNORECASE), "includes information"),
+    (re.compile(r"\bparticipantssuggested\b", re.IGNORECASE), "participants suggested"),
+    (re.compile(r"\boverallwork\b", re.IGNORECASE), "overall work"),
+    (re.compile(r"\bguidelinesfor\b", re.IGNORECASE), "guidelines for"),
+    (re.compile(r"\bissimilarto\b", re.IGNORECASE), "is similar to"),
+    (re.compile(r"\beasierto\b", re.IGNORECASE), "easier to"),
+    (re.compile(r"\bspatialcognitive\b", re.IGNORECASE), "spatial-cognitive"),
+    (re.compile(r"\bwassupported\b", re.IGNORECASE), "was supported"),
+    (re.compile(r"\bblindaccessible\b", re.IGNORECASE), "blind-accessible"),
+    (re.compile(r"\bpopulationbased\b", re.IGNORECASE), "population-based"),
+    (re.compile(r"\bsignalto-noise\b", re.IGNORECASE), "signal-to-noise"),
+    (re.compile(r"\bbasrelief\b", re.IGNORECASE), "bas-relief"),
+    (re.compile(r"\bAppend ix\b"), "Appendix"),
+    (re.compile(r"\bMDP\s+i\b"), "MDPI"),
+    (re.compile(r"\bB rain-computer\b"), "Brain-computer"),
+    (re.compile(r"\bIta ly\b"), "Italy"),
+    (re.compile(r"\bBel humeur\b"), "Belhumeur"),
+    (re.compile(r"\bLeporin i\b"), "Leporini"),
+    (re.compile(r"\badvanta-\s*[\u00a8\u02d9]\s*geous\b", re.IGNORECASE), "advantageous"),
+    (
+        re.compile(r"\bThe laser components include The Cartesian linear stage provides\b"),
+        "The Cartesian linear stage provides",
+    ),
+    (re.compile(r"\bbest suites\b", re.IGNORECASE), "best suits"),
+    (re.compile(r"\bHands of!"), "Hands off!"),
+    (re.compile(r"\ball the they identified\b", re.IGNORECASE), "all that they identified"),
+    (re.compile(r"\bvoiding positing\b", re.IGNORECASE), "voiding position"),
+)
 _SPLIT_EMAIL_AFTER_AT_PATTERN = re.compile(
     r"(?P<local>\b[A-Za-z0-9._%+-]{2,})@\s+(?P<domain>[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
 )
@@ -3886,6 +3953,42 @@ def _repair_known_word_glue_text(text: str) -> str:
     for pattern, replacement in _KNOWN_WORD_GLUE_REPAIRS:
         text = pattern.sub(replacement, text)
     return text
+
+
+def _case_like(source: str, replacement: str) -> str:
+    if source.isupper():
+        return replacement.upper()
+    if source[:1].isupper():
+        return replacement[:1].upper() + replacement[1:]
+    return replacement
+
+
+def _repair_english_ocr_text_artifacts_text(text: str) -> str:
+    for pattern, replacement in _EN_OCR_WORD_REPAIRS:
+        text = pattern.sub(lambda m, repl=replacement: _case_like(m.group(0), repl), text)
+    for pattern, replacement in _EN_OCR_PHRASE_REPAIRS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _repair_english_ocr_text_artifacts(html: str) -> str:
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    skip_stack: list[str] = []
+
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            _update_skip_stack(part, skip_stack)
+            out.append(part)
+            continue
+        if skip_stack:
+            out.append(part)
+            continue
+        out.append(_repair_english_ocr_text_artifacts_text(part))
+
+    return "".join(out)
 
 
 def _compact_effective_variable_html(match: re.Match[str]) -> str:
@@ -13284,6 +13387,8 @@ def polish_html_document(
     polished = _absorb_external_figure_captions_into_units(polished)
     polished = _repair_known_word_glue(polished)
     polished = _repair_safe_text_artifacts(polished)
+    if language_policy.code == "en":
+        polished = _repair_english_ocr_text_artifacts(polished)
     polished = _mark_consecutive_float_runs(polished)
     polished, _ = _merge_biorender_caption_fragments(polished)
     if ru_caption_context:

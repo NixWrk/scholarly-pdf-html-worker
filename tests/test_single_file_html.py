@@ -6254,6 +6254,21 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "<p>Fudan Univerisity reported a pathologica example that deceases as the distance grows.</p>"
         "<p>References mentioned eicient tools, eiciency, eectiveness, deining protocols, "
         "uniied inputs, simpliication, ine-grained evaluation, and ailiations.</p>"
+        "<p>Lost ligatures included frst fne fgurative defned profcient beneft "
+        "difculties staf eforts confrmed clarifed infuenced fndings feld.</p>"
+        "<p>Joined words included medicineresistant customdesigned hardwareupdate easy-tolearn "
+        "Attributebased thistask higherthan disabilitiessometimesface artworksis "
+        "hierarchicalsegmentation webbased needsto includesinformation participantssuggested "
+        "overallwork guidelinesfor issimilarto easierto spatialcognitive wassupported "
+        "blindaccessible.</p>"
+        "<p>OCR phrases included Hands of!, best suites, all the they identified, "
+        "and voiding positing.</p>"
+        "<p>More OCR included significate differences, an involunatary contraction, "
+        "a uroflometer, Append ix A, MDP i, B rain-computer interfaces, Ita ly, "
+        "Bel humeur, Leporin i, basrelief, populationbased cohorts, signalto-noise ratios, "
+        "and advanta- \u00a8 geous settings.</p>"
+        "<p>The laser components include The Cartesian linear stage provides 2 DOF motion.</p>"
+        "<code>frst medicineresistant</code>"
         "<p>Reprints andpermissions information governs archiving ofthe accepted manuscript.</p>"
         "<p>P. A. Heppner, \u00b4 and D. M. Budgett reported the device. "
         "L. Syd \u00a8 anheimo described a wireless \u00a8 intraocular pressure sensor.</p>"
@@ -6282,12 +6297,41 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "simplification" in polished
     assert "fine-grained evaluation" in polished
     assert "affiliations" in polished
+    assert "first fine figurative defined proficient benefit" in polished
+    assert "difficulties staff efforts confirmed clarified influenced findings field" in polished
+    assert "medicine-resistant custom-designed hardware update easy-to-learn" in polished
+    assert "Attribute-based this task higher than disabilities sometimes face artworks is" in polished
+    assert "hierarchical segmentation web-based needs to includes information participants suggested" in polished
+    assert "overall work guidelines for is similar to easier to spatial-cognitive was supported" in polished
+    assert "blind-accessible" in polished
+    assert "Hands off!, best suits, all that they identified, and voiding position" in polished
+    assert "significant differences, an involuntary contraction, a uroflowmeter" in polished
+    assert "Appendix A, MDPI, Brain-computer interfaces, Italy" in polished
+    assert "Belhumeur, Leporini, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
+    assert "and advantageous settings" in polished
+    assert "The Cartesian linear stage provides 2 DOF motion" in polished
+    assert "The laser components include The Cartesian" not in polished
+    assert "<code>frst medicineresistant</code>" in polished
     assert "Reprints and permissions information" in polished
     assert "of the accepted manuscript" in polished
     assert "Heppner, and D. M. Budgett" in polished
     assert "Syd\u00e4nheimo" in polished
     assert "wireless intraocular" in polished
     assert "iskandar@neurosurgery.wisc.edu" in polished
+
+
+def test_polish_html_document_keeps_english_ocr_repairs_en_only() -> None:
+    html = (
+        "<html><body>"
+        "<p>Lost ligatures included frst and fne. "
+        "Joined words included medicineresistant and Attributebased.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru", polish_language="ru")
+
+    assert "frst and fne" in polished
+    assert "medicineresistant and Attributebased" in polished
 
 
 def test_polish_html_document_repairs_publication_metadata_author_marker_block() -> None:
