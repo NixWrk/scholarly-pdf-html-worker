@@ -8205,7 +8205,12 @@ def _replace_href_and_link_class(attrs: str, href: str, class_name: str) -> str:
     return attrs[:class_match.start(2)] + " ".join(classes) + attrs[class_match.end(2):]
 
 
-def _rewrite_existing_page_figure_links(html: str, found_figures: set[str]) -> str:
+def _rewrite_existing_page_figure_links(
+    html: str,
+    found_figures: set[str],
+    *,
+    language_policy: PolishLanguagePolicy | None = None,
+) -> str:
     """Retarget Marker page links used as figure references to figure anchors."""
     if not found_figures:
         return html
@@ -8231,15 +8236,24 @@ def _rewrite_existing_page_figure_links(html: str, found_figures: set[str]) -> s
     def _replace(m: re.Match[str]) -> str:
         body = m.group("body")
         body_text = _visible_text(body)
+        semantic_body_text = (
+            language_policy.strip_semantic_reference_lead_in(body_text)
+            if language_policy is not None
+            else body_text
+        )
         direct = re.match(
             r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
             rf"\.?\s*({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
-            body_text,
+            semantic_body_text,
             re.IGNORECASE,
         )
         number = direct.group(1) if direct is not None else None
         if number is None:
-            num_only = re.match(rf"^({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            num_only = re.match(
+                rf"^({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
+                semantic_body_text,
+                re.IGNORECASE,
+            )
             if num_only is not None:
                 left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
                 if re.search(fig_left_context, left_text, re.IGNORECASE):
@@ -8248,7 +8262,7 @@ def _rewrite_existing_page_figure_links(html: str, found_figures: set[str]) -> s
                     r"(?:\b(?:image|photograph|picture|panel)\s*\(\s*in\s*|\b(?:image|photograph|picture|panel|in)\s*)$",
                     left_text,
                     re.IGNORECASE,
-                ) and re.match(r"^\d+[a-z]", body_text, re.IGNORECASE):
+                ) and re.match(r"^\d+[a-z]", semantic_body_text, re.IGNORECASE):
                     number = num_only.group(1)
         key = _figure_key_from_visible_number(number) if number is not None else None
         if key is None or key not in found_figures:
@@ -8341,6 +8355,7 @@ def _unwrap_unresolved_semantic_page_links(
     *,
     found_figures: set[str],
     found_tables: set[str],
+    language_policy: PolishLanguagePolicy | None = None,
 ) -> str:
     """Remove page-anchor links from Fig./Table references when no semantic target exists."""
     if "#page-" not in html:
@@ -8365,13 +8380,18 @@ def _unwrap_unresolved_semantic_page_links(
     def _replace(m: re.Match[str]) -> str:
         body = m.group("body")
         body_text = _visible_text(body)
+        semantic_body_text = (
+            language_policy.strip_semantic_reference_lead_in(body_text)
+            if language_policy is not None
+            else body_text
+        )
         left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
 
         fig_number: str | None = None
         fig_decimal_direct = re.match(
             r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
             r"\.?\s*(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$",
-            body_text,
+            semantic_body_text,
             re.IGNORECASE,
         )
         if fig_decimal_direct is not None:
@@ -8380,20 +8400,24 @@ def _unwrap_unresolved_semantic_page_links(
         fig_direct = re.match(
             r"^[\(\[]*(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
             rf"\.?\s*({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
-            body_text,
+            semantic_body_text,
             re.IGNORECASE,
         )
         if fig_number is None and fig_direct is not None:
             fig_number = _figure_key_from_visible_number(fig_direct.group(1))
         else:
-            fig_num_only = re.match(rf"^({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            fig_num_only = re.match(
+                rf"^({_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
+                semantic_body_text,
+                re.IGNORECASE,
+            )
             if fig_number is None and fig_num_only is not None and re.search(fig_left_context, left_text, re.IGNORECASE):
                 fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
             elif fig_number is None and fig_num_only is not None and re.search(
                 r"(?:\b(?:image|photograph|picture|panel)\s*\(\s*in\s*|\b(?:image|photograph|picture|panel|in)\s*)$",
                 left_text,
                 re.IGNORECASE,
-            ) and re.match(r"^\d+[a-z]", body_text, re.IGNORECASE):
+            ) and re.match(r"^\d+[a-z]", semantic_body_text, re.IGNORECASE):
                 fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
         if fig_number is not None and fig_number not in found_figures:
             return body
@@ -8401,7 +8425,7 @@ def _unwrap_unresolved_semantic_page_links(
         table_key: str | None = None
         table_decimal_direct = re.match(
             r"^[\(\[]*(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$",
-            body_text,
+            semantic_body_text,
             re.IGNORECASE,
         )
         if table_decimal_direct is not None:
@@ -8409,13 +8433,17 @@ def _unwrap_unresolved_semantic_page_links(
 
         table_direct = re.match(
             rf"^[\(\[]*(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+({_TABLE_KEY_TOKEN})[\(\)\]\.,;:]*$",
-            body_text,
+            semantic_body_text,
             re.IGNORECASE,
         )
         if table_key is None and table_direct is not None:
             table_key = _normalize_table_key(table_direct.group(1))
         else:
-            table_decimal_num_only = re.match(r"^(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            table_decimal_num_only = re.match(
+                r"^(\d+\.\d+[a-z]?)[\(\)\]\.,;:]*$",
+                semantic_body_text,
+                re.IGNORECASE,
+            )
             if table_key is None and table_decimal_num_only is not None and re.search(
                 r"(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+\d+\.\d+[a-z]?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
                 left_text,
@@ -8423,13 +8451,17 @@ def _unwrap_unresolved_semantic_page_links(
             ):
                 table_key = table_decimal_num_only.group(1).lower().replace(".", "-")
 
-            table_num_only = re.match(rf"^({_TABLE_KEY_TOKEN})[\(\)\]\.,;:]*$", body_text, re.IGNORECASE)
+            table_num_only = re.match(
+                rf"^({_TABLE_KEY_TOKEN})[\(\)\]\.,;:]*$",
+                semantic_body_text,
+                re.IGNORECASE,
+            )
             if table_key is None and table_num_only is not None and re.search(table_left_context, left_text, re.IGNORECASE):
                 table_key = _normalize_table_key(table_num_only.group(1))
             elif table_key is None and table_num_only is None:
                 table_range_tail = re.match(
                     rf"^\s*[-\u2010\u2011\u2012\u2013\u2014]\s*({_TABLE_KEY_TOKEN})[\)\]\.,;:]*$",
-                    body_text,
+                    semantic_body_text,
                     re.IGNORECASE,
                 )
                 if table_range_tail is not None and re.search(table_range_left_context, left_text, re.IGNORECASE):
@@ -12589,6 +12621,136 @@ def _wrap_float_units(html: str) -> str:
     return "".join(out_parts)
 
 
+def _absorb_external_figure_captions_into_units(html: str) -> str:
+    """Move a nearby matching caption/image run into an existing figure unit."""
+    nodes = list(_FLOAT_AWARE_SENTENCE_NODE_PATTERN.finditer(html))
+    if not nodes:
+        return html
+
+    replacements: dict[int, str] = {}
+    skip_indices: set[int] = set()
+    id_occurrence_cache: dict[str, int] = {}
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _caption_points_to_figure(raw: str, figure_id: str) -> bool:
+        return (
+            re.search(rf'href\s*=\s*(["\'])#{re.escape(figure_id)}\1', raw, re.IGNORECASE)
+            is not None
+        )
+
+    def _matches_figure_caption(raw: str, figure_id: str, fig_num: str) -> bool:
+        caption_id = _node_id_value(raw)
+        if caption_id is not None and caption_id != figure_id:
+            return False
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            return False
+        visible = _visible_text(raw)
+        starts_like_caption = (
+            re.match(
+                rf"^\s*(?:{_FIG_REF_LABEL_TOKEN}\.?)\s*{_FIG_KEY_TOKEN}\b",
+                visible,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+        if not (_node_has_class(raw, "z2m-figure-caption") or starts_like_caption):
+            return False
+        return _is_same_figure_caption(raw, fig_num) or _caption_points_to_figure(raw, figure_id)
+
+    def _is_image_only_node(raw: str) -> bool:
+        return (
+            re.search(r"<img\b", raw, re.IGNORECASE) is not None
+            and not _visible_text(raw).strip()
+        )
+
+    def _id_occurs_elsewhere(node_id: str) -> bool:
+        if node_id in id_occurrence_cache:
+            return id_occurrence_cache[node_id] > 1
+        pattern = rf'\bid\s*=\s*(["\']){re.escape(node_id)}\1'
+        id_occurrence_cache[node_id] = len(re.findall(pattern, html, re.IGNORECASE))
+        return id_occurrence_cache[node_id] > 1
+
+    def _image_target_html_from_node(raw: str) -> str:
+        node_id = _node_id_value(raw)
+        alias_html = ""
+        if (
+            node_id is not None
+            and re.fullmatch(r"fig-[A-Za-z0-9-]+", node_id, re.IGNORECASE)
+            and not _id_occurs_elsewhere(node_id)
+        ):
+            alias_html = f'<span id="{node_id}" class="z2m-float-alias"></span>'
+        if _node_has_class(raw, "z2m-figure-unit"):
+            open_end = raw.find(">")
+            close_pos = raw.lower().rfind("</div>")
+            if open_end >= 0 and close_pos > open_end:
+                return alias_html + raw[open_end + 1:close_pos]
+        return alias_html + _strip_node_id_and_add_class(raw, "z2m-figure-target")
+
+    for index, node in enumerate(nodes[:-1]):
+        raw = node.group(0)
+        if not _node_has_class(raw, "z2m-figure-unit"):
+            continue
+        figure_id = _node_id_value(raw)
+        if figure_id is None:
+            continue
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", figure_id, re.IGNORECASE)
+        if fig_match is None:
+            continue
+        if re.search(
+            r'<(?:p|h[1-6])\b(?=[^>]*\bclass\s*=\s*(["\'])[^"\']*\bz2m-figure-caption\b)',
+            raw,
+            re.IGNORECASE,
+        ):
+            continue
+
+        caption_idx: int | None = None
+        pending_image_indices: list[int] = []
+        scan_idx = index + 1
+        while scan_idx < len(nodes) and scan_idx <= index + 8:
+            if scan_idx in skip_indices or not _between_is_whitespace(scan_idx - 1, scan_idx):
+                break
+            candidate_raw = nodes[scan_idx].group(0)
+            if _matches_figure_caption(candidate_raw, figure_id, fig_match.group(1)):
+                caption_idx = scan_idx
+                break
+            if _is_image_only_node(candidate_raw):
+                pending_image_indices.append(scan_idx)
+                scan_idx += 1
+                continue
+            break
+        if caption_idx is None:
+            continue
+        caption_raw = nodes[caption_idx].group(0)
+
+        close_pos = raw.lower().rfind("</div>")
+        if close_pos < 0:
+            continue
+        image_html = "".join(_image_target_html_from_node(nodes[idx].group(0)) for idx in pending_image_indices)
+        caption_html = _strip_node_id_and_add_class(caption_raw, "z2m-figure-caption")
+        replacements[index] = raw[:close_pos] + image_html + caption_html + raw[close_pos:]
+        skip_indices.update(pending_image_indices)
+        skip_indices.add(caption_idx)
+
+    if not replacements:
+        return html
+
+    out_parts: list[str] = []
+    cursor = 0
+    for idx, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        if idx in replacements:
+            out_parts.append(replacements[idx])
+        elif idx in skip_indices:
+            pass
+        else:
+            out_parts.append(node.group(0))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts)
+
+
 def _mark_missing_figure_units(html: str) -> str:
     def _replace(match: re.Match[str]) -> str:
         raw = match.group(0)
@@ -13055,7 +13217,11 @@ def polish_html_document(
         polished = _link_equation_refs(polished)
         polished = _cleanup_decimal_equation_page_links(polished)
         polished = _link_box_refs(polished, found_boxes)
-        polished = _rewrite_existing_page_figure_links(polished, found_figures)
+        polished = _rewrite_existing_page_figure_links(
+            polished,
+            found_figures,
+            language_policy=language_policy,
+        )
         polished = _link_figure_refs(polished, found_figures)
         polished = _repair_figure_ref_links_misclassified_as_refs(polished, found_figures)
         polished = _rewrite_existing_page_table_links(polished, found_tables)
@@ -13066,6 +13232,7 @@ def polish_html_document(
             polished,
             found_figures=found_figures,
             found_tables=found_tables,
+            language_policy=language_policy,
         )
         polished = _unlink_supplementary_page_refs(polished)
         polished = _unwrap_author_year_page_links(polished)
@@ -13087,6 +13254,7 @@ def polish_html_document(
         polished = _unwrap_nested_same_href_internal_links(polished)
     polished = _normalize_table_caption_style(polished, table_caption_language=table_caption_language)
     polished = _normalize_figure_caption_style(polished, figure_caption_language=table_caption_language)
+    polished = _absorb_external_figure_captions_into_units(polished)
     polished, _ = _merge_biorender_caption_fragments(polished)
     polished, _ = _repair_caption_suffix_left_body_tail_right(polished)
     polished, _ = _refresh_inlined_data_urls_by_cache(polished, image_cache=image_cache)
@@ -13101,6 +13269,7 @@ def polish_html_document(
     polished, _ = _drop_compound_caption_missing_warnings(polished)
     polished = _wrap_box_units(polished)
     polished = _wrap_float_units(polished)
+    polished = _absorb_external_figure_captions_into_units(polished)
     polished = _collapse_duplicate_nested_float_units(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _repair_remaining_table_caption_units(polished)
@@ -13108,6 +13277,7 @@ def polish_html_document(
     polished = _collapse_duplicate_nested_float_units(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)
+    polished = _absorb_external_figure_captions_into_units(polished)
     polished = _repair_known_word_glue(polished)
     polished = _repair_safe_text_artifacts(polished)
     polished = _mark_consecutive_float_runs(polished)

@@ -10,6 +10,7 @@ class PolishLanguagePolicy:
     code: str
     page_reference_label_pattern: Pattern[str] | None = None
     page_reference_left_context_pattern: Pattern[str] | None = None
+    semantic_reference_lead_in_pattern: Pattern[str] | None = None
 
     def looks_like_page_reference(self, label: str, *, left_text: str = "") -> bool:
         if self.page_reference_label_pattern is not None and self.page_reference_label_pattern.fullmatch(label):
@@ -19,6 +20,11 @@ class PolishLanguagePolicy:
             and re.fullmatch(r"\s*\d{1,4}[\)\]\.,;:]*\s*", label) is not None
             and self.page_reference_left_context_pattern.search(left_text) is not None
         )
+
+    def strip_semantic_reference_lead_in(self, label: str) -> str:
+        if self.semantic_reference_lead_in_pattern is None:
+            return label
+        return self.semantic_reference_lead_in_pattern.sub(r"\1", label, count=1)
 
 
 EN_POLISH_POLICY = PolishLanguagePolicy(code="en")
@@ -30,6 +36,7 @@ RU_POLISH_POLICY = PolishLanguagePolicy(
         re.IGNORECASE,
     ),
     page_reference_left_context_pattern=re.compile(r"(?:см\.?\s*)?(?:с|стр)\.?\s*$", re.IGNORECASE),
+    semantic_reference_lead_in_pattern=re.compile(r"^(\s*[\(\[]?\s*)(?:см\.?\s*)+", re.IGNORECASE),
 )
 
 

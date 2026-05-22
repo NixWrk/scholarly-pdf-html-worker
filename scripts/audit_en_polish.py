@@ -663,7 +663,7 @@ FIGURE_UNIT_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 IMMEDIATE_EXTERNAL_FIGURE_CAPTION_RE = re.compile(
-    r"^\s*(?:<p\b[^>]*>\s*<img\b.*?</p>\s*)?"
+    r"^\s*(?:<p\b[^>]*>(?:(?!</p>)[\s\S])*<img\b(?:(?!</p>)[\s\S])*</p>\s*)?"
     r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>(?P<body>.*?)</p>",
     re.IGNORECASE | re.DOTALL,
 )

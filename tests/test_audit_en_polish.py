@@ -774,6 +774,42 @@ def test_analyze_pair_reports_meine_manual_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p39_across_intervening_prose() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<div id="fig-4-13" class="z2m-float-unit z2m-figure-unit">',
+                    '<p class="z2m-figure-target"><img src="fig413-a.png"/></p>',
+                    '<p class="z2m-figure-caption"><a href="#fig-4-13" class="z2m-fig-link">Рис. 4.13</a> '
+                    "<b>Высококонтрастный сюжет</b></p>",
+                    "</div>",
+                    '<p><img src="fig413-b.png"/></p>',
+                    '<p>На рис. 4.13 показан сюжет с широким диапазоном тонов.</p>',
+                    '<p class="z2m-figure-caption"><a href="#fig-4-14" class="z2m-fig-link">Рис. 4.14</a> '
+                    "<b>Следующий рисунок</b></p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P39" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

@@ -1639,6 +1639,84 @@ def test_polish_html_document_keeps_multi_image_single_caption_inside_figure_uni
     assert "Text after the figure." in after_wrapper
 
 
+def test_polish_html_document_absorbs_external_matching_figure_caption() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-5-24" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig524.jpg"/></p></div>'
+        '<p class="z2m-figure-caption"><a href="#fig-5-24" class="z2m-fig-link">Рис. 5.24</a> '
+        "<b>Сферическая аберрация</b></p>"
+        '<p><img src="fig525.jpg"/></p>'
+        "<p>Хроматическая аберрация:</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en", polish_language="ru")
+    wrapper_start = polished.index('<div id="fig-5-24" class="z2m-float-unit z2m-figure-unit">')
+    wrapper_end = polished.index("</div>", wrapper_start)
+    wrapper = polished[wrapper_start:wrapper_end]
+    after_wrapper = polished[wrapper_end:]
+
+    assert 'src="fig524.jpg"' in wrapper
+    assert "Рис. 5.24" in wrapper
+    assert "Сферическая аберрация" in wrapper
+    assert "Сферическая аберрация" not in after_wrapper
+    assert 'src="fig525.jpg"' in after_wrapper
+
+
+def test_polish_html_document_absorbs_delayed_caption_after_image_run() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-6-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="shutter-a.jpg"/></p></div>'
+        '<p><img src="shutter-b.jpg"/></p>'
+        '<div id="fig-6-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="shutter-c.jpg"/></p></div>'
+        '<p class="z2m-figure-caption"><a href="#fig-6-3" class="z2m-fig-link">Рис. 6.3</a> '
+        "<b>Центральный затвор</b></p>"
+        "<p>Фокальный затвор начинается здесь.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en", polish_language="ru")
+    wrapper_start = polished.index('<div id="fig-6-3" class="z2m-float-unit z2m-figure-unit">')
+    wrapper_end = polished.index("</div>", wrapper_start)
+    wrapper = polished[wrapper_start:wrapper_end]
+    after_wrapper = polished[wrapper_end:]
+
+    assert 'src="shutter-a.jpg"' in wrapper
+    assert 'src="shutter-b.jpg"' in wrapper
+    assert 'src="shutter-c.jpg"' in wrapper
+    assert "Рис. 6.3" in wrapper
+    assert "Центральный затвор" not in after_wrapper
+    assert "Фокальный затвор начинается здесь." in after_wrapper
+
+
+def test_polish_html_document_absorbs_caption_after_missing_warning_unit_with_see_ref() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-9-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-figure-target">см. рис. 9.6 Figure 9-6 image was not extracted into this HTML.</p>'
+        "</div>"
+        '<p class="z2m-figure-caption"><a href="#fig-9-6" class="z2m-fig-link">Рис. 9.6</a> '
+        "<b>Перемешивание листовой пленки в рамках</b></p>"
+        "<p>Цикл следующий.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en", polish_language="ru")
+    wrapper_start = polished.index('<div id="fig-9-6"')
+    wrapper_end = polished.index("</div>", wrapper_start)
+    wrapper = polished[wrapper_start:wrapper_end]
+    after_wrapper = polished[wrapper_end:]
+
+    assert "Figure 9-6 image was not extracted" in wrapper
+    assert "Рис. 9.6" in wrapper
+    assert "Перемешивание листовой пленки" in wrapper
+    assert "Перемешивание листовой пленки" not in after_wrapper
+    assert "Цикл следующий." in after_wrapper
+
+
 def test_polish_html_document_repairs_sentence_split_by_image_and_caption_paragraphs() -> None:
     html = (
         "<html><body>"
@@ -5353,6 +5431,52 @@ def test_polish_html_document_keeps_ru_page_references_in_en_policy() -> None:
     polished = polish_html_document(html, table_caption_language="en")
 
     assert 'href="#page-33-0"' in polished
+
+
+def test_polish_html_document_retargets_ru_see_figure_page_link() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-35-0"></span>'
+        '<p>Параллакс возникает <a href="#page-35-0">см. рис. 2.9</a>.</p>'
+        "<p>Рис. 2.9. Видоискатель камеры.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en", polish_language="ru")
+
+    assert 'href="#fig-2-9" class="z2m-fig-link">см. рис. 2.9</a>' in polished
+    assert 'href="#page-35-0"' not in polished
+
+
+def test_polish_html_document_keeps_ru_see_figure_page_link_in_en_policy() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-35-0"></span>'
+        '<p>Параллакс возникает <a href="#page-35-0">см. рис. 2.9</a>.</p>'
+        "<p>Рис. 2.9. Видоискатель камеры.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru", polish_language="en")
+
+    assert 'href="#page-35-0"' in polished
+    assert 'href="#fig-2-9" class="z2m-fig-link">см. рис. 2.9</a>' not in polished
+
+
+def test_polish_html_document_unwraps_unresolved_ru_see_figure_page_link() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-35-0"></span>'
+        '<p>Параллакс возникает <a href="#page-35-0">см. рис. 2.9</a>.</p>'
+        "<p>Рис. 2.8. Видоискатель камеры.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en", polish_language="ru")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "см. рис. 2.9" in compact
+    assert 'href="#page-35-0"' not in polished
 
 
 def test_polish_html_document_anchors_text_equation_and_retargets_page_link() -> None:
