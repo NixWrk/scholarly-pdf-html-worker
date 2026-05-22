@@ -24,9 +24,8 @@ BLOCK_RE = re.compile(
     r"(?P<body>.*?)</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
 )
-OVERLAPPING_BLOCK_RE = re.compile(
-    r"(?=(?P<raw><(?P<tag>p|h[1-6]|div|table|figure|figcaption|li|td|th)\b(?P<attrs>[^>]*)>"
-    r"(?P<body>.*?)</(?P=tag)>))",
+OPEN_BLOCK_TAG_RE = re.compile(
+    r"<(?P<tag>p|h[1-6]|div|table|figure|figcaption|li|td|th)\b(?P<attrs>[^>]*)>",
     re.IGNORECASE | re.DOTALL,
 )
 TABLE_CELL_RE = re.compile(
@@ -896,12 +895,19 @@ def _parse_blocks(html: str) -> list[Block]:
 
 def _parse_overlapping_blocks(html: str) -> list[Block]:
     blocks: list[Block] = []
-    for match in OVERLAPPING_BLOCK_RE.finditer(html):
-        raw = match.group("raw")
+    lower_html = html.lower()
+    for match in OPEN_BLOCK_TAG_RE.finditer(html):
+        tag = match.group("tag").lower()
+        close_token = f"</{tag}>"
+        close_start = lower_html.find(close_token, match.end())
+        if close_start == -1:
+            continue
+        close_end = close_start + len(close_token)
+        raw = html[match.start() : close_end]
         blocks.append(
             Block(
                 index=len(blocks),
-                tag=match.group("tag").lower(),
+                tag=tag,
                 attrs=_attrs(match.group("attrs")),
                 raw=raw,
                 text=_strip_tags(raw),

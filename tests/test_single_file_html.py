@@ -6444,7 +6444,8 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "overallwork guidelinesfor issimilarto easierto spatialcognitive wassupported "
         "blindaccessible timedependent threedimensional twodimensional lowdimensional topdown "
         "contextdependent finergrained featurebased basreliefs "
-        "asprepared explorationSeamless da Vinci1Si allin-one farred Perceptionof "
+        "semisupervised locationspecific asprepared asmeasured lung-tohead mattecollodion "
+        "explorationSeamless da Vinci1Si allin-one farred Perceptionof "
         "Key-wordaware openaccess BEHAVIORALAND MBVurgency CTABassistant Qmaxnormal "
         "touchinteraction intraand interobserver nearinfrared Shapefrom-shading "
         "patients,were staffmembers theCreative frontto-back ecofriendly nervesparing "
@@ -6521,7 +6522,8 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "overall work guidelines for is similar to easier to spatial-cognitive was supported" in polished
     assert "blind-accessible time-dependent three-dimensional two-dimensional low-dimensional top-down" in polished
     assert "context-dependent finer-grained feature-based" in polished
-    assert "bas-reliefs as-prepared exploration. Seamless da Vinci Si all-in-one far-red" in polished
+    assert "bas-reliefs semi-supervised location-specific as-prepared as measured" in polished
+    assert "lung-to-head matte-collodion exploration. Seamless da Vinci Si all-in-one far-red" in polished
     assert "Perception of Keyword-aware open-access BEHAVIORAL AND MBV-urgency CTAB-assisted" in polished
     assert "Qmax-normal touch interaction intra- and interobserver near-infrared Shape-from-shading" in polished
     assert "patients were staff members the Creative front-to-back eco-friendly nerve-sparing" in polished

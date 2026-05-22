@@ -183,6 +183,29 @@ def test_analyze_pair_counts_each_missing_figure_warning() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_overlapping_block_parser_keeps_nested_missing_figure_context() -> None:
+    audit = _load_audit_module()
+    html = "\n".join(
+        [
+            "<html><body>",
+            '<div class="z2m-float-unit">',
+            '<p><img src="data:image/png;base64,abc"/></p>',
+            '<p class="z2m-missing-figure-warning">Figure 9 image was not extracted into this HTML.</p>',
+            '<p class="z2m-figure-caption">Figure 9. Caption belongs to the image above.</p>',
+            "</div>",
+            "</body></html>",
+        ]
+    )
+
+    blocks = audit._parse_overlapping_blocks(html)
+    warning = next(block for block in blocks if "z2m-missing-figure-warning" in block.classes)
+    classification = audit._classify_missing_figure_warning(warning, blocks)
+
+    assert any(block.tag == "div" and block.has_img for block in blocks)
+    assert classification["defect_id"] == "P62A"
+    assert classification["extra"]["p62_subtype"] == "same_label_image_near_warning"
+
+
 def test_analyze_pair_splits_missing_figure_warning_contexts() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
