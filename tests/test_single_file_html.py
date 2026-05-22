@@ -3147,6 +3147,25 @@ def test_polish_html_document_does_not_warn_when_short_label_separates_float_uni
     assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
 
 
+def test_polish_html_document_drops_stale_same_label_missing_figure_warning() -> None:
+    html = (
+        "<html><body>"
+        f'<p><img src="{_valid_tiny_png_data_url()}"/></p>'
+        '<p class="z2m-missing-figure-warning" role="note">'
+        "Figure 2 image was not extracted into this HTML. Please check the original PDF for the missing visual content."
+        "</p>"
+        "<p>Figure 2. Caption belongs to the image above.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 2 image was not extracted" not in polished
+    assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
+    assert 'id="fig-2"' in polished
+    assert "z2m-missing-figure-unit" not in polished
+
+
 def test_polish_html_document_does_not_warn_for_in_text_subfigure_sentence() -> None:
     html = (
         "<html><body>"

@@ -11771,6 +11771,78 @@ def _drop_compound_caption_missing_warnings(html: str) -> tuple[str, int]:
     return "".join(out_parts), len(drop_indices)
 
 
+def _drop_same_label_image_missing_warnings(html: str) -> tuple[str, int]:
+    nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
+    if not nodes:
+        return html, 0
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _nearest_caption_label(index: int, *, direction: int, window: int = 4) -> str | None:
+        scanned = 0
+        current = index + direction
+        while 0 <= current < len(nodes) and scanned < window:
+            if direction < 0 and not _between_is_whitespace(current, current + 1):
+                break
+            if direction > 0 and not _between_is_whitespace(current - 1, current):
+                break
+            raw = nodes[current].group(0)
+            label = _figure_caption_num_from_visible(_visible_text(raw))
+            if label is not None:
+                return label
+            if _node_has_renderable_image(raw) or _node_is_caption_bridge_paragraph(raw):
+                current += direction
+                scanned += 1
+                continue
+            if not (
+                _looks_like_figure_caption_fragment(raw)
+                or _looks_like_figure_panel_caption_continuation(raw)
+            ):
+                break
+            current += direction
+            scanned += 1
+        return None
+
+    def _has_nearby_renderable_image(index: int, *, window: int = 4) -> bool:
+        start = max(0, index - window)
+        stop = min(len(nodes), index + window + 1)
+        for candidate in range(start, stop):
+            if candidate == index:
+                continue
+            if _node_has_renderable_image(nodes[candidate].group(0)):
+                return True
+        return False
+
+    drop_indices: set[int] = set()
+    for idx, node in enumerate(nodes):
+        raw = node.group(0)
+        if not _node_has_class(raw, "z2m-missing-figure-warning"):
+            continue
+        fig_num = _figure_caption_num_from_visible(_visible_text(raw))
+        if fig_num is None:
+            continue
+        if not _has_nearby_renderable_image(idx):
+            continue
+        previous_label = _nearest_caption_label(idx, direction=-1)
+        next_label = _nearest_caption_label(idx, direction=1)
+        if previous_label == fig_num or next_label == fig_num:
+            drop_indices.add(idx)
+
+    if not drop_indices:
+        return html, 0
+
+    out_parts: list[str] = []
+    cursor = 0
+    for idx, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        if idx not in drop_indices:
+            out_parts.append(node.group(0))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), len(drop_indices)
+
+
 def _extract_caption_intrusion_tail(caption_body: str) -> tuple[str, str] | None:
     """Split a figure-caption body when OCR injected article prose after backslashes.
 
@@ -14076,6 +14148,7 @@ def polish_html_document(
         figure_caption_language=("ru" if ru_caption_context else "en"),
     )
     polished, _ = _drop_compound_caption_missing_warnings(polished)
+    polished, _ = _drop_same_label_image_missing_warnings(polished)
     polished = _wrap_box_units(polished)
     polished = _wrap_float_units(polished)
     polished = _absorb_external_figure_captions_into_units(polished)
