@@ -11370,6 +11370,14 @@ def _node_has_broken_data_image(raw: str) -> bool:
     )
 
 
+def _node_is_empty_spacer_paragraph(raw: str) -> bool:
+    return (
+        re.match(r"<p\b", raw, re.IGNORECASE) is not None
+        and not _node_image_srcs(raw)
+        and not _visible_text(raw).strip()
+    )
+
+
 def _missing_figure_warning_html(fig_num: str, *, figure_caption_language: str = "en") -> str:
     if figure_caption_language == "ru":
         text = (
@@ -11437,6 +11445,9 @@ def _insert_missing_figure_warnings(
         image_idx = caption_run_start - 1
         while image_idx >= 0 and _between_is_whitespace(image_idx, image_idx + 1):
             image_raw = nodes[image_idx].group(0)
+            if _node_is_empty_spacer_paragraph(image_raw):
+                image_idx -= 1
+                continue
             if not _node_image_srcs(image_raw):
                 break
             image_run.insert(0, image_idx)
@@ -11455,6 +11466,10 @@ def _insert_missing_figure_warnings(
         scanned = 0
         while prev_idx >= 0 and scanned < 6 and _between_is_whitespace(prev_idx, prev_idx + 1):
             prev_raw = nodes[prev_idx].group(0)
+            if _node_is_empty_spacer_paragraph(prev_raw):
+                prev_idx -= 1
+                scanned += 1
+                continue
             if _node_image_srcs(prev_raw):
                 if _image_node_can_belong_to_fig(prev_raw, fig_num):
                     associated.append(prev_idx)
@@ -11477,6 +11492,10 @@ def _insert_missing_figure_warnings(
         scanned = 0
         while next_idx < len(nodes) and scanned < 6 and _between_is_whitespace(next_idx - 1, next_idx):
             next_raw = nodes[next_idx].group(0)
+            if _node_is_empty_spacer_paragraph(next_raw):
+                next_idx += 1
+                scanned += 1
+                continue
             if _is_figure_caption_node(next_raw):
                 break
             if _node_image_srcs(next_raw):

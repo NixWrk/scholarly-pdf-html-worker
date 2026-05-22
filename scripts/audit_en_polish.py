@@ -24,6 +24,11 @@ BLOCK_RE = re.compile(
     r"(?P<body>.*?)</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
 )
+OVERLAPPING_BLOCK_RE = re.compile(
+    r"(?=(?P<raw><(?P<tag>p|h[1-6]|div|table|figure|figcaption|li|td|th)\b(?P<attrs>[^>]*)>"
+    r"(?P<body>.*?)</(?P=tag)>))",
+    re.IGNORECASE | re.DOTALL,
+)
 TABLE_CELL_RE = re.compile(
     r"<t[dh]\b[^>]*>(?P<body>.*?)</t[dh]>",
     re.IGNORECASE | re.DOTALL,
@@ -758,6 +763,16 @@ COMMA_DECIMAL_REF_RE = re.compile(
     re.IGNORECASE,
 )
 VISIBLE_FIGURE_REF_RE = re.compile(r"\b(?:Fig\.?|Figure)\s+(?P<num>\d{1,3})(?P<letter>[A-Z])?\b")
+FIGURE_LABEL_TEXT_RE = re.compile(
+    r"\b(?:Fig(?:ure)?\.?|Figure)\s+(?P<label>\d+(?:\s*[.\-\u2010-\u2014]\s*\d+)*[A-Za-z]?)\b",
+    re.IGNORECASE,
+)
+MISSING_FIGURE_WARNING_BLOCK_RE = re.compile(
+    r"<(?P<tag>p|div|figure|figcaption|li)\b"
+    r"(?=[^>]*\bz2m-missing-figure-warning\b)(?P<attrs>[^>]*)>"
+    r"(?P<body>.*?)</(?P=tag)>",
+    re.IGNORECASE | re.DOTALL,
+)
 TABLE_REF_PARTIAL_LINK_RE = re.compile(
     r"\bTables?\s+<a\b[^>]*\bhref\s*=\s*['\"]#table-(?P<target>\d+)['\"][^>]*>"
     r"\s*(?P<label>\d+)\s*</a>",
@@ -773,10 +788,6 @@ SINGLE_STAT_REF_RE = re.compile(
 STAT_NUMERIC_CONTEXT_RE = re.compile(
     r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size|"
     r"statistical\s+power|power\s+analysis)\b",
-    re.IGNORECASE,
-)
-MISSING_FIGURE_WARNING_RE = re.compile(
-    r"<[^>]+\bz2m-missing-figure-warning\b[^>]*>",
     re.IGNORECASE,
 )
 TABLE_CAPTION_ID_RE = re.compile(
@@ -875,6 +886,43 @@ def _parse_blocks(html: str) -> list[Block]:
                 index=len(blocks),
                 tag=match.group("tag").lower(),
                 attrs=_attrs(match.group("attrs")),
+                raw=raw,
+                text=_strip_tags(raw),
+                line=_line_at(html, match.start()),
+            )
+        )
+    return blocks
+
+
+def _parse_overlapping_blocks(html: str) -> list[Block]:
+    blocks: list[Block] = []
+    for match in OVERLAPPING_BLOCK_RE.finditer(html):
+        raw = match.group("raw")
+        blocks.append(
+            Block(
+                index=len(blocks),
+                tag=match.group("tag").lower(),
+                attrs=_attrs(match.group("attrs")),
+                raw=raw,
+                text=_strip_tags(raw),
+                line=_line_at(html, match.start()),
+            )
+        )
+    return blocks
+
+
+def _missing_figure_warning_blocks(html: str) -> list[Block]:
+    blocks: list[Block] = []
+    for match in MISSING_FIGURE_WARNING_BLOCK_RE.finditer(html):
+        attrs = _attrs(match.group("attrs"))
+        if "z2m-missing-figure-warning" not in set(attrs.get("class", "").split()):
+            continue
+        raw = match.group(0)
+        blocks.append(
+            Block(
+                index=len(blocks),
+                tag=match.group("tag").lower(),
+                attrs=attrs,
                 raw=raw,
                 text=_strip_tags(raw),
                 line=_line_at(html, match.start()),
@@ -1130,6 +1178,159 @@ def _has_nearby_image(blocks: list[Block], index: int, *, window: int = 6) -> bo
     start = max(0, index - window)
     stop = min(len(blocks), index + window + 1)
     return any(block.has_img for block in blocks[start:stop])
+
+
+def _figure_label_from_text(text: str) -> str | None:
+    match = FIGURE_LABEL_TEXT_RE.search(text)
+    if match is None:
+        return None
+    label = match.group("label")
+    label = re.sub(r"\s+", "", label)
+    label = re.sub(r"[.\-\u2010-\u2014]+", "-", label)
+    return label.strip("-").lower() or None
+
+
+def _nearest_figure_label(
+    blocks: list[Block],
+    index: int,
+    *,
+    direction: int,
+    window: int = 5,
+) -> tuple[str | None, int | None]:
+    if direction == 0:
+        raise ValueError("direction must be non-zero")
+    stop = min(len(blocks), index + window + 1) if direction > 0 else max(-1, index - window - 1)
+    scan = range(index + direction, stop, direction)
+    for candidate_index in scan:
+        label = _figure_label_from_text(blocks[candidate_index].text)
+        if label is not None:
+            return label, abs(candidate_index - index)
+    return None, None
+
+
+def _nearby_image_offsets(blocks: list[Block], index: int, *, window: int = 8) -> list[int]:
+    start = max(0, index - window)
+    stop = min(len(blocks), index + window + 1)
+    return [
+        candidate_index - index
+        for candidate_index in range(start, stop)
+        if candidate_index != index and blocks[candidate_index].has_img
+    ]
+
+
+def _find_warning_block_index(blocks: list[Block], warning: Block) -> int | None:
+    for index, candidate in enumerate(blocks):
+        if "z2m-missing-figure-warning" not in candidate.classes:
+            continue
+        if candidate.line == warning.line and candidate.text == warning.text:
+            return index
+    for index, candidate in enumerate(blocks):
+        if "z2m-missing-figure-warning" in candidate.classes and candidate.text == warning.text:
+            return index
+    return None
+
+
+def _classify_missing_figure_warning(
+    warning: Block,
+    polish_blocks: list[Block],
+) -> dict[str, Any]:
+    label = _figure_label_from_text(warning.text)
+    index = _find_warning_block_index(polish_blocks, warning)
+    extra: dict[str, Any] = {
+        "figure_label": label,
+        "p62_subtype": "unclassified",
+    }
+    if index is None:
+        if not any(block.has_img for block in polish_blocks):
+            extra["p62_subtype"] = "no_nearby_image"
+            return {
+                "defect_id": "P62",
+                "check": "Missing-figure warning has no nearby image",
+                "hypothesis": "The final HTML is explicit about a missing source image, and no image was found in the block context.",
+                "proposed_fix_layer": "Marker image extraction diagnostics or review packaging",
+                "extra": extra,
+            }
+        return {
+            "defect_id": "P62B",
+            "check": "Missing-figure warning could not be placed in block context",
+            "hypothesis": "The final HTML warns about a missing figure, but audit could not classify the surrounding image context.",
+            "proposed_fix_layer": "EN polish missing-figure warning classifier",
+            "extra": extra,
+        }
+
+    image_offsets = _nearby_image_offsets(polish_blocks, index)
+    previous_image_offsets = [offset for offset in image_offsets if offset < 0]
+    next_image_offsets = [offset for offset in image_offsets if offset > 0]
+    previous_label, previous_label_distance = _nearest_figure_label(
+        polish_blocks,
+        index,
+        direction=-1,
+    )
+    next_label, next_label_distance = _nearest_figure_label(
+        polish_blocks,
+        index,
+        direction=1,
+    )
+    extra.update(
+        {
+            "block_index": index,
+            "previous_image_offsets": previous_image_offsets[:4],
+            "next_image_offsets": next_image_offsets[:4],
+            "previous_figure_label": previous_label,
+            "previous_figure_label_distance": previous_label_distance,
+            "next_figure_label": next_label,
+            "next_figure_label_distance": next_label_distance,
+        }
+    )
+
+    nearest_previous_image = min((abs(offset) for offset in previous_image_offsets), default=None)
+    nearest_next_image = min(next_image_offsets, default=None)
+    same_next_caption = label is not None and next_label == label
+    same_previous_caption = label is not None and previous_label == label
+    previous_label_does_not_intercept_image = (
+        previous_label is None
+        or previous_label == label
+        or nearest_previous_image is None
+        or previous_label_distance is None
+        or previous_label_distance > nearest_previous_image
+    )
+    if (
+        same_next_caption
+        and previous_label_does_not_intercept_image
+        and (
+            nearest_previous_image is not None
+            and nearest_previous_image <= 4
+            or nearest_next_image is not None
+            and nearest_next_image <= 4
+        )
+    ) or (same_previous_caption and nearest_previous_image is not None and nearest_previous_image <= 4):
+        extra["p62_subtype"] = "same_label_image_near_warning"
+        return {
+            "defect_id": "P62A",
+            "check": "Missing-figure warning is adjacent to a same-label image/caption",
+            "hypothesis": "The figure image appears to be present, but EN polish inserted a stale missing-image warning next to it.",
+            "proposed_fix_layer": "EN polish figure image/caption association",
+            "extra": extra,
+        }
+
+    if image_offsets:
+        extra["p62_subtype"] = "nearby_image_ambiguous_label"
+        return {
+            "defect_id": "P62B",
+            "check": "Missing-figure warning has nearby image content but ambiguous label match",
+            "hypothesis": "The article contains nearby image content, but the warning could not be confidently matched to the same figure label.",
+            "proposed_fix_layer": "EN polish figure image/caption association and manual review packaging",
+            "extra": extra,
+        }
+
+    extra["p62_subtype"] = "no_nearby_image"
+    return {
+        "defect_id": "P62",
+        "check": "Missing-figure warning has no nearby image",
+        "hypothesis": "The final HTML is explicit about a missing source image, and no nearby image was found in the block context.",
+        "proposed_fix_layer": "Marker image extraction diagnostics or review packaging",
+        "extra": extra,
+    }
 
 
 def _has_nearby_missing_figure_warning(blocks: list[Block], index: int, *, window: int = 2) -> bool:
@@ -3017,20 +3218,26 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         if defects and defects[-1].id == "P61":
             break
 
-    missing_figure_match = MISSING_FIGURE_WARNING_RE.search(slim_html)
-    if missing_figure_match is not None:
+    warning_context_blocks = _parse_overlapping_blocks(polish_html)
+    for warning_index, block in enumerate(_missing_figure_warning_blocks(polish_html)):
+        classification = _classify_missing_figure_warning(block, warning_context_blocks)
+        extra = {"warning_index": warning_index + 1, **classification["extra"]}
         defects.append(
             _defect(
-                defect_id="P62",
+                defect_id=classification["defect_id"],
                 cc_class="CC-08/CC-13",
-                check="Polish reports an extracted figure is missing",
+                check=classification["check"],
                 severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, missing_figure_match.start(), missing_figure_match.end()),
+                block=block,
+                snippet=block.text,
                 stage=RAW_STAGE,
-                hypothesis="The final HTML is explicit about a missing source image, but the article is still visually incomplete.",
-                proposed_fix_layer="Marker image extraction diagnostics or review packaging",
-                regression_test="Visible z2m-missing-figure-warning blocks are counted in the audit JSON.",
+                hypothesis=classification["hypothesis"],
+                proposed_fix_layer=classification["proposed_fix_layer"],
+                regression_test=(
+                    "Visible z2m-missing-figure-warning blocks are counted and split into "
+                    "same-label, ambiguous-nearby-image, and no-nearby-image subtypes."
+                ),
+                extra=extra,
             )
         )
 

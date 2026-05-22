@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 
@@ -471,3 +472,98 @@ def test_repolish_cached_run_auto_policy_keeps_en_corpus_only(tmp_path: Path) ->
     assert manifest["skipped_articles"][0]["skip_reason"] == "detected_ru_not_en"
     assert (tmp_path / "run" / "audit_tree" / "en_doc" / "02.en.polish.html").is_file()
     assert not (tmp_path / "run" / "audit_tree" / "ru_doc").exists()
+
+
+def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    raw_cache = source / "raw_cache"
+    profiles = source / "profiles"
+    raw_cache.mkdir(parents=True)
+    profiles.mkdir(parents=True)
+    raw_html = (
+        "<html><body>"
+        "<p>This study describes the methods and results for a figure.</p>"
+        '<p><img src="fig1.png"/></p>'
+        '<p><img src="fig2.png"/></p>'
+        "</body></html>"
+    )
+    (raw_cache / "doc.01.en.raw.html").write_text(raw_html, encoding="utf-8")
+    _write_json(profiles / "doc.citation_profile.json", {"status": "ok", "style": "unknown", "confidence": "low"})
+
+    ancestor_polish = tmp_path / "ancestor" / "doc.02.en.polish.html"
+    ancestor_polish.parent.mkdir(parents=True)
+    ancestor_polish.write_text(
+        "<html><body>"
+        '<p><img src="data:image/png;base64,AAAA"/></p>'
+        '<p><img src="data:image/png;base64,BBBB"/></p>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    chain = tmp_path / "chain"
+    _write_json(
+        chain / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article": "doc",
+                    "source_polish_path": str(ancestor_polish),
+                }
+            ]
+        },
+    )
+    _write_json(source / "manifest.json", {"source_run_dir": str(chain), "articles": [{"article": "doc"}]})
+
+    manifest = repolish_cached_run(source, tmp_path / "run")
+    polished = (tmp_path / "run" / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
+    audit_polished = (tmp_path / "run" / "audit_tree" / "doc" / "02.en.polish.html").read_text(encoding="utf-8")
+
+    assert manifest["restored_image_count"] == 2
+    assert 'data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"' in polished
+    assert 'data-z2m-src="fig2.png" src="data:image/png;base64,BBBB"' in polished
+    assert '<img src="fig1.png"' not in polished
+    assert audit_polished == polished
+
+
+def test_repolish_cached_run_restores_converted_sidecar_images(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    raw_cache = source / "raw_cache"
+    profiles = source / "profiles"
+    raw_cache.mkdir(parents=True)
+    profiles.mkdir(parents=True)
+    (raw_cache / "doc.01.en.raw.html").write_text(
+        '<html><body><p>Figure below.</p><p><img src="fig1.png"/></p></body></html>',
+        encoding="utf-8",
+    )
+    _write_json(profiles / "doc.citation_profile.json", {"status": "ok", "style": "unknown", "confidence": "low"})
+
+    source_exports_raw = tmp_path / "html" / "source_exports" / "lib" / "att" / "doc" / "01.en.raw.html"
+    source_exports_raw.parent.mkdir(parents=True)
+    source_exports_raw.write_text("", encoding="utf-8")
+    converted_doc = tmp_path / "html" / "converted" / "lib" / "att" / "doc" / "Document"
+    converted_doc.mkdir(parents=True)
+    converted_doc.joinpath("fig1.png").write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        )
+    )
+
+    chain = tmp_path / "chain"
+    _write_json(
+        chain / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article": "doc",
+                    "raw_stage_path": str(source_exports_raw),
+                }
+            ]
+        },
+    )
+    _write_json(source / "manifest.json", {"source_run_dir": str(chain), "articles": [{"article": "doc"}]})
+
+    manifest = repolish_cached_run(source, tmp_path / "run")
+    polished = (tmp_path / "run" / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
+
+    assert manifest["restored_image_count"] == 1
+    assert 'data-z2m-src="fig1.png" src="data:image/png;base64,' in polished
+    assert '<img src="fig1.png"' not in polished

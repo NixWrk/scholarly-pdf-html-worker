@@ -3092,6 +3092,22 @@ def test_polish_html_document_discloses_caption_without_image_and_adds_target_st
     assert ":target" in polished
 
 
+def test_polish_html_document_does_not_warn_when_empty_spacer_separates_image_and_caption() -> None:
+    html = (
+        "<html><body>"
+        "<p>The experiment is summarized in Fig. 1.</p>"
+        f'<p><img src="{_valid_tiny_png_data_url()}"/></p>'
+        "<p></p>"
+        "<p>Fig. 1. Caption belongs to the image above.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
+    assert "image was not extracted into this HTML" not in polished
+
+
 def test_polish_html_document_discloses_missing_figure_in_ru() -> None:
     html = (
         "<html><body>"

@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from html import unescape
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -27,7 +29,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.single_file_html import close_katex_v8_context, polish_html_document  # noqa: E402
+from zoteropdf2md.single_file_html import (  # noqa: E402
+    _to_data_url,
+    _validate_data_url,
+    close_katex_v8_context,
+    polish_html_document,
+)
 from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
@@ -49,6 +56,8 @@ MISSING_WARNING_CLASS_RE = re.compile(
     r"\bclass\s*=\s*([\"'])(?=[^\"']*\bz2m-missing)[^\"']*\1",
     re.IGNORECASE,
 )
+IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
+DATA_Z2M_SRC_RE = re.compile(r"\bdata-z2m-src\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
 
 
 def _slug(value: str, *, max_len: int = 80) -> str:
@@ -288,6 +297,251 @@ def _converted_manifest_by_pair(manifest: dict[str, Any]) -> dict[tuple[str, str
     return articles
 
 
+def _is_inline_or_remote_src(src: str) -> bool:
+    src = src.strip()
+    if not src or src.startswith("#"):
+        return True
+    lower = src.lower()
+    return lower.startswith(("data:", "http://", "https://", "blob:", "cid:"))
+
+
+def _img_srcs(html: str) -> list[str]:
+    return [unescape(match.group("src")).strip() for match in IMG_SRC_RE.finditer(html)]
+
+
+def _source_hinted_data_images(html: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for match in IMG_SRC_RE.finditer(html):
+        src = unescape(match.group("src")).strip()
+        if not src.lower().startswith("data:image/"):
+            continue
+        prefix = match.group(1)
+        hint = DATA_Z2M_SRC_RE.search(prefix)
+        if hint is not None:
+            mapping[unescape(hint.group("src")).strip()] = src
+    return mapping
+
+
+def _ordered_data_image_cache(raw_html: str, previous_polish_html: str) -> dict[str, str]:
+    """Map raw local image refs to data URLs from an older polish copy.
+
+    Cached loop runs intentionally store only raw/profile HTML.  If the older
+    production polish had already inlined local images, preserve those payloads
+    so the loop audits polish behavior instead of reporting packaging artifacts.
+    """
+
+    raw_local_srcs = [src for src in _img_srcs(raw_html) if not _is_inline_or_remote_src(src)]
+    if not raw_local_srcs:
+        return {}
+
+    hinted = _source_hinted_data_images(previous_polish_html)
+    mapping = {src: hinted[src] for src in raw_local_srcs if src in hinted}
+    missing_srcs = [src for src in raw_local_srcs if src not in mapping]
+    if not missing_srcs:
+        return mapping
+
+    data_srcs = [src for src in _img_srcs(previous_polish_html) if src.lower().startswith("data:image/")]
+    if len(data_srcs) == len(raw_local_srcs):
+        mapping.update({src: data_src for src, data_src in zip(raw_local_srcs, data_srcs) if src in missing_srcs})
+    return mapping
+
+
+def _escape_html_attr(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _add_src_hint(prefix: str, source_src: str) -> str:
+    if DATA_Z2M_SRC_RE.search(prefix):
+        return prefix
+    escaped = _escape_html_attr(source_src)
+    return re.sub(r"\bsrc\s*=\s*$", f'data-z2m-src="{escaped}" src=', prefix, flags=re.IGNORECASE)
+
+
+def _apply_data_image_cache(html: str, image_cache: dict[str, str]) -> tuple[str, int]:
+    if not image_cache:
+        return html, 0
+    replacements = 0
+
+    def replace_src(match: re.Match[str]) -> str:
+        nonlocal replacements
+        src = unescape(match.group("src")).strip()
+        data_url = image_cache.get(src)
+        if data_url is None:
+            return match.group(0)
+        replacements += 1
+        prefix = _add_src_hint(match.group(1), src)
+        return f"{prefix}{match.group(2)}{data_url}{match.group(4)}"
+
+    return IMG_SRC_RE.sub(replace_src, html), replacements
+
+
+def _manifest_article_for(manifest: dict[str, Any], article: str) -> dict[str, Any] | None:
+    for item in manifest.get("articles") or []:
+        if not isinstance(item, dict):
+            continue
+        if (
+            str(item.get("article_id") or item.get("article") or "") == article
+            or str(item.get("article") or "") == article
+        ):
+            return item
+    return None
+
+
+def _previous_polish_candidates(source_run_dir: Path, article: str) -> list[Path]:
+    candidates: list[Path] = []
+    visited: set[Path] = set()
+
+    def visit(run_dir: Path) -> None:
+        run_dir = run_dir.resolve(strict=False)
+        if run_dir in visited:
+            return
+        visited.add(run_dir)
+        manifest = _load_json(run_dir / "manifest.json", default={})
+        item = _manifest_article_for(manifest, article)
+        if item:
+            for key in ("source_polish_path", "polish_stage_path", "polish_path"):
+                value = item.get(key)
+                if value:
+                    candidates.append(Path(str(value)).resolve(strict=False))
+        direct_polish = run_dir / "polish" / f"{article}.{POLISH_STAGE}"
+        candidates.append(direct_polish.resolve(strict=False))
+        nested = manifest.get("source_run_dir")
+        if nested:
+            visit(Path(str(nested)))
+
+    visit(source_run_dir)
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(candidate)
+    return deduped
+
+
+def _article_source_image_dirs(source_run_dir: Path, article: str) -> list[Path]:
+    dirs: list[Path] = []
+    visited: set[Path] = set()
+
+    def add_stage_related_dirs(value: Any) -> None:
+        if not value:
+            return
+        stage_path = Path(str(value)).resolve(strict=False)
+        if stage_path.name in {RAW_STAGE, POLISH_STAGE} or stage_path.parent.name == "_z2m_stages":
+            article_dir = _article_dir_from_stage(stage_path)
+        else:
+            article_dir = stage_path.parent
+        dirs.append(article_dir)
+
+        parts = list(article_dir.parts)
+        if "source_exports" not in parts:
+            return
+        idx = parts.index("source_exports")
+        converted_article_dir = Path(*parts[:idx], "converted", *parts[idx + 1 :])
+        dirs.append(converted_article_dir)
+        if converted_article_dir.is_dir():
+            for child in converted_article_dir.iterdir():
+                if child.is_dir() and not child.name.startswith("_"):
+                    dirs.append(child)
+
+    def visit(run_dir: Path) -> None:
+        run_dir = run_dir.resolve(strict=False)
+        if run_dir in visited:
+            return
+        visited.add(run_dir)
+        manifest = _load_json(run_dir / "manifest.json", default={})
+        item = _manifest_article_for(manifest, article)
+        if item:
+            for key in ("raw_stage_path", "source_polish_path", "polish_stage_path", "polish_path"):
+                add_stage_related_dirs(item.get(key))
+        nested = manifest.get("source_run_dir")
+        if nested:
+            visit(Path(str(nested)))
+
+    visit(source_run_dir)
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in dirs:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(path)
+    return deduped
+
+
+def _local_image_candidates_from_dirs(src: str, search_dirs: Iterable[Path]) -> list[Path]:
+    clean = src.strip().split("?", 1)[0].split("#", 1)[0]
+    if not clean:
+        return []
+    parsed = urllib.parse.urlsplit(clean)
+    path_value = parsed.path if parsed.scheme.lower() == "file" else clean
+    decoded = urllib.parse.unquote(path_value)
+    if re.match(r"^/[A-Za-z]:/", decoded):
+        decoded = decoded[1:]
+    candidate = Path(decoded)
+    if candidate.is_absolute():
+        return [candidate]
+    return [(base / decoded).resolve(strict=False) for base in search_dirs]
+
+
+def _cached_sidecar_image_cache(
+    source_run_dir: Path,
+    article: str,
+    raw_html: str,
+    existing: dict[str, str],
+) -> tuple[dict[str, str], str | None]:
+    search_dirs = _article_source_image_dirs(source_run_dir, article)
+    if not search_dirs:
+        return {}, None
+    image_cache: dict[str, str] = {}
+    source_dirs: set[str] = set()
+    raw_local_srcs = [src for src in _img_srcs(raw_html) if not _is_inline_or_remote_src(src)]
+    for src in raw_local_srcs:
+        if src in existing:
+            continue
+        for candidate in _local_image_candidates_from_dirs(src, search_dirs):
+            if not candidate.is_file():
+                continue
+            data_url = _to_data_url(candidate, detect_by_signature=True, log_func=None)
+            if data_url is None or not _validate_data_url(data_url, candidate):
+                continue
+            image_cache[src] = data_url
+            source_dirs.add(str(candidate.parent))
+            break
+    if not image_cache:
+        return {}, None
+    return image_cache, "; ".join(sorted(source_dirs))
+
+
+def _cached_data_image_cache(source_run_dir: Path, article: str, raw_html: str) -> tuple[dict[str, str], str | None]:
+    raw_local_srcs = [src for src in _img_srcs(raw_html) if not _is_inline_or_remote_src(src)]
+    expected_count = len(set(raw_local_srcs))
+    collected: dict[str, str] = {}
+    sources: list[str] = []
+    for candidate in _previous_polish_candidates(source_run_dir, article):
+        if not candidate.is_file():
+            continue
+        previous_html = candidate.read_text(encoding="utf-8", errors="replace")
+        image_cache = _ordered_data_image_cache(raw_html, previous_html)
+        if image_cache:
+            collected.update(image_cache)
+            sources.append(str(candidate))
+            if len(collected) >= expected_count:
+                return collected, "; ".join(sources)
+    sidecar_cache, sidecar_source = _cached_sidecar_image_cache(source_run_dir, article, raw_html, collected)
+    if sidecar_cache:
+        collected.update(sidecar_cache)
+        if sidecar_source:
+            sources.append(sidecar_source)
+    return collected, "; ".join(sources) if sources else None
+
+
 def normalize_converted_audit_article_ids(run_dir: Path) -> dict[str, Any]:
     """Rewrite audit article names to unique converted-run artifact ids."""
 
@@ -351,6 +605,8 @@ def repolish_cached_run(
     polish_language_counts: Counter[str] = Counter()
     skip_reason_counts: Counter[str] = Counter()
     changed_count = 0
+    restored_image_count = 0
+    restored_image_source_counts: Counter[str] = Counter()
 
     try:
         raw_files = sorted(raw_source_dir.glob(f"*.{RAW_STAGE}"))
@@ -407,6 +663,11 @@ def repolish_cached_run(
                 citation_profile=profile,
                 polish_language=language_decision.selected_polish_language,
             )
+            data_image_cache, data_image_source = _cached_data_image_cache(source_run_dir, article, raw_html)
+            polished, restored_images = _apply_data_image_cache(polished, data_image_cache)
+            if restored_images:
+                restored_image_count += restored_images
+                restored_image_source_counts[data_image_source or "unknown"] += restored_images
             previous_polish = source_run_dir / "polish" / out_polish.name
             previous_text = (
                 previous_polish.read_text(encoding="utf-8", errors="replace")
@@ -438,6 +699,8 @@ def repolish_cached_run(
                     "citation_style": _profile_value(profile, "style"),
                     "citation_confidence": _profile_value(profile, "confidence"),
                     "changed": changed,
+                    "restored_images": restored_images,
+                    "restored_image_source": data_image_source,
                     "language_detection": language_decision.detection.to_dict(),
                     **language_fields,
                 }
@@ -472,6 +735,8 @@ def repolish_cached_run(
         "language_counts": dict(sorted(language_counts.items())),
         "polish_language_counts": dict(sorted(polish_language_counts.items())),
         "skip_reason_counts": dict(sorted(skip_reason_counts.items())),
+        "restored_image_count": restored_image_count,
+        "restored_image_source_counts": dict(sorted(restored_image_source_counts.items())),
         "profile_status_counts": dict(sorted(profile_status_counts.items())),
         "profile_style_counts": dict(sorted(profile_style_counts.items())),
         "articles": articles,

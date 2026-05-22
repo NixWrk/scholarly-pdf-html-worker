@@ -146,6 +146,95 @@ def test_analyze_pair_accepts_wrapped_missing_figure_unit() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_counts_each_missing_figure_warning() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><head><style>p.z2m-missing-figure-warning { color: red; }</style></head><body>",
+                    '<p class="z2m-missing-figure-warning">Figure 2 image was not extracted into this HTML.</p>',
+                    '<div class="z2m-missing-figure-warning">Figure 4 image was not extracted into this HTML.</div>',
+                    '<div class="z2m-missing-figure-unit">',
+                    '<p class="z2m-missing-figure-warning">Figure 8 image was not extracted into this HTML.</p>',
+                    "</div>",
+                    '<p>Figure 6 image was not extracted into this HTML, but this is plain prose.</p>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert len(p62) == 3
+        assert [defect["extra"]["warning_index"] for defect in p62] == [1, 2, 3]
+        assert "Figure 2 image was not extracted" in p62[0]["snippet"]
+        assert "Figure 4 image was not extracted" in p62[1]["snippet"]
+        assert "Figure 8 image was not extracted" in p62[2]["snippet"]
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_splits_missing_figure_warning_contexts() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        data_img = "data:image/png;base64,abc"
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    f'<p><img src="{data_img}"/></p>',
+                    '<p class="z2m-missing-figure-warning">Figure 1 image was not extracted into this HTML.</p>',
+                    '<p class="z2m-figure-caption">Figure 1. Caption belongs to the image above.</p>',
+                    f'<p><img src="{data_img}"/></p>',
+                    '<p class="z2m-missing-figure-warning">Figure 2 image was not extracted into this HTML.</p>',
+                    '<p class="z2m-figure-caption">Figure 3. Different caption nearby.</p>',
+                    "<p>Filler A.</p>",
+                    "<p>Filler B.</p>",
+                    "<p>Filler C.</p>",
+                    "<p>Filler D.</p>",
+                    "<p>Filler E.</p>",
+                    "<p>Filler F.</p>",
+                    "<p>Filler G.</p>",
+                    "<p>Filler H.</p>",
+                    '<p class="z2m-missing-figure-warning">Figure 4 image was not extracted into this HTML.</p>',
+                    '<p class="z2m-figure-caption">Figure 4. Caption survived, but no image is nearby.</p>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p62a = [defect for defect in result["defects_found"] if defect["id"] == "P62A"]
+        p62b = [defect for defect in result["defects_found"] if defect["id"] == "P62B"]
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert len(p62a) == 1
+        assert len(p62b) == 1
+        assert len(p62) == 1
+        assert p62a[0]["extra"]["p62_subtype"] == "same_label_image_near_warning"
+        assert p62a[0]["extra"]["figure_label"] == "1"
+        assert p62b[0]["extra"]["p62_subtype"] == "nearby_image_ambiguous_label"
+        assert p62[0]["extra"]["p62_subtype"] == "no_nearby_image"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_closes_raw_frontmatter_ocr_when_polish_repairs_markers() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -907,7 +996,7 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
             "P59",
             "P60",
             "P61",
-            "P62",
+            "P62B",
             "P63",
             "P64",
             "P65",
