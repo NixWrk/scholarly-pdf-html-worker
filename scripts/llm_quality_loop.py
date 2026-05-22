@@ -35,6 +35,7 @@ from zoteropdf2md.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
 )
+from zoteropdf2md.citation_profile import infer_citation_style_from_text  # noqa: E402
 from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
@@ -58,6 +59,7 @@ MISSING_WARNING_CLASS_RE = re.compile(
 )
 IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
 DATA_Z2M_SRC_RE = re.compile(r"\bdata-z2m-src\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
+TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _slug(value: str, *, max_len: int = 80) -> str:
@@ -137,6 +139,32 @@ def _converted_article_id(raw_path: Path, index: int | None = None) -> str:
     )
     suffix = _slug(article_dir.name, max_len=72)
     return f"{prefix}_{suffix}" if prefix else suffix
+
+
+def _html_plain_text_for_profile(html: str) -> str:
+    text = re.sub(r"(?i)<br\s*/?>", "\n", html)
+    text = re.sub(r"(?i)</(?:p|div|li|tr|h[1-6]|table|section|article)>", "\n", text)
+    text = TAG_RE.sub(" ", text)
+    return unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, Any]:
+    text = _html_plain_text_for_profile(raw_html)
+    inferred_style, inferred_confidence, paren_count, bracket_count = infer_citation_style_from_text(text)
+    style = inferred_style if inferred_confidence == "high" else "unknown"
+    confidence = inferred_confidence if inferred_confidence == "high" else "low"
+    return {
+        "status": "converted_raw_html_inferred",
+        "style": style,
+        "confidence": confidence,
+        "source": "converted_raw_html",
+        "source_policy": "use_inferred_style_only_when_high_confidence",
+        "inferred_style": inferred_style,
+        "inferred_confidence": inferred_confidence,
+        "source_raw_stage_path": str(raw_path),
+        "paren_numeric_count": paren_count,
+        "bracket_numeric_count": bracket_count,
+    }
 
 
 def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict[str, Any]:
@@ -306,15 +334,20 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
 
     roots = [root.resolve(strict=False) for root in roots]
     pairs = find_converted_stage_pairs(roots)
-    profile = {"status": "not_applicable_converted_stage", "style": "unknown", "confidence": "low"}
     articles: list[dict[str, Any]] = []
+    profile_status_counts: Counter[str] = Counter()
+    profile_style_counts: Counter[str] = Counter()
     for index, (raw_path, polish_path) in enumerate(pairs, start=1):
         article = _article_name_from_stage(raw_path)
         article_id = _converted_article_id(raw_path, index)
         out_raw = raw_cache / f"{article_id}.{RAW_STAGE}"
         out_profile = profiles / f"{article_id}.citation_profile.json"
         shutil.copy2(raw_path, out_raw)
+        raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
+        profile = _converted_raw_citation_profile(raw_html, raw_path)
         _write_json(out_profile, profile)
+        profile_status_counts[profile["status"]] += 1
+        profile_style_counts[f"{profile['style']}:{profile['confidence']}"] += 1
         articles.append(
             {
                 "index": index,
@@ -344,8 +377,8 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
         "article_count": len(articles),
         "raw_cache_dir": str(raw_cache),
         "profile_dir": str(profiles),
-        "profile_status_counts": {profile["status"]: len(articles)} if articles else {},
-        "profile_style_counts": {f"{profile['style']}:{profile['confidence']}": len(articles)} if articles else {},
+        "profile_status_counts": dict(sorted(profile_status_counts.items())),
+        "profile_style_counts": dict(sorted(profile_style_counts.items())),
         "articles": articles,
     }
     _write_json(out_dir / "manifest.json", manifest)

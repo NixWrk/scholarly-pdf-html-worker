@@ -108,7 +108,12 @@ When the production converted tree itself is the corpus for the next loop,
 convert it into an internal cached-run source and repolish that cache. This
 uses every `01.en.raw.html` under the supplied converted roots, keeps the
 original stage paths for image restoration and review, skips confidently
-non-EN documents by default, and does not write back to `data/html/converted`:
+non-EN documents by default, and does not write back to `data/html/converted`.
+Because converted stages do not carry the original PDF citation profiles, the
+cache records a per-document citation-style inference from the raw HTML text.
+Only high-confidence inferred styles are used as the effective polish profile;
+medium-confidence inferences stay as diagnostics and keep the effective profile
+at `unknown/low`:
 
 ```powershell
 python scripts\llm_quality_loop.py observe `

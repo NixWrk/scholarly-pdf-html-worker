@@ -329,6 +329,32 @@ def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_pat
     assert all(Path(article["raw_stage_path"]).name == "01.en.raw.html" for article in manifest["articles"])
 
 
+def test_prepare_converted_raw_cache_infers_citation_style_from_raw_html(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "lib" / "KEY" / "111" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text(
+        "<html><body><p>Body cites [1], [2], [3], [4], [5], [6], and [7].</p></body></html>",
+        encoding="utf-8",
+    )
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+
+    manifest = prepare_converted_raw_cache([root], tmp_path / "source")
+
+    article = manifest["articles"][0]
+    profile = json.loads(Path(article["profile_path"]).read_text(encoding="utf-8"))
+    assert article["profile_status"] == "converted_raw_html_inferred"
+    assert article["citation_style"] == "unknown"
+    assert article["citation_confidence"] == "low"
+    assert profile["source"] == "converted_raw_html"
+    assert profile["source_policy"] == "use_inferred_style_only_when_high_confidence"
+    assert profile["inferred_style"] == "bracket_numeric"
+    assert profile["inferred_confidence"] == "medium"
+    assert profile["bracket_numeric_count"] == 7
+    assert manifest["profile_status_counts"] == {"converted_raw_html_inferred": 1}
+    assert manifest["profile_style_counts"] == {"unknown:low": 1}
+
+
 def test_prepare_converted_raw_cache_ids_do_not_shift_when_new_sources_appear(tmp_path: Path) -> None:
     root = tmp_path / "converted"
     stage_dir = root / "lib" / "KEY" / "222" / "Doc" / "_z2m_stages"
