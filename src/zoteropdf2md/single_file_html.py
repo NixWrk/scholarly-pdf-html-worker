@@ -4711,6 +4711,25 @@ def _repair_split_url_anchor_block_tail(html: str) -> str:
     return _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN.sub(replace, html)
 
 
+def _normalize_same_href_text_anchor_label(label: str) -> str:
+    normalized = re.sub(r"\s+", " ", label).strip()
+    return re.sub(r"\bsupple\s+mental\b", "supplemental", normalized, flags=re.IGNORECASE)
+
+
+def _looks_like_split_same_href_text_label(label: str) -> bool:
+    if len(label) < 8 or len(label) > 180:
+        return False
+    if re.search(r"https?://|doi\.org/|\b10\.\d{4,9}/", label, re.IGNORECASE):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:online|supplemental|supplementary|material|table|figure|appendix|data)\b",
+            label,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _merge_adjacent_same_href_url_anchors(html: str) -> str:
     """Merge adjacent URL/DOI anchors that point to the same href."""
 
@@ -4731,6 +4750,10 @@ def _merge_adjacent_same_href_url_anchors(html: str) -> str:
 
         body = _visible_text(match.group("body"))
         next_body = _visible_text(match.group("next_body"))
+        text_label = _normalize_same_href_text_anchor_label(f"{body} {next_body}")
+        if _looks_like_split_same_href_text_label(text_label):
+            return f'<a{match.group("attrs")}>{_escape_html_text(text_label)}</a>'
+
         compact_body = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(body + next_body))
         if not compact_body:
             return match.group(0)

@@ -298,6 +298,26 @@ def test_polish_html_document_repairs_split_visible_url_anchor_text() -> None:
     assert "fncir.</a> 2017.00020" not in polished
 
 
+def test_polish_html_document_merges_same_href_text_anchor_fragments() -> None:
+    url = "https://dx.doi.org/10.1136/bmjopen-2021-056234"
+    html = (
+        "<html><body>"
+        f'<p>See <a href="{url}">online supple</a> '
+        f'<a href="{url}">mental table 1A-C</a> for details.</p>'
+        f'<p>Also see <a href="{url}">online</a> '
+        f'<a href="{url}">supplemental table 2B</a>.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "online supplemental table 1A-C" in compact
+    assert "online supplemental table 2B" in compact
+    assert "supple</a>" not in compact
+    assert polished.count(f'href="{url}"') == 2
+
+
 def test_polish_html_document_repairs_split_url_anchor_across_paragraphs() -> None:
     html = (
         "<html><body>"
