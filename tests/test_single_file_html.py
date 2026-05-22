@@ -6290,7 +6290,11 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "Attributebased thistask higherthan disabilitiessometimesface artworksis "
         "hierarchicalsegmentation webbased needsto includesinformation participantssuggested "
         "overallwork guidelinesfor issimilarto easierto spatialcognitive wassupported "
-        "blindaccessible.</p>"
+        "blindaccessible timedependent threedimensional twodimensional featurebased basreliefs "
+        "asprepared explorationSeamless da Vinci1Si allin-one farred Perceptionof "
+        "Key-wordaware openaccess BEHAVIORALAND MBVurgency CTABassistant Qmaxnormal "
+        "touchinteraction intraand interobserver nearinfrared Shapefrom-shading "
+        "patients,were staffmembers theCreative.</p>"
         "<p>OCR phrases included Hands of!, best suites, all the they identified, "
         "and voiding positing.</p>"
         "<p>More OCR included significate differences, an involunatary contraction, "
@@ -6350,7 +6354,11 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Attribute-based this task higher than disabilities sometimes face artworks is" in polished
     assert "hierarchical segmentation web-based needs to includes information participants suggested" in polished
     assert "overall work guidelines for is similar to easier to spatial-cognitive was supported" in polished
-    assert "blind-accessible" in polished
+    assert "blind-accessible time-dependent three-dimensional two-dimensional feature-based" in polished
+    assert "bas-reliefs as-prepared exploration. Seamless da Vinci Si all-in-one far-red" in polished
+    assert "Perception of Keyword-aware open-access BEHAVIORAL AND MBV-urgency CTAB-assisted" in polished
+    assert "Qmax-normal touch interaction intra- and interobserver near-infrared Shape-from-shading" in polished
+    assert "patients were staff members the Creative" in polished
     assert "Hands off!, best suits, all that they identified, and voiding position" in polished
     assert "significant differences, an involuntary contraction, a uroflowmeter" in polished
     assert "Appendix A, MDPI, Brain-computer interfaces, Italy" in polished
