@@ -494,6 +494,13 @@ _NESTED_FIG_LINK_PATTERN = re.compile(
     r'(</a>)',
     re.IGNORECASE,
 )
+_NESTED_SAME_HREF_INTERNAL_LINK_PATTERN = re.compile(
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']#[^"\']+["\'])[^>]*)>\s*'
+    r'<a\b(?P<inner_attrs>(?=[^>]*\bhref\s*=\s*["\']#[^"\']+["\'])[^>]*)>'
+    r'(?P<body>[\s\S]{1,260}?)</a>'
+    r'(?P<trail>[\)\]\.,;:]*)\s*</a>',
+    re.IGNORECASE,
+)
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _FIGURE_GAP_PARA_PATTERN = (
     r"<p\b[^>]*>\s*"
@@ -966,6 +973,30 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\baferents\b", re.IGNORECASE), "afferents"),
     (re.compile(r"\bdefcits\b", re.IGNORECASE), "deficits"),
     (re.compile(r"\bofline\b", re.IGNORECASE), "offline"),
+    (re.compile(r"\bRefrence\b"), "Reference"),
+    (re.compile(r"\brefrence\b"), "reference"),
+    (re.compile(r"\bapproximatley\b", re.IGNORECASE), "approximately"),
+    (re.compile(r"\bsuiprising\b", re.IGNORECASE), "surprising"),
+    (re.compile(r"\battaclied\b", re.IGNORECASE), "attached"),
+    (re.compile(r"\bcomparision\b", re.IGNORECASE), "comparison"),
+    (re.compile(r"\bclincal\b", re.IGNORECASE), "clinical"),
+    (re.compile(r"\bbeacause\b", re.IGNORECASE), "because"),
+    (re.compile(r"\bthrefore\b", re.IGNORECASE), "therefore"),
+    (re.compile(r"\burtheral\b", re.IGNORECASE), "urethral"),
+    (re.compile(r"\bUroflowrnetry\b"), "Uroflowmetry"),
+    (re.compile(r"\buroflowrnetry\b"), "uroflowmetry"),
+    (re.compile(r"\bUroflowmetery\b"), "Uroflowmetry"),
+    (re.compile(r"\buroflowmetery\b"), "uroflowmetry"),
+    (re.compile(r"\burofowmetry\b", re.IGNORECASE), "uroflowmetry"),
+    (re.compile(r"\burflowmetry\b", re.IGNORECASE), "uroflowmetry"),
+    (re.compile(r"\bFERENCE\s+VALUES\b"), "REFERENCE VALUES"),
+    (re.compile(r"\bintraand\s+inter-", re.IGNORECASE), "intra- and inter-"),
+    (re.compile(r"\bflowmetery\b", re.IGNORECASE), "flowmetry"),
+    (re.compile(r"\bnon-invasivly\b", re.IGNORECASE), "non-invasively"),
+    (re.compile(r"\bsubcomitee\b", re.IGNORECASE), "subcommittee"),
+    (re.compile(r"\bstandarization\b", re.IGNORECASE), "standardization"),
+    (re.compile(r"\bstandarisation\b", re.IGNORECASE), "standardisation"),
+    (re.compile(r"\baformentioned\b", re.IGNORECASE), "aforementioned"),
     (re.compile(r"\beicient\b", re.IGNORECASE), "efficient"),
     (re.compile(r"\beiciency\b", re.IGNORECASE), "efficiency"),
     (re.compile(r"\beectiveness\b", re.IGNORECASE), "effectiveness"),
@@ -1534,6 +1565,26 @@ def _unwrap_nested_fig_links(fragment: str) -> str:
     while current != prev:
         prev = current
         current = _NESTED_FIG_LINK_PATTERN.sub(r"\2", current)
+    return current
+
+
+def _unwrap_nested_same_href_internal_links(fragment: str) -> str:
+    """Remove redundant nested semantic links that target the same local id."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = _extract_href_attr(match.group("attrs"))
+        inner_href = _extract_href_attr(match.group("inner_attrs"))
+        if href is None or inner_href is None:
+            return match.group(0)
+        if href.lower() != inner_href.lower() or not href.startswith("#"):
+            return match.group(0)
+        return f'<a{match.group("inner_attrs")}>{match.group("body")}</a>{match.group("trail")}'
+
+    prev = ""
+    current = fragment
+    while current != prev:
+        prev = current
+        current = _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN.sub(replace, current)
     return current
 
 
@@ -12920,6 +12971,7 @@ def polish_html_document(
         polished = _rewrite_existing_page_table_links(polished, found_tables)
         polished = _link_table_refs(polished, found_tables)
         polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
+        polished = _unwrap_nested_same_href_internal_links(polished)
         polished = _unwrap_unresolved_semantic_page_links(
             polished,
             found_figures=found_figures,
@@ -12940,6 +12992,7 @@ def polish_html_document(
         polished = _rewrite_existing_page_table_links(polished, found_tables)
         polished = _link_table_refs(polished, found_tables)
         polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
+        polished = _unwrap_nested_same_href_internal_links(polished)
     polished = _normalize_table_caption_style(polished, table_caption_language=table_caption_language)
     polished = _normalize_figure_caption_style(polished, figure_caption_language=table_caption_language)
     polished, _ = _merge_biorender_caption_fragments(polished)

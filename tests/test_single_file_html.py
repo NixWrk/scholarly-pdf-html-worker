@@ -1040,6 +1040,25 @@ def test_polish_html_document_unwraps_nested_fig_links_even_when_linkify_disable
     assert '<a href="#fig-1" class="z2m-fig-link"><a href="#fig-1"' not in polished
 
 
+def test_polish_html_document_unwraps_nested_same_href_table_links() -> None:
+    html = (
+        "<html><body>"
+        "<p>The values are listed in "
+        "<a href=\"#table-8-2\" class=\"z2m-table-link\">"
+        "<a href=\"#table-8-2\" class=\"z2m-table-link\">Tables 8.2</a>"
+        "</a> and <a href=\"#table-8-4\" class=\"z2m-table-link\">8.4</a>.</p>"
+        "<div id=\"table-8-2\"><p>TABLE 8.2. Data.</p></div>"
+        "<div id=\"table-8-4\"><p>TABLE 8.4. Data.</p></div>"
+        "</body></html>"
+    )
+    polished = polish_html_document(html, table_caption_language="en", enable_citation_linkify=False)
+
+    assert polished.count('href="#table-8-2"') == 1
+    assert '<a href="#table-8-2" class="z2m-table-link">Tables 8.2</a>' in polished
+    assert '<a href="#table-8-2" class="z2m-table-link"><a href="#table-8-2"' not in polished
+    assert "</a></a>" not in polished
+
+
 def test_polish_html_document_repairs_sentence_split_by_figure_block() -> None:
     html = (
         "<html><body>"
@@ -3686,6 +3705,11 @@ def test_polish_html_document_repairs_common_scientific_word_glue() -> None:
         "<p>The work was timeconsuming and contentaware; an ofline metaanalysis reported sensorimotor defcits.</p>"
         "<p>Diferential and diferent vagal aferents used inhibitionbased phaselocked crossfrequency mechanisms.</p>"
         "<p>Online supple mental table 1 and Biobeha v. Rev. entries should be normalized.</p>"
+        "<p>Refrence values were approximatley stable, not suiprising after comparision.</p>"
+        "<p>The attaclied block mentioned an urtheral clincal issue beacause threfore remained.</p>"
+        "<p>Uroflowrnetry, Uroflowmetery, urofowmetry, urflowmetry, and flowmetery were normalized.</p>"
+        "<p>FERENCE VALUES reported intraand inter-subject variability.</p>"
+        "<p>The non-invasivly aformentioned standarization subcomitee note stayed readable.</p>"
         "</body></html>"
     )
     polished = polish_html_document(html, table_caption_language="en")
@@ -3706,6 +3730,11 @@ def test_polish_html_document_repairs_common_scientific_word_glue() -> None:
     assert "differential and different vagal afferents" in polished
     assert "inhibition-based phase-locked cross-frequency mechanisms" in polished
     assert "Online supplemental table 1 and Biobehav. Rev. entries" in polished
+    assert "Reference values were approximately stable, not surprising after comparison" in polished
+    assert "attached block mentioned an urethral clinical issue because therefore remained" in polished
+    assert "Uroflowmetry, Uroflowmetry, uroflowmetry, uroflowmetry, and flowmetry were normalized" in polished
+    assert "REFERENCE VALUES reported intra- and inter-subject variability" in polished
+    assert "non-invasively aforementioned standardization subcommittee note" in polished
 
 
 def test_polish_html_document_normalizes_latex_micro_units_and_glued_charge_density() -> None:
