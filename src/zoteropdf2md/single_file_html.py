@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from .abbreviations import RU_ABBREV_TO_LATIN
+from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
 
 
 # Image signature (magic numbers) to MIME type mapping
@@ -8482,6 +8483,21 @@ def _retarget_mismatched_ref_link_labels(html: str) -> str:
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
 
 
+def _unwrap_page_reference_ref_links(html: str, language_policy: PolishLanguagePolicy) -> str:
+    """Remove bibliography links from explicit page references."""
+    if "#ref-" not in html:
+        return html
+
+    def _replace(match: re.Match[str]) -> str:
+        label = _visible_text(match.group("body"))
+        left_text = _visible_text(html[max(0, match.start() - 48): match.start()])
+        if language_policy.looks_like_page_reference(label, left_text=left_text):
+            return match.group("body")
+        return match.group(0)
+
+    return _REF_ANCHOR_PATTERN.sub(_replace, html)
+
+
 def _repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
     """Move OCR-swallowed decimal/unit text back out of citation anchors."""
     if "#ref-" not in html:
@@ -8651,6 +8667,21 @@ def _unwrap_plain_prose_page_links(html: str) -> str:
         if re.search(r"\b(?:copyright|creative commons|doi|https?|www\.)\b", label, re.IGNORECASE):
             return match.group(0)
         return match.group("body")
+
+    return _PAGE_ANCHOR_PATTERN.sub(_replace, html)
+
+
+def _unwrap_page_reference_page_links(html: str, language_policy: PolishLanguagePolicy) -> str:
+    """Remove page-anchor links from explicit page-reference labels."""
+    if "#page-" not in html:
+        return html
+
+    def _replace(match: re.Match[str]) -> str:
+        label = _visible_text(match.group("body"))
+        left_text = _visible_text(html[max(0, match.start() - 48): match.start()])
+        if language_policy.looks_like_page_reference(label, left_text=left_text):
+            return match.group("body")
+        return match.group(0)
 
     return _PAGE_ANCHOR_PATTERN.sub(_replace, html)
 
@@ -12936,7 +12967,12 @@ def polish_html_document(
     enable_citation_linkify: bool = True,
     citation_profile: Any | None = None,
     image_cache: Mapping[str, str] | None = None,
+    polish_language: str | None = None,
 ) -> str:
+    language_policy = resolve_polish_language_policy(
+        polish_language,
+        table_caption_language=table_caption_language,
+    )
     polished = _unwrap_spurious_math_captions(html)  # before all else: free captions from <math>
     polished = _unwrap_nested_fig_links(polished)
     polished = _drop_page_header_footer_paragraphs(polished)
@@ -13007,6 +13043,7 @@ def polish_html_document(
     if enable_citation_linkify:
         polished = _add_reference_ids_and_citation_links(polished, citation_profile=citation_profile)
         polished = _retarget_mismatched_ref_link_labels(polished)
+        polished = _unwrap_page_reference_ref_links(polished, language_policy)
         polished = _repair_ref_links_absorbed_decimal_or_unit_text(polished)
         polished = _repair_nested_reference_links(polished)
         polished = _unwrap_author_year_ref_links(polished, citation_profile=citation_profile)
@@ -13033,6 +13070,7 @@ def polish_html_document(
         polished = _unlink_supplementary_page_refs(polished)
         polished = _unwrap_author_year_page_links(polished)
         polished = _unwrap_plain_prose_page_links(polished)
+        polished = _unwrap_page_reference_page_links(polished, language_policy)
         polished = _unwrap_broken_page_anchor_links(polished)
         polished = _repair_numeric_ref_false_positives(polished)
         polished = _repair_statistical_ref_false_positives(polished)

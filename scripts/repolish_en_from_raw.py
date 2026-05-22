@@ -165,6 +165,7 @@ def repolish_file(
     raw_path: Path,
     *,
     table_caption_language: str = "en",
+    polish_language: str | None = None,
     inline_images: bool = True,
 ) -> RepolishResult:
     raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
@@ -172,6 +173,7 @@ def repolish_file(
         raw_html,
         table_caption_language=table_caption_language,
         enable_citation_linkify=True,
+        polish_language=polish_language,
     )
 
     polish_path = raw_path.parent / POLISH_STAGE
@@ -199,12 +201,14 @@ def repolish_roots(
     roots: list[Path],
     *,
     table_caption_language: str = "en",
+    polish_language: str | None = None,
     inline_images: bool = True,
 ) -> dict[str, object]:
     results = [
         repolish_file(
             raw_path,
             table_caption_language=table_caption_language,
+            polish_language=polish_language,
             inline_images=inline_images,
         )
         for raw_path in find_raw_files(roots)
@@ -213,6 +217,8 @@ def repolish_roots(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stage": f"{RAW_STAGE} -> {POLISH_STAGE}",
         "roots": [str(root) for root in roots],
+        "table_caption_language": table_caption_language,
+        "polish_language": polish_language or table_caption_language,
         "article_count": len(results),
         "changed_count": sum(1 for result in results if result.changed),
         "inlined_image_count": sum(len(result.inlined_images) for result in results),
@@ -238,6 +244,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Caption language mode for polish_html_document.",
     )
     parser.add_argument(
+        "--polish-language",
+        choices=("en", "ru"),
+        help="Language policy for language-specific polish repairs; defaults to --table-caption-language.",
+    )
+    parser.add_argument(
         "--no-inline-images",
         action="store_true",
         help="Do not inline local image files into regenerated polish HTML.",
@@ -255,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     report = repolish_roots(
         args.roots,
         table_caption_language=args.table_caption_language,
+        polish_language=args.polish_language,
         inline_images=not args.no_inline_images,
     )
     print(

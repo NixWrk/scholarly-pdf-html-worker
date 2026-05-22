@@ -5321,6 +5321,40 @@ def test_polish_html_document_keeps_working_page_anchor_links() -> None:
     assert 'href="#page-11-0"' in polished
 
 
+def test_polish_html_document_unwraps_ru_page_reference_page_links() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-33-0"></span><span id="page-63-0"></span>'
+        '<p>Параллакс возникает <a href="#page-33-0">см. с. 34</a> '
+        'и см. с. <a href="#page-63-0">64</a>, но обычная ссылка остается '
+        '<a href="#page-11-0">page 11</a>.</p>'
+        '<span id="page-11-0"></span>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "см. с. 34" in compact
+    assert "см. с. 64" in compact
+    assert 'href="#page-33-0"' not in polished
+    assert 'href="#page-63-0"' not in polished
+    assert 'href="#page-11-0"' in polished
+
+
+def test_polish_html_document_keeps_ru_page_references_in_en_policy() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-33-0"></span>'
+        '<p>Параллакс возникает <a href="#page-33-0">см. с. 34</a>.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#page-33-0"' in polished
+
+
 def test_polish_html_document_anchors_text_equation_and_retargets_page_link() -> None:
     html = (
         "<html><body>"
@@ -5417,6 +5451,41 @@ def test_polish_html_document_repairs_recent_meine_link_false_positives() -> Non
     assert "effect size 1,5" in compact
     assert 'href="#page-4-0"' not in polished
     assert "that formulas that use the total" in polished
+
+
+def test_polish_html_document_unwraps_ru_page_reference_false_ref_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>Одни представляют черный, <a href="#ref-108" class="z2m-ref-link">см. с. 239</a> '
+        'и белый тон. См. с. <a href="#ref-34" class="z2m-ref-link">34</a> для примера. '
+        'Нормальная ссылка остается <a href="#ref-3" class="z2m-ref-link">[3]</a>.</p>'
+        "<h4>References</h4>"
+        "<ul>" + "".join(f"<li>Ref {i}.</li>" for i in range(1, 110)) + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "см. с. 239" in compact
+    assert "См. с. 34" in compact
+    assert 'href="#ref-108" class="z2m-ref-link">см. с. 239</a>' not in polished
+    assert 'href="#ref-34" class="z2m-ref-link">34</a>' not in polished
+    assert '<a href="#ref-3" class="z2m-ref-link">[3]</a>' in polished
+
+
+def test_polish_html_document_keeps_ru_page_reference_ref_links_in_en_policy() -> None:
+    html = (
+        "<html><body>"
+        '<p>Одни представляют черный, <a href="#ref-108" class="z2m-ref-link">см. с. 239</a>.</p>'
+        "<h4>References</h4>"
+        "<ul>" + "".join(f"<li>Ref {i}.</li>" for i in range(1, 110)) + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#ref-108" class="z2m-ref-link">см. с. 239</a>' in polished
 
 
 def test_polish_html_document_repairs_page_anchor_letter_glued_superscript_citations() -> None:

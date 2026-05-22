@@ -315,7 +315,7 @@ def normalize_converted_audit_article_ids(run_dir: Path) -> dict[str, Any]:
     return audit
 
 
-def repolish_cached_run(source_run_dir: Path, out_dir: Path) -> dict[str, Any]:
+def repolish_cached_run(source_run_dir: Path, out_dir: Path, *, polish_language: str | None = None) -> dict[str, Any]:
     """Regenerate polish HTML from a run directory containing raw_cache/profiles."""
     source_run_dir = source_run_dir.resolve(strict=False)
     out_dir = out_dir.resolve(strict=False)
@@ -353,6 +353,7 @@ def repolish_cached_run(source_run_dir: Path, out_dir: Path) -> dict[str, Any]:
                 table_caption_language="en",
                 enable_citation_linkify=True,
                 citation_profile=profile,
+                polish_language=polish_language,
             )
 
             out_raw = raw_out / raw_path.name
@@ -407,6 +408,7 @@ def repolish_cached_run(source_run_dir: Path, out_dir: Path) -> dict[str, Any]:
         "out_dir": str(out_dir),
         "code_commit": _git_short_head(),
         "working_tree_dirty": _git_dirty(),
+        "polish_language": polish_language or "en",
         "article_count": len(articles),
         "changed_count": changed_count,
         "raw_cache_dir": str(raw_out),
@@ -966,7 +968,7 @@ def observe(args: argparse.Namespace) -> int:
     if args.source_run_dir and converted_roots:
         raise SystemExit("Use either --source-run-dir or --converted-roots, not both.")
     if args.source_run_dir:
-        manifest = repolish_cached_run(args.source_run_dir, run_dir)
+        manifest = repolish_cached_run(args.source_run_dir, run_dir, polish_language=args.polish_language)
         print(f"Repolished cached run: articles={manifest['article_count']} changed={manifest['changed_count']}")
     elif converted_roots:
         manifest = prepare_converted_run(converted_roots, run_dir)
@@ -1024,6 +1026,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 
     observe_parser = subparsers.add_parser("observe", help="Run repolish/audit/history/gate and build an LLM pack.")
     observe_parser.add_argument("--source-run-dir", type=Path, help="Run dir with raw_cache and profiles to repolish.")
+    observe_parser.add_argument(
+        "--polish-language",
+        choices=("en", "ru"),
+        help="Language policy for language-specific polish repairs when repolishing a cached run.",
+    )
     observe_parser.add_argument(
         "--converted-roots",
         nargs="+",

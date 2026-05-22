@@ -73,3 +73,42 @@ def test_repolish_cli_writes_json_report() -> None:
         assert (stage_dir / "02.en.polish.html").is_file()
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_repolish_cli_can_select_ru_polish_policy_with_en_captions() -> None:
+    repolish = _load_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "01.en.raw.html").write_text(
+            "<html><body>"
+            '<span id="page-33-0"></span>'
+            '<p>Параллакс возникает <a href="#page-33-0">см. с. 34</a>.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+        report_path = tmp_path / "report.json"
+
+        exit_code = repolish.main(
+            [
+                "--roots",
+                str(tmp_path),
+                "--out-report",
+                str(report_path),
+                "--table-caption-language",
+                "en",
+                "--polish-language",
+                "ru",
+            ]
+        )
+
+        assert exit_code == 0
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["table_caption_language"] == "en"
+        assert report["polish_language"] == "ru"
+        polished = (stage_dir / "02.en.polish.html").read_text(encoding="utf-8")
+        assert "см. с. 34" in polished
+        assert 'href="#page-33-0"' not in polished
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)

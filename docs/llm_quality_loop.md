@@ -39,6 +39,18 @@ python scripts\llm_quality_loop.py observe `
 Add `--run-tests` when the loop should run the configured test command before
 audit/history/gates.
 
+For language-specific repair experiments, keep the stage shape stable and pass
+the policy explicitly. For example, Russian page-reference repairs can be tested
+without switching English figure/table captions:
+
+```powershell
+python scripts\llm_quality_loop.py observe `
+  --source-run-dir .tmp_local2\llm_runs\experiment_001 `
+  --out-dir .tmp_local2\llm_runs\experiment_001_ru_policy `
+  --polish-language ru `
+  --no-append-history
+```
+
 ## Observe Production Converted Stages
 
 For Zotero production output under `data/html/converted/.../_z2m_stages`,
