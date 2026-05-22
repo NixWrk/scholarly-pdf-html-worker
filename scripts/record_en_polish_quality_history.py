@@ -255,6 +255,34 @@ def _record_metrics(record: dict[str, Any]) -> dict[str, int | float]:
     }
 
 
+def _record_total_metrics(record: dict[str, Any]) -> dict[str, int | float]:
+    metrics = {
+        key: value
+        for key in ("score", "defects", "errors", "warnings", "infos")
+        if (value := _numeric_value(record.get(key))) is not None
+    }
+    metrics.update(_record_metrics(record))
+    return metrics
+
+
+def _sum_record_totals(records: list[dict[str, Any]]) -> dict[str, int | float]:
+    totals: dict[str, int | float] = {}
+    for record in records:
+        for key, value in _record_total_metrics(record).items():
+            totals[key] = round(float(totals.get(key, 0)) + float(value), 2)
+    return dict(sorted(totals.items()))
+
+
+def _subtract_totals(
+    current: dict[str, int | float],
+    previous: dict[str, int | float],
+) -> dict[str, int | float]:
+    return {
+        key: round(float(current.get(key, 0)) - float(previous.get(key, 0)), 2)
+        for key in sorted(set(previous) | set(current))
+    }
+
+
 def compare_entries(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
     if previous is None:
         return {
@@ -267,7 +295,12 @@ def compare_entries(previous: dict[str, Any] | None, current: dict[str, Any]) ->
     current_articles = current.get("articles", {})
     all_articles = sorted(set(previous_articles) | set(current_articles))
     article_deltas: list[dict[str, Any]] = []
+    comparable_article_deltas: list[dict[str, Any]] = []
+    new_article_deltas: list[dict[str, Any]] = []
+    removed_article_deltas: list[dict[str, Any]] = []
     for article in all_articles:
+        has_old = article in previous_articles
+        has_new = article in current_articles
         old = previous_articles.get(article, {})
         new = current_articles.get(article, {})
         old_metrics = _record_metrics(old)
@@ -285,24 +318,39 @@ def compare_entries(previous: dict[str, Any] | None, current: dict[str, Any]) ->
             "metrics_delta": metric_deltas,
             "old_score": old.get("score", 0),
             "new_score": new.get("score", 0),
+            "comparison_state": "comparable" if has_old and has_new else "new" if has_new else "removed",
         }
         for key, value in metric_deltas.items():
             delta[f"{key}_delta"] = value
         article_deltas.append(delta)
+        if has_old and has_new:
+            comparable_article_deltas.append(delta)
+        elif has_new:
+            new_article_deltas.append(delta)
+        else:
+            removed_article_deltas.append(delta)
 
     totals_delta = {
         key: round(float(current.get("totals", {}).get(key, 0)) - float(previous.get("totals", {}).get(key, 0)), 2)
         for key in sorted(set(previous.get("totals", {})) | set(current.get("totals", {})))
     }
+    comparable_names = sorted(set(previous_articles) & set(current_articles))
+    comparable_previous_totals = _sum_record_totals([previous_articles[name] for name in comparable_names])
+    comparable_current_totals = _sum_record_totals([current_articles[name] for name in comparable_names])
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "previous_run_id": previous.get("run_id"),
         "current_run_id": current["run_id"],
         "status": "ok",
         "totals_delta": totals_delta,
-        "regressions": [item for item in article_deltas if item["score_delta"] > 0],
-        "improvements": [item for item in article_deltas if item["score_delta"] < 0],
-        "unchanged": [item for item in article_deltas if item["score_delta"] == 0],
+        "comparable_totals_delta": _subtract_totals(comparable_current_totals, comparable_previous_totals),
+        "new_articles": new_article_deltas,
+        "removed_articles": removed_article_deltas,
+        "new_article_count": len(new_article_deltas),
+        "removed_article_count": len(removed_article_deltas),
+        "regressions": [item for item in comparable_article_deltas if item["score_delta"] > 0],
+        "improvements": [item for item in comparable_article_deltas if item["score_delta"] < 0],
+        "unchanged": [item for item in comparable_article_deltas if item["score_delta"] == 0],
     }
 
 

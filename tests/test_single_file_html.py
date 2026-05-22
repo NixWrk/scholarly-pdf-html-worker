@@ -6401,7 +6401,8 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "Attributebased thistask higherthan disabilitiessometimesface artworksis "
         "hierarchicalsegmentation webbased needsto includesinformation participantssuggested "
         "overallwork guidelinesfor issimilarto easierto spatialcognitive wassupported "
-        "blindaccessible timedependent threedimensional twodimensional featurebased basreliefs "
+        "blindaccessible timedependent threedimensional twodimensional lowdimensional topdown "
+        "contextdependent finergrained featurebased basreliefs "
         "asprepared explorationSeamless da Vinci1Si allin-one farred Perceptionof "
         "Key-wordaware openaccess BEHAVIORALAND MBVurgency CTABassistant Qmaxnormal "
         "touchinteraction intraand interobserver nearinfrared Shapefrom-shading "
@@ -6409,14 +6410,19 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "upprojection KeunWhangbo first-inhumans Descriptionsfor realworld "
         "Refreshabletactile OFTACTILE residualnormal processingbased handassembled "
         "staffmember selfcontrolled Qmaxurgency d)2.5D prostatectomy\u0394VV "
-        "groundtruth backilluminated displaycan EVERYDAYACTIVITIES ofdepression "
+        "groundtruth backilluminated displaycan EVERYDAYACTIVITIES voicecommands singlefinger "
+        "Computeraided MRsafe MRcompatible inIndian Nineteenthcentury airpolluted watersoluble "
+        "nonneoadjuvant lightbeam SUFestimated SUFdetermined UFrecorded ofdepression "
         "numbergestures 99Tcmcolloids.</p>"
         "<p>OCR phrases included Hands of!, best suites, all the they identified, "
         "and voiding positing.</p>"
         "<p>More OCR included significate differences, an involunatary contraction, "
-        "a uroflometer, liverposl nomograms, an Examing Committee, urinary track, "
+        "a uroflometer, upto three tests, pngpng, parametres, simpification, Amercian, "
+        "liverposl nomograms, an Examing Committee, urinary track, "
         "inital shape, Bolognia, systometry, bulbocarnosus, Ncology, "
         "and euromodulation devices, Append ix A, MDP i, B rain-computer interfaces, Ita ly, "
+        "APPEND ix B, Hindaw i, fMR i, I mplantable systems, will to help reveal, "
+        "Mata-Analysis, documents that that intensity, Retinal Nerve Fiber Laver, "
         "Bel humeur, Leporin i, t o the best of our knowledge, ob je ct s w ould, "
         "safe ty c oncerns, enj oy, basrelief, populationbased cohorts, "
         "signalto-noise ratios, and advanta- \u00a8 geous settings.</p>"
@@ -6472,7 +6478,8 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Attribute-based this task higher than disabilities sometimes face artworks is" in polished
     assert "hierarchical segmentation web-based needs to includes information participants suggested" in polished
     assert "overall work guidelines for is similar to easier to spatial-cognitive was supported" in polished
-    assert "blind-accessible time-dependent three-dimensional two-dimensional feature-based" in polished
+    assert "blind-accessible time-dependent three-dimensional two-dimensional low-dimensional top-down" in polished
+    assert "context-dependent finer-grained feature-based" in polished
     assert "bas-reliefs as-prepared exploration. Seamless da Vinci Si all-in-one far-red" in polished
     assert "Perception of Keyword-aware open-access BEHAVIORAL AND MBV-urgency CTAB-assisted" in polished
     assert "Qmax-normal touch interaction intra- and interobserver near-infrared Shape-from-shading" in polished
@@ -6481,12 +6488,18 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Refreshable tactile OF TACTILE residual-normal processing-based hand-assembled" in polished
     assert "staff member self-controlled Qmax-urgency d) 2.5D" in polished
     assert "prostatectomy \u0394VV ground-truth back-illuminated display can EVERYDAY ACTIVITIES" in polished
+    assert "voice commands single-finger Computer-aided MR-safe MR-compatible in Indian" in polished
+    assert "Nineteenth-century air-polluted water-soluble non-neoadjuvant light-beam" in polished
+    assert "SUF-estimated SUF-determined UF-recorded" in polished
     assert "of depression number gestures 99Tcm colloids" in polished
     assert "Hands off!, best suits, all that they identified, and voiding position" in polished
     assert "significant differences, an involuntary contraction, a uroflowmeter" in polished
+    assert "up to three tests, png, parameters, simplification, American" in polished
     assert "Liverpool nomograms, an Examining Committee, urinary tract, initial shape" in polished
     assert "Bologna, cystometry, bulbocavernosus, Oncology, and neuromodulation devices" in polished
     assert "Appendix A, MDPI, Brain-computer interfaces, Italy" in polished
+    assert "APPENDIX B, Hindawi, fMRI, Implantable systems, will help reveal" in polished
+    assert "Meta-Analysis, documents that the intensity, Retinal Nerve Fiber Layer" in polished
     assert "Belhumeur, Leporini, to the best of our knowledge, objects would" in polished
     assert "safety concerns, enjoy, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
     assert "and advantageous settings" in polished

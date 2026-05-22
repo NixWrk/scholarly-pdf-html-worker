@@ -100,12 +100,19 @@ def test_quality_history_compares_deltas_for_every_metric() -> None:
                     "polish_replacement_chars": 1,
                     "broken_internal_links": 2,
                 },
-            }
+            },
+            "removed_article": {
+                "score": 4,
+                "defects": 1,
+                "errors": 0,
+                "warnings": 1,
+                "metrics": {"polish_replacement_chars": 1},
+            },
         },
     }
     current = {
         "run_id": "new",
-        "totals": {"score": 7, "polish_replacement_chars": 3},
+        "totals": {"score": 12, "polish_replacement_chars": 3},
         "articles": {
             "article_a": {
                 "score": 7,
@@ -118,15 +125,28 @@ def test_quality_history_compares_deltas_for_every_metric() -> None:
                     "polish_replacement_chars": 3,
                     "broken_internal_links": 0,
                 },
-            }
+            },
+            "new_article": {
+                "score": 5,
+                "defects": 2,
+                "errors": 0,
+                "warnings": 2,
+                "metrics": {"polish_replacement_chars": 0},
+            },
         },
     }
 
     comparison = compare_entries(previous, current)
     delta = comparison["improvements"][0]
 
-    assert comparison["totals_delta"]["score"] == -3
+    assert comparison["totals_delta"]["score"] == 2
+    assert comparison["comparable_totals_delta"]["score"] == -3
     assert comparison["totals_delta"]["polish_replacement_chars"] == 2
+    assert comparison["new_article_count"] == 1
+    assert comparison["removed_article_count"] == 1
+    assert comparison["new_articles"][0]["article"] == "new_article"
+    assert comparison["removed_articles"][0]["article"] == "removed_article"
+    assert comparison["regressions"] == []
     assert delta["metrics_delta"]["polish_blocks"] == -1
     assert delta["metrics_delta"]["polish_replacement_chars"] == 2
     assert delta["polish_replacement_chars_delta"] == 2

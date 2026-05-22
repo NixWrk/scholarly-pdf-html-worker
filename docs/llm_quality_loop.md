@@ -118,6 +118,14 @@ python scripts\llm_quality_loop.py observe `
   --run-id converted_all3_repolish_001
 ```
 
+Converted article ids are derived from the library, attachment key,
+size/mtime directory, and document folder rather than from discovery order.
+If the production corpus gains or loses files between loop iterations, the
+quality comparison reports `new_articles` and `removed_articles` separately and
+uses `comparable_totals_delta` for the lower-is-better gate. New documents are
+still audited and queued for review, but they are not counted as regressions of
+the code patch that was just made.
+
 ## Build Or Rebuild Only The LLM Pack
 
 ```powershell

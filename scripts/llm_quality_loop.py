@@ -117,13 +117,26 @@ def _norm_path(value: Any) -> str:
     return str(Path(str(value)).resolve(strict=False)) if value else ""
 
 
-def _converted_article_id(raw_path: Path, index: int) -> str:
+def _converted_article_id(raw_path: Path, index: int | None = None) -> str:
     article_dir = _article_dir_from_stage(raw_path)
-    parent = article_dir.parent.name if article_dir.parent != article_dir else ""
+    version = article_dir.parent.name if article_dir.parent != article_dir else ""
     attachment = article_dir.parent.parent.name if article_dir.parent.parent != article_dir.parent else ""
-    prefix = "_".join(part for part in (_slug(attachment, max_len=12), _slug(parent, max_len=24)) if part)
+    library = (
+        article_dir.parent.parent.parent.name
+        if article_dir.parent.parent.parent != article_dir.parent.parent
+        else ""
+    )
+    prefix = "_".join(
+        part
+        for part in (
+            _slug(library, max_len=14),
+            _slug(attachment, max_len=10),
+            _slug(version, max_len=22),
+        )
+        if part
+    )
     suffix = _slug(article_dir.name, max_len=72)
-    return f"{index:03d}_{prefix}_{suffix}" if prefix else f"{index:03d}_{suffix}"
+    return f"{prefix}_{suffix}" if prefix else suffix
 
 
 def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict[str, Any]:
@@ -859,8 +872,14 @@ def evaluate_quality_gate(comparison: dict[str, Any], gate_config: dict[str, Any
         )
 
     totals_delta = comparison.get("totals_delta") if isinstance(comparison.get("totals_delta"), dict) else {}
+    comparable_totals_delta = (
+        comparison.get("comparable_totals_delta")
+        if isinstance(comparison.get("comparable_totals_delta"), dict)
+        else {}
+    )
+    gate_totals_delta = comparable_totals_delta or totals_delta
     for metric, limit in dict(gate_config.get("max_total_deltas") or {}).items():
-        observed = float(totals_delta.get(metric, 0) or 0)
+        observed = float(gate_totals_delta.get(metric, 0) or 0)
         if observed > float(limit):
             failures.append({"kind": "total_delta", "metric": metric, "observed": observed, "limit": limit})
 
@@ -886,6 +905,9 @@ def evaluate_quality_gate(comparison: dict[str, Any], gate_config: dict[str, Any
         "regression_count": len(regressions),
         "improvement_count": len(comparison.get("improvements") or []),
         "totals_delta": totals_delta,
+        "comparable_totals_delta": comparable_totals_delta,
+        "new_article_count": int(comparison.get("new_article_count") or 0),
+        "removed_article_count": int(comparison.get("removed_article_count") or 0),
     }
 
 
@@ -1435,6 +1457,9 @@ def build_analysis_pack(
         "assessment_totals": assessment.get("totals", {}),
         "comparison_status": comparison.get("status"),
         "comparison_totals_delta": comparison.get("totals_delta", {}),
+        "comparison_comparable_totals_delta": comparison.get("comparable_totals_delta", {}),
+        "new_article_count": comparison.get("new_article_count", 0),
+        "removed_article_count": comparison.get("removed_article_count", 0),
         "regression_count": len(comparison.get("regressions") or []),
         "improvement_count": len(comparison.get("improvements") or []),
         "audit_defect_counts": audit.get("corpus_summary", {}).get("defect_counts", {}),
@@ -1488,6 +1513,9 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- regression_count: `{pack.get('regression_count')}`",
         f"- improvement_count: `{pack.get('improvement_count')}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- comparison_comparable_totals_delta: `{json.dumps(pack.get('comparison_comparable_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- new_article_count: `{pack.get('new_article_count')}`",
+        f"- removed_article_count: `{pack.get('removed_article_count')}`",
         f"- pattern_history_path: `{(pack.get('pattern_observations') or {}).get('history_path')}`",
         f"- pattern_articles_reviewed: `{(pack.get('pattern_observations') or {}).get('article_count_reviewed')}`",
         "",

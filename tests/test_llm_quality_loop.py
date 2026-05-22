@@ -82,6 +82,27 @@ def test_quality_gate_passes_when_lower_is_better_metrics_do_not_increase() -> N
     assert report["improvement_count"] == 1
 
 
+def test_quality_gate_uses_comparable_totals_when_corpus_changes() -> None:
+    comparison = {
+        "status": "ok",
+        "totals_delta": {"score": 5, "defects": 2},
+        "comparable_totals_delta": {"score": -1, "defects": 0},
+        "new_article_count": 1,
+        "regressions": [],
+        "improvements": [{"article": "article_a", "score_delta": -1}],
+    }
+    gate_config = {
+        "max_regressions": 0,
+        "max_total_deltas": {"score": 0, "defects": 0},
+    }
+
+    report = evaluate_quality_gate(comparison, gate_config)
+
+    assert report["status"] == "pass"
+    assert report["new_article_count"] == 1
+    assert report["comparable_totals_delta"] == {"score": -1, "defects": 0}
+
+
 def test_analysis_pack_filters_ignored_defects_and_adds_pattern_metadata(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _write_json(
@@ -306,6 +327,27 @@ def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_pat
     ]
     assert all(Path(article["source_polish_path"]).name == "02.en.polish.html" for article in manifest["articles"])
     assert all(Path(article["raw_stage_path"]).name == "01.en.raw.html" for article in manifest["articles"])
+
+
+def test_prepare_converted_raw_cache_ids_do_not_shift_when_new_sources_appear(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "lib" / "KEY" / "222" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    first = prepare_converted_raw_cache([root], tmp_path / "source1")
+    original_id = first["articles"][0]["article_id"]
+
+    earlier_stage_dir = root / "lib" / "AAA" / "111" / "Earlier" / "_z2m_stages"
+    earlier_stage_dir.mkdir(parents=True)
+    (earlier_stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
+    (earlier_stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+
+    second = prepare_converted_raw_cache([root], tmp_path / "source2")
+    ids_by_article = {article["article"]: article["article_id"] for article in second["articles"]}
+
+    assert ids_by_article["Doc"] == original_id
+    assert ids_by_article["Earlier"] != original_id
 
 
 def test_normalize_converted_audit_article_ids_uses_manifest_paths(tmp_path: Path) -> None:
