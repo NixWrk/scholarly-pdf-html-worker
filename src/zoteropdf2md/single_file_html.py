@@ -372,6 +372,7 @@ _EQUATION_REF_PATTERN = re.compile(
 )
 
 _FIG_KEY_TOKEN = r"\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*"
+_FIG_RELAXED_KEY_TOKEN = r"\d+(?:\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*\d+)*"
 _FIG_PANEL_SUFFIX_TOKEN = r"[a-z]"
 # In-text figure references: "Fig. 3" / "рис. 3" / "фиг. 3" NOT followed by ". <text>"
 # (that would be a figure caption).  We distinguish "Fig. 3. Caption..." from "...Fig. 3."
@@ -573,7 +574,7 @@ _FIGURE_CAPTION_STYLE_PATTERN = re.compile(
     r'|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a|\u0443\u043d\u043e\u0433|\u0443\u043d\u043a|\u0443\u043d\u043e)?'
     r'|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a|\u0443\u043d\u043e\u0433|\u0443\u043d\u043a|\u0443\u043d\u043e)?'
     r'|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)'
-    rf'\.?\s*({_FIG_KEY_TOKEN})\s*([.\|:\-]?)\s*([^<]*?)'
+    rf'\.?\s*({_FIG_RELAXED_KEY_TOKEN})\s*([.\|:\-]?)\s*([^<]*?)'
     r'(\s*</p>)',
     re.IGNORECASE,
 )
@@ -9210,7 +9211,7 @@ def _normalize_figure_caption_style(html: str, *, figure_caption_language: str =
 
         normalized_source = source_label.lower()
         english_label = normalized_source.startswith("fig")
-        number = fig_no.upper()
+        number = re.sub(r"\s*([.\-\u2010\u2011\u2012\u2013\u2014])\s*", r"\1", fig_no.upper())
 
         # Skip in-text refs like "Fig. 16 shows ...".
         if english_label and delimiter not in {".", "|", ":", "-"}:
@@ -9994,7 +9995,7 @@ def _figure_caption_num_from_visible(visible: str) -> str | None:
         r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
         r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
         r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-        rf"\.?\s*({_FIG_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
+        rf"\.?\s*({_FIG_RELAXED_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
         visible,
         re.IGNORECASE,
     )
@@ -12649,7 +12650,7 @@ def _absorb_external_figure_captions_into_units(html: str) -> str:
         visible = _visible_text(raw)
         starts_like_caption = (
             re.match(
-                rf"^\s*(?:{_FIG_REF_LABEL_TOKEN}\.?)\s*{_FIG_KEY_TOKEN}\b",
+                rf"^\s*(?:{_FIG_REF_LABEL_TOKEN}\.?)\s*{_FIG_RELAXED_KEY_TOKEN}\b",
                 visible,
                 re.IGNORECASE,
             )

@@ -1717,6 +1717,30 @@ def test_polish_html_document_absorbs_caption_after_missing_warning_unit_with_se
     assert "Цикл следующий." in after_wrapper
 
 
+def test_polish_html_document_absorbs_spaced_decimal_figure_caption() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3-9" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig39a.jpg"/></p></div>'
+        '<p><img src="fig39b.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 3 .9. Calibration curves.</p>'
+        "<p>After the figure.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    wrapper_start = polished.index('<div id="fig-3-9" class="z2m-float-unit z2m-figure-unit">')
+    wrapper_end = polished.index("</div>", wrapper_start)
+    wrapper = polished[wrapper_start:wrapper_end]
+    after_wrapper = polished[wrapper_end:]
+
+    assert 'src="fig39a.jpg"' in wrapper
+    assert 'src="fig39b.jpg"' in wrapper
+    assert "Figure 3.9. Calibration curves." in wrapper
+    assert "Calibration curves" not in after_wrapper
+    assert "After the figure." in after_wrapper
+
+
 def test_polish_html_document_repairs_sentence_split_by_image_and_caption_paragraphs() -> None:
     html = (
         "<html><body>"
@@ -4379,6 +4403,14 @@ def test_add_figure_anchors_handles_russian_caption() -> None:
 
     assert "3" in found
     assert 'id="fig-3"' in result
+
+
+def test_add_figure_anchors_handles_spaced_decimal_caption_number() -> None:
+    html = "<p>Fig. 3 .9. Calibration curves of the flow rate measurement.</p>"
+    result, found = _add_figure_anchors(html)
+
+    assert "3-9" in found
+    assert 'id="fig-3-9"' in result
 
 
 def test_add_figure_anchors_skips_paragraph_with_existing_id() -> None:
