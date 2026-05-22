@@ -108,7 +108,119 @@ def test_repolish_cli_can_select_ru_polish_policy_with_en_captions() -> None:
         assert report["table_caption_language"] == "en"
         assert report["polish_language"] == "ru"
         polished = (stage_dir / "02.en.polish.html").read_text(encoding="utf-8")
-        assert "см. с. 34" in polished
         assert 'href="#page-33-0"' not in polished
+        assert "см. с. 34" in polished
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_repolish_cli_auto_policy_selects_ru_per_document() -> None:
+    repolish = _load_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        ru_body = "РџР°СЂР°Р»Р»Р°РєСЃ РІРѕР·РЅРёРєР°РµС‚ РІ СЌС‚РѕРј СЂР°Р·РґРµР»Рµ. " * 90
+        (stage_dir / "01.en.raw.html").write_text(
+            "<html><body>"
+            '<span id="page-33-0"></span>'
+            f"<p>{ru_body}</p>"
+            '<p>РџР°СЂР°Р»Р»Р°РєСЃ <a href="#page-33-0">СЃРј. СЃ. 34</a>.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+        mojibake_ru_body = (
+            "\u0420\u045f\u0420\xb0\u0421\u0402\u0420\xb0\u0420\xbb\u0420\xbb\u0420\xb0"
+            "\u0420\u0454\u0421\u0403 \u0420\u0406\u0420\u0455\u0420\xb7\u0420\u0405"
+            "\u0420\u0451\u0420\u0454\u0420\xb0\u0420\xb5\u0421\u201a \u0420\u0406 "
+            "\u0421\u040c\u0421\u201a\u0420\u0455\u0420\u0458 \u0421\u0402\u0420\xb0"
+            "\u0420\xb7\u0420\u0491\u0420\xb5\u0420\xbb\u0420\xb5. "
+        ) * 90
+        (stage_dir / "01.en.raw.html").write_text(
+            "<html><body>"
+            '<span id="page-33-0"></span>'
+            f"<p>{mojibake_ru_body}</p>"
+            '<p>\u0441\u043c. \u0441. 34</p>'
+            '<p>\u0420\u045f\u0420\xb0\u0421\u0402\u0420\xb0\u0420\xbb\u0420\xbb'
+            '\u0420\xb0\u0420\u0454\u0421\u0403 <a href="#page-33-0">'
+            '\u0421\u0403\u0420\u0458. \u0421\u0403. 34</a>.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+        report_path = tmp_path / "report.json"
+
+        exit_code = repolish.main(
+            [
+                "--roots",
+                str(tmp_path),
+                "--out-report",
+                str(report_path),
+                "--table-caption-language",
+                "en",
+                "--polish-language",
+                "auto",
+            ]
+        )
+
+        assert exit_code == 0
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["polish_language"] == "auto"
+        assert report["polish_language_counts"] == {"ru": 1}
+        assert report["articles"][0]["polish_language"] == "ru"
+        assert report["articles"][0]["detected_language"] == "ru"
+        polished = (stage_dir / "02.en.polish.html").read_text(encoding="utf-8")
+        assert "СЃРј. СЃ. 34" in polished
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_repolish_cli_can_skip_non_english_documents_for_en_corpus() -> None:
+    repolish = _load_module()
+    tmp_path = _make_temp_dir()
+    try:
+        en_stage = tmp_path / "English article" / "_z2m_stages"
+        ru_stage = tmp_path / "Russian article" / "_z2m_stages"
+        en_stage.mkdir(parents=True)
+        ru_stage.mkdir(parents=True)
+        en_text = (
+            "This study evaluates the design of neural interfaces and describes the methods, "
+            "results, and discussion for the experiments. "
+        ) * 80
+        ru_text = (
+            "\u041a\u043b\u0438\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u0435 "
+            "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u0438 "
+            "\u043e\u043f\u0438\u0441\u044b\u0432\u0430\u044e\u0442 "
+            "\u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0443 "
+            "\u0438 \u043b\u0435\u0447\u0435\u043d\u0438\u0435. "
+        ) * 80
+        (en_stage / "01.en.raw.html").write_text(f"<html><body><p>{en_text}</p></body></html>", encoding="utf-8")
+        (ru_stage / "01.en.raw.html").write_text(f"<html><body><p>{ru_text}</p></body></html>", encoding="utf-8")
+        report_path = tmp_path / "report.json"
+
+        exit_code = repolish.main(
+            [
+                "--roots",
+                str(tmp_path),
+                "--out-report",
+                str(report_path),
+                "--polish-language",
+                "auto",
+                "--target-language",
+                "en",
+                "--skip-non-target-language",
+            ]
+        )
+
+        assert exit_code == 0
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["raw_count"] == 2
+        assert report["article_count"] == 1
+        assert report["skipped_count"] == 1
+        assert report["polish_language_counts"] == {"en": 1}
+        assert (en_stage / "02.en.polish.html").is_file()
+        assert not (ru_stage / "02.en.polish.html").exists()
+        skipped = [article for article in report["articles"] if article["skipped"]]
+        assert skipped[0]["detected_language"] == "ru"
+        assert skipped[0]["skip_reason"] == "detected_ru_not_en"
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)

@@ -7,6 +7,7 @@ from scripts.llm_quality_loop import (
     evaluate_quality_gate,
     normalize_converted_audit_article_ids,
     prepare_converted_run,
+    repolish_cached_run,
     render_llm_prompt,
     write_manual_review_queue,
 )
@@ -295,3 +296,40 @@ def test_write_manual_review_queue_keeps_all_artifacts_and_filters_ignored(tmp_p
     assert queue[1]["defect_ids"] == {"P20": 1}
     assert queue[1]["non_ignored_defect_ids"] == {}
     assert queue[1]["review_status"] == "pending"
+
+
+def test_repolish_cached_run_auto_policy_keeps_en_corpus_only(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    raw_cache = source / "raw_cache"
+    raw_cache.mkdir(parents=True)
+    en_text = (
+        "This study evaluates the design of neural interfaces and describes the methods, "
+        "results, and discussion for the experiments. "
+    ) * 80
+    ru_text = (
+        "\u041a\u043b\u0438\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u0435 "
+        "\u0440\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u0438 "
+        "\u043e\u043f\u0438\u0441\u044b\u0432\u0430\u044e\u0442 "
+        "\u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0443 "
+        "\u0438 \u043b\u0435\u0447\u0435\u043d\u0438\u0435. "
+    ) * 80
+    (raw_cache / "en_doc.01.en.raw.html").write_text(f"<html><body><p>{en_text}</p></body></html>", encoding="utf-8")
+    (raw_cache / "ru_doc.01.en.raw.html").write_text(f"<html><body><p>{ru_text}</p></body></html>", encoding="utf-8")
+
+    manifest = repolish_cached_run(
+        source,
+        tmp_path / "run",
+        polish_language="auto",
+        target_language="en",
+        skip_non_target_language=True,
+    )
+
+    assert manifest["raw_count"] == 2
+    assert manifest["article_count"] == 1
+    assert manifest["skipped_count"] == 1
+    assert manifest["polish_language_counts"] == {"en": 1}
+    assert [article["article"] for article in manifest["articles"]] == ["en_doc"]
+    assert [article["article"] for article in manifest["skipped_articles"]] == ["ru_doc"]
+    assert manifest["skipped_articles"][0]["skip_reason"] == "detected_ru_not_en"
+    assert (tmp_path / "run" / "audit_tree" / "en_doc" / "02.en.polish.html").is_file()
+    assert not (tmp_path / "run" / "audit_tree" / "ru_doc").exists()

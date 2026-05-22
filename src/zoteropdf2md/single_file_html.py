@@ -372,7 +372,10 @@ _EQUATION_REF_PATTERN = re.compile(
 )
 
 _FIG_KEY_TOKEN = r"\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*"
-_FIG_RELAXED_KEY_TOKEN = r"\d+(?:\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*\d+)*"
+_FIG_RELAXED_KEY_TOKEN = (
+    r"\d+(?:\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*\d+"
+    r"(?!\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*\d+[A-Za-z]))*"
+)
 _FIG_PANEL_SUFFIX_TOKEN = r"[a-z]"
 # In-text figure references: "Fig. 3" / "рис. 3" / "фиг. 3" NOT followed by ". <text>"
 # (that would be a figure caption).  We distinguish "Fig. 3. Caption..." from "...Fig. 3."

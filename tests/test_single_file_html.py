@@ -1741,6 +1741,23 @@ def test_polish_html_document_absorbs_spaced_decimal_figure_caption() -> None:
     assert "After the figure." in after_wrapper
 
 
+def test_polish_html_document_links_caption_with_decimal_leading_text_to_base_figure() -> None:
+    html = (
+        "<html><body>"
+        "<p>In Fig. 17 the virtual model is depicted. In Fig. 17 the model is split.</p>"
+        '<p><img src="fig17.jpg"/></p>'
+        "<p>Fig. 17. 2.5D virtual model obtained by applying the proposed methodology.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-17"' in polished
+    assert 'id="fig-17-2-5"' not in polished
+    assert polished.count('href="#fig-17"') == 2
+    assert "Figure 17. 2.5D virtual model" in polished
+
+
 def test_polish_html_document_repairs_sentence_split_by_image_and_caption_paragraphs() -> None:
     html = (
         "<html><body>"
@@ -4411,6 +4428,16 @@ def test_add_figure_anchors_handles_spaced_decimal_caption_number() -> None:
 
     assert "3-9" in found
     assert 'id="fig-3-9"' in result
+
+
+def test_add_figure_anchors_keeps_caption_text_decimal_out_of_number() -> None:
+    html = "<p>Fig. 17. 2.5D virtual model obtained by applying the proposed methodology.</p>"
+    result, found = _add_figure_anchors(html)
+
+    assert "17" in found
+    assert "17-2-5" not in found
+    assert 'id="fig-17"' in result
+    assert 'id="fig-17-2-5"' not in result
 
 
 def test_add_figure_anchors_skips_paragraph_with_existing_id() -> None:

@@ -14,6 +14,7 @@ PDF and rebuilt citation profile.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html import unescape
@@ -35,6 +36,7 @@ from zoteropdf2md.single_file_html import (  # noqa: E402
     _validate_data_url,
     polish_html_document,
 )
+from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
 RAW_STAGE = "01.en.raw.html"
@@ -48,6 +50,15 @@ class RepolishResult:
     raw_stage: str
     polish_stage: str
     changed: bool
+    requested_polish_language: str = "en"
+    polish_language: str = "en"
+    target_language: str = "en"
+    detected_language: str = "unknown"
+    language_confidence: float = 0.0
+    language_reason: str = ""
+    language_gate_reason: str = ""
+    skipped: bool = False
+    skip_reason: str = ""
     inlined_images: list[str] = field(default_factory=list)
     missing_images: list[dict[str, object]] = field(default_factory=list)
 
@@ -166,17 +177,47 @@ def repolish_file(
     *,
     table_caption_language: str = "en",
     polish_language: str | None = None,
+    target_language: str = "en",
+    skip_non_target_language: bool = False,
+    skip_unknown_language: bool = False,
     inline_images: bool = True,
 ) -> RepolishResult:
     raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
+    language_decision = resolve_document_polish_language(
+        raw_html,
+        table_caption_language=table_caption_language,
+        polish_language=polish_language,
+        target_language=target_language,
+        skip_non_target_language=skip_non_target_language,
+        skip_unknown_language=skip_unknown_language,
+    )
+    language_fields = language_decision.to_flat_report_fields()
+    polish_path = raw_path.parent / POLISH_STAGE
+    article_dir = raw_path.parent.parent if raw_path.parent.name == "_z2m_stages" else raw_path.parent
+    if language_decision.should_skip:
+        return RepolishResult(
+            article=article_dir.name,
+            raw_stage=str(raw_path),
+            polish_stage=str(polish_path),
+            changed=False,
+            requested_polish_language=str(language_fields["requested_polish_language"]),
+            polish_language=str(language_fields["polish_language"]),
+            target_language=str(language_fields["target_language"]),
+            detected_language=str(language_fields["detected_language"]),
+            language_confidence=float(language_fields["language_confidence"]),
+            language_reason=str(language_fields["language_reason"]),
+            language_gate_reason=str(language_fields["language_gate_reason"]),
+            skipped=True,
+            skip_reason=str(language_fields["skip_reason"]),
+        )
+
     polished = polish_html_document(
         raw_html,
         table_caption_language=table_caption_language,
         enable_citation_linkify=True,
-        polish_language=polish_language,
+        polish_language=language_decision.selected_polish_language,
     )
 
-    polish_path = raw_path.parent / POLISH_STAGE
     inlined_images: list[str] = []
     missing_images: list[dict[str, object]] = []
     if inline_images:
@@ -186,12 +227,18 @@ def repolish_file(
     changed = previous != polished
     polish_path.write_text(polished, encoding="utf-8")
 
-    article_dir = raw_path.parent.parent if raw_path.parent.name == "_z2m_stages" else raw_path.parent
     return RepolishResult(
         article=article_dir.name,
         raw_stage=str(raw_path),
         polish_stage=str(polish_path),
         changed=changed,
+        requested_polish_language=str(language_fields["requested_polish_language"]),
+        polish_language=str(language_fields["polish_language"]),
+        target_language=str(language_fields["target_language"]),
+        detected_language=str(language_fields["detected_language"]),
+        language_confidence=float(language_fields["language_confidence"]),
+        language_reason=str(language_fields["language_reason"]),
+        language_gate_reason=str(language_fields["language_gate_reason"]),
         inlined_images=inlined_images,
         missing_images=missing_images,
     )
@@ -202,6 +249,9 @@ def repolish_roots(
     *,
     table_caption_language: str = "en",
     polish_language: str | None = None,
+    target_language: str = "en",
+    skip_non_target_language: bool = False,
+    skip_unknown_language: bool = False,
     inline_images: bool = True,
 ) -> dict[str, object]:
     results = [
@@ -209,20 +259,34 @@ def repolish_roots(
             raw_path,
             table_caption_language=table_caption_language,
             polish_language=polish_language,
+            target_language=target_language,
+            skip_non_target_language=skip_non_target_language,
+            skip_unknown_language=skip_unknown_language,
             inline_images=inline_images,
         )
         for raw_path in find_raw_files(roots)
     ]
+    processed_results = [result for result in results if not result.skipped]
+    skipped_results = [result for result in results if result.skipped]
+    language_counts = Counter(result.detected_language for result in results)
+    polish_language_counts = Counter(result.polish_language for result in processed_results)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stage": f"{RAW_STAGE} -> {POLISH_STAGE}",
         "roots": [str(root) for root in roots],
         "table_caption_language": table_caption_language,
         "polish_language": polish_language or table_caption_language,
-        "article_count": len(results),
-        "changed_count": sum(1 for result in results if result.changed),
-        "inlined_image_count": sum(len(result.inlined_images) for result in results),
-        "missing_image_count": sum(len(result.missing_images) for result in results),
+        "target_language": target_language,
+        "skip_non_target_language": skip_non_target_language,
+        "skip_unknown_language": skip_unknown_language,
+        "raw_count": len(results),
+        "article_count": len(processed_results),
+        "skipped_count": len(skipped_results),
+        "changed_count": sum(1 for result in processed_results if result.changed),
+        "inlined_image_count": sum(len(result.inlined_images) for result in processed_results),
+        "missing_image_count": sum(len(result.missing_images) for result in processed_results),
+        "language_counts": dict(sorted(language_counts.items())),
+        "polish_language_counts": dict(sorted(polish_language_counts.items())),
         "articles": [asdict(result) for result in results],
     }
 
@@ -245,8 +309,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--polish-language",
-        choices=("en", "ru"),
+        choices=("en", "ru", "auto"),
         help="Language policy for language-specific polish repairs; defaults to --table-caption-language.",
+    )
+    parser.add_argument(
+        "--target-language",
+        default="en",
+        help="Document language to keep when --skip-non-target-language is enabled.",
+    )
+    parser.add_argument(
+        "--skip-non-target-language",
+        action="store_true",
+        help="Skip confidently detected non-target documents instead of regenerating their polish stage.",
+    )
+    parser.add_argument(
+        "--skip-unknown-language",
+        action="store_true",
+        help="Skip documents whose language cannot be detected confidently.",
     )
     parser.add_argument(
         "--no-inline-images",
@@ -267,11 +346,16 @@ def main(argv: list[str] | None = None) -> int:
         args.roots,
         table_caption_language=args.table_caption_language,
         polish_language=args.polish_language,
+        target_language=args.target_language,
+        skip_non_target_language=args.skip_non_target_language,
+        skip_unknown_language=args.skip_unknown_language,
         inline_images=not args.no_inline_images,
     )
     print(
         "Repolished EN stages: "
+        f"raw={report['raw_count']} "
         f"articles={report['article_count']} "
+        f"skipped={report['skipped_count']} "
         f"changed={report['changed_count']} "
         f"inlined_images={report['inlined_image_count']} "
         f"missing_images={report['missing_image_count']}"

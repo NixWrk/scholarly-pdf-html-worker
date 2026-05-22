@@ -3,13 +3,13 @@
 This repository keeps the LLM in the loop, not in charge of the loop. The
 workflow is:
 
-1. Regenerate EN polish from cached raw HTML and citation profiles.
+1. Regenerate EN polish from every cached raw HTML and citation profile.
 2. Run the full EN polish audit.
 3. Record all quality metrics and compare them with a previous run.
 4. Evaluate gates for lower-is-better metrics.
 5. Build a compact LLM analysis packet and prompt.
 6. Let an engineer or coding agent make a small patch plus tests.
-7. Repeat the loop before committing.
+7. Repeat the full EN corpus loop before committing.
 
 ## Branch Workflow
 
@@ -27,6 +27,12 @@ The command writes a new run directory with `polish/`, `audit_tree/`,
 `quality_gate_report.json`, `llm_analysis_pack.json`, and
 `llm_analysis_prompt.md`.
 
+This is the mandatory loop shape for code patches. By default `observe` now
+uses `--polish-language auto`, `--target-language en`, and skips confidently
+detected non-English documents from the EN corpus audit. The manifest records
+`raw_count`, `article_count`, `skipped_count`, per-document language detection,
+and the selected polish policy for every accepted document.
+
 ```powershell
 python scripts\llm_quality_loop.py observe `
   --source-run-dir .tmp_local2\source_exports_full_pdf_profile_rerun_d1100b3_2026-05-20 `
@@ -39,8 +45,9 @@ python scripts\llm_quality_loop.py observe `
 Add `--run-tests` when the loop should run the configured test command before
 audit/history/gates.
 
-For language-specific repair experiments, keep the stage shape stable and pass
-the policy explicitly. For example, Russian page-reference repairs can be tested
+For language-specific repair experiments, keep the stage shape stable. Use
+`--polish-language auto` for normal EN corpus work, or pass a policy explicitly
+for targeted experiments. Russian page-reference repairs can still be tested
 without switching English figure/table captions:
 
 ```powershell
@@ -50,6 +57,9 @@ python scripts\llm_quality_loop.py observe `
   --polish-language ru `
   --no-append-history
 ```
+
+Use `--include-non-target-language` only when intentionally reviewing a mixed
+corpus. For the current branch, EN runs should stay on the default EN target.
 
 ## Observe Production Converted Stages
 
@@ -71,6 +81,10 @@ python scripts\llm_quality_loop.py observe `
 Use a previous entry only when it was produced by the same converted-stage mode;
 older entries that were keyed by document name can collapse duplicate Zotero
 attachments and create misleading deltas.
+
+Converted-stage observation is useful for manual review queues, but it is not a
+replacement for the mandatory cached raw EN repolish loop above because it does
+not regenerate `02.en.polish.html`.
 
 ## Build Or Rebuild Only The LLM Pack
 
@@ -124,5 +138,6 @@ Each fix should be small:
 - one production repair layer;
 - tests for the real symptom and at least one non-regression edge case;
 - targeted repolish for affected articles;
-- full corpus repolish before commit;
+- full cached raw EN corpus repolish before commit, with per-document auto
+  policy and language stats in `manifest.json`;
 - gate must pass or the regression must be explicitly understood.

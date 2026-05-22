@@ -10,6 +10,7 @@ external LLM command is explicitly supplied.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
 import re
@@ -27,6 +28,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from zoteropdf2md.single_file_html import close_katex_v8_context, polish_html_document  # noqa: E402
+from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
 RAW_STAGE = "01.en.raw.html"
@@ -315,7 +317,15 @@ def normalize_converted_audit_article_ids(run_dir: Path) -> dict[str, Any]:
     return audit
 
 
-def repolish_cached_run(source_run_dir: Path, out_dir: Path, *, polish_language: str | None = None) -> dict[str, Any]:
+def repolish_cached_run(
+    source_run_dir: Path,
+    out_dir: Path,
+    *,
+    polish_language: str | None = None,
+    target_language: str = "en",
+    skip_non_target_language: bool = False,
+    skip_unknown_language: bool = False,
+) -> dict[str, Any]:
     """Regenerate polish HTML from a run directory containing raw_cache/profiles."""
     source_run_dir = source_run_dir.resolve(strict=False)
     out_dir = out_dir.resolve(strict=False)
@@ -333,8 +343,12 @@ def repolish_cached_run(source_run_dir: Path, out_dir: Path, *, polish_language:
 
     articles: list[dict[str, Any]] = []
     assessments: list[dict[str, Any]] = []
+    skipped_articles: list[dict[str, Any]] = []
     profile_status_counts: dict[str, int] = {}
     profile_style_counts: dict[str, int] = {}
+    language_counts: Counter[str] = Counter()
+    polish_language_counts: Counter[str] = Counter()
+    skip_reason_counts: Counter[str] = Counter()
     changed_count = 0
 
     try:
@@ -348,14 +362,6 @@ def repolish_cached_run(source_run_dir: Path, out_dir: Path, *, polish_language:
                 else {"status": "missing_profile", "style": "unknown", "confidence": "low"}
             )
             raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
-            polished = polish_html_document(
-                raw_html,
-                table_caption_language="en",
-                enable_citation_linkify=True,
-                citation_profile=profile,
-                polish_language=polish_language,
-            )
-
             out_raw = raw_out / raw_path.name
             out_profile = profile_out / f"{article}.citation_profile.json"
             out_polish = polish_out / f"{article}.{POLISH_STAGE}"
@@ -364,6 +370,42 @@ def repolish_cached_run(source_run_dir: Path, out_dir: Path, *, polish_language:
                 shutil.copy2(profile_path, out_profile)
             else:
                 _write_json(out_profile, profile)
+
+            language_decision = resolve_document_polish_language(
+                raw_html,
+                table_caption_language="en",
+                polish_language=polish_language,
+                target_language=target_language,
+                skip_non_target_language=skip_non_target_language,
+                skip_unknown_language=skip_unknown_language,
+            )
+            language_fields = language_decision.to_flat_report_fields()
+            language_counts[language_decision.detection.detected_language] += 1
+            if language_decision.should_skip:
+                skip_reason_counts[language_decision.skip_reason] += 1
+                skipped_articles.append(
+                    {
+                        "index": index,
+                        "article": article,
+                        "raw_cache_path": str(out_raw),
+                        "profile_path": str(out_profile),
+                        "profile_status": _profile_value(profile, "status"),
+                        "citation_style": _profile_value(profile, "style"),
+                        "citation_confidence": _profile_value(profile, "confidence"),
+                        "language_detection": language_decision.detection.to_dict(),
+                        **language_fields,
+                    }
+                )
+                continue
+
+            polish_language_counts[language_decision.selected_polish_language] += 1
+            polished = polish_html_document(
+                raw_html,
+                table_caption_language="en",
+                enable_citation_linkify=True,
+                citation_profile=profile,
+                polish_language=language_decision.selected_polish_language,
+            )
             previous_polish = source_run_dir / "polish" / out_polish.name
             previous_text = (
                 previous_polish.read_text(encoding="utf-8", errors="replace")
@@ -395,36 +437,60 @@ def repolish_cached_run(source_run_dir: Path, out_dir: Path, *, polish_language:
                     "citation_style": _profile_value(profile, "style"),
                     "citation_confidence": _profile_value(profile, "confidence"),
                     "changed": changed,
+                    "language_detection": language_decision.detection.to_dict(),
+                    **language_fields,
                 }
             )
-            assessments.append(assess_polish_html(article, polished, profile))
+            assessment = assess_polish_html(article, polished, profile)
+            assessment.update(language_fields)
+            assessments.append(assessment)
     finally:
         close_katex_v8_context()
 
     totals, problematic = _assessment_totals(assessments)
     manifest = {
         "generated_at": _now(),
+        "source_kind": "cached_raw_repolish",
+        "mandatory_corpus_repolish": True,
         "source_run_dir": str(source_run_dir),
         "out_dir": str(out_dir),
         "code_commit": _git_short_head(),
         "working_tree_dirty": _git_dirty(),
         "polish_language": polish_language or "en",
+        "target_language": target_language,
+        "skip_non_target_language": skip_non_target_language,
+        "skip_unknown_language": skip_unknown_language,
+        "raw_count": len(raw_files),
         "article_count": len(articles),
+        "skipped_count": len(skipped_articles),
         "changed_count": changed_count,
         "raw_cache_dir": str(raw_out),
         "profile_dir": str(profile_out),
         "polish_dir": str(polish_out),
         "audit_tree_dir": str(audit_tree),
+        "language_counts": dict(sorted(language_counts.items())),
+        "polish_language_counts": dict(sorted(polish_language_counts.items())),
+        "skip_reason_counts": dict(sorted(skip_reason_counts.items())),
         "profile_status_counts": dict(sorted(profile_status_counts.items())),
         "profile_style_counts": dict(sorted(profile_style_counts.items())),
         "articles": articles,
+        "skipped_articles": skipped_articles,
     }
     assessment = {
         "generated_at": _now(),
+        "source_kind": "cached_raw_repolish",
+        "raw_count": len(raw_files),
         "article_count": len(assessments),
+        "skipped_count": len(skipped_articles),
         "run_dir": str(out_dir),
         "code_commit": _git_short_head(),
         "working_tree_dirty": _git_dirty(),
+        "target_language": target_language,
+        "skip_non_target_language": skip_non_target_language,
+        "skip_unknown_language": skip_unknown_language,
+        "language_counts": manifest["language_counts"],
+        "polish_language_counts": manifest["polish_language_counts"],
+        "skip_reason_counts": manifest["skip_reason_counts"],
         "totals": totals,
         "profile_status_counts": manifest["profile_status_counts"],
         "profile_style_counts": manifest["profile_style_counts"],
@@ -782,8 +848,15 @@ def build_analysis_pack(
         "run_dir": str(run_dir),
         "run_id": entry.get("run_id") or run_dir.name,
         "code_commit": manifest.get("code_commit"),
+        "raw_count": manifest.get("raw_count"),
+        "skipped_count": manifest.get("skipped_count"),
         "ignored_defect_ids": sorted(ignored),
         "article_count": manifest.get("article_count") or assessment.get("article_count"),
+        "language_counts": manifest.get("language_counts") or assessment.get("language_counts") or {},
+        "polish_language_counts": manifest.get("polish_language_counts")
+        or assessment.get("polish_language_counts")
+        or {},
+        "skip_reason_counts": manifest.get("skip_reason_counts") or assessment.get("skip_reason_counts") or {},
         "quality_totals": entry.get("totals", {}),
         "assessment_totals": assessment.get("totals", {}),
         "comparison_status": comparison.get("status"),
@@ -815,6 +888,11 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- run_id: `{pack.get('run_id')}`",
         f"- run_dir: `{pack.get('run_dir')}`",
         f"- code_commit: `{pack.get('code_commit')}`",
+        f"- raw_count: `{pack.get('raw_count')}`",
+        f"- article_count: `{pack.get('article_count')}`",
+        f"- skipped_count: `{pack.get('skipped_count')}`",
+        f"- language_counts: `{json.dumps(pack.get('language_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- polish_language_counts: `{json.dumps(pack.get('polish_language_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- ignored_defect_ids: `{', '.join(pack.get('ignored_defect_ids') or [])}`",
         f"- comparison_status: `{pack.get('comparison_status')}`",
         f"- regression_count: `{pack.get('regression_count')}`",
@@ -968,8 +1046,21 @@ def observe(args: argparse.Namespace) -> int:
     if args.source_run_dir and converted_roots:
         raise SystemExit("Use either --source-run-dir or --converted-roots, not both.")
     if args.source_run_dir:
-        manifest = repolish_cached_run(args.source_run_dir, run_dir, polish_language=args.polish_language)
-        print(f"Repolished cached run: articles={manifest['article_count']} changed={manifest['changed_count']}")
+        manifest = repolish_cached_run(
+            args.source_run_dir,
+            run_dir,
+            polish_language=args.polish_language,
+            target_language=args.target_language,
+            skip_non_target_language=args.skip_non_target_language,
+            skip_unknown_language=args.skip_unknown_language,
+        )
+        print(
+            "Repolished cached run: "
+            f"raw={manifest['raw_count']} "
+            f"articles={manifest['article_count']} "
+            f"skipped={manifest['skipped_count']} "
+            f"changed={manifest['changed_count']}"
+        )
     elif converted_roots:
         manifest = prepare_converted_run(converted_roots, run_dir)
         print(f"Prepared converted stage run: articles={manifest['article_count']}")
@@ -1028,8 +1119,33 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     observe_parser.add_argument("--source-run-dir", type=Path, help="Run dir with raw_cache and profiles to repolish.")
     observe_parser.add_argument(
         "--polish-language",
-        choices=("en", "ru"),
+        choices=("en", "ru", "auto"),
+        default="auto",
         help="Language policy for language-specific polish repairs when repolishing a cached run.",
+    )
+    observe_parser.add_argument(
+        "--target-language",
+        default="en",
+        help="Corpus language to keep for cached-run repolish; defaults to EN for this loop.",
+    )
+    language_filter_group = observe_parser.add_mutually_exclusive_group()
+    language_filter_group.add_argument(
+        "--skip-non-target-language",
+        dest="skip_non_target_language",
+        action="store_true",
+        help="Skip confidently detected non-target documents from cached-run audit/statistics.",
+    )
+    language_filter_group.add_argument(
+        "--include-non-target-language",
+        dest="skip_non_target_language",
+        action="store_false",
+        help="Keep non-target documents in cached-run audit/statistics.",
+    )
+    observe_parser.set_defaults(skip_non_target_language=True)
+    observe_parser.add_argument(
+        "--skip-unknown-language",
+        action="store_true",
+        help="Skip documents whose language cannot be detected confidently.",
     )
     observe_parser.add_argument(
         "--converted-roots",
