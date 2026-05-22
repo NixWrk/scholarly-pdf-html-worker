@@ -3,9 +3,10 @@
 This repository keeps the LLM in the loop, not in charge of the loop. The
 workflow is:
 
-1. Regenerate EN polish from every cached raw HTML and citation profile.
-2. Run focused regression tests for every new artifact fix, plus the configured
-   test command.
+1. Scan every cached raw HTML file and regenerate EN polish for every accepted
+   EN document with its citation profile.
+2. Run focused regression tests for every new artifact fix, then run the full
+   configured project test suite.
 3. Run the full EN polish audit.
 4. Record all quality metrics and compare them with a previous run.
 5. Evaluate gates for lower-is-better metrics.
@@ -31,11 +32,12 @@ The command writes a new run directory with `polish/`, `audit_tree/`,
 
 This is the mandatory loop shape for code patches. By default `observe` now
 uses `--polish-language auto`, `--target-language en`, and skips confidently
-detected non-English documents from the EN corpus audit. The manifest records
-`raw_count`, `article_count`, `skipped_count`, per-document language detection,
-and the selected polish policy for every accepted document.
+detected non-English documents from the EN corpus audit. It scans every cached
+raw HTML file from the source run, repolishes every accepted EN document, and
+records `raw_count`, `article_count`, `skipped_count`, per-document language
+detection, and the selected polish policy for every accepted document.
 
-`observe` also runs the configured test command by default
+`observe` also runs the full configured project test suite by default
 (`required_test_command` in `configs/llm_quality_gates.json`, currently
 `python -m pytest -q`) before audit/history/gates. Use `--skip-tests` only for
 exploratory audit runs that do not include code changes.
@@ -144,8 +146,9 @@ Each fix should be small:
 - at least one non-regression edge case when the repair can touch links, tags,
   math, code/pre blocks, language policy, or nearby article classes;
 - targeted repolish for affected articles;
-- full cached raw EN corpus repolish before commit, with per-document auto
-  policy and language stats in `manifest.json`;
-- configured test command must pass in the loop, or the run must be clearly
-  marked as exploratory with `--skip-tests`;
+- full cached raw EN corpus repolish before commit: all cached raw files scanned
+  and every accepted EN article repolished, with per-document auto policy and
+  language stats in `manifest.json`;
+- full configured project test suite must pass in the loop, or the run must be
+  clearly marked as exploratory with `--skip-tests`;
 - gate must pass or the regression must be explicitly understood.

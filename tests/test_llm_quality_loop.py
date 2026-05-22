@@ -199,7 +199,9 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
 
     assert "Every production artifact fix must include a focused regression test" in prompt
     assert "guard/negative test" in prompt
-    assert "configured test command" in prompt
+    assert "full configured project test suite" in prompt
+    assert "all cached raw files are scanned" in prompt
+    assert "every accepted EN article is repolished" in prompt
 
 
 def test_assessment_warning_count_ignores_css_selector_without_body_warning() -> None:
