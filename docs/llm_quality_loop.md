@@ -39,6 +39,27 @@ python scripts\llm_quality_loop.py observe `
 Add `--run-tests` when the loop should run the configured test command before
 audit/history/gates.
 
+## Observe Production Converted Stages
+
+For Zotero production output under `data/html/converted/.../_z2m_stages`,
+observe the existing raw/polish pairs directly. This mode does not repolish; it
+audits the current production artifacts in place, keeps duplicate document
+names separate with stable artifact ids, and writes `manual_review_queue.json`
+for article-by-article review.
+
+```powershell
+python scripts\llm_quality_loop.py observe `
+  --converted-roots D:\Elvis_projects\Zotero_automatization\data\html\converted `
+  --out-dir .tmp_local2\llm_runs\converted_313_loop_adapter_2026-05-22 `
+  --run-id converted_313_loop_adapter_2026-05-22 `
+  --no-append-history `
+  --max-articles 20
+```
+
+Use a previous entry only when it was produced by the same converted-stage mode;
+older entries that were keyed by document name can collapse duplicate Zotero
+attachments and create misleading deltas.
+
 ## Build Or Rebuild Only The LLM Pack
 
 ```powershell

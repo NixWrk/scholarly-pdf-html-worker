@@ -683,6 +683,21 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     assert "by/ 4.0" not in polished
 
 
+def test_polish_html_document_repairs_spaced_protocol_url_anchors() -> None:
+    html = (
+        "<html><body>"
+        '<p>Available online: <a href="http: //www.brailleauthority.org/tg/web-manual/index.html">'
+        "http: //www.brailleauthority.org/tg/web-manual/index.html</a></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="http://www.brailleauthority.org/tg/web-manual/index.html"' in polished
+    assert ">http://www.brailleauthority.org/tg/web-manual/index.html</a>" in polished
+    assert "http: //" not in polished
+
+
 def test_polish_html_document_repairs_url_spaces_inside_path_continuations() -> None:
     html = (
         "<html><body>"
@@ -5274,6 +5289,36 @@ def test_polish_html_document_unwraps_decimal_equation_page_links() -> None:
 
     assert "Eqn. 2.1)" in polished
     assert 'href="#page-7-0"' not in polished
+
+
+def test_polish_html_document_unwraps_broken_page_anchor_links() -> None:
+    html = (
+        "<html><body>"
+        '<p><b><a href="#page-10-0">Chapter 2 cameras</a></b></p>'
+        '<p>See <a href="#page-11-0">page 11</a> for more detail.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Chapter 2 cameras" in polished
+    assert "page 11" in polished
+    assert 'href="#page-10-0"' not in polished
+    assert 'href="#page-11-0"' not in polished
+
+
+def test_polish_html_document_keeps_working_page_anchor_links() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-11-0"></span>'
+        '<p>See <a href="#page-11-0">page 11</a> for more detail.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="page-11-0"' in polished
+    assert 'href="#page-11-0"' in polished
 
 
 def test_polish_html_document_anchors_text_equation_and_retargets_page_link() -> None:

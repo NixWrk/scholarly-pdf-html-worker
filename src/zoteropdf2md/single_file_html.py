@@ -1209,6 +1209,15 @@ _ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
 )
 _DOUBLE_QUOTED_HREF_ATTR_PATTERN = re.compile(r'\bhref\s*=\s*"(?P<href>[^"]+)"', re.IGNORECASE)
 _SINGLE_QUOTED_HREF_ATTR_PATTERN = re.compile(r"\bhref\s*=\s*'(?P<href>[^']+)'", re.IGNORECASE)
+_SPACED_PROTOCOL_HREF_ATTR_PATTERN = re.compile(
+    r'(?P<prefix>\bhref\s*=\s*)(?P<quote>["\'])(?P<scheme>https?:)\s+//(?P<rest>[^"\']+)(?P=quote)',
+    re.IGNORECASE,
+)
+_SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']https?:\s+//[^"\']+["\'][^>]*)>'
+    r'(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
 _BROKEN_PLAIN_URL_PROTOCOL_PATTERN = re.compile(r"\b(https?://)\s+", re.IGNORECASE)
 _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN = re.compile(
     r"(?P<prefix>\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*/)\s+"
@@ -4730,6 +4739,33 @@ def _repair_broken_plain_url_text(html: str) -> str:
         out.append(repair_text(part))
 
     return "".join(out)
+
+
+def _repair_spaced_protocol_url_anchors(html: str) -> str:
+    """Join OCR spaces in URL anchor href protocols such as ``http: //``."""
+    if "http" not in html.lower():
+        return html
+
+    def fix_href(attrs: str) -> tuple[str, str | None]:
+        fixed_href: str | None = None
+
+        def replace_attr(match: re.Match[str]) -> str:
+            nonlocal fixed_href
+            fixed_href = f"{match.group('scheme')}//{match.group('rest')}"
+            return f"{match.group('prefix')}{match.group('quote')}{fixed_href}{match.group('quote')}"
+
+        return _SPACED_PROTOCOL_HREF_ATTR_PATTERN.sub(replace_attr, attrs, count=1), fixed_href
+
+    def replace_anchor(match: re.Match[str]) -> str:
+        attrs, fixed_href = fix_href(match.group("attrs"))
+        body = match.group("body")
+        if fixed_href and "<" not in body:
+            fixed_body = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", body)
+            if _compact_visible_url_fragment(fixed_body).lower() == _compact_visible_url_fragment(fixed_href).lower():
+                body = _escape_html_text(fixed_href)
+        return f"<a{attrs}>{body}</a>"
+
+    return _SPACED_PROTOCOL_URL_ANCHOR_PATTERN.sub(replace_anchor, html)
 
 
 def _rewrite_page_linked_bracket_citations(html: str, ref_count: int) -> str:
@@ -8613,6 +8649,23 @@ def _unwrap_plain_prose_page_links(html: str) -> str:
         if semantic_label.match(label):
             return match.group(0)
         if re.search(r"\b(?:copyright|creative commons|doi|https?|www\.)\b", label, re.IGNORECASE):
+            return match.group(0)
+        return match.group("body")
+
+    return _PAGE_ANCHOR_PATTERN.sub(_replace, html)
+
+
+def _unwrap_broken_page_anchor_links(html: str) -> str:
+    """Drop #page-* links that no longer have a matching page anchor id."""
+    if "#page-" not in html:
+        return html
+    page_ids = {match.group(2) for match in _REFERENCE_PAGE_ID_PATTERN.finditer(html)}
+    if not page_ids:
+        return _PAGE_ANCHOR_PATTERN.sub(lambda match: match.group("body"), html)
+
+    def _replace(match: re.Match[str]) -> str:
+        href_match = re.search(r'\bhref\s*=\s*(["\'])#(?P<target>page-[^"\']+)\1', match.group("attrs"), re.IGNORECASE)
+        if href_match is None or href_match.group("target") in page_ids:
             return match.group(0)
         return match.group("body")
 
@@ -12980,6 +13033,7 @@ def polish_html_document(
         polished = _unlink_supplementary_page_refs(polished)
         polished = _unwrap_author_year_page_links(polished)
         polished = _unwrap_plain_prose_page_links(polished)
+        polished = _unwrap_broken_page_anchor_links(polished)
         polished = _repair_numeric_ref_false_positives(polished)
         polished = _repair_statistical_ref_false_positives(polished)
         polished = _mark_unit_exponent_superscripts(polished)
@@ -13031,9 +13085,11 @@ def polish_html_document(
     polished = _repair_split_url_anchor_block_tail(polished)
     polished = _repair_split_visible_url_anchors(polished)
     polished = _repair_miswrapped_doi_anchor_labels(polished)
+    polished = _repair_spaced_protocol_url_anchors(polished)
     polished = _merge_adjacent_same_href_mailto_anchors(polished)
     polished = _merge_adjacent_same_href_url_anchors(polished)
     polished = _repair_broken_plain_url_text(polished)
+    polished = _repair_spaced_protocol_url_anchors(polished)
     polished = _autolink_plain_urls(polished)
     polished = _repair_split_url_anchor_block_tail(polished)
     polished = _normalize_spacing_after_url_links(polished)
