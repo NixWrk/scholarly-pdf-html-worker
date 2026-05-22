@@ -876,12 +876,15 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Ignore defect ids listed in `ignored_defect_ids` unless they interact with a text/link problem.",
         "Classify universal root causes, propose the smallest code layer to fix them, and name regression tests.",
         "Do not propose broad rewrites when a local repair or guard is enough.",
+        "Every production artifact fix must include a focused regression test that reproduces the observed symptom.",
+        "Also add at least one guard/negative test when the repair could touch links, tags, math, code, language policy, or nearby article classes.",
+        "The loop is incomplete until the configured test command and the full cached raw EN repolish comparison have both passed.",
         "",
         "Return this structure:",
         "1. Critical findings by article.",
         "2. Cross-article patterns.",
         "3. Patch plan with production file/function targets.",
-        "4. Tests to add or update.",
+        "4. Tests to add or update, including the focused artifact regression.",
         "5. Risks and gate checks to rerun.",
         "",
         "## Run Summary",
@@ -1160,7 +1163,20 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     observe_parser.add_argument("--defect-patterns", type=Path, default=DEFAULT_DEFECT_PATTERNS)
     observe_parser.add_argument("--ignore-defect-id", action="append")
     observe_parser.add_argument("--max-articles", type=int, default=12)
-    observe_parser.add_argument("--run-tests", action="store_true")
+    test_group = observe_parser.add_mutually_exclusive_group()
+    test_group.add_argument(
+        "--run-tests",
+        dest="run_tests",
+        action="store_true",
+        help="Run the configured test command before audit/history/gates. This is the default for the loop.",
+    )
+    test_group.add_argument(
+        "--skip-tests",
+        dest="run_tests",
+        action="store_false",
+        help="Skip the configured test command; use only for exploratory audit runs, not for code patches.",
+    )
+    observe_parser.set_defaults(run_tests=True)
     observe_parser.add_argument("--test-command")
     observe_parser.add_argument("--skip-audit", action="store_true")
     observe_parser.add_argument("--skip-history", action="store_true")

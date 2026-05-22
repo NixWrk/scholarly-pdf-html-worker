@@ -6,6 +6,7 @@ from scripts.llm_quality_loop import (
     build_analysis_pack,
     evaluate_quality_gate,
     normalize_converted_audit_article_ids,
+    parse_args,
     prepare_converted_run,
     repolish_cached_run,
     render_llm_prompt,
@@ -157,6 +158,48 @@ def test_analysis_pack_filters_ignored_defects_and_adds_pattern_metadata(tmp_pat
     prompt = render_llm_prompt(pack)
     assert "article_a" in prompt
     assert "text-cleanup" in prompt
+    assert "focused artifact regression" in prompt
+
+
+def test_observe_runs_configured_tests_by_default() -> None:
+    args = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            "source_run",
+            "--out-dir",
+            "out_run",
+        ]
+    )
+
+    assert args.run_tests is True
+
+    args = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            "source_run",
+            "--out-dir",
+            "out_run",
+            "--skip-tests",
+        ]
+    )
+
+    assert args.run_tests is False
+
+
+def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
+    prompt = render_llm_prompt(
+        {
+            "run_id": "run_a",
+            "ignored_defect_ids": [],
+            "articles": [],
+        }
+    )
+
+    assert "Every production artifact fix must include a focused regression test" in prompt
+    assert "guard/negative test" in prompt
+    assert "configured test command" in prompt
 
 
 def test_assessment_warning_count_ignores_css_selector_without_body_warning() -> None:
