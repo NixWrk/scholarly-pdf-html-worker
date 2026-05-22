@@ -6577,7 +6577,9 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
         "S. OA\u041b\u2020 \u041b\u2021SModhrain were present. "
         "SEQUIN \u0412\u0491 , C., Konrad \u0412\u0491 Schindler, and "
         "Adarsh \u0412\u0401 Kowdle, Radim \u041b\u2021 S\u041b\u2021 ara, "
-        "templates \u0412\u0491 for objects, and C. BAijhler, \u041b\u045a and P. Penaz were cited.</p>"
+        "templates \u0412\u0491 for objects, and C. BAijhler, \u041b\u045a and P. Penaz were cited. "
+        "Kristja\u00b4nsson A\u00b4, Jo\u00b4hannesson O\u00b4 I, Sa\u00b4nchez, "
+        "Ka\u00b4rma\u00b4n, Ismae\u00a8l, Muhovi\u02c7c, and University \u00a8 of Kent appeared.</p>"
         '<p><a href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait</a> '
         "\u041b\u2122 e\u041b\u2122 University of Bath.</p>"
         '<p data-name="fac\u0412\u0451ade">The visible name is Neum\u0412\u0401uller.</p>'
@@ -6615,6 +6617,8 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
     assert "Radim \u0160\u00e1ra" in polished
     assert "templates for objects" in polished
     assert "C. B\u00fchler, and P. Penaz" in polished
+    assert "Kristj\u00e1nsson \u00c1, J\u00f3hannesson \u00d3 I, S\u00e1nchez" in polished
+    assert "K\u00e1rm\u00e1n, Isma\u00ebl, Muhovi\u010d, and University of Kent" in polished
     assert 'href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait\u0117</a>' in polished
     assert 'data-name="fac\u0412\u0451ade"' in polished
     assert "<code>fac\u0412\u0451ade O\u0412\u0491Donnell</code>" in polished

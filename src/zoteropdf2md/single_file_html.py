@@ -4474,6 +4474,54 @@ def _with_diaeresis(match: re.Match[str]) -> str:
     return f"{match.group('left')}{replacements.get(vowel, vowel)}"
 
 
+def _with_preceding_acute(match: re.Match[str]) -> str:
+    replacements = {
+        "a": "\u00e1",
+        "e": "\u00e9",
+        "i": "\u00ed",
+        "o": "\u00f3",
+        "u": "\u00fa",
+        "y": "\u00fd",
+        "A": "\u00c1",
+        "E": "\u00c9",
+        "I": "\u00cd",
+        "O": "\u00d3",
+        "U": "\u00da",
+        "Y": "\u00dd",
+    }
+    return replacements.get(match.group("vowel"), match.group("vowel"))
+
+
+def _with_preceding_diaeresis(match: re.Match[str]) -> str:
+    replacements = {
+        "a": "\u00e4",
+        "e": "\u00eb",
+        "i": "\u00ef",
+        "o": "\u00f6",
+        "u": "\u00fc",
+        "y": "\u00ff",
+        "A": "\u00c4",
+        "E": "\u00cb",
+        "I": "\u00cf",
+        "O": "\u00d6",
+        "U": "\u00dc",
+        "Y": "\u0178",
+    }
+    return replacements.get(match.group("vowel"), match.group("vowel"))
+
+
+def _with_following_caron(match: re.Match[str]) -> str:
+    replacements = {
+        "c": "\u010d",
+        "s": "\u0161",
+        "z": "\u017e",
+        "C": "\u010c",
+        "S": "\u0160",
+        "Z": "\u017d",
+    }
+    return replacements.get(match.group("letter"), match.group("letter"))
+
+
 def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
     for bad, good in _LATIN_MOJIBAKE_ACCENT_REPLACEMENTS:
         text = text.replace(bad, good)
@@ -4495,6 +4543,10 @@ def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
         lambda m: f"{m.group('prefix')}\u00f3",
         text,
     )
+    text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00b4(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_acute, text)
+    text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00a8(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_diaeresis, text)
+    text = re.sub(r"\u02c7\s*(?P<letter>[cCsSzZ])", _with_following_caron, text)
+    text = re.sub(r"\b(?P<left>[A-Za-z]{3,})\s+\u00a8\s+(?P<right>[A-Za-z]{2,})\b", r"\g<left> \g<right>", text)
     text = re.sub(r"(?P<left>[cC])\u00b8(?=[A-Za-z])", lambda m: "\u00c7" if m.group("left") == "C" else "\u00e7", text)
     return text
 
