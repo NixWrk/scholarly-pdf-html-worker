@@ -6464,6 +6464,7 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "inital shape, Bolognia, systometry, bulbocarnosus, Ncology, "
         "and euromodulation devices, Append ix A, MDP i, B rain-computer interfaces, Ita ly, "
         "APPEND ix B, Hindaw i, fMR i, I mplantable systems, will to help reveal, "
+        "Sem i -structured interviews, Tree-dimensional Analysis Sofware, Beha v. Neurosci., "
         "Mata-Analysis, documents that that intensity, Retinal Nerve Fiber Laver, "
         "Bel humeur, Leporin i, t o the best of our knowledge, ob je ct s w ould, "
         "safe ty c oncerns, enj oy, basrelief, populationbased cohorts, "
@@ -6542,6 +6543,7 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Bologna, cystometry, bulbocavernosus, Oncology, and neuromodulation devices" in polished
     assert "Appendix A, MDPI, Brain-computer interfaces, Italy" in polished
     assert "APPENDIX B, Hindawi, fMRI, Implantable systems, will help reveal" in polished
+    assert "Semi-structured interviews, Three-dimensional Analysis Software, Behav. Neurosci." in polished
     assert "Meta-Analysis, documents that the intensity, Retinal Nerve Fiber Layer" in polished
     assert "Belhumeur, Leporini, to the best of our knowledge, objects would" in polished
     assert "safety concerns, enjoy, bas-relief, population-based cohorts, signal-to-noise ratios" in polished
