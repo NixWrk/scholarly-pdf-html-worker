@@ -1732,6 +1732,21 @@ _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN = re.compile(
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-])",
     re.IGNORECASE,
 )
+_BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN = re.compile(
+    r"(?P<prefix>\b(?:(?:https?://)?www|https?://[A-Za-z0-9-]+)(?:\.[A-Za-z0-9-]+)*)"
+    r"\s+\.\s+(?=[A-Za-z0-9-]+(?:[./]|$))",
+    re.IGNORECASE,
+)
+_BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN = re.compile(
+    r"(?P<prefix>\b(?:(?:https?://)?www|https?://[A-Za-z0-9-]+)(?:\.[A-Za-z0-9-]+)*\.)"
+    r"\s+(?=[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?\.)",
+    re.IGNORECASE,
+)
+_BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN = re.compile(
+    r"(?P<prefix>\b(?:(?:https?://)?www\.|https?://[A-Za-z0-9-]+\.)(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+)"
+    r"\s+(?P<tail>[A-Za-z0-9-]{1,40})(?=\.)",
+    re.IGNORECASE,
+)
 
 # Quick-scan trigger: only run the subscript-spill fix when this substring exists.
 _SUBSCRIPT_OPEN = re.compile(r'[_^]\{')
@@ -5470,6 +5485,9 @@ def _repair_broken_plain_url_text(html: str) -> str:
         previous = None
         while previous != fixed:
             previous = fixed
+            fixed = _BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN.sub(r"\g<prefix>.", fixed)
+            fixed = _BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+            fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
             fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
             fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
         return fixed
@@ -5537,6 +5555,9 @@ def _repair_broken_url_anchor_labels(html: str) -> str:
         previous = None
         while previous != fixed:
             previous = fixed
+            fixed = _BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN.sub(r"\g<prefix>.", fixed)
+            fixed = _BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+            fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
             fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
             fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
         return fixed

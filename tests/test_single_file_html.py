@@ -742,6 +742,10 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
         "<p>Article https:// doi.org/10.1038/s41598-019-45416-4</p>"
         "<p>Package https://github.com/albertorestifo/ node-dijkstra</p>"
         "<p>Latest updates: hps://dl.acm.org/doi/10.1145/3155286</p>"
+        "<p>Journal page http://www . dovepress.com/testimonials.php</p>"
+        "<p>Fact sheet https://www . who.int/news-room/fact-sheets/detail/blindness</p>"
+        "<p>Safety pack www. osh a.europa.eu/en/Campaigns/ew2005/pressroom</p>"
+        "<p>Supplemental site www.operativeneuro surgery-online.com.</p>"
         '<p>Linked updates: <a href="https://dl.acm.org/doi/10.1145/2982142.2982176">'
         "hps://dl.acm.org/doi/10.1145/2982142.2982176</a></p>"
         "</body></html>"
@@ -753,6 +757,10 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     assert 'href="https://doi.org/10.1038/s41598-019-45416-4"' in polished
     assert 'href="https://github.com/albertorestifo/node-dijkstra"' in polished
     assert 'href="https://dl.acm.org/doi/10.1145/3155286"' in polished
+    assert 'href="http://www.dovepress.com/testimonials.php"' in polished
+    assert 'href="https://www.who.int/news-room/fact-sheets/detail/blindness"' in polished
+    assert 'href="https://www.osha.europa.eu/en/Campaigns/ew2005/pressroom"' in polished
+    assert 'href="https://www.operativeneurosurgery-online.com"' in polished
     assert ">https://dl.acm.org/doi/10.1145/2982142.2982176</a>" in polished
     assert ">https://creativecommons.org/licenses/by/4.0/</a>" in polished
     assert "https:// creativecommons.org" not in polished
@@ -760,6 +768,10 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     assert "albertorestifo/ node-dijkstra" not in polished
     assert "hps://dl.acm.org" not in polished
     assert "by/ 4.0" not in polished
+    assert "www . dovepress" not in polished
+    assert "www . who" not in polished
+    assert "www. osh a" not in polished
+    assert "operativeneuro surgery" not in polished
 
 
 def test_polish_html_document_repairs_spaced_protocol_url_anchors() -> None:
