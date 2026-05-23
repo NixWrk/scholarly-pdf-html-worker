@@ -6751,6 +6751,30 @@ def test_polish_html_document_repairs_known_ocr_suffixes_across_inline_markup() 
     assert 'stimul<sup class="z2m-table-fn">i</sup> untouched' in polished
 
 
+def test_polish_html_document_repairs_ocr_tokens_from_global_p71_audit() -> None:
+    html = (
+        "<html><body>"
+        "<p>Thirtyeight subjects used bootloding software for watershed Segmentaion.</p>"
+        "<p>The sys- tem used a crania l implant appro ximately twice per trial.</p>"
+        "<p>F igures showed TQma x and PdetQma x with a passive senor.</p>"
+        "<p>The Deptartment reported PRAVALENCE in a discription in J Neurocsi.</p>"
+        "<p>Schfer et al. discussed aesthesia protocols.</p>"
+        "<p>The result was to be The topological sort and simulates the The validation.</p>"
+        "<p>Leave IRIT-ELIPSE unchanged.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Thirty-eight subjects used bootloading software for watershed Segmentation" in polished
+    assert "The system used a cranial implant approximately twice per trial" in polished
+    assert "Figures showed TQmax and PdetQmax with a passive sensor" in polished
+    assert "The Department reported PREVALENCE in a description in J Neurosci" in polished
+    assert "Sch\u00e4fer et al. discussed anesthesia protocols" in polished
+    assert "to be the topological sort and simulates the validation" in polished
+    assert "IRIT-ELIPSE" in polished
+
+
 def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_nodes() -> None:
     html = (
         "<html><body>"
