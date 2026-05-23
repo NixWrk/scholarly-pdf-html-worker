@@ -6676,6 +6676,26 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
     assert '<a href="https://example.test/B%20rain-computer">B rain-computer</a>' in polished
 
 
+def test_polish_html_document_repairs_joined_word_residuals_from_audit() -> None:
+    html = (
+        "<html><body>"
+        "<p>videobased and textbased content used leftright and pushpull cues. "
+        "The feed-andsleep technique measured symptomscore changes in urineflow traces.</p>"
+        "<p>FromFebruary the darkbrown sample had BPHassociated markers, "
+        "domaininvariant features, vitamin-Ddeficient status, and Qcould improve.</p>"
+        "<p>OpticalTouch, vanderVorst, Al Omari1, and texture.Tactile remain visible.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "video-based and text-based content used left-right and push-pull cues" in polished
+    assert "feed-and-sleep technique measured symptom score changes in urine flow traces" in polished
+    assert "From February the dark brown sample had BPH-associated markers" in polished
+    assert "domain-invariant features, vitamin-D-deficient status, and Q could improve" in polished
+    assert "Optical Touch, van der Vorst, Al Omari 1, and texture. Tactile" in polished
+
+
 def test_polish_html_document_repairs_known_ocr_suffixes_across_inline_markup() -> None:
     html = (
         "<html><body>"
