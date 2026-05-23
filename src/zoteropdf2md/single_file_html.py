@@ -1801,6 +1801,15 @@ _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN = re.compile(
     r'(?P<tail>[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{1,300})',
     re.IGNORECASE,
 )
+_SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[^<]{1,260})</a>'
+    r'(?P<tail>\s*\.\s*[A-Za-z]{2,}'
+    r'(?:/[A-Za-z0-9._~:#?\[\]@!$&\'()*+,;=%-]+)*'
+    r'(?:/\s+[A-Za-z0-9][A-Za-z0-9._~:#?\[\]@!$&\'()*+,;=%-]+)?)'
+    r'(?P<trailing>[.,;:)]?)',
+    re.IGNORECASE | re.DOTALL,
+)
 _ADJACENT_SAME_HREF_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://)[^>]*)>'
     r'(?P<body>[\s\S]{0,260}?)</a>\s+'
@@ -5355,6 +5364,17 @@ def _compact_visible_url_fragment(text: str) -> str:
     return re.sub(r"\s+", "", text).replace("&amp;", "&")
 
 
+def _url_fragment_compare_key(text: str) -> str:
+    compact = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(text)).strip("()[]")
+    compact = compact.rstrip(".,;:")
+    compact = re.sub(r"^https?://", "", compact, flags=re.IGNORECASE)
+    return compact.lower().rstrip("/")
+
+
+def _starts_like_visible_url_fragment(text: str) -> bool:
+    return bool(re.match(r"\s*(?:https?://|www\.|doi\.org/|10\.\d{4,9}/)", text, re.IGNORECASE))
+
+
 def _extract_href_attr(attrs: str) -> str | None:
     for pattern in (_DOUBLE_QUOTED_HREF_ATTR_PATTERN, _SINGLE_QUOTED_HREF_ATTR_PATTERN):
         match = pattern.search(attrs)
@@ -5412,10 +5432,18 @@ def _repair_split_visible_url_anchors(html: str) -> str:
 
         href_compact = _compact_visible_url_fragment(href)
         body_compact = _compact_visible_url_fragment(url_text)
-        if not href_compact.startswith(body_compact):
+        href_key = _url_fragment_compare_key(href)
+        body_key = _url_fragment_compare_key(url_text)
+        if not (href_compact.startswith(body_compact) or href_key.startswith(body_key)):
             return match.group(0)
 
-        needed_tail = href_compact[len(body_compact) :]
+        needed_tail = (
+            href_compact[len(body_compact) :]
+            if href_compact.startswith(body_compact)
+            else href_key[len(body_key) :]
+        )
+        if not needed_tail:
+            return match.group(0)
         consumed = _consume_compact_prefix(match.group("tail"), needed_tail)
         if consumed is None:
             return match.group(0)
@@ -5450,6 +5478,42 @@ def _repair_split_url_anchor_block_tail(html: str) -> str:
         return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
 
     return _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN.sub(replace, html)
+
+
+def _repair_split_url_anchor_domain_tail(html: str) -> str:
+    """Join a partial URL anchor with its visible ``.com/...`` tail."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = _strip_wrapping_url_quotes(match.group("href"))
+        body = _visible_text(match.group("body")).strip()
+        href_key = _url_fragment_compare_key(href)
+        body_key = _url_fragment_compare_key(body)
+        if not body_key or not (href_key == body_key or href_key.startswith(body_key)):
+            return match.group(0)
+        if not re.search(r"\b(?:https?://|www\.)", body, re.IGNORECASE):
+            return match.group(0)
+
+        candidate = _repair_broken_visible_url_text(f"{body}{match.group('tail')}")
+        candidate = re.sub(r"\s+", "", candidate)
+        if not candidate.lower().startswith(("http://", "https://")):
+            scheme_match = re.match(r"(?P<scheme>https?://)", href, re.IGNORECASE)
+            if scheme_match is None:
+                return match.group(0)
+            candidate = f"{scheme_match.group('scheme')}{candidate}"
+        merged_url, trailing = _split_url_and_trailing_punct(candidate + match.group("trailing"))
+        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
+            return match.group(0)
+
+        attrs = re.sub(
+            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
+            lambda m: f'{m.group(1)}"{_escape_html_attr(merged_url)}"',
+            match.group("attrs"),
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
+
+    return _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN.sub(replace, html)
 
 
 def _normalize_same_href_text_anchor_label(label: str) -> str:
@@ -5523,6 +5587,67 @@ def _merge_adjacent_same_href_url_anchors(html: str) -> str:
     return current
 
 
+def _merge_post_autolink_split_url_anchors(html: str) -> str:
+    """Merge URL anchors that were split by OCR and then autolinked separately."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = _strip_wrapping_url_quotes(match.group("href"))
+        next_href = _strip_wrapping_url_quotes(match.group("next_href"))
+        body = _visible_text(match.group("body"))
+        next_body = _visible_text(match.group("next_body"))
+        tail = match.group("tail") or ""
+
+        combined = f"{body}{match.group('join')}{next_body}{tail}"
+        repaired = _repair_broken_visible_url_text(combined)
+        if not _starts_like_visible_url_fragment(repaired):
+            return match.group(0)
+        repaired_key = _url_fragment_compare_key(repaired)
+        next_href_key = _url_fragment_compare_key(next_href)
+        href_key = _url_fragment_compare_key(href)
+        if not repaired_key:
+            return match.group(0)
+        if not (
+            next_href_key.startswith(repaired_key)
+            or repaired_key.startswith(next_href_key)
+            or (href_key and href_key != next_href_key and next_href_key.startswith(href_key))
+        ):
+            return match.group(0)
+
+        repaired_url, repaired_trailing = _split_url_and_trailing_punct(repaired)
+        repaired_key = _url_fragment_compare_key(repaired_url)
+        label = next_href if next_href_key.startswith(repaired_key) and len(repaired_key) >= len(next_href_key) - 4 else repaired_url
+        merged_url, trailing = _split_url_and_trailing_punct(label)
+        if not trailing:
+            trailing = repaired_trailing
+        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
+            return match.group(0)
+        attrs = re.sub(
+            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
+            lambda m: f'{m.group(1)}"{_escape_html_attr(merged_url)}"',
+            match.group("next_attrs"),
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
+
+    pattern = re.compile(
+        r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+        r'(?P<body>[^<]{1,260})</a>'
+        r'(?P<join>\s*\.?\s*)'
+        r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*(?P<next_quote>["\'])(?P<next_href>https?://[^"\']+)(?P=next_quote)[^>]*)>'
+        r'(?P<next_body>[^<]{1,500})</a>'
+        r'(?P<tail>\s*[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{0,220})?',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = pattern.sub(replace, current)
+    return current
+
+
 def _merge_adjacent_same_href_mailto_anchors(html: str) -> str:
     """Merge OCR-split mailto anchors that point to the same address."""
 
@@ -5586,17 +5711,7 @@ def _repair_broken_plain_url_text(html: str) -> str:
     """Join OCR spaces inside visible plain URLs before autolinking."""
 
     def repair_text(text: str) -> str:
-        fixed = _BROKEN_PLAIN_URL_SCHEME_PATTERN.sub("https://", text)
-        fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", fixed)
-        previous = None
-        while previous != fixed:
-            previous = fixed
-            fixed = _BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN.sub(r"\g<prefix>.", fixed)
-            fixed = _BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-            fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
-            fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-            fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-        return fixed
+        return _repair_broken_visible_url_text(text)
 
     parts = _TAG_SPLIT_PATTERN.split(html)
     out: list[str] = []
@@ -5615,6 +5730,20 @@ def _repair_broken_plain_url_text(html: str) -> str:
         out.append(repair_text(part))
 
     return "".join(out)
+
+
+def _repair_broken_visible_url_text(text: str) -> str:
+    fixed = _BROKEN_PLAIN_URL_SCHEME_PATTERN.sub("https://", text)
+    fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", fixed)
+    previous = None
+    while previous != fixed:
+        previous = fixed
+        fixed = _BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN.sub(r"\g<prefix>.", fixed)
+        fixed = _BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+        fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
+        fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+        fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+    return fixed
 
 
 def _repair_spaced_protocol_url_anchors(html: str) -> str:
@@ -5656,23 +5785,22 @@ def _repair_broken_url_anchor_labels(html: str) -> str:
     )
 
     def repair_label(label: str) -> str:
-        fixed = _BROKEN_PLAIN_URL_SCHEME_PATTERN.sub("https://", label)
-        fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", fixed)
-        previous = None
-        while previous != fixed:
-            previous = fixed
-            fixed = _BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN.sub(r"\g<prefix>.", fixed)
-            fixed = _BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-            fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
-            fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-            fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-        return fixed
+        return _repair_broken_visible_url_text(label)
 
     def replace(match: re.Match[str]) -> str:
         href = _strip_wrapping_url_quotes(match.group("href"))
         body = match.group("body")
         repaired = repair_label(body)
-        if _compact_visible_url_fragment(repaired).lower() != _compact_visible_url_fragment(href).lower():
+        repaired_key = _url_fragment_compare_key(repaired)
+        href_key = _url_fragment_compare_key(href)
+        if repaired_key != href_key:
+            if repaired == body or not re.search(r"\b(?:https?://|www\.)", body, re.IGNORECASE):
+                return match.group(0)
+            return f'<a{match.group("attrs")}>{_escape_html_text(repaired)}</a>'
+        visible_url, trailing = _split_url_and_trailing_punct(repaired.strip())
+        if trailing and _url_fragment_compare_key(visible_url) == href_key:
+            return f'<a{match.group("attrs")}>{_escape_html_text(href)}</a>{_escape_html_text(trailing)}'
+        if repaired == body and not re.match(r"\s*https?://", body, re.IGNORECASE):
             return match.group(0)
         return f'<a{match.group("attrs")}>{_escape_html_text(href)}</a>'
 
@@ -14519,6 +14647,11 @@ def polish_html_document(
     polished = _repair_spaced_protocol_url_anchors(polished)
     polished = _repair_broken_url_anchor_labels(polished)
     polished = _autolink_plain_urls(polished)
+    polished = _repair_split_url_anchor_domain_tail(polished)
+    polished = _repair_split_visible_url_anchors(polished)
+    polished = _merge_adjacent_same_href_url_anchors(polished)
+    polished = _merge_post_autolink_split_url_anchors(polished)
+    polished = _repair_broken_url_anchor_labels(polished)
     polished = _repair_split_url_anchor_block_tail(polished)
     polished = _split_doi_metadata_body_paragraphs(polished)
     polished = _normalize_spacing_after_url_links(polished)

@@ -420,6 +420,75 @@ def test_polish_html_document_restores_hyphens_when_merging_split_url_anchors() 
     assert "therapy-andoptogenetics" not in polished
 
 
+def test_polish_html_document_repairs_post_autolink_split_url_domains() -> None:
+    html = (
+        "<html><body>"
+        '<p>Available at: <a href="https://www">https://www</a>. '
+        '<a href="https://www.mathworks.com/matlabcentral/fileexchange/33484-linear-deming-regression">'
+        "mathworks.com/matlabcentral/fileexchange/334</a> 84-linear-deming-regression.</p>"
+        '<p>Journal page <a href="http://www.dovepress">http://www.dovepress</a>. '
+        "com/testimonials.php to read quotes.</p>"
+        '<p>Software <a href="http://www.megasoftware.net/">http://www.megasoftwa</a> '
+        '<a href="http://www.megasoftware.net/">re.net</a>.</p>'
+        '<p>Safety pack <a href="http://www.osha.europa.eu/en/Campaigns/ew2005/pressroom">'
+        "www. osh</a> "
+        '<a href="http://www.osha.europa.eu/en/Campaigns/ew2005/pressroom">'
+        "a.europa.eu/en/Campaigns/ew2005/pressroom</a>.</p>"
+        '<p>Archive <a href="https://www.yumpu">www.yumpu</a>. '
+        "com/en/document/read/9413826/ bladder-ultrasonographypdf-internationalcontinence-society</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert ">https://www.mathworks.com/matlabcentral/fileexchange/33484-linear-deming-regression</a>." in compact
+    assert ">http://www.dovepress.com/testimonials.php</a> to read quotes." in compact
+    assert ">http://www.megasoftware.net/</a>." in compact
+    assert ">http://www.osha.europa.eu/en/Campaigns/ew2005/pressroom</a>." in compact
+    assert ">https://www.yumpu.com/en/document/read/9413826/bladder-ultrasonographypdf-internationalcontinence-society</a>" in compact
+    assert "https://www</a>. <a" not in compact
+    assert "www.dovepress</a>. com" not in compact
+    assert "www.megasoftwa</a>" not in compact
+    assert "www. osh" not in compact
+    assert "www.yumpu</a>. com" not in compact
+
+
+def test_polish_html_document_does_not_merge_same_href_reference_prose_with_url() -> None:
+    href = "https://www.zotero.org/google-docs/?L0JBPZ"
+    html = (
+        "<html><body><ol>"
+        f'<li><a href="{href}">36Bird S, Loper E, Klein E. '
+        "Natural Language Processing with Python. O'Reilly Media Inc., 2009 </a> "
+        f'<a href="{href}">https://www.nltk.org/.</a></li>'
+        "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert 'href="36Bird S' not in polished
+    assert polished.count(f'href="{href}"') == 2
+    assert "Natural Language Processing with Python" in compact
+    assert "https://www.nltk.org/" in compact
+
+
+def test_polish_html_document_keeps_sentence_period_after_normalized_url_anchor() -> None:
+    href = "http://www.3dphotoworks.com"
+    html = (
+        "<html><body>"
+        f'<p>DPhotoWorks website is at <a href="{href}"> http://www.3dphotoworks.com. </a></p>'
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit"><p>Figure 1. Caption.</p></div>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert re.search(rf'<a href="{re.escape(href)}">{re.escape(href)}</a>\.\s*</p>', compact)
+    assert not re.search(rf'<a href="{re.escape(href)}">{re.escape(href)}</a>\s*</p>', compact)
+
+
 def test_polish_html_document_repairs_nested_autolink_in_escaped_anchor_snippet() -> None:
     html = (
         "<html><body>"
