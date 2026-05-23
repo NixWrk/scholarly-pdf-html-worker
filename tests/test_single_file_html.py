@@ -6718,6 +6718,9 @@ def test_polish_html_document_repairs_joined_word_residuals_from_audit() -> None
         "<p>FromFebruary the darkbrown sample had BPHassociated markers, "
         "domaininvariant features, vitamin-Ddeficient status, and Qcould improve.</p>"
         "<p>OpticalTouch, vanderVorst, Al Omari1, and texture.Tactile remain visible.</p>"
+        "<p>readyreckoners appeared withlower urinary tract symptoms, while Positionrelated "
+        "effects used twoobject, shiftinvariant, IPPgrades, and Qto verify operation.</p>"
+        "<p>The port extrusionsurgically treated group was recorded.</p>"
         "</body></html>"
     )
 
@@ -6728,6 +6731,9 @@ def test_polish_html_document_repairs_joined_word_residuals_from_audit() -> None
     assert "From February the dark brown sample had BPH-associated markers" in polished
     assert "domain-invariant features, vitamin-D-deficient status, and Q could improve" in polished
     assert "Optical Touch, van der Vorst, Al Omari 1, and texture. Tactile" in polished
+    assert "ready reckoners appeared with lower urinary tract symptoms" in polished
+    assert "Position-related effects used two-object, shift-invariant, IPP grades, and Q to verify" in polished
+    assert "port extrusion surgically treated group" in polished
 
 
 def test_polish_html_document_repairs_known_ocr_suffixes_across_inline_markup() -> None:

@@ -274,6 +274,13 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"\bAl\s+Omari1\b",
     re.IGNORECASE,
 )
+
+
+def _joined_word_match_is_url_slug(text: str, match: re.Match[str]) -> bool:
+    left = text[max(0, match.start() - 96): match.start()]
+    return bool(re.search(r"(?:https?://|www\.)[^\s<>()\[\]]*$", left, re.IGNORECASE))
+
+
 FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
     r"For\s+these[\s\S]{200,6000}?reasons,\s+a\s+transdiagnostic|"
     r"also\s+and\s+the\s+Committee[\s\S]{0,2000}?require\s+evaluation|"
@@ -3320,7 +3327,14 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
 
-    joined_word_match = KNOWN_JOINED_WORD_RE.search(plain)
+    joined_word_match = next(
+        (
+            match
+            for match in KNOWN_JOINED_WORD_RE.finditer(plain)
+            if not _joined_word_match_is_url_slug(plain, match)
+        ),
+        None,
+    )
     if joined_word_match is not None:
         defects.append(
             _defect(
