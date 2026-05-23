@@ -10399,7 +10399,14 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
         r"(?=@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
     )
     et_al_surname_v_pattern = re.compile(
-        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v(?=\s+et\s+al\.?\b)"
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+v(?=\s+et\s+al\.?\b)"
+    )
+    hyphen_surname_v_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v(?=-[A-Z][A-Za-z'-]{2,})"
+    )
+    named_o_v_term_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v"
+        r"(?=\s+(?:chain|chains|model|models|process|processes|test|tests)\b)"
     )
     initial_surname_v_sentence_pattern = re.compile(
         r"(?P<initials>\b(?:[A-Z]\.\s*){1,4})"
@@ -10425,8 +10432,23 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
     )
 
     def _replace_text(text: str) -> str:
+        def _join_allowed(root: str) -> bool:
+            return root.lower() not in {
+                "table",
+                "figure",
+                "section",
+                "appendix",
+                "chapter",
+                "mean",
+                "node",
+                "reference",
+                "dcon",
+                "cardio",
+                "haystackd",
+            }
+
         def _replace(match: re.Match[str]) -> str:
-            if match.group("root").lower() in {"table", "figure", "section", "appendix", "chapter"}:
+            if not _join_allowed(match.group("root")):
                 return match.group(0)
             return f"{match.group('root')}{match.group('suffix')}"
 
@@ -10434,12 +10456,23 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
             given_tail = match.group("given").strip().split()[-1].lower()
             if given_tail in {"the", "this", "these", "those", "while"}:
                 return match.group(0)
-            if match.group("root").lower() in {"table", "figure", "section", "appendix", "chapter"}:
+            if not _join_allowed(match.group("root")):
                 return match.group(0)
             return f"{match.group('given')}{match.group('root')}{match.group('suffix')}"
 
         text = email_pattern.sub(lambda match: f"{match.group('root')}{match.group('suffix')}", text)
-        text = et_al_surname_v_pattern.sub(lambda match: f"{match.group('root')}v", text)
+        text = et_al_surname_v_pattern.sub(
+            lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
+            text,
+        )
+        text = hyphen_surname_v_pattern.sub(
+            lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
+            text,
+        )
+        text = named_o_v_term_pattern.sub(
+            lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
+            text,
+        )
         text = initial_surname_v_sentence_pattern.sub(
             lambda match: f"{match.group('initials')}{match.group('root')}v",
             text,
@@ -10449,7 +10482,7 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
         text = initial_name_pattern.sub(
             lambda match: (
                 match.group(0)
-                if match.group("root").lower() in {"table", "figure", "section", "appendix", "chapter"}
+                if not _join_allowed(match.group("root"))
                 else f"{match.group('initials')}{match.group('root')}{match.group('suffix')}"
             ),
             text,

@@ -1346,6 +1346,9 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     html = (
         "<html><body>"
         "<p>Abdusalomo v et al. proposed a saliency method.</p>"
+        "<p>Similarly, Laha v et al. studied navigation.</p>"
+        "<p>Pairwise Kolmogoro v-Smirno v tests and a Marko v chain were reported.</p>"
+        "<p>W i = Mean i * N n i and Dcon v refers to deformable convolution.</p>"
         "<h4>References</h4>"
         "<ul><li>J. A. Gardner and V. Bulato v. Scientific diagrams made easy.</li></ul>"
         "</body></html>"
@@ -1354,8 +1357,17 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     polished = polish_html_document(html, table_caption_language="en")
 
     assert "Abdusalomov et al." in polished
+    assert "Lahav et al." in polished
+    assert "Kolmogorov-Smirnov tests" in polished
+    assert "Markov chain" in polished
+    assert "Mean i * N" in polished
+    assert "Dcon v refers" in polished
     assert "V. Bulatov. Scientific diagrams" in polished
     assert "Abdusalomo v" not in polished
+    assert "Laha v" not in polished
+    assert "Kolmogoro v" not in polished
+    assert "Smirno v" not in polished
+    assert "Marko v" not in polished
     assert "Bulato v." not in polished
 
 
