@@ -710,6 +710,9 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
         "<p>License (https:// creativecommons.org/licenses/by/ 4.0/)</p>"
         "<p>Article https:// doi.org/10.1038/s41598-019-45416-4</p>"
         "<p>Package https://github.com/albertorestifo/ node-dijkstra</p>"
+        "<p>Latest updates: hps://dl.acm.org/doi/10.1145/3155286</p>"
+        '<p>Linked updates: <a href="https://dl.acm.org/doi/10.1145/2982142.2982176">'
+        "hps://dl.acm.org/doi/10.1145/2982142.2982176</a></p>"
         "</body></html>"
     )
 
@@ -718,10 +721,13 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     assert 'href="https://creativecommons.org/licenses/by/4.0/"' in polished
     assert 'href="https://doi.org/10.1038/s41598-019-45416-4"' in polished
     assert 'href="https://github.com/albertorestifo/node-dijkstra"' in polished
+    assert 'href="https://dl.acm.org/doi/10.1145/3155286"' in polished
+    assert ">https://dl.acm.org/doi/10.1145/2982142.2982176</a>" in polished
     assert ">https://creativecommons.org/licenses/by/4.0/</a>" in polished
     assert "https:// creativecommons.org" not in polished
     assert "https:// doi.org" not in polished
     assert "albertorestifo/ node-dijkstra" not in polished
+    assert "hps://dl.acm.org" not in polished
     assert "by/ 4.0" not in polished
 
 

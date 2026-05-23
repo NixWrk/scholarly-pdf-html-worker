@@ -1705,6 +1705,7 @@ _SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _BROKEN_PLAIN_URL_PROTOCOL_PATTERN = re.compile(r"\b(https?://)\s+", re.IGNORECASE)
+_BROKEN_PLAIN_URL_SCHEME_PATTERN = re.compile(r"\b(?:hps|htps|ttps)://", re.IGNORECASE)
 _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN = re.compile(
     r"(?P<prefix>\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*/)\s+"
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-])",
@@ -5448,7 +5449,8 @@ def _repair_broken_plain_url_text(html: str) -> str:
     """Join OCR spaces inside visible plain URLs before autolinking."""
 
     def repair_text(text: str) -> str:
-        fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", text)
+        fixed = _BROKEN_PLAIN_URL_SCHEME_PATTERN.sub("https://", text)
+        fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", fixed)
         previous = None
         while previous != fixed:
             previous = fixed
@@ -5500,6 +5502,38 @@ def _repair_spaced_protocol_url_anchors(html: str) -> str:
         return f"<a{attrs}>{body}</a>"
 
     return _SPACED_PROTOCOL_URL_ANCHOR_PATTERN.sub(replace_anchor, html)
+
+
+def _repair_broken_url_anchor_labels(html: str) -> str:
+    """Normalize visible URL labels when the href already carries the intact URL."""
+    if "http" not in html.lower():
+        return html
+
+    pattern = re.compile(
+        r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+        r'(?P<body>[^<]{0,500})</a>',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    def repair_label(label: str) -> str:
+        fixed = _BROKEN_PLAIN_URL_SCHEME_PATTERN.sub("https://", label)
+        fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", fixed)
+        previous = None
+        while previous != fixed:
+            previous = fixed
+            fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+            fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+        return fixed
+
+    def replace(match: re.Match[str]) -> str:
+        href = _strip_wrapping_url_quotes(match.group("href"))
+        body = match.group("body")
+        repaired = repair_label(body)
+        if _compact_visible_url_fragment(repaired).lower() != _compact_visible_url_fragment(href).lower():
+            return match.group(0)
+        return f'<a{match.group("attrs")}>{_escape_html_text(href)}</a>'
+
+    return pattern.sub(replace, html)
 
 
 def _rewrite_page_linked_bracket_citations(html: str, ref_count: int) -> str:
@@ -14192,10 +14226,12 @@ def polish_html_document(
     polished = _repair_split_visible_url_anchors(polished)
     polished = _repair_miswrapped_doi_anchor_labels(polished)
     polished = _repair_spaced_protocol_url_anchors(polished)
+    polished = _repair_broken_url_anchor_labels(polished)
     polished = _merge_adjacent_same_href_mailto_anchors(polished)
     polished = _merge_adjacent_same_href_url_anchors(polished)
     polished = _repair_broken_plain_url_text(polished)
     polished = _repair_spaced_protocol_url_anchors(polished)
+    polished = _repair_broken_url_anchor_labels(polished)
     polished = _autolink_plain_urls(polished)
     polished = _repair_split_url_anchor_block_tail(polished)
     polished = _normalize_spacing_after_url_links(polished)
