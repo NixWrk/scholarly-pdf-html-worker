@@ -5771,6 +5771,10 @@ def test_polish_html_document_repairs_recent_meine_link_false_positives() -> Non
         'The term is used<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>.</p>'
         '<p>Earlier work (Gaillard et al., 1999, <a href="#page-8-0">2000)</a> remains author-year text.</p>'
         '<p>A study (Dehaene-Lambertz et al., <a href="#page-8-1">2002)</a> also remains text.</p>'
+        '<p>More work (Teng et al., <a href="#page-8-2">2012;</a> Kolarik et al., 2017) remains text.</p>'
+        '<p>Optimization (Bonizzato et al <a href="#page-8-3">2023)</a> was cited.</p>'
+        '<span id="page-8-4"></span>'
+        '<p>The results are discussed in Sections 3.4, 4 and <a href="#page-8-4">5.</a></p>'
         '<p>Power analysis used effect size <a href="#ref-1" class="z2m-ref-link">1</a>,'
         '<a href="#ref-5" class="z2m-ref-link">5</a> and G*Power group '
         '<a href="#ref-2" class="z2m-ref-link">2</a>.</p>'
@@ -5800,8 +5804,13 @@ def test_polish_html_document_repairs_recent_meine_link_false_positives() -> Non
     assert 'used<sup>3</sup>' in polished
     assert 'Gaillard et al., 1999, 2000)' in compact
     assert 'Dehaene-Lambertz et al., 2002)' in compact
+    assert 'Teng et al., 2012; Kolarik et al., 2017' in compact
+    assert 'Bonizzato et al 2023)' in compact
     assert 'href="#page-8-0"' not in polished
     assert 'href="#page-8-1"' not in polished
+    assert 'href="#page-8-2"' not in polished
+    assert 'href="#page-8-3"' not in polished
+    assert '<a href="#page-8-4">5.</a>' in polished
     assert 'effect size <a href="#ref-1"' not in polished
     assert "effect size 1,5" in compact
     assert 'href="#page-4-0"' not in polished

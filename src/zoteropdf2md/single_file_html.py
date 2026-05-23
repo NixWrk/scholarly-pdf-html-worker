@@ -9391,6 +9391,8 @@ def _unwrap_author_year_page_links(html: str) -> str:
         label = _visible_text(match.group("body"))
         if _AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label) is None:
             left_text = _visible_text(html[max(0, match.start() - 180): match.start()])
+            if re.search(r"\d{4}", label) and _AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(left_text[-160:] + label):
+                return match.group("body")
             year_continuation = (
                 re.fullmatch(r"\(?\d{4}[a-z]?\)?", label) is not None
                 and re.search(
