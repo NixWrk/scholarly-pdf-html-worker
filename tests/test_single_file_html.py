@@ -6609,6 +6609,9 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "and urofl owmeter.</p>"
         "<p>References mentioned eicient tools, eiciency, eectiveness, deining protocols, "
         "uniied inputs, simpliication, ine-grained evaluation, and ailiations.</p>"
+        "<p>More ligature losses included signifcantly fewer errors, eficacy trials, "
+        "fltering pipelines, scafolds, fbers, fexible flms, fbroin, biofuid, "
+        "difusion, feld-efect sensors, suficiently powered tradeofs, and an oficer in the ofice.</p>"
         "<p>Lost ligatures included frst fne fgurative defned profcient beneft "
         "difculties staf eforts confrmed clarifed infuenced fnger fndings feld.</p>"
         "<p>Joined words included medicineresistant customdesigned hardwareupdate easy-tolearn "
@@ -6687,6 +6690,10 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "simplification" in polished
     assert "fine-grained evaluation" in polished
     assert "affiliations" in polished
+    assert "significantly fewer errors, efficacy trials, filtering pipelines" in polished
+    assert "scaffolds, fibers, flexible films, fibroin, biofluid" in polished
+    assert "diffusion, field-effect sensors, sufficiently powered tradeoffs" in polished
+    assert "an officer in the office" in polished
     assert "first fine figurative defined proficient benefit" in polished
     assert "influenced finger findings field" in polished
     assert "difficulties staff efforts confirmed clarified influenced finger findings field" in polished
