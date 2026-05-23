@@ -1649,6 +1649,9 @@ _EMPTY_BLOCKQUOTE_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _LATIN_MOJIBAKE_ACCENT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("\u0412\u0401\u0414\u00b1", "\u00ef"),
+    ("\u0412\u0491\u0414\u00b1", "\u00ed"),
+    ("\u0414\u00b1", "i"),
     ("\u0412\u0401", "\u00a8"),
     ("\u0412\u0451", "\u00b8"),
     ("\u0412\u0491", "\u00b4"),
@@ -4693,6 +4696,34 @@ def _with_preceding_diaeresis(match: re.Match[str]) -> str:
     return replacements.get(match.group("vowel"), match.group("vowel"))
 
 
+def _with_following_acute(match: re.Match[str]) -> str:
+    return _with_preceding_acute(match)
+
+
+def _with_following_diaeresis(match: re.Match[str]) -> str:
+    return _with_preceding_diaeresis(match)
+
+
+def _with_preceding_circumflex(match: re.Match[str]) -> str:
+    replacements = {
+        "a": "\u00e2",
+        "e": "\u00ea",
+        "i": "\u00ee",
+        "o": "\u00f4",
+        "u": "\u00fb",
+        "A": "\u00c2",
+        "E": "\u00ca",
+        "I": "\u00ce",
+        "O": "\u00d4",
+        "U": "\u00db",
+    }
+    return replacements.get(match.group("vowel"), match.group("vowel"))
+
+
+def _with_following_circumflex(match: re.Match[str]) -> str:
+    return _with_preceding_circumflex(match)
+
+
 def _with_following_caron(match: re.Match[str]) -> str:
     replacements = {
         "c": "\u010d",
@@ -4728,13 +4759,18 @@ def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
     )
     text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00b4(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_acute, text)
     text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00a8(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_diaeresis, text)
+    text = re.sub(r"(?P<vowel>[AEIOUaeiou])\u02c6(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_circumflex, text)
+    text = re.sub(r"\b(?P<left>[A-Za-z]{3,})\s+[\u00a8\u00b4]\s+(?P<right>[A-Za-z]{2,})\b", r"\g<left> \g<right>", text)
+    text = re.sub(r"\u00b4\s*(?P<vowel>[AEIOUYaeiouy])", _with_following_acute, text)
+    text = re.sub(r"\u00a8\s*(?P<vowel>[AEIOUYaeiouy])", _with_following_diaeresis, text)
+    text = re.sub(r"\u02c6\s*(?P<vowel>[AEIOUaeiou])", _with_following_circumflex, text)
     text = re.sub(r"\u02c7\s*(?P<letter>[cCsSzZ])", _with_following_caron, text)
-    text = re.sub(r"\b(?P<left>[A-Za-z]{3,})\s+\u00a8\s+(?P<right>[A-Za-z]{2,})\b", r"\g<left> \g<right>", text)
     text = re.sub(r"(?P<left>[cC])\u00b8(?=[A-Za-z])", lambda m: "\u00c7" if m.group("left") == "C" else "\u00e7", text)
     return text
 
 
 def _repair_latin_detached_accent_artifacts_html(html: str) -> str:
+    html = re.sub(r"\s+[\u00a8\u00b4\u02c6]\s+(?=<(?:i|em|b|strong)\b)", " ", html, flags=re.IGNORECASE)
     return _PAKENAIT_ORCID_DOT_SUFFIX_PATTERN.sub(
         lambda m: f"{m.group('open')}\u0117{m.group('close')}",
         html,
