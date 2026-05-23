@@ -1006,6 +1006,40 @@ def test_polish_html_document_normalizes_ru_figure_caption_with_leading_inline_t
     assert "Рисунок 5. Another caption." in polished
 
 
+def test_polish_html_document_unwraps_page_links_inside_leading_caption_labels() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-figure-caption"><a href="#page-3-0">Fig 2. S</a> chematic diagram</p>'
+        '<p class="z2m-table-caption"><a href="#page-4-0">Table 1. T</a> he settings</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 2. Schematic diagram." in polished
+    assert "TABLE 1. The settings." in polished
+    assert '<a href="#page-3-0">Fig 2. S</a>' not in polished
+    assert '<a href="#page-4-0">Table 1. T</a>' not in polished
+
+
+def test_polish_html_document_unwraps_page_links_on_reference_list_numbers() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4><ul>"
+        '<li id="ref-1"><a href="#page-0-0"><span class="z2m-ref-num">1.</span></a> '
+        "Levy-Tzedek S. Color improves visual acuity.</li>"
+        '<li id="ref-2"><a href="#page-0-0">2.</a> Auvray M. Learning to perceive.</li>'
+        "</ul></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<a href="#page-0-0"><span class="z2m-ref-num">1.</span></a>' not in polished
+    assert '<a href="#page-0-0">2.</a>' not in polished
+    assert '<span class="z2m-ref-num">1.</span> Levy-Tzedek' in polished
+    assert re.search(r"(?:>2\.</span>|>2\.) Auvray", polished)
+
+
 def test_polish_html_document_normalizes_hallucinated_ru_figure_caption_label() -> None:
     html = (
         "<html><body>"

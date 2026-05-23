@@ -452,6 +452,21 @@ _REF_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
+_REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN = re.compile(
+    r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*)'
+    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
+    r'(?P<body>\s*(?:<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*)?\d{1,4}\.?\s*(?:</span>)?\s*)'
+    r'</a>',
+    re.IGNORECASE,
+)
+_REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN = re.compile(
+    r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
+    r'<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*\d{1,4}\.?\s*</span>\s*)'
+    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
+    r'(?P<body>\s*\d{1,4}\.?\s*)'
+    r'</a>\s*',
+    re.IGNORECASE,
+)
 _AUTHOR_YEAR_CITATION_TEXT_PATTERN = re.compile(
     r"\b"
     r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
@@ -1246,6 +1261,8 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bI\s+mplantable\b"), "Implantable"),
     (re.compile(r"\bSem\s+i\s*-\s*structured\b"), "Semi-structured"),
     (re.compile(r"\bsem\s+i\s*-\s*structured\b"), "semi-structured"),
+    (re.compile(r"\bS\s+chematic\b"), "Schematic"),
+    (re.compile(r"\bT\s+he\b"), "The"),
     (re.compile(r"\bTree-dimensional\b"), "Three-dimensional"),
     (re.compile(r"\btree-dimensional\b"), "three-dimensional"),
     (re.compile(r"\bThree-dimensioanl\b"), "Three-dimensional"),
@@ -9415,6 +9432,28 @@ def _retarget_mismatched_ref_link_labels(html: str) -> str:
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
 
 
+def _unwrap_reference_list_page_number_links(html: str) -> str:
+    """Remove Marker page links from leading bibliography item numbers."""
+    if "#page-" not in html or "z2m-ref-num" not in html:
+        return html
+
+    def _replace(match: re.Match[str]) -> str:
+        label = re.sub(r"\s+", " ", _visible_text(match.group("body"))).strip()
+        if label != f"{match.group('num')}." and label != match.group("num"):
+            return match.group(0)
+        return f"{match.group('open')}{match.group('body')}"
+
+    repaired = _REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN.sub(_replace, html)
+
+    def _drop_duplicate(match: re.Match[str]) -> str:
+        label = re.sub(r"\s+", " ", _visible_text(match.group("body"))).strip()
+        if label != f"{match.group('num')}." and label != match.group("num"):
+            return match.group(0)
+        return match.group("open")
+
+    return _REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN.sub(_drop_duplicate, repaired)
+
+
 def _unwrap_page_reference_ref_links(html: str, language_policy: PolishLanguagePolicy) -> str:
     """Remove bibliography links from explicit page references."""
     if "#ref-" not in html:
@@ -10134,6 +10173,57 @@ def _normalize_figure_caption_style(html: str, *, figure_caption_language: str =
         return f"{p_open}{leading_inline}{label} {number}.{p_close}"
 
     return _FIGURE_CAPTION_STYLE_PATTERN.sub(_normalize, html)
+
+
+_CAPTION_LEADING_PAGE_ANCHOR_PATTERN = re.compile(
+    r"^(?P<prefix>\s*)"
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*)>"
+    r"(?P<body>[\s\S]*?)</a>"
+    r"(?P<rest>[\s\S]*)$",
+    re.IGNORECASE,
+)
+
+
+def _unwrap_leading_caption_page_anchors(html: str) -> str:
+    """Remove Marker page links from the leading label inside caption nodes."""
+    if "#page-" not in html:
+        return html
+
+    def _looks_like_caption_label(text: str, *, table: bool) -> bool:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        if table:
+            return bool(
+                re.match(
+                    rf"^(?:TABLES?|Tables?)\.?\s+{_TABLE_KEY_TOKEN}(?:[\).:|,-]?\s+[A-Z])?[\).:|,-]*$",
+                    cleaned,
+                    re.IGNORECASE,
+                )
+            )
+        return bool(
+            re.match(
+                rf"^(?:FIG(?:URE)?S?|Fig(?:ure)?s?)\.?\s*{_FIG_KEY_TOKEN}"
+                r"(?:[\).:|,-]?\s+[A-Z])?[\).:|,-]*$",
+                cleaned,
+                re.IGNORECASE,
+            )
+        )
+
+    def _replace_node(match: re.Match[str]) -> str:
+        open_tag = match.group("open")
+        is_figure_caption = _node_has_class(open_tag, "z2m-figure-caption")
+        is_table_caption = _node_has_class(open_tag, "z2m-table-caption")
+        if not (is_figure_caption or is_table_caption):
+            return match.group(0)
+        body = match.group("body")
+        anchor_match = _CAPTION_LEADING_PAGE_ANCHOR_PATTERN.match(body)
+        if anchor_match is None:
+            return match.group(0)
+        if not _looks_like_caption_label(anchor_match.group("body"), table=is_table_caption):
+            return match.group(0)
+        unwrapped = f"{anchor_match.group('prefix')}{anchor_match.group('body')}{anchor_match.group('rest')}"
+        return f"{open_tag}{unwrapped}{match.group('close')}"
+
+    return _P_OR_H_BLOCK_PATTERN.sub(_replace_node, html)
 
 
 def _normalize_ru_reference_lexemes(html: str) -> str:
@@ -14300,6 +14390,7 @@ def polish_html_document(
     if enable_citation_linkify:
         polished = _add_reference_ids_and_citation_links(polished, citation_profile=citation_profile)
         polished = _retarget_mismatched_ref_link_labels(polished)
+        polished = _unwrap_reference_list_page_number_links(polished)
         polished = _unwrap_page_reference_ref_links(polished, language_policy)
         polished = _repair_ref_links_absorbed_decimal_or_unit_text(polished)
         polished = _repair_nested_reference_links(polished)
@@ -14347,6 +14438,7 @@ def polish_html_document(
         polished = _link_table_refs(polished, found_tables)
         polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
         polished = _unwrap_nested_same_href_internal_links(polished)
+    polished = _unwrap_leading_caption_page_anchors(polished)
     polished = _normalize_table_caption_style(polished, table_caption_language=table_caption_language)
     polished = _normalize_figure_caption_style(polished, figure_caption_language=table_caption_language)
     polished = _absorb_external_figure_captions_into_units(polished)
