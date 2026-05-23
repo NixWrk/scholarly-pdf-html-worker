@@ -6676,6 +6676,27 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
     assert '<a href="https://example.test/B%20rain-computer">B rain-computer</a>' in polished
 
 
+def test_polish_html_document_repairs_known_ocr_suffixes_across_inline_markup() -> None:
+    html = (
+        "<html><body>"
+        '<p>See Append<sup class="z2m-table-fn">ix</sup> 1 and '
+        'APPEND<sup class="z2m-table-fn">ix</sup> B.</p>'
+        '<p>Sources include MDP<sup class="z2m-table-fn">i</sup>, '
+        'Hindaw<a href="#page-3-0">i</a>, and fMR<span>i</span> scans.</p>'
+        '<p>Sem<sup class="z2m-table-fn">i</sup>-structured interviews used '
+        "Three-dimensioanl images.</p>"
+        '<p>Keep stimul<sup class="z2m-table-fn">i</sup> untouched.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Appendix 1 and APPENDIX B" in polished
+    assert "Sources include MDPI, Hindawi, and fMRI scans" in polished
+    assert "Semi-structured interviews used Three-dimensional images" in polished
+    assert 'stimul<sup class="z2m-table-fn">i</sup> untouched' in polished
+
+
 def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_nodes() -> None:
     html = (
         "<html><body>"

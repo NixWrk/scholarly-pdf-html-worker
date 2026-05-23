@@ -1230,6 +1230,8 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bsem\s+i\s*-\s*structured\b"), "semi-structured"),
     (re.compile(r"\bTree-dimensional\b"), "Three-dimensional"),
     (re.compile(r"\btree-dimensional\b"), "three-dimensional"),
+    (re.compile(r"\bThree-dimensioanl\b"), "Three-dimensional"),
+    (re.compile(r"\bthree-dimensioanl\b"), "three-dimensional"),
     (re.compile(r"\bSofware\b"), "Software"),
     (re.compile(r"\bsofware\b"), "software"),
     (re.compile(r"\bwill\s+to\s+help\b", re.IGNORECASE), "will help"),
@@ -1309,7 +1311,48 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bvoiding positing\b", re.IGNORECASE), "voiding position"),
 )
 _EN_OCR_CROSS_TAG_SKIP_TAGS = {"script", "style", "code", "pre", "math", "svg"}
+_EN_OCR_INLINE_TOKEN_TAG_PATTERN = r"(?P<tag>a|b|i|span|sup|sub)"
 _EN_OCR_CROSS_TAG_REPAIRS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...] = (
+    (
+        re.compile(
+            rf"\bAPPEND\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*ix\s*</(?P=tag)>"
+        ),
+        "APPENDIX",
+    ),
+    (
+        re.compile(
+            rf"\bAppend\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*ix\s*</(?P=tag)>"
+        ),
+        "Appendix",
+    ),
+    (
+        re.compile(
+            rf"\bMDP\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*i\s*</(?P=tag)>",
+            re.IGNORECASE,
+        ),
+        "MDPI",
+    ),
+    (
+        re.compile(
+            rf"\bHindaw\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*i\s*</(?P=tag)>",
+            re.IGNORECASE,
+        ),
+        "Hindawi",
+    ),
+    (
+        re.compile(
+            rf"\bfMR\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*i\s*</(?P=tag)>",
+            re.IGNORECASE,
+        ),
+        "fMRI",
+    ),
+    (
+        re.compile(
+            rf"\bSem\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*i\s*</(?P=tag)>\s*-\s*structured\b",
+            re.IGNORECASE,
+        ),
+        "Semi-structured",
+    ),
     (
         re.compile(
             r"(?P<open><a\b[^>]*>)\s*(?P<prefix>\[?)\s*Bel\s*(?P<close></a>)\s*humeur\b",
