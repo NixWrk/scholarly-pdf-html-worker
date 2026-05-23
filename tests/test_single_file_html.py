@@ -269,6 +269,37 @@ def test_polish_html_document_autolinks_plain_web_urls() -> None:
     assert "<pre>https://do-not-link.example</pre>" in polished
 
 
+def test_polish_html_document_splits_doi_metadata_from_following_prose() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure data doi: 10.1371/journal.pone.0076783.g005 "
+        "The bar plots in Figure 7 illustrate trial-by-trial completion times.</p>"
+        "<p>Source https://doi.org/10.1371/journal.pone.0199389.g005 "
+        "As before, time to complete each trial was normalized and compared.</p>"
+        '<p id="ref-8">Reference DOI: https://doi.org/10.1000/example '
+        "The journal title continues here.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert re.search(
+        r'doi:\s*<a href="https://doi\.org/10\.1371/journal\.pone\.0076783\.g005"[^>]*>'
+        r"10\.1371/journal\.pone\.0076783\.g005</a>\s*</p>\s*<p>The bar plots",
+        polished,
+    )
+    assert re.search(
+        r'<a href="https://doi\.org/10\.1371/journal\.pone\.0199389\.g005"[^>]*>'
+        r"https://doi\.org/10\.1371/journal\.pone\.0199389\.g005</a>\s*</p>\s*"
+        r"<p>As before",
+        polished,
+    )
+    assert 'id="ref-8"' in polished
+    assert "The journal title continues here.</p>" in compact
+    assert "</p> <p>The journal title continues here." not in compact
+
+
 def test_polish_html_document_unescapes_safe_anchor_snippets() -> None:
     html = (
         "<html><body>"

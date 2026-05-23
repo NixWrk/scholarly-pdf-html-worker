@@ -3460,16 +3460,29 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
 
-    doi_body_merge_match = DOI_BODY_PROSE_MERGE_RE.search(plain)
-    if doi_body_merge_match is not None:
+    doi_body_merge = next(
+        (
+            (block, match)
+            for block in body_blocks
+            for match in [DOI_BODY_PROSE_MERGE_RE.search(block.text)]
+            if match is not None
+        ),
+        None,
+    )
+    if doi_body_merge is not None:
+        doi_body_merge_block, doi_body_merge_match = doi_body_merge
         defects.append(
             _defect(
                 defect_id="P75",
                 cc_class="CC-07/CC-13",
                 check="DOI metadata is merged into following body prose",
                 severity="warning",
-                block=None,
-                snippet=_snippet(plain, doi_body_merge_match.start(), doi_body_merge_match.end()),
+                block=doi_body_merge_block,
+                snippet=_snippet(
+                    doi_body_merge_block.text,
+                    doi_body_merge_match.start(),
+                    doi_body_merge_match.end(),
+                ),
                 stage=POLISH_STAGE,
                 hypothesis="A DOI/front-matter metadata line lost its boundary and swallowed the next paragraph.",
                 proposed_fix_layer="EN polish DOI/front-matter boundary repair",

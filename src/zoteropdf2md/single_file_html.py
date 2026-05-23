@@ -76,6 +76,22 @@ _BARE_DOI_PATTERN = re.compile(
     r"(?P<doi>10\.\d{4,9}/[^\s<>\"\[\]]+)",
     re.IGNORECASE,
 )
+_DOI_METADATA_BODY_BOUNDARY_PATTERN = re.compile(
+    r"(?P<doi>(?:\b(?:DOI|doi)\s*:\s*)?(?:"
+    r"<a\b(?=[^>]*\bhref\s*=\s*['\"]https?://(?:dx\.)?doi\.org/10\.)[^>]*>[\s\S]{0,400}?</a>"
+    r"|https?://(?:dx\.)?doi\.org/10\.[^\s<]+"
+    r"|10\.\d{4,9}/[^\s<]+"
+    r"))"
+    r"(?P<space>\s+)"
+    r"(?P<tail>(?:</?(?:span|em|i|b|strong)\b[^>]*>\s*)*"
+    r"(?:the|this|we|in|as|or|depicted|generated|lines)\b[\s\S]{20,})",
+    re.IGNORECASE,
+)
+_REFERENCE_PARAGRAPH_ATTR_PATTERN = re.compile(
+    r"\b(?:id\s*=\s*['\"]ref-\d+|"
+    r"class\s*=\s*['\"][^'\"]*(?:z2m-reference|z2m-bibliography|references|bibliography))",
+    re.IGNORECASE,
+)
 _JOURNAL_PAGE_FURNITURE_PATTERN = re.compile(
     r"^[A-Z][A-Za-z& .:-]{2,80}\s+\d{4}\s*,\s*\d+\s*,\s*\d+"
     r"(?:\s*\.\s*https?://doi\.org/\S+)?"
@@ -5534,6 +5550,41 @@ def _repair_broken_url_anchor_labels(html: str) -> str:
         return f'<a{match.group("attrs")}>{_escape_html_text(href)}</a>'
 
     return pattern.sub(replace, html)
+
+
+def _split_doi_metadata_body_paragraphs(html: str) -> str:
+    """Split DOI/front-matter metadata from body prose when both share one paragraph."""
+    lowered = html.lower()
+    if "doi" not in lowered and "10." not in html:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        open_tag = match.group("open")
+        if _REFERENCE_PARAGRAPH_ATTR_PATTERN.search(open_tag):
+            return match.group(0)
+
+        body = match.group("body")
+        boundary = _DOI_METADATA_BODY_BOUNDARY_PATTERN.search(body)
+        if boundary is None:
+            return match.group(0)
+
+        left_body = body[: boundary.end("doi")].rstrip()
+        right_body = body[boundary.start("tail") :].lstrip()
+        right_text = _visible_text(right_body)
+        if len(right_text) < 35 or len(right_text.split()) < 5:
+            return match.group(0)
+
+        prefix_text = _visible_text(body[: boundary.start("doi")])
+        if len(prefix_text) > 500 and not re.search(
+            r"\b(?:fig(?:ure)?|table|doi|copyright|license|received|published|available|plos)\b",
+            prefix_text,
+            re.IGNORECASE,
+        ):
+            return match.group(0)
+
+        return f"{open_tag}{left_body}{match.group('close')}\n<p>{right_body}</p>"
+
+    return _P_BLOCK_PATTERN.sub(replace, html)
 
 
 def _rewrite_page_linked_bracket_citations(html: str, ref_count: int) -> str:
@@ -14267,6 +14318,7 @@ def polish_html_document(
     polished = _repair_broken_url_anchor_labels(polished)
     polished = _autolink_plain_urls(polished)
     polished = _repair_split_url_anchor_block_tail(polished)
+    polished = _split_doi_metadata_body_paragraphs(polished)
     polished = _normalize_spacing_after_url_links(polished)
     polished = _mark_wide_table_layout(polished)
     polished = _inject_utf8_charset(polished)

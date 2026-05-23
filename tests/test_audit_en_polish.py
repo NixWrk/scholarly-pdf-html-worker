@@ -2178,6 +2178,39 @@ def test_analyze_pair_ignores_post_reference_doi_metadata_for_duplicate_numbers(
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_doi_body_merge_only_within_one_block() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "doi boundary sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+
+        polish_path.write_text(
+            "<html><body>"
+            "<p>DOI: https://doi.org/10.1145/2982142.2982176 "
+            "the plasticity of the system remains visible in later trials.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        result = audit.analyze_pair(raw_path, polish_path)
+        assert "P75" in {defect["id"] for defect in result["defects_found"]}
+
+        polish_path.write_text(
+            "<html><body>"
+            "<p>DOI: https://doi.org/10.1145/2982142.2982176</p>"
+            "<p>the plasticity of the system remains visible in later trials.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        result = audit.analyze_pair(raw_path, polish_path)
+        assert "P75" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_broken_url_audit_does_not_flag_url_followed_by_reference_year() -> None:
     audit = _load_audit_module()
 
