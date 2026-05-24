@@ -1026,6 +1026,7 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bUroflowmetery\b"), "Uroflowmetry"),
     (re.compile(r"\buroflowmetery\b"), "uroflowmetry"),
     (re.compile(r"\burofowmetry\b", re.IGNORECASE), "uroflowmetry"),
+    (re.compile(r"\bUrdynamic\b", re.IGNORECASE), "urodynamic"),
     (re.compile(r"\bfowmeter\b", re.IGNORECASE), "flowmeter"),
     (re.compile(r"\bfows\b", re.IGNORECASE), "flows"),
     (re.compile(r"\bfowrate\b", re.IGNORECASE), "flow rate"),
@@ -1038,6 +1039,7 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bndings\b", re.IGNORECASE), "findings"),
     (re.compile(r"\burflowmetry\b", re.IGNORECASE), "uroflowmetry"),
     (re.compile(r"\bFERENCE\s+VALUES\b"), "REFERENCE VALUES"),
+    (re.compile(r"\bRewiev\b", re.IGNORECASE), "review"),
     (re.compile(r"\bintraand\s+inter-", re.IGNORECASE), "intra- and inter-"),
     (re.compile(r"\bflowmetery\b", re.IGNORECASE), "flowmetry"),
     (re.compile(r"\bnon-invasivly\b", re.IGNORECASE), "non-invasively"),
@@ -1070,6 +1072,13 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bpathologica\b", re.IGNORECASE), "pathological"),
     (re.compile(r"\bdeceases\s+as\s+the\s+distance\b", re.IGNORECASE), "decreases as the distance"),
     (re.compile(r"\blength\s+form\s+ADF4351\b", re.IGNORECASE), "length from ADF4351"),
+    (re.compile(r"\bMirocontroller\b", re.IGNORECASE), "microcontroller"),
+    (re.compile(r"\bmicroconroller\b", re.IGNORECASE), "microcontroller"),
+    (re.compile(r"\bNusssenblatt\b", re.IGNORECASE), "Nussenblatt"),
+    (re.compile(r"\btemprature\b", re.IGNORECASE), "temperature"),
+    (re.compile(r"\bchildrean\b", re.IGNORECASE), "children"),
+    (re.compile(r"\bfascade\b", re.IGNORECASE), "facade"),
+    (re.compile(r"\belectromyograhic\b", re.IGNORECASE), "electromyographic"),
     (re.compile(r"\bCompetinginterests\b", re.IGNORECASE), "Competing interests"),
     (re.compile(r"\bAdditionalinformation\b", re.IGNORECASE), "Additional information"),
     (re.compile(r"\bandrequests\b", re.IGNORECASE), "and requests"),
@@ -1320,6 +1329,7 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bsofware\b"), "software"),
     (re.compile(r"\bwill\s+to\s+help\b", re.IGNORECASE), "will help"),
     (re.compile(r"\bMata-Analysis\b"), "Meta-Analysis"),
+    (re.compile(r"\bMagr\s+Reson\b", re.IGNORECASE), "Magn Reson"),
     (re.compile(r"\bdocuments\s+that\s+that\s+intensity\b", re.IGNORECASE), "documents that the intensity"),
     (re.compile(r"\bRetinal\s+Nerve\s+Fiber\s+Laver\b"), "Retinal Nerve Fiber Layer"),
     (re.compile(r"\bt\s+o\s+the\s+best\s+of\s+our\s+knowledge\b", re.IGNORECASE), "to the best of our knowledge"),
@@ -1331,6 +1341,14 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bF\s+igures\b"), "Figures"),
     (re.compile(r"\bf\s+igures\b"), "figures"),
     (re.compile(r"\bpassive\s+senor\b", re.IGNORECASE), "passive sensor"),
+    (re.compile(r"\bAppel's\s+Sir\s+i\b", re.IGNORECASE), "Apple's Siri"),
+    (re.compile(r"\bcompliment\s+of\s+the\s+text-area\s+mask\b", re.IGNORECASE), "complement of the text-area mask"),
+    (re.compile(r"\bHip-pocampus\b", re.IGNORECASE), "Hippocampus"),
+    (re.compile(r"\bFlorescence\s+Technique\b", re.IGNORECASE), "Fluorescence Technique"),
+    (re.compile(r"\bStocks\s+shift\b", re.IGNORECASE), "Stokes shift"),
+    (re.compile(r"\bObject\s+Eden260V\b", re.IGNORECASE), "Objet Eden260V"),
+    (re.compile(r"\bOPRATING\s+PRICIPLE\b", re.IGNORECASE), "OPERATING PRINCIPLE"),
+    (re.compile(r"\bARTI\s+CLE\s+TYPE\b", re.IGNORECASE), "ARTICLE TYPE"),
     (re.compile(r"\bsimulates\s+the\s+The\s+validation\b", re.IGNORECASE), "simulates the validation"),
     (re.compile(r"\bto\s+be\s+The\s+topological\s+sort\b", re.IGNORECASE), "to be the topological sort"),
     (re.compile(r"\baesthesia\s+protocols\b", re.IGNORECASE), "anesthesia protocols"),
@@ -1449,6 +1467,40 @@ _EN_OCR_CROSS_TAG_REPAIRS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match
             re.IGNORECASE,
         ),
         "Semi-structured",
+    ),
+    (
+        re.compile(
+            rf"\b(?P<prefix>TQma|PdetQma)\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*x\s*</(?P=tag)>",
+            re.IGNORECASE,
+        ),
+        lambda m: f"{m.group('prefix')}x",
+    ),
+    (
+        re.compile(
+            rf"\b(?P<stem>crania)\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*l\s*</(?P=tag)>\s+implant\b",
+            re.IGNORECASE,
+        ),
+        lambda m: f"{_case_like(m.group('stem'), 'cranial')} implant",
+    ),
+    (
+        re.compile(
+            rf"\bappro\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*x\s*</(?P=tag)>\s*imately\b",
+            re.IGNORECASE,
+        ),
+        "approximately",
+    ),
+    (
+        re.compile(
+            rf"\b(?P<lead>[Ff])\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*igures\s*</(?P=tag)>"
+        ),
+        lambda m: "Figures" if m.group("lead") == "F" else "figures",
+    ),
+    (
+        re.compile(
+            rf"\bsys\s*-\s*<{_EN_OCR_INLINE_TOKEN_TAG_PATTERN}\b[^>]*>\s*tem\s*</(?P=tag)>\b",
+            re.IGNORECASE,
+        ),
+        "system",
     ),
     (
         re.compile(
@@ -5923,6 +5975,12 @@ def _repair_broken_visible_url_text(text: str) -> str:
         fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
         fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
         fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
+    fixed = re.sub(
+        r"\b(?P<ext>png|jpe?g|gif|svg|webp|pdf)(?P=ext)\b",
+        r"\g<ext>",
+        fixed,
+        flags=re.IGNORECASE,
+    )
     return fixed
 
 

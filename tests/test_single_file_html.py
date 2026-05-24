@@ -7032,6 +7032,19 @@ def test_polish_html_document_repairs_ocr_tokens_from_global_p71_audit() -> None
         "<p>The Deptartment reported PRAVALENCE in a discription in J Neurocsi.</p>"
         "<p>Schfer et al. discussed aesthesia protocols.</p>"
         "<p>The result was to be The topological sort and simulates the The validation.</p>"
+        "<p>Critical Rewiev appeared in J Magr Reson Imaging while Urdynamic tests "
+        "used electromyograhic tracing.</p>"
+        "<p>Apple-like voice controls appeared as Appel's Sir i; masks used the "
+        "compliment of the text-area mask.</p>"
+        "<p>Hip-pocampus, fascade models, Stocks shift, Object Eden260V, "
+        "B Nusssenblatt, and OPRATING PRICIPLE were printed as ARTI CLE TYPE.</p>"
+        "<p>Low-Cost Indo Cyanine Green Florescence Technique was cited.</p>"
+        '<p>Table terms included TQma<sup class="z2m-table-fn">x</sup>, '
+        'PdetQma<a href="#page-3-0">x</a>, and a crania <a href="#page-3-0">l</a> implant.</p>'
+        '<p>The sys- <a href="#page-2-0">tem</a> was appro<a href="#page-2-0">x</a>imately ready; '
+        'F<a href="#page-2-0">igures</a> showed the result.</p>'
+        '<p>Download <a href="https://upload.wikimedia.org/a/SVM_margins.png">'
+        "https://upload.wikimedia.org/a/SVM_margins.pngpng</a>.</p>"
         "<p>Leave IRIT-ELIPSE unchanged.</p>"
         "</body></html>"
     )
@@ -7044,6 +7057,19 @@ def test_polish_html_document_repairs_ocr_tokens_from_global_p71_audit() -> None
     assert "The Department reported PREVALENCE in a description in J Neurosci" in polished
     assert "Sch\u00e4fer et al. discussed anesthesia protocols" in polished
     assert "to be the topological sort and simulates the validation" in polished
+    assert "Critical review appeared in J Magn Reson Imaging while urodynamic tests" in polished
+    assert "used electromyographic tracing" in polished
+    assert "Apple-like voice controls appeared as Apple's Siri" in polished
+    assert "complement of the text-area mask" in polished
+    assert "Hippocampus, facade models, Stokes shift, Objet Eden260V" in polished
+    assert "B Nussenblatt, and OPERATING PRINCIPLE were printed as ARTICLE TYPE" in polished
+    assert "Low-Cost Indo Cyanine Green Fluorescence Technique" in polished
+    assert "Table terms included TQmax, PdetQmax, and a cranial implant" in polished
+    assert "The system was approximately ready; Figures showed the result" in polished
+    assert (
+        '<a href="https://upload.wikimedia.org/a/SVM_margins.png">'
+        "https://upload.wikimedia.org/a/SVM_margins.png</a>"
+    ) in polished
     assert "IRIT-ELIPSE" in polished
 
 

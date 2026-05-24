@@ -385,6 +385,14 @@ KNOWN_OCR_TOKEN_RE = re.compile(
     r"\.oog-inch\b",
     re.IGNORECASE,
 )
+
+
+def _known_ocr_token_is_false_positive(plain: str, match: re.Match[str]) -> bool:
+    token = match.group(0)
+    if token.upper() == "ELIPSE":
+        context = plain[max(0, match.start() - 16) : min(len(plain), match.end() + 16)]
+        return re.search(r"\bIRIT\s*-\s*ELIPSE\b", context, re.IGNORECASE) is not None
+    return False
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
     r"Positive\s+value\s*=\s*increased\s+symptoms,\s*negative\s+value\s*=\s*"
     r"decreased\s+symptoms\s+studies\s+to\s+evaluate\b|"
@@ -3427,7 +3435,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         )
 
     known_ocr_match = KNOWN_OCR_TOKEN_RE.search(plain)
-    if known_ocr_match is not None:
+    if known_ocr_match is not None and not _known_ocr_token_is_false_positive(plain, known_ocr_match):
         defects.append(
             _defect(
                 defect_id="P71",
