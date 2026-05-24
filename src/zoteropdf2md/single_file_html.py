@@ -1727,6 +1727,17 @@ _SPLIT_NEG_UNIT_EXP_HTML_PATTERN = re.compile(
     r"(?:<i>\s*)?[-\u2212](?:\s*</i>)?\s*<sup(?P<attrs>[^>]*)>\s*(?P<exp>[123])\s*</sup>",
     re.IGNORECASE,
 )
+_SPLIT_SIGN_ONLY_NEG_UNIT_EXP_HTML_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?P<unit>(?:mg\s*L|mC\s*cm|\u00b5C\s*cm|\u03bcC\s*cm|uC\s*cm|"
+    r"cd\s*m|nm\s*d|mm\s*s|cm\s*s|m\s*s|cm|mm|nm|M|m|d|s)\s*)"
+    r"<sup\b[^>]*>\s*[-\u2212\u2013\u2014]\s*</sup>\s*"
+    r"<sup\b[^>]*>\s*(?:<a\b[^>]*>)?\s*(?P<exp>[123])\s*(?:</a>)?\s*</sup>",
+    re.IGNORECASE,
+)
+_PLAIN_POS_UNIT_EXP_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?P<value>\d+(?:\.\d+)?)\s*"
+    r"(?P<unit>(?:\u00b5m|\u03bcm|um|mm|cm|nm|m))\s*(?P<exp>[23])\b"
+)
 _UNIT_EXPONENT_SUP_PATTERN = re.compile(
     r"(?P<unit>(?:\u00b5m|\u03bcm|Вµm|Ојm|um|mC\s*cm|\u00b5C\s*cm|\u03bcC\s*cm|uC\s*cm|cd\s*m|mm\s*s|cm\s*s|m\s*s|cm|mm|m)\s*)"
     r"<sup(?P<attrs>[^>]*)>\s*(?P<exp>[-\u2212]?\s*[123])\s*</sup>",
@@ -5377,8 +5388,16 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
         'mg kg<sup class="z2m-unit-exp">-1</sup> h<sup class="z2m-unit-exp">-1</sup>',
         html,
     )
+    html = _SPLIT_SIGN_ONLY_NEG_UNIT_EXP_HTML_PATTERN.sub(
+        lambda m: f'{m.group("unit").rstrip()}<sup class="z2m-unit-exp">-{m.group("exp")}</sup>',
+        html,
+    )
     html = _SPLIT_NEG_UNIT_EXP_HTML_PATTERN.sub(
         lambda m: f"{m.group('unit')}<sup{_append_class_to_attrs(m.group('attrs') or '', 'z2m-unit-exp')}>-{m.group('exp')}</sup>",
+        html,
+    )
+    html = _PLAIN_POS_UNIT_EXP_PATTERN.sub(
+        lambda m: f'{m.group("value")} {m.group("unit")}<sup class="z2m-unit-exp">{m.group("exp")}</sup>',
         html,
     )
     html = re.sub(

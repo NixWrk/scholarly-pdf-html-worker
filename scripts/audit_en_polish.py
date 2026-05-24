@@ -92,9 +92,9 @@ SUP_NUMERIC_RANGE_RE = re.compile(
 LATEX_SUP_CITATION_RE = re.compile(r"\\\(\^\{[\d,\s\-\u2013\u2014]+}\\\)")
 UNIT_FLATTEN_RE = re.compile(
     r"\b(?:mC\s*cm|cd\s*m|kg\s*h|mg\s*kg\s*h)\s*[-\u2212]\s*\d+\b|"
-    r"\b(?:u|µ|μ)m\s+\d+\b|"
+    r"\b(?-i:(?:u|\u00b5|\u03bc)m)\s*[23]\b|"
     r"\bmCcm[-\u2212]\d+\b|"
-    r"\b\d+(?:\.\d+)?\s*(?:u|µ|μ)?m\s*2\b|"
+    r"\b\d+(?:\.\d+)?\s*(?-i:(?:u|\u00b5|\u03bc)?m)\s*[23]\b|"
     r"\b\d+(?:\.\d+)?Vand\b|"
     r"\b\d+(?:\.\d+)?\s*(?:u|µ|μ)Aand\b",
     re.IGNORECASE,
@@ -1578,12 +1578,33 @@ def _page_link_semantic_kind(html: str, match: re.Match[str]) -> str | None:
 
 
 def _unit_match_is_repaired_in_raw(match_text: str, raw: str) -> bool:
-    if re.search(r"(?:u|µ|μ)m\s+\d+\b", match_text, re.IGNORECASE):
-        return bool(re.search(r"(?:u|µ|μ)m\s*<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*\d+\s*</sup>", raw, re.IGNORECASE))
-    if re.search(r"\b\d+(?:\.\d+)?\s*(?:u|µ|μ)?m\s*2\b", match_text, re.IGNORECASE):
-        return bool(re.search(r"(?:u|µ|μ)m\s*<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*2\s*</sup>", raw, re.IGNORECASE))
+    raw_unescaped = unescape(raw)
+    if re.search(r"(?-i:(?:u|\u00b5|\u03bc)m)\s*[23]\b", match_text, re.IGNORECASE):
+        return bool(
+            re.search(
+                r"(?-i:(?:u|\u00b5|\u03bc)m)\s*<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*[23]\s*</sup>",
+                raw_unescaped,
+                re.IGNORECASE,
+            )
+            or (
+                "data-z2m-tex" in raw_unescaped
+                and re.search(r"(?-i:(?:u|\u00b5|\u03bc)m)\s*\^\{?\s*[23]\s*\}?", raw_unescaped)
+            )
+        )
+    if re.search(r"\b\d+(?:\.\d+)?\s*(?-i:(?:u|\u00b5|\u03bc)?m)\s*[23]\b", match_text, re.IGNORECASE):
+        return bool(
+            re.search(
+                r"(?-i:(?:u|\u00b5|\u03bc)?m)\s*<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*[23]\s*</sup>",
+                raw_unescaped,
+                re.IGNORECASE,
+            )
+            or (
+                "data-z2m-tex" in raw_unescaped
+                and re.search(r"(?-i:(?:u|\u00b5|\u03bc)?m)\s*\^\{?\s*[23]\s*\}?", raw_unescaped)
+            )
+        )
     if re.search(r"\b(?:mC\s*cm|cd\s*m|kg\s*h|mg\s*kg\s*h)\s*[-\u2212]\s*\d+\b", match_text, re.IGNORECASE):
-        return bool(re.search(r"<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*-\d+\s*</sup>", raw, re.IGNORECASE))
+        return bool(re.search(r"<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*-\d+\s*</sup>", raw_unescaped, re.IGNORECASE))
     return False
 
 

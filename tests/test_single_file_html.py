@@ -2299,7 +2299,7 @@ def test_polish_html_document_does_not_append_body_after_ocr_caption() -> None:
     assert "A 96ch flexible surface electrode array" not in flat
     assert "Figure 1. Electrode fabrication and experimental paradigm." in flat
     assert "experimental paradigm. (0.12 mm2)" not in flat
-    assert "(0.12 mm2). Electrode fabrication began" in flat
+    assert '(0.12 mm<sup class="z2m-unit-exp">2</sup>). Electrode fabrication began' in flat
 
 
 def test_polish_html_document_repairs_cross_mixed_prose_and_figure_caption() -> None:
@@ -4136,6 +4136,8 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
         "<p>The dose was 10 mg kg h − 1 IV and capacitance was 750 μCcm−2.</p>"
         "<p>The voltage was 0.7Vand 1.0Vfor 30 μAand 250 μA, respectively.</p>"
         "<p>The coating was at least 130 <i>µ</i> m thick.</p>"
+        "<p>The floor covered 60m2, the field covered 1.73 m2, and the maze covered 8 × 4 m 2.</p>"
+        "<p>The M2 occlusion and 350M 2 model label are not square-meter units.</p>"
         "<p>The grating covered 1.5 ◦ × 1.5 ◦ and was baked at 200 ◦ C.</p>"
         "<p>The window covered 1.5 <i>◦ ×</i> 1.5 <i>◦</i> and was baked at 350 <i>◦</i> C.</p>"
         "</body></html>"
@@ -4149,6 +4151,11 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
     assert "0.7 V and 1.0 V for 30 μA and 250 μA" in polished
     assert "130 µm thick" in polished
     assert "<i>µ</i> m" not in polished
+    assert '60 m<sup class="z2m-unit-exp">2</sup>' in polished
+    assert '1.73 m<sup class="z2m-unit-exp">2</sup>' in polished
+    assert '8 × 4 m<sup class="z2m-unit-exp">2</sup>' in polished
+    assert "M2 occlusion" in polished
+    assert "350M 2 model label" in polished
     assert "1.5° × 1.5°" in polished
     assert "200°C" in polished
     assert "350°C" in polished
@@ -4563,6 +4570,7 @@ def test_polish_html_document_marks_existing_unit_exponent_superscripts() -> Non
         "<p>Dose was 10 mg kg h <i>−</i> <sup>1</sup> IV.</p>"
         "<p>Luminance was 74 cd m <i>−</i> <sup>2</sup>.</p>"
         "<p>Insertion velocity was 0.01 mm s <i>−</i> <sup>1</sup>.</p>"
+        "<p>Scan velocity was 1 cm s <sup> − </sup> <sup> 1 </sup> and 130000 M <sup> − </sup> <sup> 1 </sup>.</p>"
         "<h4>References</h4><ul><li>Ref one.</li><li>Ref two.</li></ul>"
         "</body></html>"
     )
@@ -4572,6 +4580,8 @@ def test_polish_html_document_marks_existing_unit_exponent_superscripts() -> Non
     assert 'mg kg<sup class="z2m-unit-exp">-1</sup> h<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'cd m<sup class="z2m-unit-exp">-2</sup>' in polished
     assert 'mm s<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert 'cm s<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert 'M<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'href="#ref-1"' not in polished
     assert 'href="#ref-2"' not in polished
 
