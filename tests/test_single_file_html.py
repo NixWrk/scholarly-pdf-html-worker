@@ -5980,6 +5980,88 @@ def test_polish_html_document_anchors_text_equation_and_retargets_page_link() ->
     assert 'href="#page-4-1"' not in polished
 
 
+def test_polish_html_document_retargets_numeric_page_link_section_ref() -> None:
+    html = (
+        "<html><body>"
+        '<p>As described in Section <a href="#page-3-1">3.2,</a> the model is stable.</p>'
+        "<h2>3.2 Model details</h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#section-3-2" class="z2m-section-link">3.2,</a>' in polished
+    assert 'href="#page-3-1"' not in polished
+
+
+def test_polish_html_document_unwraps_unresolved_section_appendix_equation_page_refs() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-6-0"></span><span id="page-7-0"></span>'
+        '<span id="page-8-0"></span><span id="page-8-1"></span>'
+        '<p>Values are defined in <a href="#page-6-0">Eq 1</a> and Appendix '
+        '<a href="#page-7-0">A)</a>.</p>'
+        '<p>Later we discuss Section <a href="#page-8-0">4.1,</a> but the heading is missing.</p>'
+        '<p>Plural ranges stay as page navigation when no semantic target exists in Sections 3.4, 4 and '
+        '<a href="#page-8-1">5.</a></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "Eq 1" in compact
+    assert "Appendix A)" in compact
+    assert "Section 4.1," in compact
+    assert 'href="#page-6-0"' not in polished
+    assert 'href="#page-7-0"' not in polished
+    assert 'href="#page-8-0"' not in polished
+    assert '<a href="#page-8-1">5.</a>' in polished
+
+
+def test_polish_html_document_unwraps_split_unresolved_figure_table_page_labels() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-2-0"></span><span id="page-3-0"></span><span id="page-4-0"></span>'
+        '<p><a href="#page-2-0">Figure</a> 9 shows the hard task.</p>'
+        '<p>Results are aggregated in <a href="#page-3-0">Table</a> 2.</p>'
+        '<p>The phrase figure of merit keeps its page link '
+        '<a href="#page-4-0">Figure</a> of merit.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "Figure 9 shows" in compact
+    assert "Table 2." in compact
+    assert 'href="#page-2-0"' not in polished
+    assert 'href="#page-3-0"' not in polished
+    assert 'href="#page-4-0"' in polished
+
+
+def test_polish_html_document_retargets_plural_figure_section_page_ref_tails() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-8-0"></span><span id="page-5-0"></span>'
+        '<p>Error zones are shown in Figs '
+        '<a href="#fig-2" class="z2m-fig-link">2A,</a> 3A and '
+        '<a href="#page-8-0">4A)</a>.</p>'
+        '<p>Flow limitations appear in Sections 2 and <a href="#page-5-0">3)</a>.</p>'
+        '<p>Fig. 4. Example.</p>'
+        '<h2>3. Results</h2>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert 'href="#fig-4" class="z2m-fig-link">4A)</a>' in polished
+    assert "Sections 2 and 3)" in compact
+    assert 'href="#page-8-0"' not in polished
+    assert 'href="#page-5-0"' not in polished
+
+
 def test_polish_html_document_links_box_refs_and_frames_box() -> None:
     html = (
         "<html><body>"

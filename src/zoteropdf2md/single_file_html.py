@@ -9553,12 +9553,18 @@ def _unwrap_unresolved_semantic_page_links(
     *,
     found_figures: set[str],
     found_tables: set[str],
+    found_sections: set[str],
+    found_boxes: set[str],
     language_policy: PolishLanguagePolicy | None = None,
 ) -> str:
-    """Remove page-anchor links from Fig./Table references when no semantic target exists."""
+    """Retarget or remove stale page links from semantic cross-references."""
     if "#page-" not in html:
         return html
 
+    found_equations = {
+        match.group(2).upper().replace(".", "-")
+        for match in re.finditer(r'\bid\s*=\s*(["\'])eq-([^"\']+)\1', html, re.IGNORECASE)
+    }
     fig_tail = (
         r"(?:(?:[a-z]|\([a-z]\))(?:\s*(?:,|[-\u2010\u2011\u2012\u2013\u2014])\s*(?:[a-z]|\([a-z]\)))*)?"
         rf"(?:\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?)*"
@@ -9575,6 +9581,19 @@ def _unwrap_unresolved_semantic_page_links(
         rf"(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+{_TABLE_KEY_TOKEN}\s*$"
     )
 
+    def _section_key(value: str) -> str:
+        return value.strip().strip("().,;:").upper().replace(".", "-")
+
+    def _eq_key(value: str) -> str:
+        return value.strip().strip("().,;:").upper().replace(".", "-")
+
+    def _has_internal_target(prefix: str, key: str) -> bool:
+        return re.search(rf'\bid\s*=\s*(["\']){re.escape(prefix + key)}\1', html, re.IGNORECASE) is not None
+
+    def _link_page_anchor(m: re.Match[str], href: str, class_name: str) -> str:
+        attrs = _replace_anchor_href_and_class(m.group("attrs"), href, class_name)
+        return f'<a{attrs}>{m.group("body")}</a>'
+
     def _replace(m: re.Match[str]) -> str:
         body = m.group("body")
         body_text = _visible_text(body)
@@ -9583,7 +9602,9 @@ def _unwrap_unresolved_semantic_page_links(
             if language_policy is not None
             else body_text
         )
+        stripped_semantic = semantic_body_text.strip()
         left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
+        right_text = _visible_text(html[m.end():m.end() + 120])
 
         fig_number: str | None = None
         fig_decimal_direct = re.match(
@@ -9612,12 +9633,20 @@ def _unwrap_unresolved_semantic_page_links(
             if fig_number is None and fig_num_only is not None and re.search(fig_left_context, left_text, re.IGNORECASE):
                 fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
             elif fig_number is None and fig_num_only is not None and re.search(
+                r"\b(?:FIG(?:URE)?S?|Fig(?:ure)?s?)\b[\s\S]{0,120}(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
+                left_text,
+                re.IGNORECASE,
+            ):
+                fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
+            elif fig_number is None and fig_num_only is not None and re.search(
                 r"(?:\b(?:image|photograph|picture|panel)\s*\(\s*in\s*|\b(?:image|photograph|picture|panel|in)\s*)$",
                 left_text,
                 re.IGNORECASE,
             ) and re.match(r"^\d+[a-z]", semantic_body_text, re.IGNORECASE):
                 fig_number = _figure_key_from_visible_number(fig_num_only.group(1))
-        if fig_number is not None and fig_number not in found_figures:
+        if fig_number is not None:
+            if fig_number in found_figures:
+                return _link_page_anchor(m, f"#fig-{fig_number}", "z2m-fig-link")
             return body
 
         table_key: str | None = None
@@ -9656,6 +9685,12 @@ def _unwrap_unresolved_semantic_page_links(
             )
             if table_key is None and table_num_only is not None and re.search(table_left_context, left_text, re.IGNORECASE):
                 table_key = _normalize_table_key(table_num_only.group(1))
+            elif table_key is None and table_num_only is not None and re.search(
+                rf"\b(?:TABLES?|Tables?)\b[\s\S]{{0,120}}(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
+                left_text,
+                re.IGNORECASE,
+            ):
+                table_key = _normalize_table_key(table_num_only.group(1))
             elif table_key is None and table_num_only is None:
                 table_range_tail = re.match(
                     rf"^\s*[-\u2010\u2011\u2012\u2013\u2014]\s*({_TABLE_KEY_TOKEN})[\)\]\.,;:]*$",
@@ -9664,7 +9699,98 @@ def _unwrap_unresolved_semantic_page_links(
                 )
                 if table_range_tail is not None and re.search(table_range_left_context, left_text, re.IGNORECASE):
                     table_key = _normalize_table_key(table_range_tail.group(1))
-        if table_key is not None and table_key not in found_tables:
+        if table_key is not None:
+            if table_key in found_tables:
+                return _link_page_anchor(m, f"#table-{table_key}", "z2m-table-link")
+            return body
+
+        section_key: str | None = None
+        section_plural_context = False
+        section_direct = re.match(
+            r"^[\(\[]*Section\s+(?P<num>[IVX]{1,6}|\d{1,2}(?:\.\d{1,2})*)(?P<trail>[\)\]\.,;:]*)$",
+            stripped_semantic,
+            re.IGNORECASE,
+        )
+        if section_direct is not None:
+            section_key = _section_key(section_direct.group("num"))
+        else:
+            section_num_only = re.match(
+                r"^(?P<num>[IVX]{1,6}|\d{1,2}(?:\.\d{1,2})*)(?P<trail>[\)\]\.,;:]*)$",
+                stripped_semantic,
+                re.IGNORECASE,
+            )
+            if section_num_only is not None and re.search(r"\bSection\s*$", left_text, re.IGNORECASE):
+                section_key = _section_key(section_num_only.group("num"))
+            elif section_num_only is not None and re.search(
+                r"\bSections?\b[\s\S]{0,120}(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
+                left_text,
+                re.IGNORECASE,
+            ):
+                section_key = _section_key(section_num_only.group("num"))
+                section_plural_context = True
+        if section_key is not None:
+            if section_key in found_sections or _has_internal_target("section-", section_key):
+                return _link_page_anchor(m, f"#section-{section_key}", "z2m-section-link")
+            if section_plural_context:
+                return m.group(0)
+            return body
+
+        appendix_key: str | None = None
+        appendix_direct = re.match(
+            r"^[\(\[]*Appendix\s+(?P<letter>[A-Z])(?P<trail>[\)\]\.,;:]*)$",
+            stripped_semantic,
+            re.IGNORECASE,
+        )
+        if appendix_direct is not None:
+            appendix_key = appendix_direct.group("letter").upper()
+        else:
+            appendix_letter_only = re.match(r"^(?P<letter>[A-Z])(?P<trail>[\)\]\.,;:]*)$", stripped_semantic)
+            if appendix_letter_only is not None and re.search(r"\bAppendix\s*$", left_text, re.IGNORECASE):
+                appendix_key = appendix_letter_only.group("letter").upper()
+        if appendix_key is not None:
+            target_key = f"APPENDIX-{appendix_key}"
+            if target_key in found_sections:
+                return _link_page_anchor(m, f"#section-appendix-{appendix_key.lower()}", "z2m-section-link")
+            return body
+
+        box_direct = re.match(
+            r"^[\(\[]*Box\s+(?P<num>\d+)(?P<trail>[\)\]\.,;:]*)$",
+            stripped_semantic,
+            re.IGNORECASE,
+        )
+        box_num = box_direct.group("num") if box_direct is not None else None
+        if box_num is None:
+            box_num_only = re.match(r"^(?P<num>\d+)(?P<trail>[\)\]\.,;:]*)$", stripped_semantic)
+            if box_num_only is not None and re.search(r"\bBox\s*$", left_text, re.IGNORECASE):
+                box_num = box_num_only.group("num")
+        if box_num is not None:
+            if box_num in found_boxes:
+                return _link_page_anchor(m, f"#box-{box_num}", "z2m-box-link")
+            return body
+
+        eq_direct = re.match(
+            r"^[\(\[]*(?:Eq(?:n|uation)?\.?|Equation)\s+(?P<num>\(?\d{1,3}(?:\.\d{1,3})?\)?)(?P<trail>[\)\]\.,;:]*)$",
+            stripped_semantic,
+            re.IGNORECASE,
+        )
+        eq_key = _eq_key(eq_direct.group("num")) if eq_direct is not None else None
+        if eq_key is None:
+            eq_num_only = re.match(
+                r"^(?P<num>\(?\d{1,3}(?:\.\d{1,3})?\)?)(?P<trail>[\)\]\.,;:]*)$",
+                stripped_semantic,
+            )
+            if eq_num_only is not None and re.search(r"\b(?:Eq(?:n|uation)?\.?|Equation)\s*$", left_text, re.IGNORECASE):
+                eq_key = _eq_key(eq_num_only.group("num"))
+        if eq_key is not None:
+            if eq_key in found_equations:
+                return _link_page_anchor(m, f"#eq-{eq_key}", "z2m-eq-link")
+            return body
+
+        if re.fullmatch(
+            r"[\(\[]?\s*(?:Fig(?:ure)?s?|Figures?|Table|Tables|Section|Appendix|Box|Eq(?:n|uation)?\.?|Equation)\.?\s*[\)\]]?",
+            stripped_semantic,
+            re.IGNORECASE,
+        ) and re.match(r"^\s*(?:ure\s+)?(?:S?\d|[A-Z]\b)", right_text, re.IGNORECASE):
             return body
 
         return m.group(0)
@@ -14699,6 +14825,8 @@ def polish_html_document(
             polished,
             found_figures=found_figures,
             found_tables=found_tables,
+            found_sections=found_sections,
+            found_boxes=found_boxes,
             language_policy=language_policy,
         )
         polished = _unlink_supplementary_page_refs(polished)
