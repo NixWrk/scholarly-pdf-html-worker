@@ -6783,9 +6783,12 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "uniied inputs, simpliication, ine-grained evaluation, and ailiations.</p>"
         "<p>More ligature losses included signifcantly fewer errors, eficacy trials, "
         "fltering pipelines, scafolds, fbers, fexible flms, fbroin, biofuid, "
-        "difusion, feld-efect sensors, suficiently powered tradeofs, and an oficer in the ofice.</p>"
+        "difusion, feld-efect sensors, fll and flled forms, fowing fluid, "
+        "fuoroscopy, fuoroscopic guidance, and fashes of light, "
+        "suficiently powered tradeofs, and an oficer in the ofice.</p>"
         "<p>Lost ligatures included frst fne fgurative defned profcient beneft "
-        "difculties staf eforts confrmed clarifed infuenced fnger fndings feld.</p>"
+        "difculties staf eforts confrmed clarifed infuenced fnger fndings feld. "
+        "The patient stimulated \u00aerst and the device saw \u0412\u00aerst order markers.</p>"
         "<p>Joined words included medicineresistant customdesigned hardwareupdate easy-tolearn "
         "Attributebased thistask higherthan disabilitiessometimesface artworksis "
         "hierarchicalsegmentation webbased needsto includesinformation participantssuggested "
@@ -6822,6 +6825,7 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "a dditive production, alternati ves, pr inting services, technical ly, "
         "high ) w ere, thr ee different, straightfo rw ard, Gener al digital, "
         "Barc elona, coefcient values, and supple mental notes.</p>"
+        "<p>The 1.5 T magnetic eld and urine ow rate remained stable.</p>"
         "<p>The laser components include The Cartesian linear stage provides 2 DOF motion.</p>"
         "<code>frst medicineresistant</code>"
         "<p>Reprints andpermissions information governs archiving ofthe accepted manuscript.</p>"
@@ -6864,11 +6868,14 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "affiliations" in polished
     assert "significantly fewer errors, efficacy trials, filtering pipelines" in polished
     assert "scaffolds, fibers, flexible films, fibroin, biofluid" in polished
-    assert "diffusion, field-effect sensors, sufficiently powered tradeoffs" in polished
+    assert "diffusion, field-effect sensors, fill and filled forms, flowing fluid" in polished
+    assert "fluoroscopy, fluoroscopic guidance, and flashes of light" in polished
+    assert "sufficiently powered tradeoffs" in polished
     assert "an officer in the office" in polished
     assert "first fine figurative defined proficient benefit" in polished
     assert "influenced finger findings field" in polished
     assert "difficulties staff efforts confirmed clarified influenced finger findings field" in polished
+    assert "stimulated first and the device saw first order markers" in polished
     assert "medicine-resistant custom-designed hardware update easy-to-learn" in polished
     assert "Attribute-based this task higher than disabilities sometimes face artworks is" in polished
     assert "hierarchical segmentation web-based needs to includes information participants suggested" in polished
@@ -6904,6 +6911,7 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "CNC-milling machines, support structures, additive production, alternatives" in polished
     assert "printing services, technically, high) were, three different, straightforward" in polished
     assert "General digital, Barcelona, coefficient values, and supplemental notes" in polished
+    assert "The 1.5 T magnetic field and urine flow rate remained stable" in polished
     assert "The Cartesian linear stage provides 2 DOF motion" in polished
     assert "The laser components include The Cartesian" not in polished
     assert "<code>frst medicineresistant</code>" in polished

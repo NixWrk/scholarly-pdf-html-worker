@@ -1224,6 +1224,31 @@ def test_analyze_pair_reports_fulltext_batch_016_020_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_p66_ignores_rst_abbreviations_but_flags_mojibake_first() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>RST-001 and the RST group are valid abbreviations.</p>"
+            "<p>The hemisphere stimulated \u00aerst was randomized.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p66 = [defect for defect in result["defects_found"] if defect["id"] == "P66"]
+        assert [defect["extra"]["match"] for defect in p66] == ["\u00aerst"]
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_fulltext_batch_021_025_blind_spots() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

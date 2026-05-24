@@ -1173,6 +1173,7 @@ _KNOWN_WORD_GLUE_REPAIRS = (
 _EN_OCR_WORD_REPAIRS = (
     (re.compile(r"\bsignifcantly\b", re.IGNORECASE), "significantly"),
     (re.compile(r"\bsignifcant\b", re.IGNORECASE), "significant"),
+    (re.compile(r"\bmodifcation\b", re.IGNORECASE), "modification"),
     (re.compile(r"\beficacy\b", re.IGNORECASE), "efficacy"),
     (re.compile(r"\beficiently\b", re.IGNORECASE), "efficiently"),
     (re.compile(r"\bsuficient\b", re.IGNORECASE), "sufficient"),
@@ -1193,6 +1194,12 @@ _EN_OCR_WORD_REPAIRS = (
     (re.compile(r"\bscafold\b", re.IGNORECASE), "scaffold"),
     (re.compile(r"\bfeld-efect\b", re.IGNORECASE), "field-effect"),
     (re.compile(r"\bfltering\b", re.IGNORECASE), "filtering"),
+    (re.compile(r"\bfll\b", re.IGNORECASE), "fill"),
+    (re.compile(r"\bflled\b", re.IGNORECASE), "filled"),
+    (re.compile(r"\bfowing\b", re.IGNORECASE), "flowing"),
+    (re.compile(r"\bfuoroscopy\b", re.IGNORECASE), "fluoroscopy"),
+    (re.compile(r"\bfuoroscopic\b", re.IGNORECASE), "fluoroscopic"),
+    (re.compile(r"\bfashes\b", re.IGNORECASE), "flashes"),
     (re.compile(r"\bgalss\b", re.IGNORECASE), "glass"),
     (re.compile(r"\bcoeficients\b", re.IGNORECASE), "coefficients"),
     (re.compile(r"\bfrst\b", re.IGNORECASE), "first"),
@@ -1248,6 +1255,7 @@ _EN_OCR_WORD_REPAIRS = (
     (re.compile(r"\bSchfer\b"), "Sch\u00e4fer"),
 )
 _EN_OCR_PHRASE_REPAIRS = (
+    (re.compile(r"(?:\u00ae|\u0412\u00ae)rst\b", re.IGNORECASE), "first"),
     (re.compile(r"\bmedicineresistant\b", re.IGNORECASE), "medicine-resistant"),
     (re.compile(r"\bcustomdesigned\b", re.IGNORECASE), "custom-designed"),
     (re.compile(r"\bhardwareupdate\b", re.IGNORECASE), "hardware update"),
@@ -1271,6 +1279,8 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\bwassupported\b", re.IGNORECASE), "was supported"),
     (re.compile(r"\bblindaccessible\b", re.IGNORECASE), "blind-accessible"),
     (re.compile(r"\bpopulationbased\b", re.IGNORECASE), "population-based"),
+    (re.compile(r"\bmagnetic\s+eld\b", re.IGNORECASE), "magnetic field"),
+    (re.compile(r"\burine\s+ow\b", re.IGNORECASE), "urine flow"),
     (re.compile(r"\bsignalto-noise\b", re.IGNORECASE), "signal-to-noise"),
     (re.compile(r"\bbasrelief\b", re.IGNORECASE), "bas-relief"),
     (re.compile(r"\bfrontto-back\b", re.IGNORECASE), "front-to-back"),
