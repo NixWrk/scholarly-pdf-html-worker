@@ -3066,6 +3066,67 @@ def _unicode_glued_author_marker_count(text: str) -> int:
     return count
 
 
+_AUTHOR_BYLINE_NAME_RE = re.compile(
+    r"\b"
+    r"(?:[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]*|[A-Z]\.)"
+    r"(?:\s+(?:[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]*|[A-Z]\.)){1,5}"
+    r"\b",
+    re.UNICODE,
+)
+
+
+def _looks_author_byline_front_matter(raw: str, visible: str) -> bool:
+    if len(visible) < 6 or len(visible) > 450:
+        return False
+    lower = visible.lower()
+    if re.match(r"^\s*(?:abstract|introduction|references|bibliography)\b", lower):
+        return False
+    if len(re.findall(r"[.!?](?:\s|$)", visible)) >= 2:
+        return False
+    if re.search(
+        r"\b(?:are|is|was|were|has|have|had|using|used|support|supports|"
+        r"show|shows|shown|study|studies|method|methods|results?|participants?|"
+        r"patients?|models?|devices?|figure|table)\b",
+        lower,
+    ):
+        return False
+    if re.search(r"\b(?:box|fig(?:ure)?s?|table|section|appendix|equations?|eqs?\.?)\s+\d", lower):
+        return False
+
+    sup_marker_hits = len(
+        re.findall(
+            r"<sup\b[^>]*>\s*(?:<a\b[^>]*>\s*)?\d{1,2}(?:\s*[,.\-]\s*\d{1,2}){0,6}",
+            raw,
+            re.IGNORECASE | re.DOTALL,
+        )
+    )
+    glued_marker_hits = max(
+        len(
+            re.findall(
+                r"\b[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff.'-]+"
+                r"(?:\s+[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff.'-]+){1,5}"
+                r"\s*\d{1,2}(?:\s*[,.\-]\s*\d{1,2}){0,6}",
+                visible,
+            )
+        ),
+        _unicode_glued_author_marker_count(visible),
+    )
+    if sup_marker_hits == 0 and glued_marker_hits == 0:
+        return False
+
+    name_hits = len(_AUTHOR_BYLINE_NAME_RE.findall(visible))
+    if name_hits < 1:
+        return False
+    if name_hits >= 2 and (sup_marker_hits >= 1 or glued_marker_hits >= 1):
+        return True
+
+    # Single-author bylines are often just "Name <sup>1,2</sup>" before Abstract.
+    residue = _AUTHOR_BYLINE_NAME_RE.sub(" ", visible)
+    residue = re.sub(r"\b(?:and|or|et\s+al)\b", " ", residue, flags=re.IGNORECASE)
+    residue = re.sub(r"[\d\s,.;:*()\[\]\-\u2013\u2014\u2020\u2021&]+", " ", residue)
+    return len(residue.strip()) <= 12
+
+
 def _looks_front_matter_block(raw: str) -> bool:
     if not re.match(r"\s*<(?:p|h[1-6])\b", raw, re.IGNORECASE):
         return False
@@ -3117,6 +3178,10 @@ def _looks_front_matter_block(raw: str) -> bool:
         "laboratory for",
     )
     if any(keyword in lower for keyword in front_keywords):
+        return True
+    if "contributed equally" in lower and (_leading_footnote_number(raw) is not None or "author" in lower):
+        return True
+    if _looks_author_byline_front_matter(raw, visible):
         return True
 
     glued_author_markers = len(

@@ -3098,6 +3098,96 @@ def test_polish_html_document_does_not_link_author_heading_affiliation_superscri
     assert 'href="#ref-1"' in polished[author_block_end:]
 
 
+def test_polish_html_document_protects_short_author_byline_heading_refs() -> None:
+    html = (
+        "<html><body>"
+        "<h2>Do Electrode Properties Create a Problem?</h2>"
+        "<h2><b>Matthew J. Nelson<sup>1,2</sup> and Pierre Pouget <sup>1</sup></b></h2>"
+        "<p>Local field potential recordings remain useful<sup>1</sup>.</p>"
+        "<h4>References</h4>"
+        "<ul><li>Ref one.</li><li>Ref two.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    author_start = polished.index("Matthew J. Nelson")
+    author_block_start = polished.rfind("<h2", 0, author_start)
+    author_block_end = polished.index("</h2>", author_start)
+    author_block = polished[author_block_start:author_block_end]
+    body_start = polished.index("Local field potential")
+
+    assert "z2m-front-matter" in author_block
+    assert 'href="#ref-' not in author_block
+    assert 'href="#ref-1"' in polished[body_start:]
+
+
+def test_polish_html_document_protects_single_author_byline_refs() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Development of visual Neuroprostheses: trends and challenges</h1>"
+        "<p>Eduardo Fernandez<sup>1,2</sup></p>"
+        "<h4><b>Abstract</b></h4>"
+        "<p>Visual prostheses are implantable medical devices<sup>1</sup>.</p>"
+        "<h4>References</h4>"
+        "<ul><li>Ref one.</li><li>Ref two.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    author_start = polished.index("Eduardo Fernandez")
+    author_block_start = polished.rfind("<p", 0, author_start)
+    author_block_end = polished.index("</p>", author_start)
+    author_block = polished[author_block_start:author_block_end]
+    body_start = polished.index("Visual prostheses")
+
+    assert "z2m-front-matter" in author_block
+    assert 'href="#ref-' not in author_block
+    assert 'href="#ref-1"' in polished[body_start:]
+
+
+def test_polish_html_document_protects_contribution_note_refs() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Protocol for a systematic review</h1>"
+        "<p><sup>1</sup> contributed equally.</p>"
+        "<h2>1. Introduction</h2>"
+        "<p>Prior work motivates the protocol<sup>1</sup>.</p>"
+        "<h4>References</h4>"
+        "<ul><li>Ref one.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    note_start = polished.index("contributed equally")
+    note_block_start = polished.rfind("<p", 0, note_start)
+    note_block_end = polished.index("</p>", note_start)
+    note_block = polished[note_block_start:note_block_end]
+    body_start = polished.index("Prior work")
+
+    assert "z2m-front-matter" in note_block
+    assert 'href="#ref-' not in note_block
+    assert 'href="#ref-1"' in polished[body_start:]
+
+
+def test_polish_html_document_keeps_body_titlecase_sup_citations_linked() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Visual prosthesis review</h1>"
+        "<p>Visual Prostheses<sup>1</sup> are implantable devices.</p>"
+        "<h4>References</h4>"
+        "<ul><li>Ref one.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body_start = polished.index("Visual Prostheses")
+    body_end = polished.index("</p>", body_start)
+    body_block = polished[body_start:body_end]
+
+    assert "z2m-front-matter" not in body_block
+    assert 'href="#ref-1"' in body_block
+
+
 def test_polish_html_document_repairs_front_matter_marker_ocr() -> None:
     html = (
         "<html><body>"
