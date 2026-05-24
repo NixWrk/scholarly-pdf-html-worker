@@ -1661,10 +1661,14 @@ _EMPTY_BLOCKQUOTE_PATTERN = re.compile(
 _LATIN_MOJIBAKE_ACCENT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("\u0412\u0401\u0414\u00b1", "\u00ef"),
     ("\u0412\u0491\u0414\u00b1", "\u00ed"),
+    ("\u0412\u00a8\u0414\u00b1", "\u00ef"),
+    ("\u0412\u00b4\u0414\u00b1", "\u00ed"),
     ("\u0414\u00b1", "i"),
     ("\u0412\u0401", "\u00a8"),
     ("\u0412\u0451", "\u00b8"),
     ("\u0412\u0491", "\u00b4"),
+    ("\u0412\u00a8", "\u00a8"),
+    ("\u0412\u00b4", "\u00b4"),
     ("\u041b\u2122", "\u02d9"),
     ("\u041b\u045a", "\u02dc"),
     ("\u041b\u2020", "\u02c6"),
@@ -4810,6 +4814,22 @@ def _with_following_circumflex(match: re.Match[str]) -> str:
     return _with_preceding_circumflex(match)
 
 
+def _with_preceding_tilde(match: re.Match[str]) -> str:
+    replacements = {
+        "a": "\u00e3",
+        "o": "\u00f5",
+        "n": "\u00f1",
+        "A": "\u00c3",
+        "O": "\u00d5",
+        "N": "\u00d1",
+    }
+    return replacements.get(match.group("letter"), match.group("letter"))
+
+
+def _with_following_tilde(match: re.Match[str]) -> str:
+    return _with_preceding_tilde(match)
+
+
 def _with_following_caron(match: re.Match[str]) -> str:
     replacements = {
         "c": "\u010d",
@@ -4846,10 +4866,16 @@ def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
     text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00b4(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_acute, text)
     text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00a8(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_diaeresis, text)
     text = re.sub(r"(?P<vowel>[AEIOUaeiou])\u02c6(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_circumflex, text)
+    text = re.sub(r"\bSao\u02dc(?=\s|[,.;)])", "S\u00e3o", text)
+    text = re.sub(r"(?P<letter>[AaOoNn])\u02dc(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_tilde, text)
+    text = re.sub(r"(?P<letter>[cCsSzZ])\u02c7(?=\s*(?:[A-Za-z]|[,.;)]))", _with_following_caron, text)
+    text = re.sub(r"\b(?P<left>[a-z]{3,})-\s+[\u00a8\u00b4\u02c6]\s+(?P<right>[a-z]{3,})\b", r"\g<left>\g<right>", text)
+    text = re.sub(r"\b(?P<left>[A-Z][A-Za-z]{2,})-\s+[\u00a8\u00b4\u02c6]\s+(?P<right>[A-Z][A-Za-z]{2,})\b", r"\g<left>-\g<right>", text)
     text = re.sub(r"\b(?P<left>[A-Za-z]{3,})\s+[\u00a8\u00b4]\s+(?P<right>[A-Za-z]{2,})\b", r"\g<left> \g<right>", text)
     text = re.sub(r"\u00b4\s*(?P<vowel>[AEIOUYaeiouy])", _with_following_acute, text)
     text = re.sub(r"\u00a8\s*(?P<vowel>[AEIOUYaeiouy])", _with_following_diaeresis, text)
     text = re.sub(r"\u02c6\s*(?P<vowel>[AEIOUaeiou])", _with_following_circumflex, text)
+    text = re.sub(r"\u02dc\s*(?P<letter>[AaOoNn])", _with_following_tilde, text)
     text = re.sub(r"\u02c7\s*(?P<letter>[cCsSzZ])", _with_following_caron, text)
     text = re.sub(r"(?P<left>[cC])\u00b8(?=[A-Za-z])", lambda m: "\u00c7" if m.group("left") == "C" else "\u00e7", text)
     return text
