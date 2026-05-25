@@ -389,6 +389,56 @@ def test_analyze_pair_ignores_dates_addresses_and_toc_as_frontmatter_ocr() -> No
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_doi_metadata_as_frontmatter_ocr() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text(
+            "<html><body>"
+            "<p>To link to this article: https://doi.org/10.1080/17483107.2023.2228827</p>"
+            "<p>DOI: 10.1111/j.1747-4949.2011.00654.x</p>"
+            "<p>*Correspondence: bfoster@bcm.edu https://doi.org/10.1016/j.cub.2019.08.004</p>"
+            "<p>Vision Res . 2015 June ; 111(0 0): 182-196. doi:10.1016/j.visres.2014.10.023.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        polish_path.write_text("<html><body><p>Clean body.</p></body></html>", encoding="utf-8")
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P01" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_keeps_author_affiliation_marker_frontmatter_ocr() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text(
+            "<html><body><p>Yu-Han Wang , Chen Li , Wen-Ching Chen , "
+            "Poyin Huang 1 2 2 2, 3, 4, 5, 6, 7</p></body></html>",
+            encoding="utf-8",
+        )
+        polish_path.write_text("<html><body><p>Clean body.</p></body></html>", encoding="utf-8")
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P01" in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_numeric_vectors_as_citation_ranges() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

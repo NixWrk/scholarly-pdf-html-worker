@@ -1692,6 +1692,26 @@ def _looks_like_copyright_notice(text: str) -> bool:
 def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
     normalized = _normalize_ws(text)
     lowered = normalized.lower()
+    doi_mention_re = r"(?:\bdoi\s*:?\s*(?:https?://(?:dx\.)?doi\.org/)?10\.\S+|https?://(?:dx\.)?doi\.org/10\.\S+)"
+    if re.fullmatch(
+        r"(?:to\s+(?:link|cite)\s+to\s+this\s+article|article\s+link)\s*:?\s*"
+        r"(?:https?://(?:dx\.)?doi\.org/)?10\.\S+",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:doi\s*:?\s*)?(?:https?://(?:dx\.)?doi\.org/)?10\.\S+",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return True
+    if (
+        re.search(doi_mention_re, lowered)
+        and not re.search(r"\b(?:abstract|introduction|methods?|results?|discussion|conclusion)\b", lowered)
+        and len(normalized) <= 180
+    ):
+        return True
     if re.fullmatch(
         r"printed\s+in\s+the\s+united\s+states\s+of\s+america"
         r"(?:\s+\d+){3,}\s*",
