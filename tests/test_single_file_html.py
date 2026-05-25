@@ -3722,6 +3722,53 @@ def test_polish_html_document_handles_reference_number_glued_to_author_initial()
     assert 'href="#page-10-3"' not in polished[: polished.index("References")]
 
 
+def test_polish_html_document_splits_collapsed_dot_bulleted_reference_item() -> None:
+    html = (
+        "<html><body>"
+        "<p>Existing RNAs include guide-dogs [2, 3] and GPS-based aids [7, 8].</p>"
+        "<h4>References</h4>"
+        '<p block-type="ListGroup"><ul>'
+        '<li block-type="ListItem">1. . Galindo C, et al., "Control Architecture," IEEE, 2006. '
+        '. Ulrich I and Borenstein J, "The GuideCane," IEEE, 2001. '
+        '. Kulyukin V, et al., "Robot-Assisted Wayfinding," Autonomous Robots, 2006. '
+        '. Bissit D and Heyes A, "Biofeedback in Rehabilitation," Ergonomics, 1980. '
+        '. Benjamin JM, Ali NA, and Schepis AF, "A Laser Cane for the Blind," 1973. '
+        '. Yuan D and Manduchi R, "A Tool for Range Sensing," CVPR Workshops, 2004. '
+        '. Balachandran W, Cecelja F, and Ptasinski P, "A GPS Based Navigation Aid," 2003. '
+        '. Wilson J, et al., "SWAN," Wearable Comput., 2007.</li>'
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    ref_section = polished[polished.index("References"):]
+
+    assert '<li block-type="ListItem" id="ref-8">' in ref_section
+    assert '<span class="z2m-ref-num">8.</span> Wilson J' in ref_section
+    assert '[<a href="#ref-2" class="z2m-ref-link">2</a>, <a href="#ref-3" class="z2m-ref-link">3</a>]' in body
+    assert '[<a href="#ref-7" class="z2m-ref-link">7</a>, <a href="#ref-8" class="z2m-ref-link">8</a>]' in body
+
+
+def test_polish_html_document_keeps_short_dot_separator_reference_item_unsplit() -> None:
+    html = (
+        "<html><body>"
+        "<p>See [1] for details.</p>"
+        "<h4>References</h4>"
+        "<ul>"
+        '<li>1. Smith J, "One reference with preserved OCR dots" . Available online. '
+        ". Retrieved 2024.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    ref_section = polished[polished.index("References"):]
+
+    assert ref_section.count("<li") == 1
+    assert 'id="ref-2"' not in ref_section
+
+
 def test_polish_html_document_detects_unheaded_reference_list_after_acknowledgments() -> None:
     html = (
         "<html><body>"

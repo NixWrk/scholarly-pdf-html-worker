@@ -6619,6 +6619,69 @@ def _normalize_reference_list_items(html: str) -> str:
     return "".join(out)
 
 
+_COLLAPSED_REFERENCE_SEPARATOR_PATTERN = re.compile(
+    r"\s+\.\s+(?=(?:<[^>]+>\s*)*[A-Z])",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_collapsed_reference_part(body: str) -> bool:
+    text = _visible_text(body).strip()
+    text = re.sub(r"^\.+\s*", "", text)
+    if len(text) < 18:
+        return False
+    if re.match(r"^(?:https?://|www\.|doi\b)", text, re.IGNORECASE):
+        return False
+    if re.match(r"^[A-Z][A-Za-z'\u2019.-]+(?:\s+[A-Z][A-Za-z'\u2019.-]*){0,5}\s*,", text):
+        return True
+    if re.match(r"^[A-Z][A-Za-z'\u2019.-]+(?:\s+[A-Z][A-Za-z'\u2019.-]*){0,4}\s+(?:and|&)\s+", text):
+        return True
+    if re.match(r"^[A-Z][A-Za-z'\u2019.-]+(?:\s+[A-Z][A-Za-z'\u2019.-]*){0,3}\s+et\s+al\.?\b", text):
+        return True
+    return bool(re.match(r"^[A-Z]{2,}[A-Za-z0-9.-]*\s+\d", text))
+
+
+def _split_collapsed_reference_list_items(html: str) -> str:
+    """Split a single bibliography ``<li>`` that contains many dot-bulleted refs.
+
+    Marker sometimes drops all list-item boundaries from a bibliography while
+    preserving each lost bullet as `` . Author...`` inside the first item.  If
+    left collapsed, only ``ref-1`` exists and all later numeric citations remain
+    unlinked.  The splitter is deliberately conservative: it requires an
+    existing visible start number and several author-like boundary candidates.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        if _LI_ID_PATTERN.search(attrs) is not None:
+            return match.group(0)
+        start_number = _reference_visible_number(body)
+        if start_number is None or start_number <= 0:
+            return match.group(0)
+
+        stripped_body = _strip_reference_visible_number(body)
+        stripped_body = re.sub(r"^\s*(?:\.\s*)+", "", stripped_body).strip()
+        if not stripped_body:
+            return match.group(0)
+        raw_parts = _COLLAPSED_REFERENCE_SEPARATOR_PATTERN.split(stripped_body)
+        parts = [re.sub(r"^\s*(?:\.\s*)+", "", part).strip() for part in raw_parts]
+        parts = [part for part in parts if _visible_text(part).strip()]
+        if len(parts) < 4:
+            return match.group(0)
+
+        author_like_count = sum(1 for part in parts if _looks_like_collapsed_reference_part(part))
+        if author_like_count < max(3, int(len(parts) * 0.55)):
+            return match.group(0)
+
+        return " ".join(
+            f"<li{attrs}>{start_number + offset}. {part}</li>"
+            for offset, part in enumerate(parts)
+        )
+
+    return _LI_BLOCK_PATTERN.sub(replace, html)
+
+
 def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
     ref_index = 0
     max_ref_id = 0
@@ -8259,6 +8322,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
 
     references_and_after = _flatten_nested_reference_list_items(references_and_after)
     references_and_after = _normalize_reference_list_items(references_and_after)
+    references_and_after = _split_collapsed_reference_list_items(references_and_after)
     references_with_ids, ref_index = _add_reference_ids_to_list_items(references_and_after)
     references_with_ids, paragraph_ref_index = _add_reference_ids_to_standalone_reference_paragraphs(references_with_ids)
     ref_index = max(ref_index, paragraph_ref_index)
