@@ -416,6 +416,40 @@ def test_analyze_pair_ignores_doi_metadata_as_frontmatter_ocr() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_publication_toc_and_contact_metadata_as_frontmatter_ocr() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text(
+            "<html><body>"
+            "<p>Citation: de Ruyter van Steveninck, J., van Wezel, R., &amp; van Gerven, M. "
+            "(2022). End-to-end optimization of prosthetic vision. Journal of Vision, 22(2):20, "
+            "1-14, https://doi.org/10.1167/jov.22.2.20.</p>"
+            "<p>Please cite this article as: Rowan, D., The detection of virtual objects using echoes by humans, "
+            "Hearing Research (2017), doi: 10.1016/j.heares.2017.01.001</p>"
+            "<p>Received: 2016.02.26 Accepted: 2016.05.15 Published: 2016.05.27</p>"
+            "<p>16.2.1 Gaze Tracking and Image Stabilization</p>"
+            "<p>Chapter 1 Introduction1 1.1 Instrumentation and Modelling2 1.1.1 Application of FIM4 "
+            "1.2 Aims and Objectives6 Chapter 2 Literature Review8 2.1 Bioimpedance8 "
+            "2.1.1 Biological tissue in electric field8 2.1.3 Frequency response of bioimpedance9</p>"
+            "<p>Ujejskiego 75, 85-168 Bydgoszcz, Poland Tel: 0048 52 3655 553; e-mail: psoban@wp.pl</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        polish_path.write_text("<html><body><p>Clean body.</p></body></html>", encoding="utf-8")
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P01" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_keeps_author_affiliation_marker_frontmatter_ocr() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

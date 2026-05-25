@@ -1731,6 +1731,29 @@ def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
         and len(normalized) <= 180
     ):
         return True
+    if (
+        re.search(doi_mention_re, lowered)
+        and (
+            lowered.startswith(("citation:", "please cite this article as:"))
+            or re.search(r"\b\d{4}\s*;\s*\d+\s*(?:\([^)]*\))?\s*:\s*\d+", normalized)
+            or re.search(r"\b(?:journal|hearing\s+research|invest\s+ophthalmol|pak\s+j\s+med\s+sci)\b", lowered)
+        )
+        and len(normalized) <= 520
+    ):
+        return True
+    if re.fullmatch(
+        rf"(?:(?:received|accepted|published)\s*:?\s*\d{{1,4}}(?:[./]\d{{1,2}}){{2}}\s*){{2,4}}",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.fullmatch(
+        r"\d+(?:\.\d+){2,}\s+[A-Z][\s\S]{2,140}",
+        normalized,
+    ):
+        return True
+    if re.search(r"\b(?:clinicaltrials\.gov|trial\s+registration|project\s+no\.)\b", lowered):
+        return True
     if re.fullmatch(
         r"printed\s+in\s+the\s+united\s+states\s+of\s+america"
         r"(?:\s+\d+){3,}\s*",
@@ -1761,6 +1784,15 @@ def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
         and re.search(r"\b(?:room|street|road|laan|avenue|netherlands|usa|uk)\b", lowered)
     ):
         return True
+    if (
+        re.search(r"\b(?:tel\.?|fax|e-?mail|email|correspondence\s+to)\b|@", lowered)
+        and re.search(
+            r"\b(?:department|institute|university|school|college|hospital|center|centre|street|avenue|road|"
+            r"box|poland|india|sweden|usa|uk)\b",
+            lowered,
+        )
+    ):
+        return True
     return False
 
 
@@ -1773,6 +1805,12 @@ def _looks_like_table_of_contents_block(text: str) -> bool:
     roman_page_hits = len(re.findall(r"\b(?:i{1,3}|iv|v|vi{0,3}|ix|x|xi{0,3})\b", lowered))
     chapter_hits = len(re.findall(r"\bchapte?\s*r\s+\d+\s*:", lowered))
     if chapter_hits >= 2 and section_hits >= 4:
+        return True
+    if (
+        section_hits >= 5
+        and len(re.findall(r"\b\d{1,4}\b", normalized)) >= 10
+        and re.search(r"\b(?:abstract|chapter|introduction|overview|literature\s+review|theoretical\s+background)\b", lowered)
+    ):
         return True
     return section_hits >= 4 and roman_page_hits >= 1
 
