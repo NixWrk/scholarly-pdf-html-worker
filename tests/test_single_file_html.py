@@ -3633,6 +3633,8 @@ def test_polish_html_document_strips_bracket_ref_prefix_from_references() -> Non
         "<ul>"
         "<li>[1] Smith et al., Nature 2020.</li>"
         "<li>[2] Jones et al., Science 2021.</li>"
+        '<li><span id="page-4-0"></span>[ <a href="#page-1-10">3]</a> Kruk et al., 2020.</li>'
+        '<li><span id="page-4-1"></span><a href="#page-1-11">[4]</a> Popescu et al., 2014.</li>'
         "</ul>"
         "</body></html>"
     )
@@ -3646,6 +3648,10 @@ def test_polish_html_document_strips_bracket_ref_prefix_from_references() -> Non
     # Check no "1. [1]" double numbering
     assert "1.</span> [1]" not in ref_section
     assert "1.</span> [2]" not in ref_section
+    assert "3.</span> Kruk" in ref_section
+    assert "4.</span> Popescu" in ref_section
+    assert 'href="#page-1-10"' not in ref_section
+    assert 'href="#page-1-11"' not in ref_section
 
 
 def test_polish_html_document_strips_duplicate_dotted_bracket_ref_prefix() -> None:
@@ -5334,6 +5340,11 @@ def test_polish_html_document_unwraps_unresolved_semantic_page_links() -> None:
         "<html><body>"
         '<p>Missing visual is discussed in Fig. <a href="#page-2-0">9A)</a> '
         'and Table <a href="#page-3-0">7)</a>.</p>'
+        '<p>The screen is shown in <a href="#page-2-1">Figure 1a &amp; 1b.</a> '
+        'and in Supplementary <a href="#page-2-2">Figure S2</a>.</p>'
+        '<p>See S1 <a href="#page-4-0">Table</a>, Section <a href="#page-4-1">V-C)</a>, '
+        'and Appendix <a href="#page-4-2">A.3.</a> for details.</p>'
+        '<p>Data reported in the <a href="#page-5-0">Results</a> section are available.</p>'
         "<p><b> Fig. 1 </b> Extracted figure.</p>"
         "<p>Table 1. Extracted table.</p>"
         "</body></html>"
@@ -5343,8 +5354,20 @@ def test_polish_html_document_unwraps_unresolved_semantic_page_links() -> None:
 
     assert "Fig. 9A)" in polished
     assert "Table 7)" in polished
+    assert "Figure 1a &amp; 1b." in polished
+    assert "Supplementary Figure S2" in polished
+    assert "S1 Table" in polished
+    assert "Section V-C)" in polished
+    assert "Appendix A.3." in polished
+    assert "Results section" in polished
     assert 'href="#page-2-0"' not in polished
     assert 'href="#page-3-0"' not in polished
+    assert 'href="#page-2-1"' not in polished
+    assert 'href="#page-2-2"' not in polished
+    assert 'href="#page-4-0"' not in polished
+    assert 'href="#page-4-1"' not in polished
+    assert 'href="#page-4-2"' not in polished
+    assert 'href="#page-5-0"' not in polished
 
 
 def test_table_anchors_and_links_handle_wrapped_labels_and_page_links() -> None:

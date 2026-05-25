@@ -211,6 +211,15 @@ _PAGE_ANCHOR_DOTTED_REF_NUM_STRIP_PATTERN = re.compile(
     r'\.?\s*(?:</(?:b|strong)>\s*)?',
     re.IGNORECASE,
 )
+_PAGE_ANCHOR_BRACKET_REF_NUM_STRIP_PATTERN = re.compile(
+    r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)*'
+    r'(?:'
+    r'\[\s*<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\2[^>]*>\s*\d{1,4}\s*\]?\s*</a>'
+    r'|'
+    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\3[^>]*>\s*\[\s*\d{1,4}\s*\]\s*</a>'
+    r')\s*',
+    re.IGNORECASE,
+)
 _VISIBLE_REF_NUM_PATTERN = re.compile(
     r'^\s*(?:<[^>]+>\s*)*'
     r'(?:'
@@ -8341,6 +8350,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             # Strip leading "[N]" bracket number (IEEE/Vancouver style) to avoid
             # "1. [1] Author..." double-numbering.
             body = _LEADING_PAGE_SPAN_BRACKET_REF_NUM_STRIP_PATTERN.sub("", body)
+            body = _PAGE_ANCHOR_BRACKET_REF_NUM_STRIP_PATTERN.sub("", body)
             body = _BRACKET_REF_NUM_STRIP_PATTERN.sub("", body)
             body = _DOTTED_BRACKET_REF_NUM_STRIP_PATTERN.sub(r"\1", body)
             body = _PAGE_ANCHOR_DOTTED_REF_NUM_STRIP_PATTERN.sub("", body)
@@ -9715,6 +9725,7 @@ def _unwrap_unresolved_semantic_page_links(
             if language_policy is not None
             else body_text
         )
+        semantic_body_text = html_lib.unescape(semantic_body_text)
         stripped_semantic = semantic_body_text.strip()
         left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
         right_text = _visible_text(html[m.end():m.end() + 120])
@@ -9904,6 +9915,26 @@ def _unwrap_unresolved_semantic_page_links(
             stripped_semantic,
             re.IGNORECASE,
         ) and re.match(r"^\s*(?:ure\s+)?(?:S?\d|[A-Z]\b)", right_text, re.IGNORECASE):
+            return body
+
+        if re.fullmatch(r"(?i:fig(?:ure)?|fig\.?|table|tables?)", stripped_semantic) and re.match(
+            r"^\s*of\b",
+            right_text,
+            re.IGNORECASE,
+        ):
+            return m.group(0)
+
+        semantic_context = f"{left_text[-120:]} {stripped_semantic} {right_text[:120]}"
+        if re.search(
+            r"\b(?:Fig(?:ure)?s?|Figures?|Tables?|Supplementary\s+(?:Fig(?:ure)?|Table|Appendix)|"
+            r"Multimedia\s+Appendix|Section|Appendix|Textbox|Box|Eq(?:n|uation)?\.?|Equation|Algorithm|Results)\b",
+            semantic_context,
+            re.IGNORECASE,
+        ) and (
+            re.search(r"\d|[A-Z]\.?", stripped_semantic) is not None
+            or re.fullmatch(r"(?i:results|training|textbox|table|figure|fig\.?|appendix)", stripped_semantic)
+            is not None
+        ):
             return body
 
         return m.group(0)
