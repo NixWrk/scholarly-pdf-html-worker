@@ -10,13 +10,16 @@ workflow is:
 3. Run the full EN polish audit.
 4. Group every article-level manifestation into global pattern observations and
    append them to the cumulative pattern history.
-5. If one `P*` defect id mixes different root causes or artifact mechanisms,
+5. Record every newly spotted manual manifestation in the append-only manual
+   observation ledger before promoting it into an audit pattern, repair, or
+   false-positive rule.
+6. If one `P*` defect id mixes different root causes or artifact mechanisms,
    split or refine the classification before, or together with, the repair.
-6. Record all quality metrics and compare them with a previous run.
-7. Evaluate gates for lower-is-better metrics.
-8. Build a compact LLM analysis packet and prompt.
-9. Let an engineer or coding agent make a small patch plus tests.
-10. Repeat the full EN corpus loop before committing.
+7. Record all quality metrics and compare them with a previous run.
+8. Evaluate gates for lower-is-better metrics.
+9. Build a compact LLM analysis packet and prompt.
+10. Let an engineer or coding agent make a small patch plus tests.
+11. Repeat the full EN corpus loop before committing.
 
 ## Branch Workflow
 
@@ -54,6 +57,16 @@ file for the same loop. Pattern history is not optional: local manifestations
 are reviewed as global pattern evidence first, then recurring groups become
 problem candidates across one or more iterations.
 
+Manual review has its own append-only ledger. If a reviewer notices a text,
+link, table, citation, or artifact manifestation that is not already represented
+by an audit defect, record the raw observation first and keep its article,
+stage path, snippet, suspected pattern, status, and test coverage state. The
+default ledger is `manual_observation_ledger.jsonl` next to the output run
+directory; every `observe` run writes `manual_observation_summary.json` by
+grouping that cumulative ledger. A single observation remains raw evidence
+unless it is severe; repeated groups across articles or iterations become
+problem candidates.
+
 ```powershell
 python scripts\llm_quality_loop.py observe `
   --source-run-dir .tmp_local2\source_exports_full_pdf_profile_rerun_d1100b3_2026-05-20 `
@@ -62,6 +75,25 @@ python scripts\llm_quality_loop.py observe `
   --run-id experiment_001 `
   --no-append-history
 ```
+
+Record a newly spotted manifestation while reviewing `manual_review_queue.json`:
+
+```powershell
+python scripts\llm_quality_loop.py record-observation `
+  --ledger .tmp_local2\llm_runs\manual_observation_ledger.jsonl `
+  --run-dir .tmp_local2\llm_runs\experiment_001 `
+  --article article_a `
+  --stage-path .tmp_local2\llm_runs\experiment_001\audit_tree\article_a\02.en.polish.html `
+  --snippet "Objec tive split remains in body text" `
+  --suspected-pattern "inline OCR word split in ordinary text"
+```
+
+When that observation is confirmed and covered, append a status update with the
+same `--observation-id` or update the existing review note in the queue. The
+summary counts the latest record for each observation id, while the JSONL file
+keeps the full trail. The important invariant is that the loop can reconstruct
+what was seen, where it was seen, and whether audit/repair/guard tests now cover
+it.
 
 For language-specific repair experiments, keep the stage shape stable. Use
 `--polish-language auto` for normal EN corpus work, or pass a policy explicitly
@@ -187,6 +219,12 @@ Each fix should be small:
 - all article-level manifestations grouped into `pattern_observations.json` and
   appended to the cumulative pattern history before deciding what problem to
   solve;
+- newly spotted manual manifestations appended to
+  `manual_observation_ledger.jsonl`, then grouped in
+  `manual_observation_summary.json`, before deciding whether they are recurring
+  problems;
+- confirmed manual observations must get audit, repair, false-positive, or
+  guard test coverage and an updated status/test status in the ledger trail;
 - `P*` classification refined whenever a current pattern summary shows that a
   single defect id is hiding distinct mechanisms, such as plain text OCR
   spacing, inline-tag splits, and table-footnote word splits;

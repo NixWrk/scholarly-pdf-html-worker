@@ -6,13 +6,16 @@ from scripts.llm_quality_loop import (
     assess_polish_html,
     build_analysis_pack,
     evaluate_quality_gate,
+    manual_observation_signature,
     normalize_converted_audit_article_ids,
     prepare_converted_raw_cache,
     parse_args,
     prepare_converted_run,
+    record_manual_observation,
     repolish_cached_run,
     render_llm_prompt,
     write_manual_review_queue,
+    write_manual_observation_summary,
     write_pattern_observations,
 )
 
@@ -245,7 +248,165 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     assert "all cached raw files are scanned" in prompt
     assert "every accepted EN article is repolished" in prompt
     assert "Pattern observations must be accumulated globally across loop iterations" in prompt
+    assert "manual observation ledger" in prompt
     assert "refine the P classification" in prompt
+
+
+def test_manual_observation_summary_accumulates_raw_manifestations(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "manual_observation_ledger.jsonl"
+    first = record_manual_observation(
+        ledger_path,
+        {
+            "created_at": "2026-05-25T00:00:00+00:00",
+            "run_id": "run1",
+            "article": "article_a",
+            "stage_path": "article_a/02.en.polish.html",
+            "snippet": "The article shows Objec tive split in a heading.",
+            "suspected_pattern": "inline OCR word split in ordinary text",
+        },
+    )
+    second = record_manual_observation(
+        ledger_path,
+        {
+            "created_at": "2026-05-25T01:00:00+00:00",
+            "run_id": "run2",
+            "article": "article_b",
+            "stage_path": "article_b/02.en.polish.html",
+            "snippet": "The body contains meth ods after an inline span.",
+            "suspected_pattern": "inline OCR word split in ordinary text",
+        },
+    )
+    run_dir = tmp_path / "run2"
+    _write_json(run_dir / "quality_history_entry.json", {"run_id": "run2"})
+
+    summary = write_manual_observation_summary(run_dir, ledger_path=ledger_path)
+
+    assert first["normalized_signature"] == second["normalized_signature"]
+    assert ledger_path.read_text(encoding="utf-8").count("\n") == 2
+    assert summary["observation_count"] == 2
+    assert summary["group_count"] == 1
+    candidate = summary["problem_candidates"][0]
+    assert candidate["problem_state"] == "problem_candidate"
+    assert candidate["article_count"] == 2
+    assert candidate["run_count"] == 2
+    assert candidate["statuses"] == {"untriaged": 2}
+    assert [sample["article"] for sample in candidate["sample_observations"]] == ["article_a", "article_b"]
+
+
+def test_manual_observation_summary_uses_latest_status_for_same_observation(tmp_path: Path) -> None:
+    ledger_path = tmp_path / "manual_observation_ledger.jsonl"
+    base_observation = {
+        "observation_id": "manual-known-1",
+        "run_id": "run1",
+        "article": "article_a",
+        "stage_path": "article_a/02.en.polish.html",
+        "snippet": "Objec tive split remains.",
+        "suspected_pattern": "inline OCR word split in ordinary text",
+    }
+    record_manual_observation(
+        ledger_path,
+        {
+            **base_observation,
+            "created_at": "2026-05-25T00:00:00+00:00",
+            "status": "untriaged",
+            "test_status": "none",
+        },
+    )
+    record_manual_observation(
+        ledger_path,
+        {
+            **base_observation,
+            "created_at": "2026-05-25T01:00:00+00:00",
+            "status": "covered_by_test",
+            "test_status": "repair",
+        },
+    )
+
+    summary = write_manual_observation_summary(tmp_path / "run", ledger_path=ledger_path)
+
+    assert summary["ledger_entry_count"] == 2
+    assert summary["observation_count"] == 1
+    group = summary["groups"][0]
+    assert group["statuses"] == {"covered_by_test": 1}
+    assert group["test_statuses"] == {"repair": 1}
+    assert summary["requires_triage"] == []
+
+
+def test_manual_observation_signature_falls_back_to_normalized_text() -> None:
+    signature = manual_observation_signature(
+        {
+            "article": "article_a",
+            "snippet": "<span>Figure 12</span> has residue 34",
+        }
+    )
+
+    assert signature == "text:figure_has_residue"
+
+
+def test_analysis_pack_includes_manual_observation_summary(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_json(run_dir / "audit_full_checks.json", {"corpus_summary": {"defect_counts": {}}, "articles": []})
+    _write_json(run_dir / "assessment.json", {"article_count": 0, "totals": {}, "articles": []})
+    _write_json(run_dir / "quality_history_entry.json", {"run_id": "run_a", "totals": {}, "articles": {}})
+    _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
+    _write_json(run_dir / "manifest.json", {"article_count": 0})
+    _write_json(
+        run_dir / "manual_observation_summary.json",
+        {
+            "ledger_path": "manual.jsonl",
+            "observation_count": 1,
+            "group_count": 1,
+            "problem_candidates": [
+                {
+                    "normalized_signature": "pattern:inline_ocr_word_split",
+                    "problem_state": "problem_candidate",
+                    "run_count": 1,
+                    "article_count": 2,
+                    "occurrence_count": 2,
+                    "statuses": {"untriaged": 2},
+                    "sample_observations": [{"article": "article_a", "snippet": "Objec tive"}],
+                }
+            ],
+            "requires_triage": [
+                {
+                    "normalized_signature": "pattern:inline_ocr_word_split",
+                    "article_count": 2,
+                    "sample_observations": [{"article": "article_a", "snippet": "Objec tive"}],
+                }
+            ],
+            "groups": [],
+        },
+    )
+
+    pack = build_analysis_pack(run_dir)
+    prompt = render_llm_prompt(pack)
+
+    assert pack["manual_observations"]["observation_count"] == 1
+    assert pack["manual_observations"]["problem_candidates"][0]["normalized_signature"] == (
+        "pattern:inline_ocr_word_split"
+    )
+    assert "Manual Observation Ledger" in prompt
+    assert "pattern:inline_ocr_word_split" in prompt
+
+
+def test_record_observation_command_is_parsed() -> None:
+    args = parse_args(
+        [
+            "record-observation",
+            "--ledger",
+            "manual.jsonl",
+            "--article",
+            "article_a",
+            "--snippet",
+            "bad split",
+        ]
+    )
+
+    assert args.command == "record-observation"
+    assert args.ledger == Path("manual.jsonl")
+    assert args.observation_id is None
+    assert args.status == "untriaged"
+    assert args.test_status == "none"
 
 
 def test_assessment_warning_count_ignores_css_selector_without_body_warning() -> None:

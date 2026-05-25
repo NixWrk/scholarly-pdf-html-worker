@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 from html import unescape
 import json
 import os
@@ -44,6 +45,7 @@ POLISH_STAGE = "02.en.polish.html"
 DEFAULT_GATE_CONFIG = ROOT / "configs" / "llm_quality_gates.json"
 DEFAULT_DEFECT_PATTERNS = ROOT / "configs" / "llm_defect_patterns.json"
 DEFAULT_PATTERN_HISTORY_NAME = "pattern_observation_history.jsonl"
+DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME = "manual_observation_ledger.jsonl"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -1123,6 +1125,219 @@ def _aggregate_pattern_history(records: Iterable[dict[str, Any]]) -> list[dict[s
     )
 
 
+def _manual_observation_ledger_path(run_dir: Path, ledger_path: Path | None = None) -> Path:
+    return (ledger_path or (run_dir.parent / DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME)).resolve(strict=False)
+
+
+def _normalize_observation_text(value: Any, *, max_len: int = 180) -> str:
+    text = TAG_RE.sub(" ", str(value or ""))
+    text = unescape(text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    text = re.sub(r"\d+", "#", text)
+    return text[:max_len]
+
+
+def _compact_observation_text(value: Any, *, max_len: int = 500) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3].rstrip() + "..."
+
+
+def manual_observation_signature(observation: dict[str, Any]) -> str:
+    suspected_pattern = _normalize_observation_text(observation.get("suspected_pattern"), max_len=96)
+    if suspected_pattern:
+        return f"pattern:{_slug(suspected_pattern, max_len=96)}"
+    for key in ("visible_text", "snippet", "html_fragment", "notes"):
+        normalized = _normalize_observation_text(observation.get(key))
+        if normalized:
+            return f"text:{_slug(normalized, max_len=120)}"
+    return "text:unknown"
+
+
+def record_manual_observation(ledger_path: Path, observation: dict[str, Any]) -> dict[str, Any]:
+    """Append one manually spotted manifestation to the cumulative ledger."""
+
+    article = str(observation.get("article") or "").strip()
+    snippet = str(observation.get("snippet") or "").strip()
+    if not article:
+        raise ValueError("Manual observation requires an article.")
+    if not snippet:
+        raise ValueError("Manual observation requires a snippet.")
+
+    created_at = str(observation.get("created_at") or _now())
+    stage_path = observation.get("stage_path")
+    defect_id = observation.get("defect_id_if_any") or observation.get("defect_id")
+    record = {
+        "created_at": created_at,
+        "run_id": str(observation.get("run_id") or "").strip(),
+        "article": article,
+        "stage_path": str(stage_path) if stage_path else "",
+        "defect_id_if_any": str(defect_id or "").strip(),
+        "snippet": snippet,
+        "html_fragment": str(observation.get("html_fragment") or "").strip(),
+        "visible_text": str(observation.get("visible_text") or "").strip(),
+        "suspected_pattern": str(observation.get("suspected_pattern") or "").strip(),
+        "status": str(observation.get("status") or "untriaged").strip() or "untriaged",
+        "test_status": str(observation.get("test_status") or "none").strip() or "none",
+        "notes": str(observation.get("notes") or "").strip(),
+        "source": str(observation.get("source") or "manual_review").strip() or "manual_review",
+    }
+    record["normalized_signature"] = str(
+        observation.get("normalized_signature") or manual_observation_signature(record)
+    )
+    digest_source = json.dumps(
+        {
+            "created_at": record["created_at"],
+            "article": record["article"],
+            "snippet": record["snippet"],
+            "stage_path": record["stage_path"],
+            "suspected_pattern": record["suspected_pattern"],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    record["observation_id"] = str(
+        observation.get("observation_id")
+        or f"manual-{_slug(created_at, max_len=20)}-{hashlib.sha1(digest_source.encode('utf-8')).hexdigest()[:10]}"
+    )
+    _append_jsonl(ledger_path.resolve(strict=False), record)
+    return record
+
+
+def write_manual_observation_summary(
+    run_dir: Path,
+    *,
+    ledger_path: Path | None = None,
+) -> dict[str, Any]:
+    """Group raw manual observations before promoting them into problems."""
+
+    run_dir = run_dir.resolve(strict=False)
+    ledger_path = _manual_observation_ledger_path(run_dir, ledger_path)
+    raw_records = _read_jsonl(ledger_path)
+    records_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw_record in enumerate(raw_records):
+        record = dict(raw_record)
+        observation_id = str(record.get("observation_id") or f"legacy-{index}")
+        record["observation_id"] = observation_id
+        created_at = str(record.get("created_at") or "")
+        previous = records_by_id.get(observation_id)
+        if previous is None:
+            record["_first_seen_at"] = created_at
+            records_by_id[observation_id] = record
+            continue
+        first_seen = str(previous.get("_first_seen_at") or previous.get("created_at") or "")
+        previous_created = str(previous.get("created_at") or "")
+        if created_at >= previous_created:
+            record["_first_seen_at"] = first_seen
+            records_by_id[observation_id] = record
+    records = sorted(
+        records_by_id.values(),
+        key=lambda record: (str(record.get("_first_seen_at") or ""), str(record.get("observation_id") or "")),
+    )
+    grouped: dict[str, dict[str, Any]] = {}
+    for record in records:
+        signature = str(record.get("normalized_signature") or manual_observation_signature(record))
+        first_seen_at = str(record.get("_first_seen_at") or record.get("created_at") or "")
+        group = grouped.setdefault(
+            signature,
+            {
+                "normalized_signature": signature,
+                "occurrence_count": 0,
+                "article_count": 0,
+                "run_count": 0,
+                "articles": [],
+                "run_ids": [],
+                "defect_ids": {},
+                "statuses": {},
+                "test_statuses": {},
+                "suspected_patterns": {},
+                "sources": {},
+                "sample_observations": [],
+                "first_seen_at": first_seen_at,
+                "last_seen_at": str(record.get("created_at") or ""),
+                "_articles": set(),
+                "_run_ids": set(),
+            },
+        )
+        group["occurrence_count"] += 1
+        article = str(record.get("article") or "")
+        run_id = str(record.get("run_id") or "")
+        if article:
+            group["_articles"].add(article)
+        if run_id:
+            group["_run_ids"].add(run_id)
+        _add_count(group["defect_ids"], str(record.get("defect_id_if_any") or "none"))
+        _add_count(group["statuses"], str(record.get("status") or "untriaged"))
+        _add_count(group["test_statuses"], str(record.get("test_status") or "none"))
+        _add_count(group["suspected_patterns"], str(record.get("suspected_pattern") or "unspecified"))
+        _add_count(group["sources"], str(record.get("source") or "manual_review"))
+
+        created_at = str(record.get("created_at") or "")
+        if first_seen_at:
+            if not group.get("first_seen_at") or first_seen_at < group["first_seen_at"]:
+                group["first_seen_at"] = first_seen_at
+        if created_at:
+            if not group.get("last_seen_at") or created_at > group["last_seen_at"]:
+                group["last_seen_at"] = created_at
+        if len(group["sample_observations"]) < 8:
+            group["sample_observations"].append(
+                {
+                    "observation_id": record.get("observation_id"),
+                    "article": article,
+                    "run_id": run_id,
+                    "stage_path": record.get("stage_path"),
+                    "defect_id_if_any": record.get("defect_id_if_any"),
+                    "snippet": _compact_observation_text(record.get("snippet")),
+                    "status": record.get("status") or "untriaged",
+                    "test_status": record.get("test_status") or "none",
+                    "notes": _compact_observation_text(record.get("notes"), max_len=240),
+                }
+            )
+
+    groups: list[dict[str, Any]] = []
+    for group in grouped.values():
+        articles = sorted(group.pop("_articles"))
+        run_ids = sorted(group.pop("_run_ids"))
+        group["articles"] = articles
+        group["run_ids"] = run_ids
+        group["article_count"] = len(articles)
+        group["run_count"] = len(run_ids)
+        for key in ("defect_ids", "statuses", "test_statuses", "suspected_patterns", "sources"):
+            group[key] = dict(sorted(group[key].items()))
+        group["problem_state"] = _problem_state(
+            int(group.get("run_count") or 0),
+            int(group.get("article_count") or 0),
+            int(group.get("occurrence_count") or 0),
+        )
+        groups.append(group)
+
+    groups.sort(
+        key=lambda item: (
+            item.get("problem_state") != "problem_candidate",
+            -int(item.get("article_count") or 0),
+            -int(item.get("occurrence_count") or 0),
+            str(item.get("normalized_signature") or ""),
+        )
+    )
+    problem_candidates = [group for group in groups if group.get("problem_state") == "problem_candidate"]
+    requires_triage = [group for group in groups if int(dict(group.get("statuses") or {}).get("untriaged", 0) or 0)]
+    summary = {
+        "generated_at": _now(),
+        "run_id": _load_json(run_dir / "quality_history_entry.json", default={}).get("run_id") or run_dir.name,
+        "run_dir": str(run_dir),
+        "ledger_path": str(ledger_path),
+        "ledger_entry_count": len(raw_records),
+        "observation_count": len(records),
+        "group_count": len(groups),
+        "groups": groups,
+        "problem_candidates": problem_candidates,
+        "requires_triage": requires_triage,
+    }
+    _write_json(run_dir / "manual_observation_summary.json", summary)
+    return summary
+
+
 def _existing_queue_items(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
@@ -1379,6 +1594,7 @@ def build_analysis_pack(
     comparison = _load_json(run_dir / "quality_compare.json", default={"status": "no_previous_entry"})
     manifest = _load_json(run_dir / "manifest.json", default={})
     pattern_observations = _load_json(run_dir / "pattern_observations.json", default={})
+    manual_observations = _load_json(run_dir / "manual_observation_summary.json", default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
     assessment_by_article = {
@@ -1505,6 +1721,15 @@ def build_analysis_pack(
             "current_patterns": (pattern_observations.get("patterns") or [])[:12],
             "cumulative_patterns": (pattern_observations.get("cumulative_patterns") or [])[:12],
         },
+        "manual_observations": {
+            "ledger_path": manual_observations.get("ledger_path"),
+            "ledger_entry_count": manual_observations.get("ledger_entry_count", 0),
+            "observation_count": manual_observations.get("observation_count", 0),
+            "group_count": manual_observations.get("group_count", 0),
+            "problem_candidates": (manual_observations.get("problem_candidates") or [])[:12],
+            "requires_triage": (manual_observations.get("requires_triage") or [])[:12],
+            "groups": (manual_observations.get("groups") or [])[:12],
+        },
         "articles": articles,
     }
 
@@ -1521,6 +1746,9 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Also add at least one guard/negative test when the repair could touch links, tags, math, code, language policy, or nearby article classes.",
         "Pattern observations must be accumulated globally across loop iterations before local manifestations are promoted into shared problem statements.",
         "Review the all-article current pattern summary and the cumulative pattern history before proposing a fix.",
+        "Any newly noticed manual manifestation that is not already captured by the audit must be recorded in the manual observation ledger before analysis or repair.",
+        "Manual observations stay raw until their cumulative groups justify a shared problem statement, except for clearly severe regressions.",
+        "For every confirmed manual observation, add or update audit/repair/false-positive test coverage and mark the observation status/test_status.",
         "When one P-code groups different root causes or artifact mechanisms, refine the P classification before or alongside the repair.",
         "The loop is incomplete until the full configured project test suite and a full cached raw EN repolish comparison have both passed.",
         "The full cached raw EN repolish comparison means all cached raw files are scanned and every accepted EN article is repolished.",
@@ -1551,6 +1779,10 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- removed_article_count: `{pack.get('removed_article_count')}`",
         f"- pattern_history_path: `{(pack.get('pattern_observations') or {}).get('history_path')}`",
         f"- pattern_articles_reviewed: `{(pack.get('pattern_observations') or {}).get('article_count_reviewed')}`",
+        f"- manual_observation_ledger_path: `{(pack.get('manual_observations') or {}).get('ledger_path')}`",
+        f"- manual_observation_ledger_entries: `{(pack.get('manual_observations') or {}).get('ledger_entry_count')}`",
+        f"- manual_observation_count: `{(pack.get('manual_observations') or {}).get('observation_count')}`",
+        f"- manual_observation_group_count: `{(pack.get('manual_observations') or {}).get('group_count')}`",
         "",
         "## Accumulated Pattern Observations",
         "",
@@ -1575,6 +1807,35 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
             lines.append(
                 f"- {pattern.get('pattern_key')}: articles={pattern.get('article_count')} | "
                 f"occurrences={pattern.get('occurrence_count')} | defects={json.dumps(pattern.get('defect_ids', {}), ensure_ascii=False, sort_keys=True)}"
+            )
+    manual_observations = pack.get("manual_observations") or {}
+    lines.extend(
+        [
+            "",
+            "## Manual Observation Ledger",
+            "",
+            "Use this append-only ledger for newly spotted manifestations before promoting them into audit patterns or repairs.",
+        ]
+    )
+    manual_problem_candidates = manual_observations.get("problem_candidates") or []
+    if manual_problem_candidates:
+        lines.append("")
+        lines.append("### Manual Problem Candidates")
+        for group in manual_problem_candidates[:8]:
+            lines.append(
+                f"- {group.get('normalized_signature')}: state={group.get('problem_state')} | "
+                f"runs={group.get('run_count')} | articles={group.get('article_count')} | "
+                f"occurrences={group.get('occurrence_count')} | statuses={json.dumps(group.get('statuses', {}), ensure_ascii=False, sort_keys=True)}"
+            )
+    requires_triage = manual_observations.get("requires_triage") or []
+    if requires_triage:
+        lines.append("")
+        lines.append("### Manual Observations Requiring Triage")
+        for group in requires_triage[:8]:
+            sample = (group.get("sample_observations") or [{}])[0]
+            lines.append(
+                f"- {group.get('normalized_signature')}: articles={group.get('article_count')} | "
+                f"sample_article={sample.get('article')} | snippet={sample.get('snippet')}"
             )
     lines.extend(["", "## Articles"])
     for article in pack.get("articles", []):
@@ -1616,9 +1877,11 @@ def write_analysis_pack(
     gate_config_path: Path = DEFAULT_GATE_CONFIG,
     defect_patterns_path: Path = DEFAULT_DEFECT_PATTERNS,
     ignored_defect_ids: set[str] | None = None,
+    manual_observation_ledger: Path | None = None,
 ) -> dict[str, Any]:
     gate_config = load_gate_config(gate_config_path)
     defect_patterns = _load_json(defect_patterns_path, default={})
+    write_manual_observation_summary(run_dir, ledger_path=manual_observation_ledger)
     pack = build_analysis_pack(
         run_dir,
         max_articles=max_articles,
@@ -1784,6 +2047,10 @@ def observe(args: argparse.Namespace) -> int:
         defect_patterns_path=args.defect_patterns,
         history_path=args.pattern_history,
     )
+    manual_observations = write_manual_observation_summary(
+        run_dir,
+        ledger_path=args.manual_observation_ledger,
+    )
     gate_report = _write_gate_report(run_dir, args.gate_config)
     pack = write_analysis_pack(
         run_dir,
@@ -1791,12 +2058,15 @@ def observe(args: argparse.Namespace) -> int:
         gate_config_path=args.gate_config,
         defect_patterns_path=args.defect_patterns,
         ignored_defect_ids=set(args.ignore_defect_id or []),
+        manual_observation_ledger=args.manual_observation_ledger,
     )
     print(
         "LLM quality loop: "
         f"gate={gate_report['status']} review_queue={len(review_queue)} "
         f"patterns={pattern_observations['pattern_count']} "
         f"problem_candidates={len(pattern_observations['problem_candidates'])} "
+        f"manual_observations={manual_observations['observation_count']} "
+        f"manual_problem_candidates={len(manual_observations['problem_candidates'])} "
         f"articles_in_pack={len(pack['articles'])} run_dir={run_dir}"
     )
     return 1 if gate_report["status"] == "fail" and args.fail_on_gate else 0
@@ -1874,6 +2144,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         type=Path,
         help=f"Append-only JSONL history for accumulated pattern observations. Defaults to out-dir parent/{DEFAULT_PATTERN_HISTORY_NAME}.",
     )
+    observe_parser.add_argument(
+        "--manual-observation-ledger",
+        type=Path,
+        help=(
+            "Append-only JSONL ledger for manually spotted manifestations. "
+            f"Defaults to out-dir parent/{DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME}."
+        ),
+    )
     observe_parser.add_argument("--ignore-defect-id", action="append")
     observe_parser.add_argument("--max-articles", type=int, default=12)
     test_group = observe_parser.add_mutually_exclusive_group()
@@ -1908,8 +2186,45 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     pack_parser.add_argument("--out-prompt", type=Path)
     pack_parser.add_argument("--gate-config", type=Path, default=DEFAULT_GATE_CONFIG)
     pack_parser.add_argument("--defect-patterns", type=Path, default=DEFAULT_DEFECT_PATTERNS)
+    pack_parser.add_argument("--manual-observation-ledger", type=Path)
     pack_parser.add_argument("--ignore-defect-id", action="append")
     pack_parser.add_argument("--max-articles", type=int, default=12)
+
+    record_parser = subparsers.add_parser(
+        "record-observation",
+        help="Append one manually spotted manifestation to the manual observation ledger.",
+    )
+    record_parser.add_argument("--ledger", type=Path, required=True)
+    record_parser.add_argument("--run-dir", type=Path)
+    record_parser.add_argument("--run-id")
+    record_parser.add_argument("--observation-id")
+    record_parser.add_argument("--article", required=True)
+    record_parser.add_argument("--stage-path", type=Path)
+    record_parser.add_argument("--defect-id")
+    record_parser.add_argument("--snippet", required=True)
+    record_parser.add_argument("--html-fragment")
+    record_parser.add_argument("--visible-text")
+    record_parser.add_argument("--suspected-pattern")
+    record_parser.add_argument(
+        "--status",
+        choices=(
+            "untriaged",
+            "confirmed",
+            "false_positive",
+            "promoted_to_audit",
+            "promoted_to_repair",
+            "covered_by_test",
+            "ignored",
+        ),
+        default="untriaged",
+    )
+    record_parser.add_argument(
+        "--test-status",
+        choices=("none", "audit", "repair", "false_positive", "guard"),
+        default="none",
+    )
+    record_parser.add_argument("--notes", default="")
+    record_parser.add_argument("--source", default="manual_review")
 
     llm_parser = subparsers.add_parser("run-llm", help="Send a generated prompt to an explicit external LLM command.")
     llm_parser.add_argument("--prompt", type=Path, required=True)
@@ -1936,8 +2251,38 @@ def main(argv: Iterable[str] | None = None) -> int:
             gate_config_path=args.gate_config,
             defect_patterns_path=args.defect_patterns,
             ignored_defect_ids=set(args.ignore_defect_id or []),
+            manual_observation_ledger=args.manual_observation_ledger,
         )
         print(f"LLM analysis pack: articles={len(pack['articles'])} run_dir={args.run_dir}")
+        return 0
+    if args.command == "record-observation":
+        run_id = args.run_id
+        if not run_id and args.run_dir:
+            entry = _load_json(args.run_dir / "quality_history_entry.json", default={})
+            run_id = str(entry.get("run_id") or args.run_dir.name)
+        record = record_manual_observation(
+            args.ledger,
+            {
+                "run_id": run_id or "",
+                "observation_id": args.observation_id,
+                "article": args.article,
+                "stage_path": args.stage_path,
+                "defect_id": args.defect_id,
+                "snippet": args.snippet,
+                "html_fragment": args.html_fragment,
+                "visible_text": args.visible_text,
+                "suspected_pattern": args.suspected_pattern,
+                "status": args.status,
+                "test_status": args.test_status,
+                "notes": args.notes,
+                "source": args.source,
+            },
+        )
+        message = f"Manual observation recorded: {record['observation_id']} ledger={args.ledger}"
+        if args.run_dir:
+            summary = write_manual_observation_summary(args.run_dir, ledger_path=args.ledger)
+            message += f" groups={summary['group_count']} problem_candidates={len(summary['problem_candidates'])}"
+        print(message)
         return 0
     if args.command == "run-llm":
         command = list(args.llm_command)
