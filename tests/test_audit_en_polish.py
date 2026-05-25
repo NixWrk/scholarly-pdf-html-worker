@@ -935,6 +935,74 @@ def test_analyze_pair_reports_round25_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_counts_nested_bibliography_refs_before_reporting_id_gap() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<p block-type="Text" id="ref-1">1. First reference.</p>',
+                    '<p block-type="ListGroup"><ul>',
+                    '<li block-type="ListItem" id="ref-2"><span class="z2m-ref-num">2.</span> Second reference.</li>',
+                    '<li block-type="ListItem" id="ref-3"><span class="z2m-ref-num">33.</span> Third reference.</li>',
+                    "</ul></p>",
+                    '<p block-type="Text" id="ref-4">4. Fourth reference.</p>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P26" not in defect_ids
+        assert "P21" not in defect_ids
+        assert "P22" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_create_reference_gap_from_nested_refs_alone() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<p block-type="Text" id="ref-1">1. First reference.</p>',
+                    '<p block-type="ListGroup"><ul>',
+                    '<li block-type="ListItem" id="ref-3"><span class="z2m-ref-num">3.</span> Third reference.</li>',
+                    "</ul></p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P26" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_joined_word_patterns_inside_url_slugs() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

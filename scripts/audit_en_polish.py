@@ -40,6 +40,7 @@ ATTR_RE = re.compile(
 REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
 FIG_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#fig-([^'\"]+)['\"][^>]*>", re.IGNORECASE)
 TABLE_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#table-([^'\"]+)['\"][^>]*>", re.IGNORECASE)
+NESTED_REF_LIST_ITEM_RE = re.compile(r"<li\b[^>]*\bid\s*=\s*['\"]ref-\d+['\"]", re.IGNORECASE)
 PAGE_LINK_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"]#page-(?P<target>[^'\"]+)['\"][^>]*>"
     r"(?P<body>.*?)</a>",
@@ -950,6 +951,24 @@ def _parse_overlapping_blocks(html: str) -> list[Block]:
                 line=_line_at(html, match.start()),
             )
         )
+    return blocks
+
+
+def _reference_identity_blocks(html: str) -> list[Block]:
+    blocks: list[Block] = []
+    seen_raw: set[str] = set()
+    for block in _parse_blocks(html):
+        if block.tag in {"p", "div"} and not REF_ID_RE.match(block.id) and NESTED_REF_LIST_ITEM_RE.search(block.raw):
+            continue
+        blocks.append(block)
+        seen_raw.add(block.raw)
+
+    for block in _parse_overlapping_blocks(html):
+        if block.tag != "li" or not REF_ID_RE.match(block.id) or block.raw in seen_raw:
+            continue
+        block.attrs["data-z2m-audit-nested-ref-item"] = "1"
+        blocks.append(block)
+        seen_raw.add(block.raw)
     return blocks
 
 
@@ -1957,6 +1976,7 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
     references_started = False
     seen_visible: dict[int, Block] = {}
     seen_ids: dict[int, Block] = {}
+    nested_seen_ids: dict[int, Block] = {}
     saw_mismatch = False
     saw_duplicate = False
     saw_gap = False
@@ -1977,8 +1997,16 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
         visible_number = int(visible_match.group(1)) if visible_match is not None else None
         id_match = REF_ID_RE.match(block.id)
         id_number = int(id_match.group(1)) if id_match is not None else None
+        is_nested_audit_ref = block.attrs.get("data-z2m-audit-nested-ref-item") == "1"
         if id_number is not None:
-            seen_ids[id_number] = block
+            if is_nested_audit_ref:
+                nested_seen_ids[id_number] = block
+            else:
+                seen_ids[id_number] = block
+        if is_nested_audit_ref:
+            if visible_number is not None and visible_number not in seen_visible:
+                seen_visible[visible_number] = block
+            continue
 
         if not saw_duplicate_prefix and REF_DUP_BRACKET_PREFIX_RE.search(block.raw):
             defects.append(
@@ -2042,6 +2070,9 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
         for left, right in zip(sorted_ids, sorted_ids[1:]):
             if right - left > 1:
                 missing = list(range(left + 1, right))
+                missing = [ref_id for ref_id in missing if ref_id not in nested_seen_ids]
+                if not missing:
+                    continue
                 defects.append(
                     _defect(
                         defect_id="P26",
@@ -4066,6 +4097,7 @@ def analyze_pair(
     polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
     raw_blocks = _parse_blocks(raw_html)
     polish_blocks = _parse_blocks(polish_html)
+    polish_reference_blocks = _reference_identity_blocks(polish_html)
     pdf_summary: dict[str, Any] = {
         "pdf_diagnostics_enabled": enable_pdf_diagnostics,
         "source_pdf_path": str(pdf_path_override or _source_pdf_path(raw_path)),
@@ -4079,7 +4111,7 @@ def analyze_pair(
     defects: list[Defect] = []
     defects.extend(_frontmatter_defects(raw_blocks, polish_blocks))
     defects.extend(_citation_defects(polish_blocks))
-    defects.extend(_reference_identity_defects(polish_blocks))
+    defects.extend(_reference_identity_defects(polish_reference_blocks))
     defects.extend(_unit_math_defects(raw_html, polish_blocks))
     defects.extend(_equation_table_defects(polish_blocks))
     defects.extend(_figure_caption_ux_defects(polish_html, polish_blocks))
