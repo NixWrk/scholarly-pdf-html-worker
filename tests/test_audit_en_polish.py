@@ -2293,6 +2293,32 @@ def test_analyze_pair_does_not_report_p45_for_x_ray_or_version_abbreviation() ->
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p45_for_formula_like_roman_tokens() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "roman formula sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>Where x j belongs to dataset X, Node x i represents a camera pose.</p>"
+            "<p>Coordinates i, Mean i, Type i, and Numbered x are table variables.</p>"
+            "<p>Assuming v is velocity, Reference v is an electrode, and Mimics v.22 was used.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P45" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_post_reference_doi_metadata_for_duplicate_numbers() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

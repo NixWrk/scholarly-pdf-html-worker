@@ -739,6 +739,26 @@ GERMAN_SOURCE_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 ROMAN_WORD_SPLIT_RE = re.compile(r"\b(?P<prefix>[A-Z][A-Za-z]{3,})\s+(?P<suffix>v|i|x|vi|ix)\b")
+ROMAN_WORD_SPLIT_FALSE_PREFIXES = {
+    "appendix",
+    "assuming",
+    "cardio",
+    "chapter",
+    "coordinates",
+    "dcon",
+    "definingx",
+    "figure",
+    "haystackd",
+    "mean",
+    "mimics",
+    "node",
+    "numbered",
+    "reference",
+    "section",
+    "table",
+    "type",
+    "where",
+}
 MIXEDCASE_VAR_FOOTNOTE_RE = re.compile(
     r"\b(?:Qma|Qa|Qav|Qmn)<sup\b[^>]*\bz2m-table-fn\b[^>]*>\s*[A-Za-z]+\s*</sup>",
     re.IGNORECASE,
@@ -2775,7 +2795,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         if split_match is None:
             continue
         prefix = split_match.group("prefix").lower()
-        if prefix in {"table", "figure", "section", "appendix", "chapter"}:
+        if prefix in ROMAN_WORD_SPLIT_FALSE_PREFIXES:
             continue
         suffix = split_match.group("suffix").lower()
         right_text = block.text[split_match.end() : split_match.end() + 12]

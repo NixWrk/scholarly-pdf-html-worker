@@ -1494,6 +1494,9 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
         "<p>Abdusalomo v et al. proposed a saliency method.</p>"
         "<p>Similarly, Laha v et al. studied navigation.</p>"
         "<p>Pairwise Kolmogoro v-Smirno v tests and a Marko v chain were reported.</p>"
+        "<p>The Kolmogoro v\u2013Smirno v test, Marko v decision process, and "
+        "Lyapuno v stability analysis were listed.</p>"
+        "<p>Agents used the Arxi v interface; Mostafa vi et al. used the nomogram.</p>"
         "<p>W i = Mean i * N n i and Dcon v refers to deformable convolution.</p>"
         "<h4>References</h4>"
         "<ul><li>J. A. Gardner and V. Bulato v. Scientific diagrams made easy.</li></ul>"
@@ -1506,6 +1509,9 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     assert "Lahav et al." in polished
     assert "Kolmogorov-Smirnov tests" in polished
     assert "Markov chain" in polished
+    assert "Kolmogorov\u2013Smirnov test, Markov decision process" in polished
+    assert "Lyapunov stability analysis" in polished
+    assert "Arxiv interface; Mostafavi et al." in polished
     assert "Mean i * N" in polished
     assert "Dcon v refers" in polished
     assert "V. Bulatov. Scientific diagrams" in polished
@@ -1514,6 +1520,9 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     assert "Kolmogoro v" not in polished
     assert "Smirno v" not in polished
     assert "Marko v" not in polished
+    assert "Lyapuno v" not in polished
+    assert "Arxi v" not in polished
+    assert "Mostafa vi" not in polished
     assert "Bulato v." not in polished
 
 

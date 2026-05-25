@@ -11159,6 +11159,22 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+vi"
         r"(?=\s+(?:argues|classifies|notes|observes|proposed|proposes|says|states|suggests|writes)\b)"
     )
+    kolmogorov_pattern = re.compile(r"\bKolmogoro\s+v\b", re.IGNORECASE)
+    smirnov_pattern = re.compile(r"\bSmirno\s+v\b", re.IGNORECASE)
+    markov_pattern = re.compile(
+        r"\bMarko\s+v(?=\s+(?:blanket|chain|chains|decision|model|models|process|processes|property|"
+        r"random|state|states|transition)\b)",
+        re.IGNORECASE,
+    )
+    lyapunov_pattern = re.compile(
+        r"\bLyapuno\s+v(?=\s+(?:analysis|candidate|function|functional|stability|type)\b)",
+        re.IGNORECASE,
+    )
+    arxiv_pattern = re.compile(
+        r"\bArxi\s+v(?=\s+(?:and|at|interface|interfaces|paper|papers|preprint|preprints|reviewing)\b)",
+        re.IGNORECASE,
+    )
+    mostafavi_pattern = re.compile(r"\bMostafa\s+vi(?=\s+et\s+al\.?\b)", re.IGNORECASE)
     pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|iv|ix|i|v|x)"
         r"(?=(?:\s*,|\s*\(|\s*&(?:amp;)?\s*|\s+(?:and|or)\b|\s+\d{1,4}\b|\s+(?:le|de|van|von)\b|\s+[A-Z](?:\b|[a-z]{2,}\b)|[.;:]?\s*</p>|[.;:]?\s*$))"
@@ -11203,6 +11219,9 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
                 return match.group(0)
             return f"{match.group('given')}{match.group('root')}{match.group('suffix')}"
 
+        def _known_replacement(replacement: str) -> Callable[[re.Match[str]], str]:
+            return lambda match: _case_like(match.group(0).split()[0], replacement)
+
         text = email_pattern.sub(lambda match: f"{match.group('root')}{match.group('suffix')}", text)
         text = et_al_surname_v_pattern.sub(
             lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
@@ -11216,6 +11235,12 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
             lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
             text,
         )
+        text = kolmogorov_pattern.sub(_known_replacement("kolmogorov"), text)
+        text = smirnov_pattern.sub(_known_replacement("smirnov"), text)
+        text = markov_pattern.sub(_known_replacement("markov"), text)
+        text = lyapunov_pattern.sub(_known_replacement("lyapunov"), text)
+        text = arxiv_pattern.sub(_known_replacement("arxiv"), text)
+        text = mostafavi_pattern.sub(_known_replacement("mostafavi"), text)
         text = initial_surname_v_sentence_pattern.sub(
             lambda match: f"{match.group('initials')}{match.group('root')}v",
             text,
