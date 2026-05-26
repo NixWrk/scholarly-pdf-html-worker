@@ -761,6 +761,36 @@ ROMAN_WORD_SPLIT_FALSE_PREFIXES = {
     "type",
     "where",
 }
+AFFILIATION_LABEL_CONTEXT_RE = re.compile(r"\b(?:ARTICLE INFO|Keywords?|Received|Accepted)\b", re.IGNORECASE)
+AFFILIATION_LABEL_RIGHT_RE = re.compile(
+    r"\s+(?:Clinical|College|Department|Division|Faculty|Hospital|Institute|Laboratory|Lab|McGill|"
+    r"Monash|National|Public|Research|School|Section|Unit|University)\b"
+)
+AFFILIATION_LABEL_LOCATION_PREFIXES = {
+    "argentina",
+    "australia",
+    "austria",
+    "belgium",
+    "brazil",
+    "canada",
+    "china",
+    "denmark",
+    "england",
+    "finland",
+    "france",
+    "germany",
+    "hungary",
+    "india",
+    "ireland",
+    "italy",
+    "japan",
+    "netherlands",
+    "norway",
+    "portugal",
+    "spain",
+    "sweden",
+    "switzerland",
+}
 MIXEDCASE_VAR_FOOTNOTE_RE = re.compile(
     r"\b(?:Qma|Qa|Qav|Qmn)<sup\b[^>]*\bz2m-table-fn\b[^>]*>\s*[A-Za-z]+\s*</sup>",
     re.IGNORECASE,
@@ -2899,6 +2929,24 @@ def _manual_blind_spot_defects(polish_html: str, polish_blocks: list[Block]) -> 
     return defects
 
 
+def _looks_like_affiliation_label_roman_boundary(block: Block, split_match: re.Match[str]) -> bool:
+    if split_match.group("suffix").lower() != "i":
+        return False
+    text = block.text
+    if AFFILIATION_LABEL_CONTEXT_RE.search(text) is None:
+        classes = set(block.attrs.get("class", "").split())
+        if "z2m-front-matter" not in classes:
+            return False
+    right_text = text[split_match.end() : split_match.end() + 90]
+    if AFFILIATION_LABEL_RIGHT_RE.match(right_text) is None:
+        return False
+    if split_match.group("prefix").lower() in AFFILIATION_LABEL_LOCATION_PREFIXES:
+        return True
+    nearby_text = text[max(0, split_match.start() - 1200) : split_match.end() + 200]
+    affiliation_label_count = len(re.findall(r"\b[a-z]\s+(?=[A-Z][A-Za-z])", nearby_text))
+    return affiliation_label_count >= 4
+
+
 def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -> list[Defect]:
     defects: list[Defect] = []
     slim_html = _structure_html(polish_html)
@@ -3061,6 +3109,18 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                     "A rendered math variable resembles a split word in visible text.",
                     "EN audit P45 math-variable classifier",
                     "Math spans such as Function <span class='z2m-math'>v</span> must not inflate P45.",
+                    block,
+                    split_match,
+                )
+            continue
+        if _looks_like_affiliation_label_roman_boundary(block, split_match):
+            if roman_split_telemetry is None:
+                roman_split_telemetry = (
+                    "P45A",
+                    "Roman-like suffix is an affiliation label boundary",
+                    "Front-matter affiliation labels after countries can resemble a split surname in visible text.",
+                    "EN audit P45 affiliation-label classifier",
+                    "Affiliation lists such as 'Denmark i National Institute' must not inflate P45.",
                     block,
                     split_match,
                 )

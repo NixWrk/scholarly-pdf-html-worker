@@ -11568,7 +11568,7 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
     )
     et_al_surname_roman_pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|i|v)"
-        r"(?=\s+et\s+al\.?\b)"
+        r"(?=\s+et\s+al\.?(?:\b|\d))"
     )
     possessive_surname_roman_pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|i|v)"
@@ -11579,7 +11579,7 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
     )
     proper_surname_v_tail_pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+v"
-        r"(?=(?:\s+(?:[A-Z]{1,4}\b|[A-Z][a-z][A-Za-z'-]{2,}\b)|\s*[)\u2020*]))"
+        r"(?=(?:\s+(?:[A-Z]{1,4}\b|[A-Z][a-z][A-Za-z'-]{2,}\d*)|\s*[)\u2020*]))"
     )
     author_surname_v_citation_pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+v(?=\s*\[\d{1,3}\])"
@@ -11616,7 +11616,7 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
         r"\bArxi\s+v(?=\s+(?:and|at|interface|interfaces|paper|papers|preprint|preprints|reviewing|tool|tools)\b)",
         re.IGNORECASE,
     )
-    mostafavi_pattern = re.compile(r"\bMostafa\s+vi(?=\s+et\s+al\.?\b)", re.IGNORECASE)
+    mostafavi_pattern = re.compile(r"\bMostafa\s+vi(?=\s+et\s+al\.?(?:\b|\d))", re.IGNORECASE)
     neuravi_pattern = re.compile(r"\bNeura\s+vi(?=\s*/\s*Cerenovus\b)", re.IGNORECASE)
     inqovi_pattern = re.compile(r"\bInqo\s+vi(?=[),.;])", re.IGNORECASE)
     negev_pattern = re.compile(r"\bNege\s+v(?=\.)", re.IGNORECASE)
@@ -11633,7 +11633,7 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
     initial_name_pattern = re.compile(
         r"(?P<initials>\b(?:[A-Z]\.\s*){1,4})"
         r"(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>iii|ii|vi|iv|ix|i|v|x)"
-        r"(?=(?:\s+[A-Z]|[.;:]?\s*</p>|[.;:]?\s*$))"
+        r"(?=(?:\s+[A-Z]|[.;:]?\s*</p>|[.;:]?\s*$|[.;:]?\s*[)\u2020*]))"
     )
 
     def _replace_text(text: str) -> str:

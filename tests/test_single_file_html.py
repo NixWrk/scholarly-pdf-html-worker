@@ -1500,9 +1500,10 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
         "Marko v fields, and a Gauss-Marko v hypothesis were listed.</p>"
         "<p>Zhangaskano v's approach, Georgie v's study, Azou vi et al., "
         "Moossa vi et al., and Ghaza vi et al. were cited.</p>"
-        "<p>Agents used the Arxi v interface and Arxi v tool; Mostafa vi et al. used the nomogram.</p>"
+        "<p>Agents used the Arxi v interface and Arxi v tool; Mostafa vi et al. used the nomogram. "
+        "Mostafa vi et al13 called it staccato.</p>"
         "<p>Neura vi/Cerenovus, Inqo vi), A. Khosra vi are with Deakin, "
-        "Krunosla v Stingl, Ivano v IV, V. Popko v), Valery Putlaye v), "
+        "Krunosla v Stingl1,2, Ivano v IV, V. Popko v), Z. Moussa vi), Valery Putlaye v), "
         "Ak. Korole v str, University of the Nege v., and Laha v [4] were listed.</p>"
         "<p>W i = Mean i * N n i and Dcon v refers to deformable convolution.</p>"
         "<h4>References</h4>"
@@ -1529,12 +1530,14 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     assert "Moossavi et al." in polished
     assert "Ghazavi et al." in polished
     assert "Arxiv interface and Arxiv tool; Mostafavi et al." in polished
+    assert "Mostafavi et al13 called it staccato" in polished
     assert "Neuravi/Cerenovus" in polished
     assert "Inqovi)" in polished
     assert "A. Khosravi are with Deakin" in polished
     assert "Krunoslav Stingl" in polished
     assert "Ivanov IV" in polished
     assert "V. Popkov)" in polished
+    assert "Z. Moussavi)" in polished
     assert "Valery Putlayev)" in polished
     assert "Ak. Korolev str" in polished
     assert "University of the Negev." in polished

@@ -2608,6 +2608,38 @@ def test_analyze_pair_splits_tagged_p45_contexts_from_real_roman_suffix_splits()
             "computes the vector.</p></body></html>",
             "P45M",
         ),
+        (
+            "affiliation-label",
+            "<html><body><p>a University of Copenhagen, Copenhagen, Denmark "
+            "b University of Debrecen, Hungary c Institute of Occupational Medicine, Germany "
+            "d National Institute, France e Public Health Center, Italy f Research Unit, Spain "
+            "g Maritime Medicine, Hamburg, Germany h Aarhus University, Copenhagen, Denmark "
+            "i National Institute of Health, Porto, Portugal ARTICLE INFO Keywords: Insecticides.</p></body></html>",
+            "P45A",
+        ),
+        (
+            "affiliation-label-country-institution",
+            "<html><body><p>h Aarhus University, Department of Public Health, Aarhus, "
+            "National Research Centre for the Working Environment, Copenhagen, Denmark "
+            "i National Institute of Health, Environmental Health Department, Porto, Portugal "
+            "ARTICLE INFO Keywords: Cohort study.</p></body></html>",
+            "P45A",
+        ),
+        (
+            "affiliation-label-state-country-institution",
+            "<html><body><p>h School of Medicine and Psychology, ANU College of Health and Medicine, "
+            "Canberra, NSW Australia i Clinical Psychology, McGill University, Montreal, QC Canada "
+            "j Monash Alfred Psychiatry Research Center ARTICLE INFO Keywords: Brain stimulation.</p></body></html>",
+            "P45A",
+        ),
+        (
+            "frontmatter-list-affiliation-label",
+            '<html><body><p block-type="ListGroup" class="z2m-front-matter"><ul>'
+            "<li><sup>h</sup> Aarhus University, Copenhagen, Denmark</li>"
+            "<li><sup>i</sup> National Institute of Health, Porto, Portugal</li>"
+            "</ul></p></body></html>",
+            "P45A",
+        ),
     ]
     try:
         stage_dir = tmp_path / "Article sample" / "_z2m_stages"

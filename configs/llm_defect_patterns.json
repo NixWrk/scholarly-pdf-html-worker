@@ -29,6 +29,11 @@
     "criticality": "medium",
     "fix_layer": "EN polish roman suffix disambiguation"
   },
+  "P45A": {
+    "pattern": "roman-suffix-affiliation-label-boundary",
+    "criticality": "medium",
+    "fix_layer": "audit affiliation-label classifier"
+  },
   "P45L": {
     "pattern": "roman-suffix-reference-link-boundary",
     "criticality": "medium",

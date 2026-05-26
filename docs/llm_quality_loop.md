@@ -19,9 +19,9 @@ workflow is:
    citation-like ranges and math/measurement ranges are tracked separately so
    their counts do not hide the real citation-parser backlog. Classification
    precision applies to text-pattern defects too: real roman-suffix word
-   splits stay in `P45`, while already-tagged superscript markers, linked
-   suffix boundaries, and rendered math variables are tracked as telemetry-only
-   `P45S`/`P45L`/`P45M`.
+   splits stay in `P45`, while affiliation labels, already-tagged superscript
+   markers, linked suffix boundaries, and rendered math variables are tracked
+   as telemetry-only `P45A`/`P45S`/`P45L`/`P45M`.
    splits that are audit telemetry rather than a new quality regression should
    stay in pattern history but set `extra.quality_counted=false`.
 7. Record all quality metrics and compare them with a previous run.
