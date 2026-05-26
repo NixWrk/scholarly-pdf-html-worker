@@ -1,6 +1,7 @@
 import base64
 import json
 from pathlib import Path
+import sys
 
 from scripts.llm_quality_loop import (
     assess_polish_html,
@@ -14,6 +15,8 @@ from scripts.llm_quality_loop import (
     record_manual_observation,
     repolish_cached_run,
     render_llm_prompt,
+    run_audit,
+    run_test_command,
     write_manual_review_queue,
     write_manual_observation_summary,
     write_pattern_observations,
@@ -569,6 +572,34 @@ def test_normalize_converted_audit_article_ids_uses_manifest_paths(tmp_path: Pat
     ]
     assert {article["source_article"] for article in audit["articles"]} == {"Doc"}
     assert all(article["artifact_hint"] for article in audit["articles"])
+
+
+def test_run_audit_writes_stream_logs_and_command_report(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    stage_dir = run_dir / "audit_tree" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish.</p></body></html>", encoding="utf-8")
+
+    run_audit(run_dir)
+
+    report = json.loads((run_dir / "audit_command_report.json").read_text(encoding="utf-8"))
+    audit = json.loads((run_dir / "audit_full_checks.json").read_text(encoding="utf-8"))
+    assert report["returncode"] == 0
+    assert Path(report["stdout_path"]).is_file()
+    assert Path(report["stderr_path"]).is_file()
+    assert audit["article_count"] == 1
+
+
+def test_run_test_command_writes_stream_logs_and_command_report(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    report = run_test_command(f"{json.dumps(sys.executable)} -c \"print('ok')\"", run_dir)
+
+    assert report["returncode"] == 0
+    assert Path(report["stdout_path"]).is_file()
+    assert Path(report["stderr_path"]).is_file()
+    assert "ok" in report["stdout_tail"]
+    assert (run_dir / "test_command_report.json").is_file()
 
 
 def test_write_manual_review_queue_keeps_all_artifacts_and_filters_ignored(tmp_path: Path) -> None:

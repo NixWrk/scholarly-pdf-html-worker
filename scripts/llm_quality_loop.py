@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -723,6 +724,22 @@ def repolish_cached_run(
 
     try:
         raw_files = sorted(raw_source_dir.glob(f"*.{RAW_STAGE}"))
+        total_raw = len(raw_files)
+        print(f"Repolish started: raw={total_raw} source={source_run_dir}", flush=True)
+        last_report = time.monotonic()
+
+        def report_progress(index: int, *, force: bool = False) -> None:
+            nonlocal last_report
+            now = time.monotonic()
+            if force or index % 25 == 0 or now - last_report >= 15:
+                print(
+                    "Repolish progress: "
+                    f"{index}/{total_raw} articles={len(articles)} "
+                    f"skipped={len(skipped_articles)} changed={changed_count}",
+                    flush=True,
+                )
+                last_report = now
+
         for index, raw_path in enumerate(raw_files, start=1):
             article = raw_path.name.removesuffix(f".{RAW_STAGE}")
             profile_path = profile_source_dir / f"{article}.citation_profile.json"
@@ -766,6 +783,7 @@ def repolish_cached_run(
                         **language_fields,
                     }
                 )
+                report_progress(index)
                 continue
 
             polish_language_counts[language_decision.selected_polish_language] += 1
@@ -821,6 +839,8 @@ def repolish_cached_run(
             assessment = assess_polish_html(article, polished, profile)
             assessment.update(language_fields)
             assessments.append(assessment)
+            report_progress(index)
+        report_progress(total_raw, force=True)
     finally:
         close_katex_v8_context()
 
@@ -1907,35 +1927,63 @@ def run_audit(run_dir: Path, roots: Iterable[Path] | None = None) -> None:
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     started = _now()
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts" / "audit_en_polish.py"),
-            "--roots",
-            *[str(root) for root in audit_roots],
-            "--out",
-            str(run_dir / "audit_full_checks.json"),
-        ],
-        cwd=ROOT,
-        text=True,
+    stdout_path = run_dir / "audit_stdout.log"
+    stderr_path = run_dir / "audit_stderr.log"
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "audit_en_polish.py"),
+        "--roots",
+        *[str(root) for root in audit_roots],
+        "--out",
+        str(run_dir / "audit_full_checks.json"),
+    ]
+    print(f"Audit started: roots={len(audit_roots)} out={run_dir / 'audit_full_checks.json'}", flush=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
+        "w",
         encoding="utf-8",
         errors="replace",
-        capture_output=True,
-        env=env,
-    )
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=stdout_file,
+            stderr=stderr_file,
+            env=env,
+        )
+        started_monotonic = time.monotonic()
+        next_report = started_monotonic + 15
+        while True:
+            returncode = process.poll()
+            if returncode is not None:
+                break
+            now = time.monotonic()
+            if now >= next_report:
+                print(f"Audit running: elapsed={int(now - started_monotonic)}s", flush=True)
+                next_report = now + 15
+            time.sleep(1)
+
+    stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stdout_path.is_file() else ""
+    stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stderr_path.is_file() else ""
     _write_json(
         run_dir / "audit_command_report.json",
         {
             "roots": [str(root) for root in audit_roots],
             "started_at": started,
             "finished_at": _now(),
-            "returncode": result.returncode,
-            "stdout_tail": result.stdout[-4000:],
-            "stderr_tail": result.stderr[-4000:],
+            "returncode": returncode,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
         },
     )
-    if result.returncode != 0:
-        raise SystemExit(f"Audit command failed with exit code {result.returncode}. See {run_dir / 'audit_command_report.json'}")
+    print(f"Audit finished: exit={returncode}", flush=True)
+    if returncode != 0:
+        raise SystemExit(f"Audit command failed with exit code {returncode}. See {run_dir / 'audit_command_report.json'}")
 
 
 def run_quality_history(run_dir: Path, *, run_id: str | None, previous_entry: Path | None, no_append: bool) -> None:
@@ -1956,18 +2004,51 @@ def run_quality_history(run_dir: Path, *, run_id: str | None, previous_entry: Pa
 
 def run_test_command(command: str, run_dir: Path) -> dict[str, Any]:
     started = _now()
-    result = subprocess.run(command, cwd=ROOT, shell=True, text=True, capture_output=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = run_dir / "test_stdout.log"
+    stderr_path = run_dir / "test_stderr.log"
+    print(f"Tests started: {command}", flush=True)
+    with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
+        "w",
+        encoding="utf-8",
+        errors="replace",
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            shell=True,
+            text=True,
+            stdout=stdout_file,
+            stderr=stderr_file,
+        )
+        started_monotonic = time.monotonic()
+        next_report = started_monotonic + 15
+        while True:
+            returncode = process.poll()
+            if returncode is not None:
+                break
+            now = time.monotonic()
+            if now >= next_report:
+                print(f"Tests running: elapsed={int(now - started_monotonic)}s", flush=True)
+                next_report = now + 15
+            time.sleep(1)
+
+    stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stdout_path.is_file() else ""
+    stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stderr_path.is_file() else ""
     report = {
         "command": command,
         "started_at": started,
         "finished_at": _now(),
-        "returncode": result.returncode,
-        "stdout_tail": result.stdout[-4000:],
-        "stderr_tail": result.stderr[-4000:],
+        "returncode": returncode,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
     }
     _write_json(run_dir / "test_command_report.json", report)
-    if result.returncode != 0:
-        raise SystemExit(f"Test command failed with exit code {result.returncode}: {command}")
+    print(f"Tests finished: exit={returncode}", flush=True)
+    if returncode != 0:
+        raise SystemExit(f"Test command failed with exit code {returncode}: {command}")
     return report
 
 

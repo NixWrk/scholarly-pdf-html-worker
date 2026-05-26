@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html import unescape
@@ -891,6 +892,14 @@ def _line_at(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def _line_starts(text: str) -> list[int]:
+    return [0] + [match.end() for match in re.finditer(r"\n", text)]
+
+
+def _line_at_from_starts(line_starts: list[int], offset: int) -> int:
+    return bisect_right(line_starts, offset)
+
+
 def _snippet(text: str, start: int = 0, end: int | None = None, *, width: int = 260) -> str:
     end = start if end is None else end
     left = max(0, start - width // 2)
@@ -915,6 +924,7 @@ def _attrs(attr_text: str) -> dict[str, str]:
 
 def _parse_blocks(html: str) -> list[Block]:
     blocks: list[Block] = []
+    line_starts = _line_starts(html)
     for match in BLOCK_RE.finditer(html):
         raw = match.group(0)
         blocks.append(
@@ -924,7 +934,7 @@ def _parse_blocks(html: str) -> list[Block]:
                 attrs=_attrs(match.group("attrs")),
                 raw=raw,
                 text=_strip_tags(raw),
-                line=_line_at(html, match.start()),
+                line=_line_at_from_starts(line_starts, match.start()),
             )
         )
     return blocks
@@ -933,6 +943,7 @@ def _parse_blocks(html: str) -> list[Block]:
 def _parse_overlapping_blocks(html: str) -> list[Block]:
     blocks: list[Block] = []
     lower_html = html.lower()
+    line_starts = _line_starts(html)
     for match in OPEN_BLOCK_TAG_RE.finditer(html):
         tag = match.group("tag").lower()
         close_token = f"</{tag}>"
@@ -948,7 +959,7 @@ def _parse_overlapping_blocks(html: str) -> list[Block]:
                 attrs=_attrs(match.group("attrs")),
                 raw=raw,
                 text=_strip_tags(raw),
-                line=_line_at(html, match.start()),
+                line=_line_at_from_starts(line_starts, match.start()),
             )
         )
     return blocks
@@ -974,6 +985,7 @@ def _reference_identity_blocks(html: str) -> list[Block]:
 
 def _missing_figure_warning_blocks(html: str) -> list[Block]:
     blocks: list[Block] = []
+    line_starts = _line_starts(html)
     for match in MISSING_FIGURE_WARNING_BLOCK_RE.finditer(html):
         attrs = _attrs(match.group("attrs"))
         if "z2m-missing-figure-warning" not in set(attrs.get("class", "").split()):
@@ -986,7 +998,7 @@ def _missing_figure_warning_blocks(html: str) -> list[Block]:
                 attrs=attrs,
                 raw=raw,
                 text=_strip_tags(raw),
-                line=_line_at(html, match.start()),
+                line=_line_at_from_starts(line_starts, match.start()),
             )
         )
     return blocks
@@ -1051,6 +1063,7 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
 def _missing_local_images(html_path: Path, html: str) -> list[dict[str, Any]]:
     missing: list[dict[str, Any]] = []
     seen: set[str] = set()
+    line_starts = _line_starts(html)
     for match in IMG_SRC_RE.finditer(html):
         src = unescape(match.group("src")).strip()
         if _is_inline_or_remote_src(src):
@@ -1065,7 +1078,7 @@ def _missing_local_images(html_path: Path, html: str) -> list[dict[str, Any]]:
         missing.append(
             {
                 "src": src,
-                "line": _line_at(html, match.start()),
+                "line": _line_at_from_starts(line_starts, match.start()),
                 "searched": [str(candidate) for candidate in candidates],
             }
         )
@@ -1517,6 +1530,30 @@ def _looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
     )
 
 
+def _looks_like_software_version_context(text: str, start: int) -> bool:
+    left = text[max(0, start - 160):start]
+    return (
+        re.search(
+            r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|opencv|numpy|scipy|driver)\s+"
+            r"(?:driver\s+)?version\s*$|\bversion\s*$",
+            left,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _sup_numeric_range_is_software_version(block: Block, match: re.Match[str]) -> bool:
+    numbers = re.findall(r"\d{1,3}", match.group("body"))
+    if len(numbers) < 2:
+        return False
+    visible_pattern = r"\s*,\s*".join(re.escape(number) for number in numbers)
+    for text_match in re.finditer(visible_pattern, block.text):
+        if _looks_like_software_version_context(block.text, text_match.start()):
+            return True
+    return False
+
+
 def _has_unlinked_tagged_citation_range(block: Block) -> bool:
     for match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):
         body = match.group("body")
@@ -1531,6 +1568,8 @@ def _has_unlinked_tagged_citation_range(block: Block) -> bool:
 def _has_unlinked_sup_numeric_range(block: Block) -> bool:
     for match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
         if "z2m-ref-link" not in match.group(0):
+            if _sup_numeric_range_is_software_version(block, match):
+                continue
             return True
     return False
 

@@ -26,6 +26,15 @@ def _load_audit_module():
     return module
 
 
+def test_fast_line_lookup_matches_count_based_lookup() -> None:
+    audit = _load_audit_module()
+    text = "first line\nsecond line\n\nfourth line"
+    starts = audit._line_starts(text)
+
+    for offset in range(len(text) + 1):
+        assert audit._line_at_from_starts(starts, offset) == audit._line_at(text, offset)
+
+
 def test_analyze_pair_reports_manual_review_defect_shapes() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -485,6 +494,31 @@ def test_analyze_pair_ignores_numeric_vectors_as_citation_ranges() -> None:
         polish_path.write_text(
             "<html><body><p>The unnormalized likelihood assignment vector would be [6, 0, 0, 10]. "
             "Dividing by 16 gives [0.375, 0, 0, 0.625].</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_software_version_sup_lists_as_citation_ranges() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>The model was implemented in PyTorch version <sup>1,3,1</sup>, "
+            "using CUDA driver version <sup>10,2</sup>.</p>"
+            "</body></html>",
             encoding="utf-8",
         )
 

@@ -6759,6 +6759,154 @@ def test_polish_html_document_keeps_numeric_citations_in_mixed_author_year_docs(
     assert 'impedance<sup>2</sup> for recording' in polished
 
 
+def test_polish_html_document_unlinks_author_year_software_version_refs() -> None:
+    html = (
+        "<html><body>"
+        "<p>The model was implemented in PyTorch version "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,'
+        '<a href="#ref-3" class="z2m-ref-link">3</a>,'
+        '<a href="#ref-1" class="z2m-ref-link">1</a></sup>, using CUDA driver version '
+        '<sup><a href="#ref-10" class="z2m-ref-link">10</a>,'
+        '<a href="#ref-2" class="z2m-ref-link">2</a></sup>.</p>'
+        "<p>UF is a widely used test for bladder emptying."
+        '<sup><a href="#ref-6" class="z2m-ref-link">6</a></sup></p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 11))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "PyTorch version 1.3.1" in body
+    assert "CUDA driver version 10.2" in body
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-2"' not in body
+    assert 'href="#ref-3"' not in body
+    assert 'href="#ref-10"' not in body
+    assert '<sup><a href="#ref-6" class="z2m-ref-link">6</a></sup>' in body
+
+
+def test_polish_html_document_unlinks_author_year_numbered_study_refs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Performance in Studies 2 and "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> was similar in both groups.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 4))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-3"' not in body
+    assert "Studies 2 and 3 was similar" in body
+
+
+def test_polish_html_document_keeps_author_year_group_citation_lists() -> None:
+    html = (
+        "<html><body>"
+        "<p>Published single-institution case series from our group "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a>,'
+        '<a href="#ref-6" class="z2m-ref-link">6</a></sup> and others '
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,'
+        '<a href="#ref-10" class="z2m-ref-link">10</a></sup> demonstrated the utility.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 11))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-3" class="z2m-ref-link">3</a>' in body
+    assert '<a href="#ref-6" class="z2m-ref-link">6</a>' in body
+    assert '<a href="#ref-1" class="z2m-ref-link">1</a>' in body
+    assert '<a href="#ref-10" class="z2m-ref-link">10</a>' in body
+
+
+def test_polish_html_document_unlinks_statistical_superscript_decimal_runs() -> None:
+    html = (
+        "<html><body>"
+        "<p>The effect size in this study was "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,'
+        '<a href="#ref-5" class="z2m-ref-link">5</a></sup>, '
+        "and the visual acuity was logMAR "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,'
+        '<a href="#ref-43" class="z2m-ref-link">43</a></sup>.</p>'
+        "<p>The measurements correspond to logMAR 2.00 and "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,'
+        '<a href="#ref-43" class="z2m-ref-link">43</a></sup>, respectively.</p>'
+        "<p>The recalled content was active M=9.25 (SD "
+        '<sup><a href="#ref-5" class="z2m-ref-link">5</a>,'
+        '<a href="#ref-71" class="z2m-ref-link">71</a></sup>) '
+        "vs. sham M=8.09 (SD "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a>,'
+        '<a href="#ref-78" class="z2m-ref-link">78</a></sup>).</p>'
+        '<p>The value was inputted into G*Power '
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a>,'
+        '<a href="#ref-1" class="z2m-ref-link">1</a></sup>.</p>'
+        "<p>Published case series from our group "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a>,'
+        '<a href="#ref-6" class="z2m-ref-link">6</a></sup> remained citations.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 44))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "effect size in this study was 1.5" in body
+    assert "logMAR 1.43" in body
+    assert "logMAR 2.00 and 1.43" in body
+    assert "SD 5.71" in body
+    assert "SD 3.78" in body
+    assert "G*Power 3.1" in body
+    assert '<a href="#ref-5" class="z2m-ref-link">5</a>' not in body
+    assert '<a href="#ref-43" class="z2m-ref-link">43</a>' not in body
+    assert '<a href="#ref-3" class="z2m-ref-link">3</a>,' in body
+    assert '<a href="#ref-6" class="z2m-ref-link">6</a>' in body
+
+
+def test_polish_html_document_unlinks_author_year_enumerated_item_refs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Delay discounting rates are associated with two neural circuits: "
+        "1) the executive function network, and "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>) '
+        "the impulsive network.</p>"
+        "<p>We carried out two navigation methods using "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>) '
+        "DRL and UWB localization, and 2) SLAM and DRL.</p>"
+        "<p>Participants completed a questionnaire to understand their "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>) '
+        "perceived difficulty of the route, 2) confidence level, and "
+        "3) willingness to use the mobility aid.</p>"
+        "<p>Alexander et al., 1986; Bickel et al., 2014; Hanlon et al., 2015; "
+        "MacKillop and Kahler, 2009 make this an author-year article.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 4))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "1) the executive function network, and 2) the impulsive network" in body
+    assert "using 1) DRL and UWB localization, and 2) SLAM and DRL" in body
+    assert "their 1) perceived difficulty of the route, 2) confidence level" in body
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-2"' not in body
+
+
 def test_polish_html_document_unwraps_author_year_ref_links_with_multiple_authors() -> None:
     html = (
         "<html><body>"

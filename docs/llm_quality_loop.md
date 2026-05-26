@@ -234,4 +234,8 @@ Each fix should be small:
   language stats in `manifest.json`;
 - full configured project test suite must pass in the loop, or the run must be
   clearly marked as exploratory with `--skip-tests`;
+- long-running repolish, test, and audit steps must emit progress and persist
+  stdout/stderr command logs in the run directory; a silent long corpus run is
+  not a valid loop artifact because failures and slow articles cannot be
+  localized after the fact;
 - gate must pass or the regression must be explicitly understood.

@@ -485,7 +485,13 @@ _AUTHOR_YEAR_CITATION_TEXT_PATTERN = re.compile(
 )
 _STAT_FALSE_REF_CONTEXT_PATTERN = re.compile(
     r"\b(?:effect\s+size|allocation\s+ratio|G\*Power|sample\s+size|"
-    r"statistical\s+power|power\s+analysis|Cohen|group|Z\s+values?|"
+    r"statistical\s+power|power\s+analysis|Cohen|group|SD|SEM|Z\s+values?|"
+    r"range\s+from\s+about|logMAR|within\s+\d+\s+or\s+\d+\s+s)\b",
+    re.IGNORECASE,
+)
+_STAT_FALSE_REF_STRONG_CONTEXT_PATTERN = re.compile(
+    r"\b(?:effect\s+size|allocation\s+ratio|G\*Power|sample\s+size|"
+    r"statistical\s+power|power\s+analysis|Cohen|SD|SEM|Z\s+values?|"
     r"range\s+from\s+about|logMAR|within\s+\d+\s+or\s+\d+\s+s)\b",
     re.IGNORECASE,
 )
@@ -10296,6 +10302,69 @@ def _repair_statistical_ref_false_positives(html: str) -> str:
     if "#ref-" not in html:
         return html
 
+    def _context_text(source: str, start: int, end: int) -> str:
+        left_bound = source.rfind("<p", 0, start)
+        right_bound = source.find("</p>", end)
+        if left_bound == -1 or right_bound == -1:
+            context_html = source[max(0, start - 180) : end + 180]
+        else:
+            context_html = source[left_bound : right_bound + len("</p>")]
+        return _visible_text(context_html)
+
+    def _has_stat_value_left_context(source: str, start: int) -> bool:
+        left_text = _visible_text(source[max(0, start - 240) : start])
+        return re.search(
+            r"(?:"
+            r"\beffect\s+size\b[^.;:]{0,120}\b(?:was|is|of|=)\s*|"
+            r"\ballocation\s+ratio\b[^.;:]{0,160}\bG\*Power\s*|"
+            r"\bG\*Power\s*|"
+            r"\blogMAR\s*|"
+            r"\blogMAR\b[^;:]{0,100}\b(?:and|or)\s*|"
+            r"\b(?:SD|SEM)\s*=?\s*|"
+            r"\bZ\s+values?\b[^.;:]{0,80}\b(?:was|were|of|=)\s*|"
+            r"\brange\s+from\s+about\s*"
+            r")$",
+            left_text,
+            re.IGNORECASE,
+        ) is not None
+
+    numeric_sup_run_pattern = re.compile(
+        r"<sup\b[^>]*>[\s\S]{0,260}?\bz2m-ref-link\b[\s\S]{0,260}?</sup>",
+        re.IGNORECASE,
+    )
+
+    def _replace_stat_sup_run(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        compact_text = re.sub(r"\s+", "", _visible_text(raw))
+        if re.fullmatch(r"\d{1,3}(?:[,;\-\u2013\u2014]\d{1,3})+", compact_text) is None:
+            return raw
+        context = _context_text(html, match.start(), match.end())
+        if _STAT_FALSE_REF_STRONG_CONTEXT_PATTERN.search(context) is None:
+            return raw
+        if not _has_stat_value_left_context(html, match.start()):
+            return raw
+        if re.fullmatch(r"\d{1,3},\d{1,3}", compact_text):
+            return compact_text.replace(",", ".")
+        return compact_text
+
+    repaired = numeric_sup_run_pattern.sub(_replace_stat_sup_run, html)
+
+    def _inside_superscript_citation_run(match: re.Match[str]) -> bool:
+        sup_start = repaired.rfind("<sup", 0, match.start())
+        if sup_start == -1:
+            return False
+        previous_sup_close = repaired.rfind("</sup>", 0, match.start())
+        if previous_sup_close > sup_start:
+            return False
+        sup_end = repaired.find("</sup>", match.end())
+        if sup_end == -1:
+            return False
+        sup_html = repaired[sup_start : sup_end + len("</sup>")]
+        if "z2m-ref-link" not in sup_html:
+            return False
+        sup_text = re.sub(r"\s+", "", _visible_text(sup_html))
+        return re.fullmatch(r"\d{1,3}(?:[,;\-\u2013\u2014]\d{1,3})+", sup_text) is not None
+
     def _replace(match: re.Match[str]) -> str:
         label = _visible_text(match.group("body"))
         if re.fullmatch(r"\d{1,3}", label) is None:
@@ -10306,18 +10375,16 @@ def _repair_statistical_ref_false_positives(html: str) -> str:
             return match.group(0)
         if number > 5:
             return match.group(0)
-        left_bound = html.rfind("<p", 0, match.start())
-        right_bound = html.find("</p>", match.end())
-        if left_bound == -1 or right_bound == -1:
-            context_html = html[max(0, match.start() - 180): match.end() + 180]
-        else:
-            context_html = html[left_bound:right_bound + len("</p>")]
-        context = _visible_text(context_html)
+        if _inside_superscript_citation_run(match):
+            if _has_stat_value_left_context(repaired, match.start()):
+                return match.group("body")
+            return match.group(0)
+        context = _context_text(repaired, match.start(), match.end())
         if _STAT_FALSE_REF_CONTEXT_PATTERN.search(context) is None:
             return match.group(0)
         return match.group("body")
 
-    return _REF_ANCHOR_PATTERN.sub(_replace, html)
+    return _REF_ANCHOR_PATTERN.sub(_replace, repaired)
 
 
 def _repair_figure_ref_links_misclassified_as_refs(html: str, found_figures: set[str]) -> str:
@@ -10417,11 +10484,50 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
             number = int(label)
         except ValueError:
             return match.group(0)
-        if number > 5:
-            return match.group(0)
         raw_window = html[max(0, match.start() - 80): match.end() + 80].lower()
         text_window = _visible_text(html[max(0, match.start() - 160): match.end() + 160])
         range_window = _visible_text(html[max(0, match.start() - 24): match.end() + 36])
+        left_text = _visible_text(html[max(0, match.start() - 140): match.start()])
+        version_context = (
+            re.search(
+                r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|opencv|numpy|scipy|driver)\s+"
+                r"(?:driver\s+)?version\b",
+                text_window,
+                re.IGNORECASE,
+            )
+            is not None
+            or re.search(r"\bversion\s*$", left_text, re.IGNORECASE) is not None
+        )
+        numbered_study_context = (
+            re.search(
+                r"\b(?:studies|study)\s+\d+\s*(?:,|and|or)\s*$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+        right_text = _visible_text(html[match.end() : match.end() + 80])
+        enumerated_item_context = (
+            re.match(r"^\s*\)", right_text) is not None
+            and re.search(
+                r"(?:[:;]\s*|\b(?:and|or|using|including|includes?|methods?|their|its|our|his|her)\s*)$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+            and (
+                number == 1
+                or re.search(
+                    r"\b\d{1,2}\s*\)",
+                    _visible_text(html[max(0, match.start() - 240) : match.start()]),
+                )
+                is not None
+            )
+        )
+        if version_context or numbered_study_context or enumerated_item_context:
+            return match.group("body")
+        if number > 5:
+            return match.group(0)
         if re.search(r"\d\s*(?:,|[-\u2013\u2014])\s*\d", range_window):
             return match.group(0)
         if re.search(r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b", text_window, re.IGNORECASE):
@@ -10446,7 +10552,74 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
             return match.group(0)
         return match.group("body")
 
-    return _REF_ANCHOR_PATTERN.sub(_replace, html)
+    repaired = _REF_ANCHOR_PATTERN.sub(_replace, html)
+
+    def _decimal_comma_value_context(left_text: str) -> bool:
+        return (
+            re.search(
+                r"\b(?:effect\s+size|logmar|snellen\s+acuity|visual\s+acuity|"
+                r"measurements?\s+of|cohens?\s+d|value|values|score|scores|"
+                r"coefficient|ratio|mean|median|power)\b[\s\S]{0,120}$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+
+    def _replace_linked_numeric_sup(match: re.Match[str]) -> str:
+        body = match.group("body")
+        numbers = re.findall(r"<a\b[^>]*>\s*(\d{1,3})\s*</a>", body, re.IGNORECASE)
+        if len(numbers) != 2:
+            return match.group(0)
+        left_text = _visible_text(repaired[max(0, match.start() - 220): match.start()])
+        if _decimal_comma_value_context(left_text):
+            return ".".join(numbers)
+        return match.group(0)
+
+    linked_numeric_sup = re.compile(
+        r"<sup\b[^>]*>\s*(?P<body>"
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+['\"][^>]*>\s*\d{1,3}\s*</a>"
+        r"\s*,\s*"
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+['\"][^>]*>\s*\d{1,3}\s*</a>"
+        r")\s*</sup>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    repaired = linked_numeric_sup.sub(_replace_linked_numeric_sup, repaired)
+
+    def _replace_plain_numeric_sup(match: re.Match[str]) -> str:
+        body = re.sub(r"\s+", "", match.group("body"))
+        left_text = _visible_text(repaired[max(0, match.start() - 160): match.start()])
+        right_text = _visible_text(repaired[match.end() : match.end() + 80])
+        if re.search(
+            r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|opencv|numpy|scipy|driver)\s+"
+            r"(?:driver\s+)?version\s*$|\bversion\s*$",
+            left_text,
+            re.IGNORECASE,
+        ):
+            return body.replace(",", ".")
+        if re.search(r"\b(?:studies|study)\s+\d+\s*(?:,|and|or)\s*$", left_text, re.IGNORECASE):
+            return body
+        if (
+            re.match(r"^\s*\)", right_text) is not None
+            and re.search(
+                r"(?:[:;]\s*|\b(?:and|or|using|including|includes?|methods?|their|its|our|his|her)\s*)$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+            and (
+                body == "1"
+                or re.search(r"\b\d{1,2}\s*\)", left_text) is not None
+            )
+        ):
+            return body
+        return match.group(0)
+
+    plain_numeric_sup = re.compile(
+        r"<sup\b[^>]*>\s*(?P<body>\d{1,3}(?:\s*,\s*\d{1,3}){0,4})\s*</sup>",
+        re.IGNORECASE,
+    )
+    return plain_numeric_sup.sub(_replace_plain_numeric_sup, repaired)
 
 
 def _repair_acronym_footnote_ref_citations(html: str) -> str:
