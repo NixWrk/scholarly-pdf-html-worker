@@ -4462,47 +4462,98 @@ def _add_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _corpus_totals(articles: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "raw_img_tags": sum(article["summary"]["raw_img_tags"] for article in articles),
+        "polish_img_tags": sum(article["summary"]["polish_img_tags"] for article in articles),
+        "polish_ref_links": sum(article["summary"]["polish_ref_links"] for article in articles),
+        "polish_fig_links": sum(article["summary"]["polish_fig_links"] for article in articles),
+        "polish_table_links": sum(article["summary"]["polish_table_links"] for article in articles),
+        "polish_page_links": sum(article["summary"]["polish_page_links"] for article in articles),
+        "polish_replacement_chars": sum(article["summary"]["polish_replacement_chars"] for article in articles),
+        "polish_missing_local_images": sum(article["summary"]["polish_missing_local_images"] for article in articles),
+        "source_pdf_present": sum(1 for article in articles if article["summary"]["source_pdf_present"]),
+        "pdf_text_chars": sum(article["summary"]["pdf_text_chars"] for article in articles),
+    }
+
+
+def _assemble_report(
+    roots: list[Path],
+    articles: list[dict[str, Any]],
+    defect_counts: dict[str, int],
+    *,
+    audit_status: str,
+    total_pair_count: int,
+) -> dict[str, Any]:
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stage": f"{RAW_STAGE} -> {POLISH_STAGE}",
+        "roots": [str(root) for root in roots],
+        "audit_status": audit_status,
+        "processed_pair_count": len(articles),
+        "total_pair_count": total_pair_count,
+        "article_count": len(articles),
+        "corpus_summary": {
+            "defect_counts": defect_counts,
+            "totals": _corpus_totals(articles),
+        },
+        "articles": articles,
+    }
+
+
+def _write_json_report(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def build_report(
     roots: list[Path],
     *,
     enable_pdf_diagnostics: bool = False,
     pdf_map: dict[str, Path] | None = None,
+    progress_out: Path | None = None,
+    progress_write_every: int = 10,
 ) -> dict[str, Any]:
     pairs = find_pairs(roots)
-    articles = [
-        analyze_pair(
-            raw_path,
-            polish_path,
-            enable_pdf_diagnostics=enable_pdf_diagnostics,
-            pdf_path_override=(pdf_map or {}).get(_article_name_from_stage(raw_path)),
+    articles: list[dict[str, Any]] = []
+    progress_every = max(1, progress_write_every)
+    for index, (raw_path, polish_path) in enumerate(pairs, 1):
+        articles.append(
+            analyze_pair(
+                raw_path,
+                polish_path,
+                enable_pdf_diagnostics=enable_pdf_diagnostics,
+                pdf_path_override=(pdf_map or {}).get(_article_name_from_stage(raw_path)),
+            )
         )
-        for raw_path, polish_path in pairs
-    ]
+        if progress_out is not None and (index % progress_every == 0 or index == len(pairs)):
+            defect_counts = _add_corpus_hit_counts(articles)
+            partial_report = _assemble_report(
+                roots,
+                articles,
+                defect_counts,
+                audit_status=("complete" if index == len(pairs) else "running"),
+                total_pair_count=len(pairs),
+            )
+            _write_json_report(progress_out, partial_report)
+            print(
+                f"Audit progress: {index}/{len(pairs)} articles={len(articles)} "
+                f"defects={sum(len(article['defects_found']) for article in articles)}",
+                flush=True,
+            )
     defect_counts = _add_corpus_hit_counts(articles)
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "stage": f"{RAW_STAGE} -> {POLISH_STAGE}",
-        "roots": [str(root) for root in roots],
-        "article_count": len(articles),
-        "corpus_summary": {
-            "defect_counts": defect_counts,
-            "totals": {
-                "raw_img_tags": sum(article["summary"]["raw_img_tags"] for article in articles),
-                "polish_img_tags": sum(article["summary"]["polish_img_tags"] for article in articles),
-                "polish_ref_links": sum(article["summary"]["polish_ref_links"] for article in articles),
-                "polish_fig_links": sum(article["summary"]["polish_fig_links"] for article in articles),
-                "polish_table_links": sum(article["summary"]["polish_table_links"] for article in articles),
-                "polish_page_links": sum(article["summary"]["polish_page_links"] for article in articles),
-                "polish_replacement_chars": sum(article["summary"]["polish_replacement_chars"] for article in articles),
-                "polish_missing_local_images": sum(
-                    article["summary"]["polish_missing_local_images"] for article in articles
-                ),
-                "source_pdf_present": sum(1 for article in articles if article["summary"]["source_pdf_present"]),
-                "pdf_text_chars": sum(article["summary"]["pdf_text_chars"] for article in articles),
-            },
-        },
-        "articles": articles,
-    }
+    report = _assemble_report(
+        roots,
+        articles,
+        defect_counts,
+        audit_status="complete",
+        total_pair_count=len(pairs),
+    )
+    if progress_out is not None:
+        _write_json_report(progress_out, report)
+    return report
 
 
 def _print_summary(report: dict[str, Any]) -> None:
@@ -4550,6 +4601,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--out", type=Path, help="Optional JSON report path.")
     parser.add_argument(
+        "--progress-write-every",
+        type=int,
+        default=10,
+        help="When --out is set, atomically refresh the JSON report after this many audited pairs.",
+    )
+    parser.add_argument(
         "--fail-on-error",
         action="store_true",
         help="Exit with status 1 when an error-severity defect is found.",
@@ -4581,11 +4638,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     pdf_map = _load_pdf_map(args.pdf_map) if args.pdf_map is not None else None
-    report = build_report(args.roots, enable_pdf_diagnostics=args.pdf_diagnostics, pdf_map=pdf_map)
+    report = build_report(
+        args.roots,
+        enable_pdf_diagnostics=args.pdf_diagnostics,
+        pdf_map=pdf_map,
+        progress_out=args.out,
+        progress_write_every=args.progress_write_every,
+    )
     _print_summary(report)
     if args.out is not None:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"Wrote {args.out}")
     if args.fail_on_error or args.fail_on_warning:
         severities = {"error"}

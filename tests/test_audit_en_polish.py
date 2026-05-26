@@ -1006,6 +1006,51 @@ def test_build_report_uses_external_pdf_map_for_pdf_diagnostics() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_build_report_refreshes_progress_json_while_auditing() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    original_analyze_pair = audit.analyze_pair
+    try:
+        root = tmp_path / "root"
+        for article_name in ("Article one", "Article two"):
+            stage_dir = root / article_name / "_z2m_stages"
+            stage_dir.mkdir(parents=True)
+            (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+            (stage_dir / "02.en.polish.html").write_text(
+                "<html><body><p>Polished.</p></body></html>",
+                encoding="utf-8",
+            )
+
+        progress_path = tmp_path / "audit.json"
+        observed_progress: list[tuple[str, int, int]] = []
+
+        def wrapped_analyze_pair(*args, **kwargs):
+            if progress_path.exists():
+                data = json.loads(progress_path.read_text(encoding="utf-8"))
+                observed_progress.append(
+                    (
+                        data["audit_status"],
+                        data["processed_pair_count"],
+                        data["total_pair_count"],
+                    )
+                )
+            return original_analyze_pair(*args, **kwargs)
+
+        audit.analyze_pair = wrapped_analyze_pair
+
+        report = audit.build_report([root], progress_out=progress_path, progress_write_every=1)
+        saved = json.loads(progress_path.read_text(encoding="utf-8"))
+
+        assert observed_progress == [("running", 1, 2)]
+        assert report["audit_status"] == "complete"
+        assert saved["audit_status"] == "complete"
+        assert saved["processed_pair_count"] == 2
+        assert saved["total_pair_count"] == 2
+    finally:
+        audit.analyze_pair = original_analyze_pair
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_load_pdf_map_accepts_zotero_candidate_records() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

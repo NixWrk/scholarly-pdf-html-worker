@@ -7381,7 +7381,10 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
         "Mart\u0131\u00b4nez, Sa\u0131\u00a8d, Lema\u02c6\u0131tre, Carri\u00b8co, "
         "Sertba\u00b8s, Ag- \u00b4 gregating, au- \u00b4 toencoders, "
         "Green- \u00a8 berg, Bar- \u00b4 ranco, Abbreviations \u00b4 Symbol, "
-        "and or \u00b4 both were also present. "
+        "and or \u00b4 both were also present. Re \u00b4 flective notes cited "
+        '<a href="#ref-1" data-name="Fern\u0412\u0491andez">Fern\u0412\u0491andez et al.</a>, '
+        '<a href="#ref-2">Gru\u0412\u00a8nbaum, Fa\u0412\u0451canha, '
+        "Ideggyo\u0412\u0491gya\u0412\u0491szati, and Mohand-Sa\u0414\u00b1\u0412\u00a8d</a>. "
         "The text had qualitative colour \u0412\u0491 palettes and present \u0412\u0401 <i> active </i> modes.</p>"
         '<p><a href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait</a> '
         "\u041b\u2122 e\u041b\u2122 University of Bath.</p>"
@@ -7431,6 +7434,10 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
     assert "Mart\u00ednez, Sa\u00efd, Lema\u00eetre, Carri\u00e7o, Sertba\u015f" in polished
     assert "Aggregating, autoencoders, Greenberg, Barranco" in polished
     assert "Abbreviations Symbol, and or both were also present" in polished
+    assert "Reflective notes cited" in polished
+    assert 'data-name="Fern\u0412\u0491andez"' in polished
+    assert '>Fern\u00e1ndez et al.</a>' in polished
+    assert ">Gr\u00fcnbaum, Fa\u00e7anha, Ideggy\u00f3gy\u00e1szati, and Mohand-Sa\u00efd</a>" in polished
     assert "qualitative colour palettes and present <i> active </i> modes" in polished
     assert 'href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait\u0117</a>' in polished
     assert 'data-name="fac\u0412\u0451ade"' in polished

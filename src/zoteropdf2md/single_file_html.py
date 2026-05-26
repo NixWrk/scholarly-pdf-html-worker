@@ -147,6 +147,7 @@ _PAREN_REF_CITATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SKIP_AUTOLINK_TAGS = {"script", "style", "code", "pre", "math", "svg", "a"}
+_TEXT_NODE_REPAIR_SKIP_TAGS = _SKIP_AUTOLINK_TAGS - {"a"}
 _CITATION_SKIP_TAGS = _SKIP_AUTOLINK_TAGS | {
     "table",
     "thead",
@@ -3126,7 +3127,11 @@ def _strip_protocol_sentinel_leaks(html: str) -> str:
     return cleaned_html
 
 
-def _update_skip_stack(tag_fragment: str, skip_stack: list[str]) -> None:
+def _update_skip_stack_for_tags(
+    tag_fragment: str,
+    skip_stack: list[str],
+    skip_tags: set[str],
+) -> None:
     raw = tag_fragment.strip()
     if not raw.startswith("<") or raw.startswith("<!--") or raw.startswith("<!"):
         return
@@ -3147,8 +3152,12 @@ def _update_skip_stack(tag_fragment: str, skip_stack: list[str]) -> None:
     if open_match is None:
         return
     tag_name = open_match.group(1).lower()
-    if tag_name in _SKIP_AUTOLINK_TAGS:
+    if tag_name in skip_tags:
         skip_stack.append(tag_name)
+
+
+def _update_skip_stack(tag_fragment: str, skip_stack: list[str]) -> None:
+    _update_skip_stack_for_tags(tag_fragment, skip_stack, _SKIP_AUTOLINK_TAGS)
 
 
 def _citation_tag_is_protected(tag_fragment: str) -> bool:
@@ -5098,6 +5107,8 @@ def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(r"\bRe\s+[\u00a8\u00b4\u02c6]\s+flective\b", "Reflective", text)
+    text = re.sub(r"\bre\s+[\u00a8\u00b4\u02c6]\s+flective\b", "reflective", text)
     text = re.sub(r"\b(?P<left>[A-Za-z]{3,})\s+[\u00a8\u00b4]\s+(?P<right>[A-Za-z]{2,})\b", r"\g<left> \g<right>", text)
     text = re.sub(r"\u00b4\s*(?P<vowel>[AEIOUYaeiouy\u0131])", _with_following_acute, text)
     text = re.sub(r"\u00a8\s*(?P<vowel>[AEIOUYaeiouy\u0131])", _with_following_diaeresis, text)
@@ -5116,6 +5127,26 @@ def _repair_latin_detached_accent_artifacts_html(html: str) -> str:
         lambda m: f"{m.group('open')}\u0117{m.group('close')}",
         html,
     )
+
+
+def _repair_latin_detached_accent_artifacts_in_visible_text(html: str) -> str:
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    skip_stack: list[str] = []
+
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            _update_skip_stack_for_tags(part, skip_stack, _TEXT_NODE_REPAIR_SKIP_TAGS)
+            out.append(part)
+            continue
+        if skip_stack:
+            out.append(part)
+            continue
+        out.append(_repair_latin_detached_accent_artifacts_text(part))
+
+    return "".join(out)
 
 
 def _compact_effective_variable_html(match: re.Match[str]) -> str:
@@ -15529,6 +15560,7 @@ def polish_html_document(
     polished = _repair_known_word_glue(polished)
     polished = _repair_safe_text_artifacts(polished)
     if language_policy.code == "en":
+        polished = _repair_latin_detached_accent_artifacts_in_visible_text(polished)
         polished = _repair_english_ocr_text_artifacts(polished)
     polished = _mark_consecutive_float_runs(polished)
     polished, _ = _merge_biorender_caption_fragments(polished)
