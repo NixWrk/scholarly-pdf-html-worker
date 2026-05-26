@@ -701,12 +701,81 @@ _BARE_CITATION_SINGLE_GLUED_PATTERN = re.compile(
     r'(?P<num>\d{1,3})(?=\s+(?:for|and|or|to|in|of|with|by|as)\b)'
 )
 _BARE_CITATION_ET_AL_GLUED_PATTERN = re.compile(
-    r'(?P<lead>\bet\s+al\.?)(?P<num>\d{1,3})(?=[\s,.;:!?)<\]]|$)',
+    r'(?P<lead>\bet\s+al\.?)\s*(?P<num>\d{1,3})(?=[\s,.;:!?)<\]/]|$)',
     re.IGNORECASE,
 )
 _BARE_CITATION_SPACED_DOT_PATTERN = re.compile(
     r'(?<=[A-Za-zА-Яа-яёЁ]) (\d{1,3}(?:\.\d{1,3})+)(?=[.,;:!?)<\]]|$)'
 )
+_BARE_CITATION_TRAILING_WORD_STOPLIST = {
+    "table",
+    "figure",
+    "fig",
+    "section",
+    "sec",
+    "box",
+    "eq",
+    "equation",
+    "chapter",
+    "range",
+    "distance",
+    "frequency",
+    "parameter",
+    "value",
+    "values",
+    "sample",
+    "data",
+    "page",
+    "pages",
+    "unit",
+    "units",
+    "vol",
+    "volume",
+    "issue",
+    "front",
+    "supplementary",
+    "doi",
+    "pmid",
+    "isbn",
+    "mhz",
+    "ghz",
+    "khz",
+    "mm",
+    "cm",
+    "kg",
+    "g",
+    "mg",
+    "nm",
+    "um",
+    "ph",
+    "monkey",
+    "week",
+    "month",
+    "animal",
+    "female",
+    "male",
+    "d",
+    "ma",
+    "ua",
+    "a",
+    "v",
+    "hz",
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "in",
+    "of",
+    "than",
+    "to",
+    "under",
+    "with",
+    "Вµm",
+}
 _FALSE_DECIMAL_SUP_CITATION_PATTERN = re.compile(
     r'<sup>\s*(?:<a\b[^>]*\bz2m-ref-link\b[^>]*>)?(?P<num>\d{1,3})(?:</a>)?\s*</sup>\.(?P<frac>\d+)',
     re.IGNORECASE,
@@ -4042,7 +4111,7 @@ def _recover_bare_citations(html: str, ref_count: int) -> str:
     }
 
     def _stoplisted(word: str) -> bool:
-        return word.lower() in trailing_word_stoplist
+        return word.lower() in _BARE_CITATION_TRAILING_WORD_STOPLIST
 
     def _normalize_comma_citations(nums_text: str) -> str | None:
         try:
@@ -4217,6 +4286,64 @@ def _recover_bare_citations(html: str, ref_count: int) -> str:
         text = _BARE_CITATION_SINGLE_GLUED_PATTERN.sub(_wrap_single_glued, text)
         text = _BARE_CITATION_DOT_PATTERN.sub(_wrap_dot, text)
         text = _BARE_CITATION_SINGLE_TRAILING_PATTERN.sub(_wrap_single_trailing, text)
+        out.append(text)
+
+    return "".join(out)
+
+
+def _recover_flattened_author_superscript_citations(html: str, ref_count: int) -> str:
+    """Link narrow author-adjacent flattened superscript citations."""
+    if ref_count <= 0:
+        return html
+
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    skip_stack: list[str] = []
+
+    def _link_number(number_text: str) -> str | None:
+        if len(number_text) > 1 and number_text.startswith("0"):
+            return None
+        try:
+            number = int(number_text)
+        except ValueError:
+            return None
+        if not (1 <= number <= ref_count):
+            return None
+        return f'<a href="#ref-{number}" class="z2m-ref-link">{number_text}</a>'
+
+    def _has_non_citation_left_context(m: re.Match[str]) -> bool:
+        left = m.string[max(0, m.start() - 60): m.start()]
+        return _NONCITATION_NUMERIC_CONTEXT_PATTERN.search(left) is not None
+
+    def _replace_et_al(m: re.Match[str]) -> str:
+        linked = _link_number(m.group("num"))
+        if linked is None:
+            return m.group(0)
+        return f"{m.group('lead')}<sup>{linked}</sup>"
+
+    def _replace_word_dot(m: re.Match[str]) -> str:
+        word = (m.group("word") or "").lower()
+        if word in _BARE_CITATION_TRAILING_WORD_STOPLIST:
+            return m.group(0)
+        if _has_non_citation_left_context(m):
+            return m.group(0)
+        linked = _link_number(m.group("num"))
+        if linked is None:
+            return m.group(0)
+        return f"{m.group('lead')}.<sup>{linked}</sup>"
+
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            _update_citation_skip_stack(part, skip_stack)
+            out.append(part)
+            continue
+        if skip_stack:
+            out.append(part)
+            continue
+        text = _BARE_CITATION_ET_AL_GLUED_PATTERN.sub(_replace_et_al, part)
+        text = _BARE_CITATION_SINGLE_DOT_SUFFIX_PATTERN.sub(_replace_word_dot, text)
         out.append(text)
 
     return "".join(out)
@@ -8400,6 +8527,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             ref_index,
         )
         before_references = _link_existing_numeric_superscripts_in_safe_blocks(before_references, ref_index)
+        before_references = _recover_flattened_author_superscript_citations(before_references, ref_index)
         before_references = _link_plain_superscript_numeric_groups_in_safe_blocks(
             before_references,
             ref_index,

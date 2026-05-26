@@ -452,6 +452,33 @@ def test_superscript_numeric_profile_links_comma_before_range_citation() -> None
     ) in polished
 
 
+def test_superscript_numeric_profile_recovers_author_adjacent_flattened_citations() -> None:
+    html = (
+        "<html><body>"
+        "<p>Martiniello et al. 18 report broad tablet adoption. "
+        "Wang et al24 compared saliency models. "
+        "Program management.21 improved after follow-up. "
+        "FRET pair 30 dyes stayed a measurement phrase. "
+        "Figure 2 shows the apparatus.</p>"
+        f"{_refs(30)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert 'et al.<sup><a href="#ref-18" class="z2m-ref-link">18</a></sup> report' in polished
+    assert 'et al<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> compared' in polished
+    assert 'management.<sup><a href="#ref-21" class="z2m-ref-link">21</a></sup> improved' in polished
+    assert "FRET pair 30 dyes" in polished
+    assert "Figure 2 shows" in polished
+    assert 'href="#ref-30"' not in polished
+    assert 'href="#ref-2"' not in polished
+
+
 def test_superscript_numeric_profile_retargets_space_separated_ref_run_links() -> None:
     html = (
         "<html><body>"

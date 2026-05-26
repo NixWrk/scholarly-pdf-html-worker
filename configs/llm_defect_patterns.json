@@ -24,6 +24,11 @@
     "criticality": "high",
     "fix_layer": "reference link repair"
   },
+  "P50": {
+    "pattern": "flattened-superscript-citation",
+    "criticality": "medium",
+    "fix_layer": "EN polish citation OCR recovery"
+  },
   "P59": {
     "pattern": "false-reference-link-from-numeric-prose",
     "criticality": "high",
