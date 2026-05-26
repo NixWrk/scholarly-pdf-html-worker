@@ -2987,6 +2987,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             break
 
     references_started = False
+    roman_split_telemetry: tuple[str, str, str, str, str, Block, re.Match[str]] | None = None
     for block in polish_blocks:
         if REFERENCES_HEADING_RE.match(block.text):
             references_started = True
@@ -3016,6 +3017,54 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             re.IGNORECASE,
         ):
             continue
+        if re.search(
+            rf"\b{raw_prefix}\s*<sup\b[^>]*>\s*{raw_suffix}\s*</sup>",
+            block.raw,
+            re.IGNORECASE,
+        ):
+            if roman_split_telemetry is None:
+                roman_split_telemetry = (
+                    "P45S",
+                    "Roman-like suffix is already a superscript marker",
+                    "A rendered superscript affiliation/footnote marker resembles a split word in visible text.",
+                    "EN audit P45 superscript-marker classifier",
+                    "Superscript affiliation markers such as Teixeira<sup>i</sup> must not inflate P45.",
+                    block,
+                    split_match,
+                )
+            continue
+        if re.search(
+            rf"\b{raw_prefix}\s*<a\b[^>]*\bz2m-ref-link\b[^>]*>\s*{raw_suffix}\s*</a>",
+            block.raw,
+            re.IGNORECASE,
+        ):
+            if roman_split_telemetry is None:
+                roman_split_telemetry = (
+                    "P45L",
+                    "Roman-like suffix is wrapped by a reference link",
+                    "A reference-link boundary makes visible text resemble a split surname; repair belongs to citation/link cleanup.",
+                    "EN audit P45 linked-suffix classifier",
+                    "Author-year link fragments such as Pisan<a>i</a> must not inflate P45.",
+                    block,
+                    split_match,
+                )
+            continue
+        if re.search(
+            rf"\b{raw_prefix}\s*<span\b[^>]*\bz2m-math\b[^>]*>",
+            block.raw,
+            re.IGNORECASE,
+        ):
+            if roman_split_telemetry is None:
+                roman_split_telemetry = (
+                    "P45M",
+                    "Roman-like suffix is a rendered math variable",
+                    "A rendered math variable resembles a split word in visible text.",
+                    "EN audit P45 math-variable classifier",
+                    "Math spans such as Function <span class='z2m-math'>v</span> must not inflate P45.",
+                    block,
+                    split_match,
+                )
+            continue
         defects.append(
             _defect(
                 defect_id="P45",
@@ -3032,6 +3081,24 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
         break
+
+    if roman_split_telemetry is not None and not any(defect.id == "P45" for defect in defects):
+        defect_id, check, hypothesis, proposed_fix_layer, regression_test, block, split_match = roman_split_telemetry
+        defects.append(
+            _defect(
+                defect_id=defect_id,
+                cc_class="CC-04/CC-13",
+                check=check,
+                severity="warning",
+                block=block,
+                snippet=block.text,
+                stage=POLISH_STAGE,
+                hypothesis=hypothesis,
+                proposed_fix_layer=proposed_fix_layer,
+                regression_test=regression_test,
+                extra={"match": split_match.group(0), "quality_counted": False},
+            )
+        )
 
     mixed_var_match = MIXEDCASE_VAR_FOOTNOTE_RE.search(slim_html)
     if mixed_var_match is not None:

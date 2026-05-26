@@ -2585,6 +2585,49 @@ def test_analyze_pair_does_not_report_p45_for_formula_like_roman_tokens() -> Non
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_splits_tagged_p45_contexts_from_real_roman_suffix_splits() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    cases = [
+        (
+            "sup-marker",
+            "<html><body><p>Joao Paulo Teixeira<sup>i</sup>, Daniele Mandrioli.</p></body></html>",
+            "P45S",
+        ),
+        (
+            "linked-suffix",
+            "<html><body><p>Korol and Pisan "
+            '<a href="#ref-67" class="z2m-ref-link">i</a> '
+            '<a href="#ref-67" class="z2m-ref-link">2015)</a>.</p></body></html>',
+            "P45L",
+        ),
+        (
+            "math-variable",
+            "<html><body><p>Function "
+            '<span class="z2m-math z2m-math-inline" data-z2m-tex="\\(v(\\cdot)\\)">v</span> '
+            "computes the vector.</p></body></html>",
+            "P45M",
+        ),
+    ]
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+
+        for name, polish_html, expected_id in cases:
+            polish_path.write_text(polish_html, encoding="utf-8")
+            result = audit.analyze_pair(raw_path, polish_path)
+
+            defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+            assert "P45" not in defects_by_id, name
+            assert defects_by_id[expected_id]["severity"] == "warning"
+            assert defects_by_id[expected_id]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_post_reference_doi_metadata_for_duplicate_numbers() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

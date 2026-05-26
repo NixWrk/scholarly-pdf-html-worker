@@ -1496,7 +1496,14 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
         "<p>Pairwise Kolmogoro v-Smirno v tests and a Marko v chain were reported.</p>"
         "<p>The Kolmogoro v\u2013Smirno v test, Marko v decision process, and "
         "Lyapuno v stability analysis were listed.</p>"
-        "<p>Agents used the Arxi v interface; Mostafa vi et al. used the nomogram.</p>"
+        "<p>A Chebyche v filter, Tikhono v regularization, Lyapuno v exponents, "
+        "Marko v fields, and a Gauss-Marko v hypothesis were listed.</p>"
+        "<p>Zhangaskano v's approach, Georgie v's study, Azou vi et al., "
+        "Moossa vi et al., and Ghaza vi et al. were cited.</p>"
+        "<p>Agents used the Arxi v interface and Arxi v tool; Mostafa vi et al. used the nomogram.</p>"
+        "<p>Neura vi/Cerenovus, Inqo vi), A. Khosra vi are with Deakin, "
+        "Krunosla v Stingl, Ivano v IV, V. Popko v), Valery Putlaye v), "
+        "Ak. Korole v str, University of the Nege v., and Laha v [4] were listed.</p>"
         "<p>W i = Mean i * N n i and Dcon v refers to deformable convolution.</p>"
         "<h4>References</h4>"
         "<ul><li>J. A. Gardner and V. Bulato v. Scientific diagrams made easy.</li></ul>"
@@ -1511,7 +1518,27 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     assert "Markov chain" in polished
     assert "Kolmogorov\u2013Smirnov test, Markov decision process" in polished
     assert "Lyapunov stability analysis" in polished
-    assert "Arxiv interface; Mostafavi et al." in polished
+    assert "Chebychev filter" in polished
+    assert "Tikhonov regularization" in polished
+    assert "Lyapunov exponents" in polished
+    assert "Markov fields" in polished
+    assert "Gauss-Markov hypothesis" in polished
+    assert "Zhangaskanov's approach" in polished
+    assert "Georgiev's study" in polished
+    assert "Azouvi et al." in polished
+    assert "Moossavi et al." in polished
+    assert "Ghazavi et al." in polished
+    assert "Arxiv interface and Arxiv tool; Mostafavi et al." in polished
+    assert "Neuravi/Cerenovus" in polished
+    assert "Inqovi)" in polished
+    assert "A. Khosravi are with Deakin" in polished
+    assert "Krunoslav Stingl" in polished
+    assert "Ivanov IV" in polished
+    assert "V. Popkov)" in polished
+    assert "Valery Putlayev)" in polished
+    assert "Ak. Korolev str" in polished
+    assert "University of the Negev." in polished
+    assert "Lahav [4]" in polished
     assert "Mean i * N" in polished
     assert "Dcon v refers" in polished
     assert "V. Bulatov. Scientific diagrams" in polished
@@ -1524,6 +1551,24 @@ def test_polish_html_document_rejoins_surname_v_before_et_al_and_reference_sente
     assert "Arxi v" not in polished
     assert "Mostafa vi" not in polished
     assert "Bulato v." not in polished
+
+
+def test_polish_html_document_repairs_ref_linked_roman_suffix_author_year_split() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work by Korol and Pisan "
+        '<a href="#ref-67" class="z2m-ref-link">i</a> '
+        '<a href="#ref-67" class="z2m-ref-link">2015)</a> was cited.</p>'
+        "<h4>References</h4>"
+        '<ul><li id="ref-67"><span class="z2m-ref-num">67.</span> Pisani reference.</li></ul>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Korol and Pisani " in polished
+    assert '<a href="#ref-67" class="z2m-ref-link">i</a>' not in polished
+    assert '<a href="#ref-67" class="z2m-ref-link">2015)</a>' in polished
 
 
 def test_polish_html_document_rejoins_vi_surname_before_reporting_verb() -> None:

@@ -24,6 +24,26 @@
     "criticality": "high",
     "fix_layer": "reference link repair"
   },
+  "P45": {
+    "pattern": "roman-suffix-word-or-surname-split",
+    "criticality": "medium",
+    "fix_layer": "EN polish roman suffix disambiguation"
+  },
+  "P45L": {
+    "pattern": "roman-suffix-reference-link-boundary",
+    "criticality": "medium",
+    "fix_layer": "audit linked-suffix classifier"
+  },
+  "P45M": {
+    "pattern": "roman-suffix-math-variable-boundary",
+    "criticality": "medium",
+    "fix_layer": "audit math-variable classifier"
+  },
+  "P45S": {
+    "pattern": "roman-suffix-superscript-marker-boundary",
+    "criticality": "medium",
+    "fix_layer": "audit superscript-marker classifier"
+  },
   "P50": {
     "pattern": "flattened-superscript-citation",
     "criticality": "medium",

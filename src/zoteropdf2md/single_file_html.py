@@ -10337,6 +10337,35 @@ def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
 
 
+def _repair_roman_suffix_author_year_ref_link_splits(html: str) -> str:
+    """Undo ref links that captured a surname-final roman-like suffix."""
+    if "z2m-ref-link" not in html:
+        return html
+
+    pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+"
+        r"<a\b(?=[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"])(?=[^>]*\bz2m-ref-link\b)[^>]*>"
+        r"\s*(?P<suffix>vi|i|v)\s*</a>"
+        r"(?=\s*<a\b(?=[^>]*\bhref\s*=\s*['\"]#ref-(?P=target)['\"])(?=[^>]*\bz2m-ref-link\b)[^>]*>"
+        r"\s*\(?\d{4})",
+        re.IGNORECASE,
+    )
+    blocked_roots = {
+        "appendix",
+        "figure",
+        "section",
+        "table",
+    }
+
+    def _replace(match: re.Match[str]) -> str:
+        root = match.group("root")
+        if root.lower() in blocked_roots:
+            return match.group(0)
+        return f"{root}{match.group('suffix').lower()}"
+
+    return pattern.sub(_replace, html)
+
+
 def _unwrap_author_year_page_links(html: str) -> str:
     """Page anchors around author-year citations are stale PDF navigation, not citations."""
     if "#page-" not in html:
@@ -11537,11 +11566,26 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
         r"\b(?P<root>[A-Za-z][A-Za-z0-9._%+-]{2,})\s+(?P<suffix>vi|iv|ix|i|v|x)"
         r"(?=@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
     )
-    et_al_surname_v_pattern = re.compile(
-        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+v(?=\s+et\s+al\.?\b)"
+    et_al_surname_roman_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|i|v)"
+        r"(?=\s+et\s+al\.?\b)"
+    )
+    possessive_surname_roman_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|i|v)"
+        r"(?=['\u2019]s\b)"
     )
     hyphen_surname_v_pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v(?=-[A-Z][A-Za-z'-]{2,})"
+    )
+    proper_surname_v_tail_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+v"
+        r"(?=(?:\s+(?:[A-Z]{1,4}\b|[A-Z][a-z][A-Za-z'-]{2,}\b)|\s*[)\u2020*]))"
+    )
+    author_surname_v_citation_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+v(?=\s*\[\d{1,3}\])"
+    )
+    affiliation_surname_vi_pattern = re.compile(
+        r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+vi(?=\s+(?:are|is)\s+with\b)"
     )
     named_o_v_term_pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,}o)\s+v"
@@ -11559,18 +11603,24 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
     smirnov_pattern = re.compile(r"\bSmirno\s+v\b", re.IGNORECASE)
     markov_pattern = re.compile(
         r"\bMarko\s+v(?=\s+(?:blanket|chain|chains|decision|model|models|process|processes|property|"
-        r"random|state|states|transition)\b)",
+        r"field|fields|hypothesis|random|state|states|transition)\b)",
         re.IGNORECASE,
     )
     lyapunov_pattern = re.compile(
-        r"\bLyapuno\s+v(?=\s+(?:analysis|candidate|function|functional|stability|type)\b)",
+        r"\bLyapuno\s+v(?=\s+(?:analysis|candidate|exponent|exponents|function|functional|stability|type)\b)",
         re.IGNORECASE,
     )
+    chebychev_pattern = re.compile(r"\bChebyche\s+v(?=\s+filter\b)", re.IGNORECASE)
+    tikhonov_pattern = re.compile(r"\bTikhono\s+v(?=\s+regularization\b)", re.IGNORECASE)
     arxiv_pattern = re.compile(
-        r"\bArxi\s+v(?=\s+(?:and|at|interface|interfaces|paper|papers|preprint|preprints|reviewing)\b)",
+        r"\bArxi\s+v(?=\s+(?:and|at|interface|interfaces|paper|papers|preprint|preprints|reviewing|tool|tools)\b)",
         re.IGNORECASE,
     )
     mostafavi_pattern = re.compile(r"\bMostafa\s+vi(?=\s+et\s+al\.?\b)", re.IGNORECASE)
+    neuravi_pattern = re.compile(r"\bNeura\s+vi(?=\s*/\s*Cerenovus\b)", re.IGNORECASE)
+    inqovi_pattern = re.compile(r"\bInqo\s+vi(?=[),.;])", re.IGNORECASE)
+    negev_pattern = re.compile(r"\bNege\s+v(?=\.)", re.IGNORECASE)
+    korolev_pattern = re.compile(r"\bKorole\s+v(?=\s+str\b)", re.IGNORECASE)
     pattern = re.compile(
         r"\b(?P<root>[A-Z][a-z][A-Za-z'-]{2,})\s+(?P<suffix>vi|iv|ix|i|v|x)"
         r"(?=(?:\s*,|\s*\(|\s*&(?:amp;)?\s*|\s+(?:and|or)\b|\s+\d{1,4}\b|\s+(?:le|de|van|von)\b|\s+[A-Z](?:\b|[a-z]{2,}\b)|[.;:]?\s*</p>|[.;:]?\s*$))"
@@ -11600,6 +11650,7 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
                 "dcon",
                 "cardio",
                 "haystackd",
+                "function",
             }
 
         def _replace(match: re.Match[str]) -> str:
@@ -11619,8 +11670,32 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
             return lambda match: _case_like(match.group(0).split()[0], replacement)
 
         text = email_pattern.sub(lambda match: f"{match.group('root')}{match.group('suffix')}", text)
-        text = et_al_surname_v_pattern.sub(
+        text = et_al_surname_roman_pattern.sub(
+            lambda match: (
+                f"{match.group('root')}{match.group('suffix')}"
+                if _join_allowed(match.group("root"))
+                else match.group(0)
+            ),
+            text,
+        )
+        text = possessive_surname_roman_pattern.sub(
+            lambda match: (
+                f"{match.group('root')}{match.group('suffix')}"
+                if _join_allowed(match.group("root"))
+                else match.group(0)
+            ),
+            text,
+        )
+        text = proper_surname_v_tail_pattern.sub(
             lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
+            text,
+        )
+        text = author_surname_v_citation_pattern.sub(
+            lambda match: f"{match.group('root')}v" if _join_allowed(match.group("root")) else match.group(0),
+            text,
+        )
+        text = affiliation_surname_vi_pattern.sub(
+            lambda match: f"{match.group('root')}vi" if _join_allowed(match.group("root")) else match.group(0),
             text,
         )
         text = hyphen_surname_v_pattern.sub(
@@ -11635,8 +11710,14 @@ def _repair_false_roman_suffix_splits(html: str) -> str:
         text = smirnov_pattern.sub(_known_replacement("smirnov"), text)
         text = markov_pattern.sub(_known_replacement("markov"), text)
         text = lyapunov_pattern.sub(_known_replacement("lyapunov"), text)
+        text = chebychev_pattern.sub(_known_replacement("chebychev"), text)
+        text = tikhonov_pattern.sub(_known_replacement("tikhonov"), text)
         text = arxiv_pattern.sub(_known_replacement("arxiv"), text)
         text = mostafavi_pattern.sub(_known_replacement("mostafavi"), text)
+        text = neuravi_pattern.sub(_known_replacement("neuravi"), text)
+        text = inqovi_pattern.sub(_known_replacement("inqovi"), text)
+        text = negev_pattern.sub(_known_replacement("negev"), text)
+        text = korolev_pattern.sub(_known_replacement("korolev"), text)
         text = initial_surname_v_sentence_pattern.sub(
             lambda match: f"{match.group('initials')}{match.group('root')}v",
             text,
@@ -15336,6 +15417,7 @@ def polish_html_document(
         polished = _repair_ref_links_absorbed_decimal_or_unit_text(polished)
         polished = _repair_nested_reference_links(polished)
         polished = _unwrap_author_year_ref_links(polished, citation_profile=citation_profile)
+        polished = _repair_roman_suffix_author_year_ref_link_splits(polished)
         polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_acronym_footnote_ref_citations(polished)
         polished = _recover_trailing_citation_after_author_year_ref(polished)
