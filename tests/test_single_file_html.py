@@ -6955,6 +6955,7 @@ def test_polish_html_document_links_superscript_citations_before_lowercase_conti
         "<html><body>"
         "<p>Data generated from a previous study<sup>7,8</sup> was reanalyzed. "
         "Griffiths et al<sup>6</sup> in the form. "
+        "Health service use<sup>3,5</sup> than usual care was lower. "
         "Area was 20 cm<sup>2</sup> and remained stable. "
         "Current was 10 A<sup>2</sup> and remained stable.</p>"
         "<h4>References</h4><ol>"
@@ -6972,8 +6973,11 @@ def test_polish_html_document_links_superscript_citations_before_lowercase_conti
     assert 'href="#ref-7"' in body
     assert 'href="#ref-8"' in body
     assert 'href="#ref-6"' in body
+    assert 'href="#ref-3"' in body
+    assert 'href="#ref-5"' in body
     assert 'previous study<sup><a href="#ref-7" class="z2m-ref-link">7</a>,<a href="#ref-8"' in body
     assert 'Griffiths et al<sup><a href="#ref-6" class="z2m-ref-link">6</a></sup> in' in body
+    assert 'use<sup><a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-5"' in body
     assert 'href="#ref-2"' not in body
     assert 'cm<sup class="z2m-unit-exp">2</sup> and' in body
     assert 'A<sup><a href="#ref-2"' not in body

@@ -84,6 +84,41 @@ def test_quality_history_records_all_numeric_audit_and_assessment_metrics() -> N
     assert entry["totals"]["polish_replacement_chars"] == 2
 
 
+def test_quality_history_excludes_classification_only_defects_from_score() -> None:
+    assessment = {"articles": [{"article": "article_a", "href_counts": {}}]}
+    audit = {
+        "corpus_summary": {"defect_counts": {"P04M": 1, "P06": 1}},
+        "articles": [
+            {
+                "article": "article_a",
+                "summary": {},
+                "defects_found": [
+                    {
+                        "id": "P04M",
+                        "severity": "warning",
+                        "extra": {"quality_counted": False},
+                    },
+                    {"id": "P06", "severity": "warning"},
+                ],
+            }
+        ],
+    }
+
+    entry = build_entry(
+        run_dir=Path("run"),
+        run_id="run_a",
+        assessment=assessment,
+        audit=audit,
+    )
+
+    record = entry["articles"]["article_a"]
+    assert record["defects"] == 1
+    assert record["warnings"] == 1
+    assert record["defect_ids"] == {"P06": 1}
+    assert entry["totals"]["defects"] == 1
+    assert entry["totals"]["warnings"] == 1
+
+
 def test_quality_history_compares_deltas_for_every_metric() -> None:
     previous = {
         "run_id": "old",

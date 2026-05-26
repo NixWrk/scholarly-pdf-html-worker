@@ -530,6 +530,86 @@ def test_analyze_pair_ignores_software_version_sup_lists_as_citation_ranges() ->
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_splits_table_sup_ranges_from_body_p04() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<table><tr><th>Antonio Lozano <sup>1,2</sup>, Xing Chen <sup>1,3</sup></th></tr></table>"
+            "<h4>References</h4><ol><li>Ref one.</li><li>Ref two.</li><li>Ref three.</li></ol>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04" not in defects_by_id
+        assert defects_by_id["P04T"]["severity"] == "warning"
+        assert defects_by_id["P04T"]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_splits_math_ranges_from_body_p04() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>The produced center point heatmap is P in [0, 1] "
+            "for each class score.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04" not in defects_by_id
+        assert defects_by_id["P04M"]["severity"] == "warning"
+        assert defects_by_id["P04M"]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_prefers_body_p04_over_table_or_math_p04_splits() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<table><tr><td>Author <sup>1,2</sup></td></tr></table>"
+            "<p>Prior studies [1, 2] support the method.</p>"
+            "<h4>References</h4><ol><li>Ref one.</li><li>Ref two.</li></ol>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04" in defect_ids
+        assert "P04T" not in defect_ids
+        assert "P04M" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_cli_writes_pair_audit_report() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

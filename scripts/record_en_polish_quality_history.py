@@ -52,6 +52,16 @@ def _severity_counts(defects: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _quality_counted_defects(defects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counted: list[dict[str, Any]] = []
+    for defect in defects:
+        extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+        if extra.get("quality_counted") is False:
+            continue
+        counted.append(defect)
+    return counted
+
+
 def _assessment_articles(assessment: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not assessment:
         return {}
@@ -176,18 +186,19 @@ def build_entry(
         assessment_article = assessment_by_article.get(article_name, {})
         audit_article = audit_by_article.get(article_name, {})
         defects = list(audit_article.get("defects_found") or [])
-        severities = _severity_counts(defects)
+        quality_defects = _quality_counted_defects(defects)
+        severities = _severity_counts(quality_defects)
         metrics = _article_metrics(assessment_article, audit_article)
         labels = _article_labels(assessment_article, audit_article)
         defect_ids: dict[str, int] = {}
-        for defect in defects:
+        for defect in quality_defects:
             defect_id = str(defect.get("id") or "unknown")
             defect_ids[defect_id] = defect_ids.get(defect_id, 0) + 1
-        score = _article_score(defects, metrics)
+        score = _article_score(quality_defects, metrics)
         record = {
             "article": article_name,
             "score": score,
-            "defects": len(defects),
+            "defects": len(quality_defects),
             "errors": severities.get("error", 0),
             "warnings": severities.get("warning", 0),
             "infos": severities.get("info", 0),

@@ -7710,7 +7710,7 @@ def _lowercase_after_superscript_still_looks_citation(left_visible: str, right_v
     if left[-1] in {",", ";", "."}:
         return True
     if not re.match(
-        r"(?:and|or|with|for|in|to|from|of|was|were|is|are|has|have|had|can|may|might|would|should)\b",
+        r"(?:and|or|than|with|for|in|to|from|of|was|were|is|are|has|have|had|can|may|might|would|should)\b",
         right,
         re.IGNORECASE,
     ):

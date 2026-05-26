@@ -15,6 +15,11 @@ workflow is:
    false-positive rule.
 6. If one `P*` defect id mixes different root causes or artifact mechanisms,
    split or refine the classification before, or together with, the repair.
+   For example, body citation failures stay in `P04`, while table/float
+   citation-like ranges and math/measurement ranges are tracked separately so
+   their counts do not hide the real citation-parser backlog. Classification
+   splits that are audit telemetry rather than a new quality regression should
+   stay in pattern history but set `extra.quality_counted=false`.
 7. Record all quality metrics and compare them with a previous run.
 8. Evaluate gates for lower-is-better metrics.
 9. Build a compact LLM analysis packet and prompt.

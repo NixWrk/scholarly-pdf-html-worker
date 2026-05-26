@@ -827,6 +827,16 @@ STAT_NUMERIC_CONTEXT_RE = re.compile(
     r"statistical\s+power|power\s+analysis)\b",
     re.IGNORECASE,
 )
+MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE = re.compile(
+    r"(?:\\\[|\\\(|"
+    r"\b(?:anova|array|class|classes|coordinate|coordinates|equation|eq\.?|"
+    r"formula|glm|heatmap|interval|likelihood|matrix|median|parameter|"
+    r"parameters|probability|range|scale|score|scores|threshold|vector|"
+    r"values?)\b|"
+    r"[=<>]|[\u00b0\u03bc\u03c0\u03c3\u03c4\u03a6\u2208\u2211\u2212\u2217"
+    r"\u2219\u2223\u223c\u2248\u25e6])",
+    re.IGNORECASE,
+)
 TABLE_CAPTION_ID_RE = re.compile(
     r"<p\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])[^>]*>"
     r"(?P<body>.*?)</p>",
@@ -1530,6 +1540,26 @@ def _looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
     )
 
 
+def _looks_like_math_or_measurement_range(text: str, match: re.Match[str]) -> bool:
+    body = match.group(0)
+    if re.search(r"\[\s*(?:0|[-\u2212])", body):
+        return True
+    window = text[max(0, match.start() - 180): min(len(text), match.end() + 180)]
+    left = text[max(0, match.start() - 120): match.start()]
+    if re.search(r"\b(?:within|in|the)\s+(?:the\s+)?range\s*$", left, re.IGNORECASE):
+        return True
+    return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(window) is not None
+
+
+def _block_looks_like_math_or_measurement_range_context(block: Block) -> bool:
+    text = block.text
+    if STAT_NUMERIC_CONTEXT_RE.search(text):
+        return True
+    if re.search(r"\[\s*(?:0|[-\u2212])", text):
+        return True
+    return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(text) is not None
+
+
 def _looks_like_software_version_context(text: str, start: int) -> bool:
     left = text[max(0, start - 160):start]
     return (
@@ -1572,6 +1602,26 @@ def _has_unlinked_sup_numeric_range(block: Block) -> bool:
                 continue
             return True
     return False
+
+
+def _unlinked_citation_range_kind(block: Block) -> str:
+    match = CITATION_RANGE_LIST_RE.search(block.text)
+    has_unlinked_plain_match = match is not None and "z2m-ref-link" not in block.raw
+    has_vector_range = has_unlinked_plain_match and _looks_like_numeric_vector(block.text, match)
+    has_plain_range = has_unlinked_plain_match and not has_vector_range
+    has_tagged_range = _has_unlinked_tagged_citation_range(block)
+    has_sup_range = _has_unlinked_sup_numeric_range(block)
+    if not has_plain_range and not has_vector_range and not has_tagged_range and not has_sup_range:
+        return ""
+    if _looks_like_float_or_caption(block):
+        return "float"
+    if (
+        has_vector_range
+        or (match is not None and _looks_like_math_or_measurement_range(block.text, match))
+        or _block_looks_like_math_or_measurement_range_context(block)
+    ):
+        return "math"
+    return "body"
 
 
 def _looks_like_figure_caption(block: Block) -> bool:
@@ -1960,7 +2010,7 @@ def _frontmatter_defects(raw_blocks: list[Block], polish_blocks: list[Block]) ->
 def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
     defects: list[Defect] = []
     references_started = False
-    saw_unlinked_range = False
+    unlinked_range_candidates: dict[str, Block] = {}
     saw_false_positive = False
     saw_ocr_citation = False
     saw_latex_sup = False
@@ -1987,32 +2037,9 @@ def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
                 )
             )
             saw_ocr_citation = True
-        if not saw_unlinked_range:
-            match = CITATION_RANGE_LIST_RE.search(block.text)
-            stat_numeric_context = STAT_NUMERIC_CONTEXT_RE.search(block.text) is not None
-            if (
-                not stat_numeric_context
-                and (
-                    (match and "z2m-ref-link" not in block.raw and not _looks_like_numeric_vector(block.text, match))
-                    or _has_unlinked_tagged_citation_range(block)
-                    or _has_unlinked_sup_numeric_range(block)
-                )
-            ):
-                defects.append(
-                    _defect(
-                        defect_id="P04",
-                        cc_class="CC-02",
-                        check="Unlinked citation range/list remains in polish",
-                        severity="error",
-                        block=block,
-                        snippet=block.text,
-                        stage=POLISH_STAGE,
-                        hypothesis="Citation grammar misses ranges, en-dash/hyphen spans, or comma-separated lists.",
-                        proposed_fix_layer="EN polish citation parser",
-                        regression_test="Link [1-4], [8-10], [11, 12], and mixed list/range citation forms.",
-                    )
-                )
-                saw_unlinked_range = True
+        range_kind = _unlinked_citation_range_kind(block)
+        if range_kind and range_kind not in unlinked_range_candidates:
+            unlinked_range_candidates[range_kind] = block
         if not saw_latex_sup and LATEX_SUP_CITATION_RE.search(block.raw):
             defects.append(
                 _defect(
@@ -2045,6 +2072,56 @@ def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
                 )
             )
             saw_false_positive = True
+    if "body" in unlinked_range_candidates:
+        block = unlinked_range_candidates["body"]
+        defects.append(
+            _defect(
+                defect_id="P04",
+                cc_class="CC-02",
+                check="Unlinked body citation range/list remains in polish",
+                severity="error",
+                block=block,
+                snippet=block.text,
+                stage=POLISH_STAGE,
+                hypothesis="Citation grammar misses body ranges, en-dash/hyphen spans, or comma-separated lists.",
+                proposed_fix_layer="EN polish citation parser",
+                regression_test="Link [1-4], [8-10], [11, 12], and mixed body citation list/range forms.",
+            )
+        )
+    elif "float" in unlinked_range_candidates:
+        block = unlinked_range_candidates["float"]
+        defects.append(
+            _defect(
+                defect_id="P04T",
+                cc_class="CC-02/CC-06",
+                check="Citation-like numeric range/list remains in table or float context",
+                severity="warning",
+                block=block,
+                snippet=block.text,
+                stage=POLISH_STAGE,
+                hypothesis="Table, caption, or float content contains numeric ranges/lists that should be reviewed separately from body citation linking.",
+                proposed_fix_layer="EN audit P04 table/float classifier or table-specific citation policy",
+                regression_test="Author-affiliation and table numeric ranges must not inflate body P04 counts.",
+                extra={"quality_counted": False},
+            )
+        )
+    elif "math" in unlinked_range_candidates:
+        block = unlinked_range_candidates["math"]
+        defects.append(
+            _defect(
+                defect_id="P04M",
+                cc_class="CC-02/CC-05",
+                check="Citation-like numeric range/list remains in math or measurement context",
+                severity="warning",
+                block=block,
+                snippet=block.text,
+                stage=POLISH_STAGE,
+                hypothesis="Math, statistical, vector, or measurement notation resembles citation ranges and needs separate classification.",
+                proposed_fix_layer="EN audit P04 math/measurement classifier",
+                regression_test="Numeric vectors, parameter intervals, and measurement ranges must not inflate body P04 counts.",
+                extra={"quality_counted": False},
+            )
+        )
     return defects
 
 

@@ -4,6 +4,16 @@
     "criticality": "high",
     "fix_layer": "reference list normalization and identity checks"
   },
+  "P04M": {
+    "pattern": "math-or-measurement-range-false-citation",
+    "criticality": "medium",
+    "fix_layer": "audit citation-range classifier"
+  },
+  "P04T": {
+    "pattern": "table-or-float-range-false-citation",
+    "criticality": "medium",
+    "fix_layer": "audit citation-range classifier"
+  },
   "P05": {
     "pattern": "mixed-or-wrong-citation-style",
     "criticality": "high",
