@@ -7377,6 +7377,11 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
         "Gru\u0412\u00a8nbaum, Lu\u0412\u00a8tzner, Sao\u041b\u045a Lu\u0412\u00b4\u0414\u00b1s, "
         "Negra\u041b\u045ao, Svens\u041b\u2021ek, Cl\u0414\u00b1\u0412\u00b4nico, "
         "interpre- \u0412\u00b4 tation, and Schmitz- \u0412\u00a8 Rode appeared. "
+        "Fern\u00b4andez, Smorawin\u00b4ski, Lubin\u00b4ska, Rodr\u00b4\u0131guez, "
+        "Mart\u0131\u00b4nez, Sa\u0131\u00a8d, Lema\u02c6\u0131tre, Carri\u00b8co, "
+        "Sertba\u00b8s, Ag- \u00b4 gregating, au- \u00b4 toencoders, "
+        "Green- \u00a8 berg, Bar- \u00b4 ranco, Abbreviations \u00b4 Symbol, "
+        "and or \u00b4 both were also present. "
         "The text had qualitative colour \u0412\u0491 palettes and present \u0412\u0401 <i> active </i> modes.</p>"
         '<p><a href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait</a> '
         "\u041b\u2122 e\u041b\u2122 University of Bath.</p>"
@@ -7422,6 +7427,10 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
     assert "Gr\u00fcnbaum, L\u00fctzner, S\u00e3o Lu\u00eds" in polished
     assert "Negr\u00e3o, Sven\u0161ek, Cl\u00ednico" in polished
     assert "interpretation, and Schmitz-Rode appeared" in polished
+    assert "Fern\u00e1ndez, Smorawi\u0144ski, Lubi\u0144ska, Rodr\u00edguez" in polished
+    assert "Mart\u00ednez, Sa\u00efd, Lema\u00eetre, Carri\u00e7o, Sertba\u015f" in polished
+    assert "Aggregating, autoencoders, Greenberg, Barranco" in polished
+    assert "Abbreviations Symbol, and or both were also present" in polished
     assert "qualitative colour palettes and present <i> active </i> modes" in polished
     assert 'href="https://orcid.org/0000-0001-8665-1362">Karolina Pakenait\u0117</a>' in polished
     assert 'data-name="fac\u0412\u0451ade"' in polished

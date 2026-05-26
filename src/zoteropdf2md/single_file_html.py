@@ -4949,6 +4949,7 @@ def _with_preceding_acute(match: re.Match[str]) -> str:
         "a": "\u00e1",
         "e": "\u00e9",
         "i": "\u00ed",
+        "\u0131": "\u00ed",
         "o": "\u00f3",
         "u": "\u00fa",
         "y": "\u00fd",
@@ -4967,6 +4968,7 @@ def _with_preceding_diaeresis(match: re.Match[str]) -> str:
         "a": "\u00e4",
         "e": "\u00eb",
         "i": "\u00ef",
+        "\u0131": "\u00ef",
         "o": "\u00f6",
         "u": "\u00fc",
         "y": "\u00ff",
@@ -4993,6 +4995,7 @@ def _with_preceding_circumflex(match: re.Match[str]) -> str:
         "a": "\u00e2",
         "e": "\u00ea",
         "i": "\u00ee",
+        "\u0131": "\u00ee",
         "o": "\u00f4",
         "u": "\u00fb",
         "A": "\u00c2",
@@ -5036,6 +5039,28 @@ def _with_following_caron(match: re.Match[str]) -> str:
     return replacements.get(match.group("letter"), match.group("letter"))
 
 
+def _with_preceding_acute_consonant(match: re.Match[str]) -> str:
+    replacements = {
+        "n": "\u0144",
+        "N": "\u0143",
+    }
+    return replacements.get(match.group("letter"), match.group("letter"))
+
+
+def _with_following_acute_consonant(match: re.Match[str]) -> str:
+    return _with_preceding_acute_consonant(match)
+
+
+def _with_following_cedilla(match: re.Match[str]) -> str:
+    replacements = {
+        "c": "\u00e7",
+        "C": "\u00c7",
+        "s": "\u015f",
+        "S": "\u015e",
+    }
+    return replacements.get(match.group("letter"), match.group("letter"))
+
+
 def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
     for bad, good in _LATIN_MOJIBAKE_ACCENT_REPLACEMENTS:
         text = text.replace(bad, good)
@@ -5057,20 +5082,30 @@ def _repair_latin_detached_accent_artifacts_text(text: str) -> str:
         lambda m: f"{m.group('prefix')}\u00f3",
         text,
     )
-    text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00b4(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_acute, text)
-    text = re.sub(r"(?P<vowel>[AEIOUYaeiouy])\u00a8(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_diaeresis, text)
-    text = re.sub(r"(?P<vowel>[AEIOUaeiou])\u02c6(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_circumflex, text)
+    text = re.sub(r"(?P<vowel>[AEIOUYaeiouy\u0131])\u00b4(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_acute, text)
+    text = re.sub(r"(?P<vowel>[AEIOUYaeiouy\u0131])\u00a8(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_diaeresis, text)
+    text = re.sub(r"(?P<vowel>[AEIOUaeiou\u0131])\u02c6(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_circumflex, text)
+    text = re.sub(r"(?P<letter>[Nn])\u00b4(?=\s*(?:[B-DF-HJ-NP-TV-Zb-df-hj-np-tv-z]|[,.;)]))", _with_preceding_acute_consonant, text)
     text = re.sub(r"\bSao\u02dc(?=\s|[,.;)])", "S\u00e3o", text)
     text = re.sub(r"(?P<letter>[AaOoNn])\u02dc(?=\s*(?:[A-Za-z]|[,.;)]))", _with_preceding_tilde, text)
     text = re.sub(r"(?P<letter>[cCsSzZ])\u02c7(?=\s*(?:[A-Za-z]|[,.;)]))", _with_following_caron, text)
+    text = re.sub(r"\b(?P<left>[A-Za-z]{2,})-\s+[\u00a8\u00b4\u02c6]\s+(?P<right>[a-z]{3,})\b", r"\g<left>\g<right>", text)
     text = re.sub(r"\b(?P<left>[a-z]{3,})-\s+[\u00a8\u00b4\u02c6]\s+(?P<right>[a-z]{3,})\b", r"\g<left>\g<right>", text)
     text = re.sub(r"\b(?P<left>[A-Z][A-Za-z]{2,})-\s+[\u00a8\u00b4\u02c6]\s+(?P<right>[A-Z][A-Za-z]{2,})\b", r"\g<left>-\g<right>", text)
+    text = re.sub(
+        r"\b(?P<left>and|or|of|to|in|by|for|with|the)\s+[\u00a8\u00b4]\s+(?P<right>[A-Za-z]{2,})\b",
+        r"\g<left> \g<right>",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"\b(?P<left>[A-Za-z]{3,})\s+[\u00a8\u00b4]\s+(?P<right>[A-Za-z]{2,})\b", r"\g<left> \g<right>", text)
-    text = re.sub(r"\u00b4\s*(?P<vowel>[AEIOUYaeiouy])", _with_following_acute, text)
-    text = re.sub(r"\u00a8\s*(?P<vowel>[AEIOUYaeiouy])", _with_following_diaeresis, text)
-    text = re.sub(r"\u02c6\s*(?P<vowel>[AEIOUaeiou])", _with_following_circumflex, text)
+    text = re.sub(r"\u00b4\s*(?P<vowel>[AEIOUYaeiouy\u0131])", _with_following_acute, text)
+    text = re.sub(r"\u00a8\s*(?P<vowel>[AEIOUYaeiouy\u0131])", _with_following_diaeresis, text)
+    text = re.sub(r"\u02c6\s*(?P<vowel>[AEIOUaeiou\u0131])", _with_following_circumflex, text)
+    text = re.sub(r"\u00b4\s*(?P<letter>[Nn])", _with_following_acute_consonant, text)
     text = re.sub(r"\u02dc\s*(?P<letter>[AaOoNn])", _with_following_tilde, text)
     text = re.sub(r"\u02c7\s*(?P<letter>[cCsSzZ])", _with_following_caron, text)
+    text = re.sub(r"\u00b8\s*(?P<letter>[cCsS])", _with_following_cedilla, text)
     text = re.sub(r"(?P<left>[cC])\u00b8(?=[A-Za-z])", lambda m: "\u00c7" if m.group("left") == "C" else "\u00e7", text)
     return text
 
