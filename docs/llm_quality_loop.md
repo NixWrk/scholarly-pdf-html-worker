@@ -13,7 +13,13 @@ workflow is:
 5. Record every newly spotted manual manifestation in the append-only manual
    observation ledger before promoting it into an audit pattern, repair, or
    false-positive rule.
-6. If one `P*` defect id mixes different root causes or artifact mechanisms,
+6. During problem analysis, render the implicated source PDF page or pages and
+   compare the visual page against `01.en.raw.html` and `02.en.polish.html`
+   before classifying the root cause or choosing a repair. Record the rendered
+   page evidence in the analysis notes. If the stage-local PDF is missing for
+   a converted-stage artifact, search the Zotero/source_exports PDF candidates
+   recorded in the pack before declaring the source PDF unavailable.
+7. If one `P*` defect id mixes different root causes or artifact mechanisms,
    split or refine the classification before, or together with, the repair.
    For example, body citation failures stay in `P04`, while table/float
    citation-like ranges and math/measurement ranges are tracked separately so
@@ -24,11 +30,11 @@ workflow is:
    as telemetry-only `P45A`/`P45S`/`P45L`/`P45M`.
    splits that are audit telemetry rather than a new quality regression should
    stay in pattern history but set `extra.quality_counted=false`.
-7. Record all quality metrics and compare them with a previous run.
-8. Evaluate gates for lower-is-better metrics.
-9. Build a compact LLM analysis packet and prompt.
-10. Let an engineer or coding agent make a small patch plus tests.
-11. Repeat the full EN corpus loop before committing.
+8. Record all quality metrics and compare them with a previous run.
+9. Evaluate gates for lower-is-better metrics.
+10. Build a compact LLM analysis packet and prompt.
+11. Let an engineer or coding agent make a small patch plus tests.
+12. Repeat the full EN corpus loop before committing.
 
 ## Branch Workflow
 
@@ -184,6 +190,16 @@ The default pack ignores image-only defect ids from
 `configs/llm_quality_gates.json`. This keeps the review focused on text,
 citations, tables, structure, and OCR residue.
 
+The generated prompt treats PDF page render evidence as mandatory during
+problem analysis. For every article-local symptom selected for repair, render
+the source PDF page that contains the snippet, figure, table, footnote, or
+nearby page anchor; compare that screenshot/page image with raw and polished
+HTML before deciding whether the defect is a parser bug, OCR/layout artifact,
+audit false positive, or missing source asset. If `source_pdf_present=false` in
+the pack, inspect `source_pdf_candidates` from Zotero/source_exports first and
+record the unavailable PDF as an analysis limitation only when no candidate can
+be rendered.
+
 ## Gate Only
 
 ```powershell
@@ -228,6 +244,9 @@ Each fix should be small:
 - all article-level manifestations grouped into `pattern_observations.json` and
   appended to the cumulative pattern history before deciding what problem to
   solve;
+- PDF page render evidence checked during problem analysis for each repaired
+  article-local symptom, or an explicit note that the source PDF was
+  unavailable;
 - newly spotted manual manifestations appended to
   `manual_observation_ledger.jsonl`, then grouped in
   `manual_observation_summary.json`, before deciding whether they are recurring

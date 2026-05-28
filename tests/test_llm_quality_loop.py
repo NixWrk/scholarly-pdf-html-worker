@@ -191,6 +191,107 @@ def test_analysis_pack_filters_ignored_defects_and_adds_pattern_metadata(tmp_pat
     assert "focused artifact regression" in prompt
 
 
+def test_analysis_pack_adds_zotero_source_pdf_candidates(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    source_run = tmp_path / "source_run"
+    html_root = tmp_path / "html"
+    article_id = "Lib_KEY_123_Article"
+    converted_raw = html_root / "converted" / "Lib" / "KEY" / "123" / "Article" / "_z2m_stages" / "01.en.raw.html"
+    source_export = html_root / "source_exports" / "Lib" / "KEY" / "123"
+    source_pdf = tmp_path / "zotero" / "storage" / "KEY" / "paper.pdf"
+    source_pdf.parent.mkdir(parents=True)
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "corpus_summary": {"defect_counts": {"P59": 1}},
+            "articles": [
+                {
+                    "article": article_id,
+                    "summary": {
+                        "source_pdf_path": str(run_dir / "missing.pdf"),
+                        "source_pdf_present": False,
+                        "source_pdf_origin": "stage",
+                    },
+                    "defects_found": [
+                        {
+                            "id": "P59",
+                            "severity": "error",
+                            "check": "false bibliography link",
+                            "snippet": "figures 3 and 4",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+    _write_json(
+        run_dir / "quality_history_entry.json",
+        {"run_id": "run_a", "totals": {"score": 1}, "articles": {article_id: {"score": 1}}},
+    )
+    _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
+    _write_json(run_dir / "manifest.json", {"article_count": 1, "source_run_dir": str(source_run), "articles": []})
+    _write_json(
+        source_run / "manifest.json",
+        {"articles": [{"article_id": article_id, "raw_stage_path": str(converted_raw)}]},
+    )
+    _write_json(source_export / "manifest.json", {"source_pdf": str(source_pdf)})
+
+    pack = build_analysis_pack(run_dir, gate_config={"ignored_defect_ids_for_analysis": []})
+    candidates = pack["articles"][0]["source_pdf_candidates"]
+
+    assert candidates[0]["exists"] is True
+    assert candidates[0]["path"] == str(source_pdf.resolve(strict=False))
+
+
+def test_analysis_pack_falls_back_to_zotero_storage_by_attachment_key(tmp_path: Path, monkeypatch) -> None:
+    run_dir = tmp_path / "run"
+    zotero_root = tmp_path / "zotero"
+    attachment_key = "KEY12345"
+    article_id = f"Zotero_Elvis_D_{attachment_key}_571527_Article"
+    source_pdf = zotero_root / "Zotero_Elvis_Data" / "storage" / attachment_key / "paper.pdf"
+    source_pdf.parent.mkdir(parents=True)
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv("ZOTERO_PATH_PREFIX_MAP", f"/zotero_roots/pc_zotero={zotero_root}")
+
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "corpus_summary": {"defect_counts": {"P33": 1}},
+            "articles": [
+                {
+                    "article": article_id,
+                    "summary": {"source_pdf_present": False},
+                    "defects_found": [
+                        {
+                            "id": "P33",
+                            "severity": "error",
+                            "check": "semantic reference still points to page",
+                            "snippet": "see [29]",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+    _write_json(
+        run_dir / "quality_history_entry.json",
+        {"run_id": "run_a", "totals": {"score": 1}, "articles": {article_id: {"score": 1}}},
+    )
+    _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
+    _write_json(run_dir / "manifest.json", {"article_count": 1, "articles": []})
+
+    pack = build_analysis_pack(run_dir, gate_config={"ignored_defect_ids_for_analysis": []})
+    candidates = pack["articles"][0]["source_pdf_candidates"]
+
+    assert candidates[0]["exists"] is True
+    assert candidates[0]["path"] == str(source_pdf.resolve(strict=False))
+    assert candidates[0]["source"] == f"zotero_storage.{attachment_key}"
+
+
 def test_observe_runs_configured_tests_by_default() -> None:
     args = parse_args(
         [
@@ -253,6 +354,10 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     assert "Pattern observations must be accumulated globally across loop iterations" in prompt
     assert "manual observation ledger" in prompt
     assert "refine the P classification" in prompt
+    assert "render the implicated source PDF page" in prompt
+    assert "PDF page render evidence" in prompt
+    assert "source_pdf_candidates" in prompt
+    assert "search the Zotero/source_exports PDF candidates" in prompt
 
 
 def test_manual_observation_summary_accumulates_raw_manifestations(tmp_path: Path) -> None:

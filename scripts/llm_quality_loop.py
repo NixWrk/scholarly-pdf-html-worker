@@ -399,6 +399,237 @@ def _manifest_article_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any
     return articles
 
 
+def _configured_path_prefix_pairs() -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = [
+        ("/pdf_html_translator_repo", str(ROOT)),
+        ("/data/html", r"D:\Elvis_projects\Zotero_automatization\data\html"),
+        ("/zotero_roots/pc_zotero", r"C:\PC\Zotero"),
+        ("/zotero_roots/user_zotero", r"C:\Users\ELVIS_NIX\Zotero"),
+    ]
+    for env_name in ("HTML_DOCKER_MOUNT_PREFIX_MAP", "ZOTERO_PATH_PREFIX_MAP"):
+        for item in os.environ.get(env_name, "").split(";"):
+            if "=" not in item:
+                continue
+            left, right = (part.strip() for part in item.split("=", 1))
+            if left and right:
+                pairs.append((left, right))
+                pairs.append((right, left))
+    return pairs
+
+
+def _host_path_candidates(value: str) -> list[Path]:
+    raw = value.strip()
+    if not raw:
+        return []
+    candidates = [Path(raw).resolve(strict=False)]
+    normalized = raw.replace("\\", "/")
+    for source_prefix, target_prefix in _configured_path_prefix_pairs():
+        source_norm = source_prefix.replace("\\", "/").rstrip("/")
+        if normalized == source_norm or normalized.startswith(source_norm + "/"):
+            suffix = normalized[len(source_norm) :].lstrip("/")
+            candidates.append((Path(target_prefix) / Path(*suffix.split("/"))).resolve(strict=False))
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(candidate)
+    return deduped
+
+
+def _collect_pdf_path_strings(value: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            key_lower = str(key).lower()
+            if isinstance(nested, str) and (
+                key_lower in {"source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf", "source_path", "path"}
+                or "pdf" in key_lower
+            ):
+                if nested.lower().split("?", 1)[0].endswith(".pdf"):
+                    found.append(nested)
+            found.extend(_collect_pdf_path_strings(nested))
+    elif isinstance(value, list):
+        for nested in value:
+            found.extend(_collect_pdf_path_strings(nested))
+    elif isinstance(value, str) and value.lower().split("?", 1)[0].endswith(".pdf"):
+        found.append(value)
+    return found
+
+
+def _source_export_dirs_from_stage_related_path(value: Any) -> list[Path]:
+    if not value:
+        return []
+    path = Path(str(value)).resolve(strict=False)
+    if path.name in {RAW_STAGE, POLISH_STAGE} or path.parent.name == "_z2m_stages":
+        article_dir = _article_dir_from_stage(path)
+    else:
+        article_dir = path
+    parts = list(article_dir.parts)
+    dirs: list[Path] = []
+    for marker in ("source_exports", "converted", "final_exports", "translated"):
+        if marker not in parts:
+            continue
+        idx = parts.index(marker)
+        after = parts[idx + 1 :]
+        if len(after) < 3:
+            continue
+        dirs.append(Path(*parts[:idx], "source_exports", *after[:3]).resolve(strict=False))
+    return dirs
+
+
+def _pdf_candidates_from_source_export_dir(source_dir: Path) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    if not source_dir.is_dir():
+        return candidates
+    for json_path in sorted([source_dir / "manifest.json", *source_dir.glob("*_meta.json")], key=str):
+        if not json_path.is_file():
+            continue
+        data = _load_json(json_path, default={})
+        for pdf_value in _collect_pdf_path_strings(data):
+            for host_path in _host_path_candidates(pdf_value):
+                candidates.append(
+                    {
+                        "path": str(host_path),
+                        "exists": host_path.is_file(),
+                        "source": str(json_path),
+                        "original_path": pdf_value,
+                    }
+                )
+    return candidates
+
+
+def _zotero_root_paths() -> list[Path]:
+    roots: list[Path] = []
+    for source_prefix, target_prefix in _configured_path_prefix_pairs():
+        if "zotero" not in source_prefix.lower() and "zotero" not in target_prefix.lower():
+            continue
+        root = Path(target_prefix).resolve(strict=False)
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _attachment_keys_from_article(article: str, manifest_article: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+
+    def add(value: str) -> None:
+        if value and value not in keys:
+            keys.append(value)
+
+    for token in re.split(r"[_\\/]+", article):
+        if re.fullmatch(r"[A-Z0-9]{6,10}", token) and any(ch.isdigit() for ch in token):
+            add(token)
+    for key in ("attachment_key", "zotero_attachment_key", "zotero_key"):
+        value = manifest_article.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[A-Z0-9]{6,10}", value):
+            add(value)
+    for path_key in ("raw_stage_path", "polish_stage_path", "restored_image_source"):
+        value = manifest_article.get(path_key)
+        if not value:
+            continue
+        for part in Path(str(value)).parts:
+            if re.fullmatch(r"[A-Z0-9]{6,10}", part):
+                add(part)
+    return keys
+
+
+def _pdf_candidates_from_zotero_storage(attachment_key: str) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    if not attachment_key:
+        return candidates
+    for root in _zotero_root_paths():
+        storage_dirs = [root / "storage" / attachment_key]
+        if root.is_dir():
+            storage_dirs.extend(root.glob(f"*/storage/{attachment_key}"))
+        for storage_dir in storage_dirs:
+            if not storage_dir.is_dir():
+                continue
+            for pdf_path in sorted(storage_dir.glob("*.pdf"), key=str):
+                candidates.append(
+                    {
+                        "path": str(pdf_path.resolve(strict=False)),
+                        "exists": pdf_path.is_file(),
+                        "source": f"zotero_storage.{attachment_key}",
+                        "original_path": str(storage_dir.resolve(strict=False)),
+                    }
+                )
+    return candidates
+
+
+def _article_source_pdf_candidates(
+    run_dir: Path,
+    article: str,
+    audit_summary: dict[str, Any],
+    manifest_article: dict[str, Any],
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    visited_runs: set[Path] = set()
+
+    def add_pdf_value(value: Any, source: str) -> None:
+        if not value:
+            return
+        for host_path in _host_path_candidates(str(value)):
+            candidates.append(
+                {
+                    "path": str(host_path),
+                    "exists": host_path.is_file(),
+                    "source": source,
+                    "original_path": str(value),
+                }
+            )
+
+    def add_source_dirs_from_item(item: dict[str, Any]) -> None:
+        for key in (
+            "article_dir",
+            "raw_stage_path",
+            "source_polish_path",
+            "polish_stage_path",
+            "polish_path",
+            "restored_image_source",
+        ):
+            for source_dir in _source_export_dirs_from_stage_related_path(item.get(key)):
+                candidates.extend(_pdf_candidates_from_source_export_dir(source_dir))
+
+    add_pdf_value(audit_summary.get("source_pdf_path"), "audit_summary.source_pdf_path")
+    add_source_dirs_from_item(manifest_article)
+    for key in ("source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf"):
+        add_pdf_value(manifest_article.get(key), f"manifest.{key}")
+    for attachment_key in _attachment_keys_from_article(article, manifest_article):
+        candidates.extend(_pdf_candidates_from_zotero_storage(attachment_key))
+
+    def visit(source_run: Path) -> None:
+        source_run = source_run.resolve(strict=False)
+        if source_run in visited_runs:
+            return
+        visited_runs.add(source_run)
+        manifest = _load_json(source_run / "manifest.json", default={})
+        item = _manifest_article_for(manifest, article) or {}
+        if item:
+            add_source_dirs_from_item(item)
+            for key in ("source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf"):
+                add_pdf_value(item.get(key), f"{source_run.name}.manifest.{key}")
+            for attachment_key in _attachment_keys_from_article(article, item):
+                candidates.extend(_pdf_candidates_from_zotero_storage(attachment_key))
+        nested = manifest.get("source_run_dir")
+        if nested:
+            visit(Path(str(nested)))
+
+    visit(run_dir)
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = f"{candidate.get('path')}|{candidate.get('original_path')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    deduped.sort(key=lambda item: (not bool(item.get("exists")), str(item.get("path"))))
+    return deduped[:12]
+
+
 def _converted_manifest_by_pair(manifest: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     articles: dict[tuple[str, str], dict[str, Any]] = {}
     for article in manifest.get("articles") or []:
@@ -1658,6 +1889,12 @@ def build_analysis_pack(
                 "non_ignored_defect_count": len(defects),
                 "defects": defects,
                 "audit_summary": article.get("summary", {}),
+                "source_pdf_candidates": _article_source_pdf_candidates(
+                    run_dir,
+                    article_id,
+                    article.get("summary", {}),
+                    manifest_article,
+                ),
                 "assessment": assessment_article,
                 "history_record": record,
                 "comparison": deltas.get(article_id, {}),
@@ -1702,6 +1939,7 @@ def build_analysis_pack(
                 "metrics": item["history_record"].get("metrics", {}),
                 "assessment": item["assessment"],
                 "audit_summary": item["audit_summary"],
+                "source_pdf_candidates": item["source_pdf_candidates"],
                 "raw_stage_path": item["raw_stage_path"],
                 "polish_stage_path": item["polish_stage_path"],
                 "defects": [_defect_summary(defect, defect_patterns) for defect in item["defects"][:12]],
@@ -1766,6 +2004,7 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Also add at least one guard/negative test when the repair could touch links, tags, math, code, language policy, or nearby article classes.",
         "Pattern observations must be accumulated globally across loop iterations before local manifestations are promoted into shared problem statements.",
         "Review the all-article current pattern summary and the cumulative pattern history before proposing a fix.",
+        "During problem analysis, render the implicated source PDF page(s) and compare the visual page against raw/polish HTML before classifying the root cause; when stage-local source_pdf_present=false, search the Zotero/source_exports PDF candidates listed in source_pdf_candidates before declaring the PDF unavailable.",
         "Any newly noticed manual manifestation that is not already captured by the audit must be recorded in the manual observation ledger before analysis or repair.",
         "Manual observations stay raw until their cumulative groups justify a shared problem statement, except for clearly severe regressions.",
         "For every confirmed manual observation, add or update audit/repair/false-positive test coverage and mark the observation status/test_status.",
@@ -1776,9 +2015,10 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Return this structure:",
         "1. Critical findings by article.",
         "2. Cross-article patterns.",
-        "3. Patch plan with production file/function targets.",
-        "4. Tests to add or update, including the focused artifact regression.",
-        "5. Risks and gate checks to rerun.",
+        "3. PDF page render evidence used, or why it was unavailable.",
+        "4. Patch plan with production file/function targets.",
+        "5. Tests to add or update, including the focused artifact regression.",
+        "6. Risks and gate checks to rerun.",
         "",
         "## Run Summary",
         f"- run_id: `{pack.get('run_id')}`",
@@ -1875,6 +2115,10 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"- artifact_hint: `{article.get('artifact_hint')}`",
                 f"- raw_stage_path: `{article.get('raw_stage_path')}`",
                 f"- polish_stage_path: `{article.get('polish_stage_path')}`",
+                f"- source_pdf_path: `{(article.get('audit_summary') or {}).get('source_pdf_path')}`",
+                f"- source_pdf_present: `{(article.get('audit_summary') or {}).get('source_pdf_present')}`",
+                f"- source_pdf_origin: `{(article.get('audit_summary') or {}).get('source_pdf_origin')}`",
+                f"- source_pdf_candidates: `{json.dumps(article.get('source_pdf_candidates') or [], ensure_ascii=False)}`",
                 "- defect snippets:",
             ]
         )

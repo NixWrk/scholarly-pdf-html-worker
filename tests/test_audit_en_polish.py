@@ -122,6 +122,41 @@ def test_analyze_pair_reports_manual_review_defect_shapes() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p03_for_early_body_bracket_citations() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>The experimental setup included the Rotational-Translational Chair "
+                    '(RT-Chair; <a href="#ref-10" class="z2m-ref-link">[10]</a>) and the '
+                    "3D Tune-In Toolkit tool (3DTI Toolkit; "
+                    '<a href="#ref-11" class="z2m-ref-link">[11]</a>).</p>',
+                    "<h4>References</h4>",
+                    "<ol>",
+                    *[f"<li>Reference {idx}.</li>" for idx in range(1, 12)],
+                    "</ol>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P03" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_accepts_wrapped_missing_figure_unit() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

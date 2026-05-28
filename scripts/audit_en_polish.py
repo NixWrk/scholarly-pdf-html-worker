@@ -1988,12 +1988,20 @@ def _frontmatter_defects(raw_blocks: list[Block], polish_blocks: list[Block]) ->
         name_like_count = len(re.findall(r"\b[A-Z][A-Za-z.-]+\s+[A-Z][A-Za-z.-]+\b", block.text))
         body_like = re.search(
             r"\b(?:abstract|introduction|generative artificial intelligence|clinical|methodology|"
-            r"papers?|studies|review|museum|gallery|visitors?|participants?|technolog(?:y|ies|ical))\b",
+            r"papers?|studies|review|museum|gallery|visitors?|participants?|technolog(?:y|ies|ical)|"
+            r"experimental|setup|tools?|toolkit|introduced|reported|developed|implementation)\b",
             block.text,
             re.IGNORECASE,
         )
+        bracket_citation_like = re.search(r"\[\s*\d{1,3}", block.text) is not None
         sentence_count = len(re.findall(r"\w\.", block.text))
-        if ref_count >= 2 and name_like_count >= 2 and not body_like and sentence_count <= 2:
+        if (
+            ref_count >= 2
+            and name_like_count >= 2
+            and not body_like
+            and not bracket_citation_like
+            and sentence_count <= 2
+        ):
             defects.append(
                 _defect(
                     defect_id="P03",
