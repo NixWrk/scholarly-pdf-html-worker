@@ -5418,6 +5418,68 @@ def test_polish_html_document_merges_caption_only_missing_unit_with_previous_ima
     assert polished.count('id="fig-1"') == 1
 
 
+def test_polish_html_document_merges_existing_missing_unit_with_previous_duplicate_image_unit() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit z2m-float-run-start">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Figure 1.</b> Overall description.</p>'
+        "</div>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit z2m-float-run-mid">'
+        '<p><img src="fig2.jpg"/></p>'
+        "</div>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit z2m-float-run-end">'
+        '<p data-z2m-origin="caption-only-target" class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 2 image was not extracted into this HTML. Please check the original PDF for the missing visual content."
+        "</p>"
+        '<p class="z2m-figure-caption"><b>Figure 2.</b> Architecture of the system.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="fig2.jpg"' in fig2
+    assert "Architecture of the system" in fig2
+    assert "Figure 2 image was not extracted" not in polished
+    assert "z2m-missing-figure-unit" not in fig2
+    assert polished.count('id="fig-1"') == 1
+
+
+def test_polish_html_document_merges_caption_only_missing_unit_with_previous_table_surrogate() -> None:
+    html = (
+        "<html><body>"
+        '<p><a href="#fig-7" class="z2m-fig-link">Figure 7</a> shows the recommended routes.</p>'
+        "<table><tbody>"
+        "<tr><th>Recommended:0 times</th><th>many</th></tr>"
+        "<tr><td>Recommended:16 times</td><td>few</td></tr>"
+        "</tbody></table>"
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p data-z2m-origin="caption-only-target" class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 7 image was not extracted into this HTML. Please check the original PDF for the missing visual content."
+        "</p>"
+        '<p class="z2m-figure-caption"><b>Figure 7.</b> Identification results by area.</p>'
+        "</div>"
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig7_match = re.search(r'<div\b(?=[^>]*\bid="fig-7")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig7_match is not None
+    fig7 = fig7_match.group(0)
+    assert "<table" in fig7
+    assert "Recommended:16 times" in fig7
+    assert "Identification results by area" in fig7
+    assert "z2m-figure-target" in fig7
+    assert "Figure 7 image was not extracted" not in polished
+    assert "z2m-missing-figure-unit" not in fig7
+
+
 def test_polish_html_document_does_not_warn_for_in_text_subfigure_sentence() -> None:
     html = (
         "<html><body>"

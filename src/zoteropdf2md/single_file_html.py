@@ -19692,7 +19692,12 @@ def _mark_missing_figure_units(html: str) -> str:
         raw = match.group(0)
         if "z2m-figure-unit" not in raw:
             return raw
-        if _node_has_renderable_image(raw):
+        has_table_surrogate = re.search(
+            r'<table\b(?=[^>]*\bclass\s*=\s*(["\'])[^"\']*\bz2m-figure-target\b[^"\']*\1)[\s\S]*?</table>',
+            raw,
+            re.IGNORECASE,
+        )
+        if _node_has_renderable_image(raw) or has_table_surrogate:
             return raw
         open_end = raw.find(">")
         if open_end < 0:
@@ -20584,6 +20589,122 @@ def _merge_caption_only_missing_units_with_previous_image_units(html: str) -> tu
     return "".join(out_parts), merged
 
 
+def _merge_caption_only_missing_units_with_previous_table_surrogates(html: str) -> tuple[str, int]:
+    if "z2m-missing-figure-unit" not in html or "<table" not in html.lower():
+        return html, 0
+    nodes = list(_FLOAT_AWARE_SENTENCE_NODE_PATTERN.finditer(html))
+    if len(nodes) < 2:
+        return html, 0
+
+    div_pattern = re.compile(r"^(?P<open><div\b[^>]*>)(?P<body>[\s\S]*)(?P<close></div>)$", re.IGNORECASE)
+    table_pattern = re.compile(
+        r"^(?P<open><table\b[^>]*>)(?P<body>[\s\S]*)(?P<close></table>)$",
+        re.IGNORECASE,
+    )
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _open_id(open_tag: str) -> str | None:
+        match = re.search(r'\bid\s*=\s*(["\'])([^"\']+)\1', open_tag, re.IGNORECASE)
+        return match.group(2) if match is not None else None
+
+    def _open_classes(open_tag: str) -> list[str]:
+        match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', open_tag, re.IGNORECASE | re.DOTALL)
+        return match.group(2).split() if match is not None else []
+
+    def _table_surrogate_parts(raw: str) -> tuple[str, str, str] | None:
+        match = table_pattern.match(raw)
+        if match is None:
+            return None
+        open_tag = match.group("open")
+        if _open_id(open_tag):
+            return None
+        classes = set(_open_classes(open_tag))
+        if classes.intersection({"z2m-float-unit", "z2m-table-target", "z2m-figure-target"}):
+            return None
+        if "z2m-table-caption" in raw or "z2m-table-unit" in raw:
+            return None
+        if len(re.findall(r"<t[dh]\b", raw, flags=re.IGNORECASE)) < 4:
+            return None
+        visible = _visible_text(raw)
+        if len(visible) < 10:
+            return None
+        return open_tag, match.group("body"), match.group("close")
+
+    def _missing_unit_parts(raw: str) -> tuple[str, str, str, str] | None:
+        match = div_pattern.match(raw)
+        if match is None:
+            return None
+        open_tag = match.group("open")
+        classes = set(_open_classes(open_tag))
+        if not {"z2m-float-unit", "z2m-figure-unit", "z2m-missing-figure-unit"}.issubset(classes):
+            return None
+        target_id = _open_id(open_tag) or ""
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", target_id, re.IGNORECASE)
+        if fig_match is None or _node_has_renderable_image(raw):
+            return None
+        fig_num = fig_match.group(1)
+        if "caption-only-target" not in raw or "z2m-missing-figure-warning" not in raw:
+            return None
+        caption_body = re.sub(
+            r'<p\b(?=[^>]*\bz2m-missing-figure-warning\b)[^>]*>[\s\S]*?</p>',
+            "",
+            match.group("body"),
+            flags=re.IGNORECASE,
+        )
+        labels = {
+            label
+            for caption_match in re.finditer(r"<p\b[^>]*>[\s\S]*?</p>", caption_body, re.IGNORECASE)
+            for label in [_figure_caption_num_from_visible(_visible_text(caption_match.group(0)))]
+            if label is not None
+        }
+        if fig_num not in labels or any(label != fig_num for label in labels):
+            return None
+        if not caption_body.strip():
+            return None
+        return open_tag, caption_body, match.group("close"), fig_num
+
+    replacements: dict[int, str] = {}
+    dropped: set[int] = set()
+    merged = 0
+    for index in range(1, len(nodes)):
+        if index in replacements or index - 1 in dropped or not _between_is_whitespace(index - 1, index):
+            continue
+        table_parts = _table_surrogate_parts(nodes[index - 1].group(0))
+        missing_parts = _missing_unit_parts(nodes[index].group(0))
+        if table_parts is None or missing_parts is None:
+            continue
+        table_open, table_body, table_close = table_parts
+        missing_open, caption_body, _missing_close, fig_num = missing_parts
+        target_id = f"fig-{fig_num}"
+        run_classes = [
+            class_name
+            for class_name in _open_classes(missing_open)
+            if class_name.startswith("z2m-float-run-") or class_name == "z2m-float-alias"
+        ]
+        wrapper_classes = " ".join(["z2m-float-unit", "z2m-figure-unit", *run_classes])
+        table_open = _add_class_attr(table_open, "z2m-figure-target")
+        replacements[index] = f'<div id="{target_id}" class="{wrapper_classes}">{table_open}{table_body}{table_close}{caption_body}</div>'
+        dropped.add(index - 1)
+        merged += 1
+
+    if not replacements:
+        return html, 0
+
+    out_parts: list[str] = []
+    cursor = 0
+    for index, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        if index in dropped:
+            cursor = node.end()
+            continue
+        out_parts.append(replacements.get(index, node.group(0)))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), merged
+
+
 def _repair_sentence_breaks_around_float_units_once(html: str) -> tuple[str, int]:
     """Move prose continuations back across already wrapped figure/table/box units."""
     nodes = list(_FLOAT_AWARE_SENTENCE_NODE_PATTERN.finditer(html))
@@ -21220,6 +21341,7 @@ def polish_html_document(
         figure_caption_language=("ru" if ru_caption_context else "en"),
     )
     polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
+    polished, _ = _merge_caption_only_missing_units_with_previous_table_surrogates(polished)
     polished, _ = _drop_same_label_image_missing_warnings(polished)
     polished = _wrap_float_units(polished)
     polished = _mark_missing_figure_units(polished)
@@ -21228,6 +21350,8 @@ def polish_html_document(
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _drop_unbacked_foreign_figure_aliases(polished)
+    polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
+    polished, _ = _merge_caption_only_missing_units_with_previous_table_surrogates(polished)
     polished = _drop_stale_in_text_figure_reference_ids(polished)
     polished = _unwrap_duplicate_see_page_anchor_tails(polished)
     polished = _unwrap_page_reference_page_links(polished, language_policy)
