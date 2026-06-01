@@ -991,6 +991,12 @@ class Block:
     def has_img(self) -> bool:
         return bool(re.search(r"<img\b", self.raw, re.IGNORECASE))
 
+    @property
+    def has_figure_visual(self) -> bool:
+        return self.has_img or bool(
+            re.search(r"<table\b(?=[^>]*\bz2m-figure-target\b)", self.raw, re.IGNORECASE)
+        )
+
 
 @dataclass
 class Defect:
@@ -1466,7 +1472,7 @@ def _is_references_block(block: Block, references_started: bool) -> bool:
 def _has_nearby_image(blocks: list[Block], index: int, *, window: int = 6) -> bool:
     start = max(0, index - window)
     stop = min(len(blocks), index + window + 1)
-    return any(block.has_img for block in blocks[start:stop])
+    return any(block.has_figure_visual for block in blocks[start:stop])
 
 
 def _normalize_figure_label_key(label: str) -> str | None:
@@ -1526,9 +1532,11 @@ def _nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None 
                 or _looks_like_figure_caption(block)
             ):
                 return False
-        if block.has_img:
+        if block.has_figure_visual:
             return True
         if not block.text.strip():
+            return True
+        if block.tag in {"td", "th"}:
             return True
         if block.classes & {
             "z2m-missing-figure-warning",
@@ -1546,7 +1554,7 @@ def _nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None 
         stop = min(len(blocks), index + window + 1) if direction > 0 else max(-1, index - window - 1)
         for candidate_index in range(index + direction, stop, direction):
             block = blocks[candidate_index]
-            if block.has_img:
+            if block.has_figure_visual:
                 if not _allows_missing_warning_image_scan(block):
                     break
                 offsets.append(candidate_index - index)
@@ -1582,7 +1590,7 @@ def _classify_missing_figure_warning(
         extra["quality_counted"] = False
         extra["warning_origin"] = "caption-only-target"
     if index is None:
-        if not any(block.has_img for block in polish_blocks):
+        if not any(block.has_figure_visual for block in polish_blocks):
             extra["p62_subtype"] = "no_nearby_image"
             return {
                 "defect_id": "P62",
@@ -2351,7 +2359,7 @@ def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelate
 
 def _looks_like_float_or_caption(block: Block) -> bool:
     return (
-        block.has_img
+        block.has_figure_visual
         or bool(block.classes & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"})
         or block.tag in {"table", "figure", "figcaption"}
         or _looks_like_figure_caption(block)
@@ -3346,7 +3354,7 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
         if "z2m-missing-figure-warning" not in block.classes:
             continue
         window = polish_blocks[index + 1 : min(len(polish_blocks), index + 8)]
-        if any(candidate.has_img for candidate in window):
+        if any(candidate.has_figure_visual for candidate in window):
             defects.append(
                 _defect(
                     defect_id="P16",
@@ -3364,7 +3372,7 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
             break
 
     for block in polish_blocks:
-        if not block.id.startswith("fig-") or block.has_img:
+        if not block.id.startswith("fig-") or block.has_figure_visual:
             continue
         if figure_id_counts.get(block.id, 0) > 1:
             continue
@@ -3435,7 +3443,7 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
         saw_float = False
         for candidate in polish_blocks[index + 1 : min(len(polish_blocks), index + 12)]:
             if (
-                candidate.has_img
+                candidate.has_figure_visual
                 or "z2m-float-unit" in candidate.classes
                 or candidate.tag in {"table", "figure"}
                 or _looks_like_figure_caption(candidate)

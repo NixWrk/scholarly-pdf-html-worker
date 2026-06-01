@@ -257,6 +257,42 @@ def test_analyze_pair_accepts_wrapped_missing_figure_unit() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_accepts_table_surrogate_figure_unit_for_p13_p14() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "table surrogate figure sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><head><style>:target{outline:1px solid blue}[id^=\"fig-\"]{scroll-margin-top:42vh}</style></head><body>",
+                    '<p>See <a href="#fig-2" class="z2m-fig-link">Figure 2</a>.</p>',
+                    '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">',
+                    '<table class="z2m-figure-target">',
+                    "<tbody><tr><th></th><th colspan=\"2\">State of the world</th></tr>",
+                    "<tr><td>Judge response</td><td>Hit</td><td>False alarm</td></tr></tbody>",
+                    "</table>",
+                    '<p class="z2m-figure-caption">Figure 2. Modified imitation game and signal detection matrices.</p>',
+                    "</div>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P13" not in defect_ids
+        assert "P14" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_marks_caption_only_missing_warning_as_not_quality_counted() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -453,6 +489,29 @@ def test_overlapping_block_parser_keeps_nested_missing_figure_context() -> None:
     classification = audit._classify_missing_figure_warning(warning, blocks)
 
     assert any(block.tag == "div" and block.has_img for block in blocks)
+    assert classification["defect_id"] == "P62A"
+    assert classification["extra"]["p62_subtype"] == "same_label_image_near_warning"
+
+
+def test_overlapping_block_parser_treats_figure_table_target_as_visual_context() -> None:
+    audit = _load_audit_module()
+    html = "\n".join(
+        [
+            "<html><body>",
+            '<div id="fig-9" class="z2m-float-unit z2m-figure-unit">',
+            '<table class="z2m-figure-target"><tbody><tr><td>Recommended route</td></tr></tbody></table>',
+            '<p class="z2m-missing-figure-warning">Figure 9 image was not extracted into this HTML.</p>',
+            '<p class="z2m-figure-caption">Figure 9. Route recommendation matrix.</p>',
+            "</div>",
+            "</body></html>",
+        ]
+    )
+
+    blocks = audit._parse_overlapping_blocks(html)
+    warning = next(block for block in blocks if "z2m-missing-figure-warning" in block.classes)
+    classification = audit._classify_missing_figure_warning(warning, blocks)
+
+    assert any(block.tag == "div" and block.has_figure_visual and not block.has_img for block in blocks)
     assert classification["defect_id"] == "P62A"
     assert classification["extra"]["p62_subtype"] == "same_label_image_near_warning"
 
