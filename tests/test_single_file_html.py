@@ -10933,6 +10933,71 @@ def test_large_html_known_word_glue_repairs_safe_ligature_phrases() -> None:
     assert "<code>urine ow should stay in code</code>" in repaired
 
 
+def test_large_html_known_word_glue_repairs_old_scan_ocr_residues() -> None:
+    html = (
+        "<html><body>"
+        "<p>EARLY DETECTION CAUSED BY PROTRUDED LUMBAH I - i. "
+        "The (!I G :. nosis result t L ' n normal electromyogram of the perineal muschnr:. "
+        "Before TURP: v&amp;me 328 ml; After TVRP: pleak flow 5.8 ml. "
+        "Figure 3 noted U-W vertebrae and questioned 4y6-8. "
+        "Vesicaf dysfunction, J Ural, lumbar snine, Surg Gvnecol Obstet @e3), "
+        "disc orolanse, I Bone Point Sure, Bvadley.</p>"
+        "<p>Tilting the sections of the coil to foriTi 110 rather than 180 increases "
+        "the magnitude of the stimulus.d/T./Sz. Unit: kcounl/mg prolan, "
+        "Lndferase activity was determitied from the iiiiegfiited lummesceoce yield. "
+        "The elTicacy was noted while linearmotor S~pole aller the N-pole repels.</p>"
+        "<p>It isl part of the brochure, not aJways demonstrale the enor· mous range. "
+        "Use riSing fronts to property center the image. A charaCleriza· lion covers "
+        "Llnhof Master Te&lt;:hnlka and Unhol Kafdan Mastel TL. From inli nily to "
+        "out of locus, the smallest I-SlOP follows the ScheimplJug rule. "
+        "Three companson ShOIS describe a particularimagedislance. "
+        "IndMdual OUlldlngs gelloreground and background around a subjecl; "
+        "this pocIure from slreellevel can eleminate errors with sufiicient "
+        "millimelers for aillinhof-supplied specificions.</p>"
+        "<p>Mu&amp;es de la Ville de Paris, Mu&amp;e Zadkine, Valentin Haiiy, The Cruc$xion, "
+        "and enough P to bc familiar.</p>"
+        "<p>Methods of measzu'ing the volume/weight as a fww-cion of time. "
+        "Ai1• displacement pl'inuipZe. A contin,Ious curve and Gra1Jimetry. "
+        "OVerfLow method, Timing prinaip Ze, uroflowrneter, Uroflowrnetry, "
+        "RotCDTleter, PsyahoZogiaaZ, bZood chemistry, ResiduaZ urine, "
+        "MuZtiphasicity, estabZishment of reference vaZues, variabZes and abiZities. "
+        "A!Jstract, vuiation, measwe, Druck/Fiow.</p>"
+        "<code>foriTi and It isl should stay in code</code>"
+        + (" " * 500001)
+        + "</body></html>"
+    )
+
+    repaired = _repair_known_word_glue(html)
+
+    assert "PROTRUDED LUMBAR DISC" in repaired
+    assert "diagnosis resulted in normal electromyogram of the perineal musculature." in repaired
+    assert "volume 328 ml; After TURP: peak flow" in repaired
+    assert "L4-L5 vertebrae and questioned 4,6-8" in repaired
+    assert "Vesical dysfunction, J Urol, lumbar spine, Surg Gynecol Obstet (1963)" in repaired
+    assert "disc prolapse, J Bone Joint Surg, Bradley" in repaired
+    assert "form 110 rather than 180 increases the magnitude of the stimulus dEz/dz" in repaired
+    assert "kcount/mg protein, Luciferase activity was determined from the integrated luminescence yield" in repaired
+    assert "The efficacy was noted while linearmotor S-pole after the N-pole repels" in repaired
+    assert "It is part of the brochure, not always demonstrate the enormous range" in repaired
+    assert "rising fronts to properly center the image" in repaired
+    assert "characterization covers Linhof Master Technika and Linhof Kardan Master TL" in repaired
+    assert "From infinity to out of focus, the smallest f-stop follows the Scheimpflug rule" in repaired
+    assert "Three comparison shots describe a particular image distance" in repaired
+    assert "Individual buildings get foreground and background around a subject" in repaired
+    assert "this picture from street level can eliminate errors with sufficient millimeters" in repaired
+    assert "all Linhof-supplied specifications" in repaired
+    assert "Musées de la Ville de Paris, Musée Zadkine, Valentin Haüy, The Crucifixion" in repaired
+    assert "enough to be familiar" in repaired
+    assert "Methods of measuring the volume/weight as a function of time" in repaired
+    assert "Air displacement principle" in repaired
+    assert "A continuous curve and Gravimetry" in repaired
+    assert "Overflow method, Timing principle, uroflowmeter, Uroflowmetry" in repaired
+    assert "Rotameter, Psychological, blood chemistry, Residual urine" in repaired
+    assert "Multiphasicity, establishment of reference values, variables and abilities" in repaired
+    assert "Abstract, variation, measure, Druck/Flow" in repaired
+    assert "<code>foriTi and It isl should stay in code</code>" in repaired
+
+
 def test_large_html_false_sup_repair_unlinks_statistical_r_squared() -> None:
     html = (
         "<html><body>"
