@@ -642,6 +642,33 @@ SPLIT_AT_EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
+SPLIT_DOT_EMAIL_SENTENCE_WORDS = {
+    "addressed",
+    "author",
+    "authors",
+    "contact",
+    "correspondence",
+    "email",
+}
+
+
+def _split_dot_email_is_sentence_boundary(match: re.Match[str]) -> bool:
+    matched = match.group(0)
+    dot_pos = matched.find(".")
+    at_pos = matched.find("@")
+    if dot_pos < 0 or (at_pos >= 0 and at_pos < dot_pos):
+        return False
+    leading_word = re.match(r"\b([A-Za-z]{2,})\.\s+", matched)
+    return bool(leading_word and leading_word.group(1).lower() in SPLIT_DOT_EMAIL_SENTENCE_WORDS)
+
+
+def _find_split_dot_email_match(text: str) -> re.Match[str] | None:
+    for match in SPLIT_DOT_EMAIL_RE.finditer(text):
+        if not _split_dot_email_is_sentence_boundary(match):
+            return match
+    return None
+
+
 OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
     r"\bLUMBAH\s+I\s+-\s+i\b|"
     r"\(\s*!I\s+G\s*:\.\s*nosis\b|"
@@ -4997,7 +5024,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
 
-    split_dot_email_match = SPLIT_DOT_EMAIL_RE.search(plain)
+    split_dot_email_match = _find_split_dot_email_match(plain)
     if split_dot_email_match is not None:
         defects.append(
             _defect(

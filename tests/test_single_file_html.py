@@ -1781,6 +1781,10 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
         "<p>Fact sheet https://www . who.int/news-room/fact-sheets/detail/blindness</p>"
         "<p>Safety pack www. osh a.europa.eu/en/Campaigns/ew2005/pressroom</p>"
         "<p>Supplemental site www.operativeneuro surgery-online.com.</p>"
+        "<p>PMD news https: // https://www.pmdtec.com/news_media/press_release/leica-pmd.php</p>"
+        "<p>WHO trends https:// www.who. int/ blindness /causes/trends/en/</p>"
+        "<p>Curve notes http:// pages.mtu.edu /~{}shene/COURSES/cs3621/NOTES/curves/ continuity.html</p>"
+        "<p>Medical shop https:// www.devinemedical. com/ 541035-good-vibrations-vibrating-clock-p /lss-541035.htm</p>"
         '<p>Linked updates: <a href="https://dl.acm.org/doi/10.1145/2982142.2982176">'
         "hps://dl.acm.org/doi/10.1145/2982142.2982176</a></p>"
         "</body></html>"
@@ -1796,6 +1800,10 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     assert 'href="https://www.who.int/news-room/fact-sheets/detail/blindness"' in polished
     assert 'href="https://www.osha.europa.eu/en/Campaigns/ew2005/pressroom"' in polished
     assert 'href="https://www.operativeneurosurgery-online.com"' in polished
+    assert 'href="https://www.pmdtec.com/news_media/press_release/leica-pmd.php"' in polished
+    assert 'href="https://www.who.int/blindness/causes/trends/en/"' in polished
+    assert 'href="http://pages.mtu.edu/~{}shene/COURSES/cs3621/NOTES/curves/continuity.html"' in polished
+    assert 'href="https://www.devinemedical.com/541035-good-vibrations-vibrating-clock-p/lss-541035.htm"' in polished
     assert ">https://dl.acm.org/doi/10.1145/2982142.2982176</a>" in polished
     assert ">https://creativecommons.org/licenses/by/4.0/</a>" in polished
     assert "https:// creativecommons.org" not in polished
@@ -1807,6 +1815,12 @@ def test_polish_html_document_repairs_broken_plain_url_before_autolink() -> None
     assert "www . who" not in polished
     assert "www. osh a" not in polished
     assert "operativeneuro surgery" not in polished
+    assert "https: //" not in polished
+    assert "who. int" not in polished
+    assert "pages.mtu.edu /" not in polished
+    assert "curves/ continuity" not in polished
+    assert "devinemedical. com" not in polished
+    assert "-p /lss" not in polished
 
 
 def test_polish_html_document_repairs_spaced_protocol_url_anchors() -> None:
@@ -1879,11 +1893,105 @@ def test_polish_html_document_merges_split_url_after_reference_anchor() -> None:
     assert "http://</a>" not in polished
 
 
+def test_polish_html_document_merges_split_external_url_anchor_runs() -> None:
+    pmd = "https://www.pmdtec.com/news_media/press_release/leica-pmd.php"
+    wcc = "https://wccftech.com/infineons-tof-camera-sensor-is-capable-of-150k-pixel-output/"
+    query = "https://example.com/search?q=foo+bar%2C+baz&btnG="
+    who = "https://www.who.int/blindness/causes/trends/en/"
+    devine = "https://www.devinemedical.com/541035-Sunu-Band-Mobility-Guide-and-Smart-Watch-p/lss-541035.htm"
+    navcog = "http://www.cs.cmu.edu/~{}NavCog/navcog.html"
+    query_html = query.replace("&", "&amp;")
+    html = (
+        "<html><body>"
+        f'<p>PMD <a href="{pmd}">https:</a> // <a href="{pmd}">{pmd}</a>.</p>'
+        f'<p>News https://<a href="{wcc}">wccftech.</a> com/ '
+        f'<a href="{wcc}">infineons-tof-camera-sensor-is-capable-of-150k-pixel-output</a> /.</p>'
+        f'<p>Search https://<a href="{query_html}">example.com</a> /search?q=foo+ '
+        f'<a href="{query_html}">bar%2C</a> +baz&amp;btnG=.</p>'
+        f'<p>WHO https://<a href="{who}">www.who.</a> int/ <a href="{who}">blindness</a> '
+        "/causes/trends/en/ (accessed on 12 June 2020).</p>"
+        f'<p>Shop https://<a href="{devine}">www.devinemedical.</a> com/ '
+        f'<a href="{devine}">541035-Sunu-Band-Mobility-Guide-and-Smart-Watch-p</a> '
+        "/lss-541035.htm (accessed on 5 July 2019).</p>"
+        f'<p>NavCog http://<a href="{navcog}">www.cs.cmu.edu</a> '
+        "/~{}NavCog/navcog.html (accessed on 29 July 2019).</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count(f'href="{pmd}"') == 1
+    assert f">{pmd}</a>" in polished
+    assert polished.count(f'href="{wcc}"') == 1
+    assert f">{wcc}</a>" in polished
+    assert polished.count(f'href="{query_html}"') == 1
+    assert f">{query_html}</a>" in polished
+    assert polished.count(f'href="{who}"') == 1
+    assert f">{who}</a> (accessed on 12 June 2020)" in polished
+    assert polished.count(f'href="{devine}"') == 1
+    assert f">{devine}</a> (accessed on 5 July 2019)" in polished
+    assert polished.count(f'href="{navcog}"') == 1
+    assert f">{navcog}</a> (accessed on 29 July 2019)" in polished
+    assert "https:</a> //" not in polished
+    assert "wccftech.</a> com" not in polished
+    assert "bar%2C</a> +baz" not in polished
+    assert "www.who.</a> int" not in polished
+    assert "www.devinemedical.</a> com" not in polished
+    assert "www.cs.cmu.edu</a>" not in polished
+
+
+def test_polish_html_document_repairs_noisy_url_anchor_tails() -> None:
+    construction = "https://www.construction-physics.com/p/why-did-agriculture-mechanize-and"
+    nuclear = "https://www.construction-physics.com/p/why-are-nuclear-power-construction-c3c"
+    cc_by = "https://creativecommons.org/licenses/by/4.0/"
+    html = (
+        "<html><body>"
+        '<p>Tiptoi (<a href="http://www" target="_blank" rel="noopener noreferrer">http://www</a>. '
+        '<a href="http://www.penalty -@M tiptoi.com">tiptoi.com). While the last continues</a> '
+        "for arbitrary content.</p>"
+        f'<p>Ref. <a href="{construction}">Construction Physics, June 16, 2021, '
+        "https://www.construction</a> physics.com/p/why-did-agriculture-mechanize-and.</p>"
+        f'<p>Potter, Brian. "Why Are Nuclear Power Construction Costs So High? Part III: The Nuclear '
+        f'<a href="{nuclear}">Navy." Construction Physics, July 1, 2022. https://www.construction-</a> '
+        f'<a href="{nuclear}">physics.com/p/why-are-nuclear-power-construction-c3c.</a></p>'
+        '<p>Licence <a href="https://creativecom-mons.org/licenses/by/ 4.0/">'
+        "https://creativecom-mons.org/licenses/by/ 4.0/</a>.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="http://www.tiptoi.com"' in polished
+    assert ">http://www.tiptoi.com</a>). While the last continues for arbitrary content." in re.sub(r"\s+", " ", polished)
+    assert f'href="{construction}"' in polished
+    assert f"Construction Physics, June 16, 2021, <a href=\"{construction}\">{construction}</a>." in re.sub(
+        r"\s+",
+        " ",
+        polished,
+    )
+    assert f'Navy." Construction Physics, July 1, 2022. <a href="{nuclear}">{nuclear}</a>.' in re.sub(
+        r"\s+",
+        " ",
+        polished,
+    )
+    assert polished.count(f'href="{cc_by}"') == 1
+    assert f">{cc_by}</a>." in polished
+    assert "http://www</a>. <a" not in polished
+    assert "construction</a> physics.com" not in polished
+    assert "construction-</a> <a" not in polished
+    assert "creativecom-mons" not in polished
+    assert "by/ 4.0" not in polished
+
+
 def test_polish_html_document_merges_split_mailto_anchors() -> None:
     html = (
         "<html><body>"
         '<p>e-mail: <a href="mailto:gyorgy.buzsaki@nyulangone.org">gyorgy.buzsaki@</a> '
         '<a href="mailto:gyorgy.buzsaki@nyulangone.org">nyulangone.org</a></p>'
+        '<p>(email: <a href="mailto:valeriaanna.sovrano@unitn.it">valeriaanna.</a> '
+        '<a href="mailto:valeriaanna.sovrano@unitn.it">sovrano@unitn.it)</a></p>'
+        '<p>e-mail: <a href="mailto:lotfi\\protect _merabet@meei.harvard.edu">lotfi_merabet@</a> '
+        '<a href="mailto:lotfi\\protect _merabet@meei.harvard.edu">meei.harvard.edu</a></p>'
         "</body></html>"
     )
 
@@ -1891,7 +1999,13 @@ def test_polish_html_document_merges_split_mailto_anchors() -> None:
 
     assert polished.count('href="mailto:gyorgy.buzsaki@nyulangone.org"') == 1
     assert ">gyorgy.buzsaki@nyulangone.org</a>" in polished
+    assert polished.count('href="mailto:valeriaanna.sovrano@unitn.it"') == 1
+    assert ">valeriaanna.sovrano@unitn.it</a>)" in polished
+    assert polished.count('href="mailto:lotfi_merabet@meei.harvard.edu"') == 1
+    assert ">lotfi_merabet@meei.harvard.edu</a>" in polished
     assert "gyorgy.buzsaki@</a>" not in polished
+    assert "valeriaanna.</a>" not in polished
+    assert "lotfi_merabet@</a>" not in polished
 
 
 def test_polish_html_document_fixes_spaced_sup_and_backslash_artifacts() -> None:
@@ -2582,6 +2696,29 @@ def test_polish_html_document_rejoins_roman_split_email_local_part() -> None:
 
     assert "simonov@neuro.nnov.ru" in polished
     assert "simono v@" not in polished
+
+
+def test_polish_html_document_repairs_split_visible_emails_in_long_text_nodes() -> None:
+    filler = " ".join(["background"] * 650)
+    html = (
+        "<html><body><p>"
+        f"{filler} Email: jan. krhut@fno.cz. Contact: valeriaanna. sovrano@unitn.it. "
+        "e-mail: lotfi_merabet@ meei.harvard.edu. Reach margaret.tarampi@psych .utah.edu. "
+        "The request was addressed. jamesbarresemd@gmail.com."
+        "</p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Email: jan.krhut@fno.cz" in polished
+    assert "Contact: valeriaanna.sovrano@unitn.it" in polished
+    assert "lotfi_merabet@meei.harvard.edu" in polished
+    assert "margaret.tarampi@psych.utah.edu" in polished
+    assert "addressed. jamesbarresemd@gmail.com" in polished
+    assert "jan. krhut@" not in polished
+    assert "valeriaanna. sovrano@" not in polished
+    assert "@ meei" not in polished
+    assert "psych .utah" not in polished
 
 
 def test_polish_html_document_repairs_sentence_split_by_image_paragraph() -> None:
