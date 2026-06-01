@@ -6466,6 +6466,51 @@ def test_polish_html_document_normalizes_plain_negative_unit_exponents() -> None
     assert "s -1" not in polished
 
 
+def test_polish_html_document_repairs_known_table_ocr_artifacts() -> None:
+    html = (
+        "<html><body>"
+        "<p class=\"z2m-table-caption\">TABLE 1. Female descriptive statistics of different methods.</p>"
+        "<table><tbody>"
+        "<tr><th></th><th> nales <br/> an ±sD </th><th> Calcula <br/> Flow </th>"
+        "<th> Qn <br/> Flow i </th><th> nax <br/> ndexes </th></tr>"
+        "<tr><th>age</th><th>Actual Qavg</th><th>actual Qmax</th><th>VV</th><th>PVR</th></tr>"
+        "</tbody></table>"
+        "<table><tbody><tr><th><b>Collodion Prints</b></th><th> S </th></tr>"
+        "<tr><th>Process</th><th>Surface Coating</th></tr><tr><td>Wothlytype</td><td>X</td></tr></tbody></table>"
+        "<table><tbody><tr><th>MENDATION <br/> QUESTIONNAIRE - <br/> M <br/> RECO</th>"
+        "<th>QUESTIONNAIRE <br/> TYPE OF</th><th>REFERENCES</th><th>W TO GET IT <br/> HO</th></tr></tbody></table>"
+        "<table><tbody><tr><th>MS <br/> MPTO <br/> SY</th>"
+        "<th>MENDATION <br/> QUESTIONNAIRE - <br/> M <br/> RECO</th>"
+        "<th>QUESTIONNAIRE <br/> TYPE OF</th><th>REFERENCES</th><th>W TO GET IT <br/> HO</th></tr></tbody></table>"
+        "<p>T a bl e 2 1 con t' �nue d)</p>"
+        "<p>HE�LTHY SUBJECT 11 ME�SUREMENT 32 SER I �L NBR . 1802</p>"
+        "<table><tbody><tr><td>Gartenfreund: Exploring the botanical garden with an enclusive app</td></tr></tbody></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "nales" not in polished
+    assert "Qn <br/> Flow i" not in polished
+    assert "Actual Qavg" in polished
+    assert "Collodion Prints" in polished
+    visible = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", polished))
+    assert "Collodion Prints S Process" not in visible
+    assert "SYMPTOMS QUESTIONNAIRE - RECOMMENDATION" in polished
+    assert "<th>SYMPTOMS</th>" in polished
+    assert "TYPE OF QUESTIONNAIRE" in polished
+    assert "HOW TO GET IT" in polished
+    assert "MENDATION <br" not in polished
+    assert "MS <br/> MPTO" not in polished
+    assert "M <br/> RECO" not in polished
+    assert "Table 2.1 (continued)" in polished
+    assert "T a bl e" not in polished
+    assert "HEALTHY SUBJECT 11 MEASUREMENT 32 SERIAL-NBR. 1802" in polished
+    assert "HE�LTHY" not in polished
+    assert "inclusive app" in polished
+    assert "enclusive app" not in polished
+
+
 def test_polish_html_document_normalizes_simple_latex_unit_only_fragments() -> None:
     html = (
         "<html><body>"

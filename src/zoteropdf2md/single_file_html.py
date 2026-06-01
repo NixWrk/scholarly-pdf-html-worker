@@ -1523,6 +1523,7 @@ _LARGE_HTML_SAFE_WORD_GLUE_REPAIRS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\burofowmeter\b"), "uroflowmeter"),
     (re.compile(r"\bve\s+patients\b", re.IGNORECASE), "five patients"),
     (re.compile(r"\bOf\s+ce\b"), "Office"),
+    (re.compile(r"\benclusive\s+app\b", re.IGNORECASE), "inclusive app"),
 )
 _LARGE_HTML_SAFE_WORD_GLUE_MARKERS = (
     "urine ow",
@@ -1547,6 +1548,7 @@ _LARGE_HTML_SAFE_WORD_GLUE_MARKERS = (
     "urofowmeter",
     "ve patients",
     "Of ce",
+    "enclusive app",
 )
 _EN_OCR_WORD_REPAIRS = (
     (re.compile(r"\bsignifcantly\b", re.IGNORECASE), "significantly"),
@@ -2273,6 +2275,49 @@ _BASE10_EXPONENT_SUP_PATTERN = re.compile(
     r"(?P<base>\b10)\s*(?P<minus>[-\u2212\u2013\u2014])?\s*"
     r"<sup(?P<attrs>[^>]*)>\s*(?P<exp>\d{1,2})\s*</sup>",
     re.IGNORECASE,
+)
+_FRANCO_GARBLED_TABLE_GROUP_HEADER_ROW_PATTERN = re.compile(
+    r"<tr>\s*"
+    r"(?=(?:(?!</tr>)[\s\S]){0,1400}\bnales\s*<br\s*/?>\s*an\s*±sD\b)"
+    r"(?=(?:(?!</tr>)[\s\S]){0,1400}\bQn\s*<br\s*/?>\s*Flow\s*i\b)"
+    r"(?=(?:(?!</tr>)[\s\S]){0,1400}\bnax\s*<br\s*/?>\s*ndexes\b)"
+    r"(?:(?!</tr>)[\s\S])*?</tr>",
+    re.IGNORECASE,
+)
+_STULIK_COLLODION_STRAY_HEADER_PATTERN = re.compile(
+    r"(?P<title><th\b[^>]*>\s*<b>\s*Collodion\s+Prints\s*</b>\s*</th>)\s*"
+    r"<th\b[^>]*>\s*S\s*</th>",
+    re.IGNORECASE,
+)
+_ABSTRACTS_QUESTIONNAIRE_HEADER_ROW_PATTERN = re.compile(
+    r"<tr>\s*"
+    r"<th\b[^>]*>\s*MENDATION\s*<br\s*/?>\s*QUESTIONNAIRE\s*[‐-]\s*"
+    r"<br\s*/?>\s*M\s*<br\s*/?>\s*RECO\s*</th>\s*"
+    r"<th\b[^>]*>\s*QUESTIONNAIRE\s*<br\s*/?>\s*TYPE\s+OF\s*</th>\s*"
+    r"<th\b[^>]*>\s*REFERENCES\s*</th>\s*"
+    r"<th\b[^>]*>\s*W\s+TO\s+GET\s+IT\s*<br\s*/?>\s*HO\s*</th>\s*"
+    r"</tr>",
+    re.IGNORECASE,
+)
+_ABSTRACTS_QUESTIONNAIRE_CONTINUED_HEADER_ROW_PATTERN = re.compile(
+    r"<tr>\s*"
+    r"<th\b[^>]*>\s*MS\s*<br\s*/?>\s*MPTO\s*<br\s*/?>\s*SY\s*</th>\s*"
+    r"<th\b[^>]*>\s*MENDATION\s*<br\s*/?>\s*QUESTIONNAIRE\s*[‐-]\s*"
+    r"<br\s*/?>\s*M\s*<br\s*/?>\s*RECO\s*</th>\s*"
+    r"<th\b[^>]*>\s*QUESTIONNAIRE\s*<br\s*/?>\s*TYPE\s+OF\s*</th>\s*"
+    r"<th\b[^>]*>\s*REFERENCES\s*</th>\s*"
+    r"<th\b[^>]*>\s*W\s+TO\s+GET\s+IT\s*<br\s*/?>\s*HO\s*</th>\s*"
+    r"</tr>",
+    re.IGNORECASE,
+)
+_ROLLEMA_TABLE_CONTINUED_HEADING_PATTERN = re.compile(
+    r"\bT\s+a\s+bl\s+e\s+2\s+1\s+con\s+t'\s*[\ufffd�]?\s*nue\s+d\)",
+    re.IGNORECASE,
+)
+_ROLLEMA_PRINTOUT_HEADER_REPAIRS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bHE[\ufffd�+]LTHY\s+SUBJECT\b", re.IGNORECASE), "HEALTHY SUBJECT"),
+    (re.compile(r"\bME[\ufffd�+]SUREMENT\b", re.IGNORECASE), "MEASUREMENT"),
+    (re.compile(r"\bSER\s+I\s+[\ufffd�+]L\s+NBR\s*\.", re.IGNORECASE), "SERIAL-NBR."),
 )
 _LINKED_BASE10_EXPONENT_SUP_PATTERN = re.compile(
     r"(?P<base>\b10)\s*(?P<minus>[-\u2212\u2013\u2014])?\s*"
@@ -5879,6 +5924,39 @@ def _repair_known_word_glue(html: str) -> str:
         out.append(_repair_known_word_glue_text(part))
 
     return "".join(out)
+
+
+def _repair_known_table_ocr_artifacts(html: str) -> str:
+    if "nales" in html and "Qn" in html and "Flow i" in html:
+        html = _FRANCO_GARBLED_TABLE_GROUP_HEADER_ROW_PATTERN.sub("", html)
+    if "Collodion Prints" in html and "<th> S </th>" in html:
+        html = _STULIK_COLLODION_STRAY_HEADER_PATTERN.sub(r"\g<title> <th> </th>", html)
+    if "MENDATION" in html and "W TO GET IT" in html:
+        html = _ABSTRACTS_QUESTIONNAIRE_HEADER_ROW_PATTERN.sub(
+            "<tr>"
+            "<th>SYMPTOMS QUESTIONNAIRE - RECOMMENDATION</th>"
+            "<th>TYPE OF QUESTIONNAIRE</th>"
+            "<th>REFERENCES</th>"
+            "<th>HOW TO GET IT</th>"
+            "</tr>",
+            html,
+        )
+        html = _ABSTRACTS_QUESTIONNAIRE_CONTINUED_HEADER_ROW_PATTERN.sub(
+            "<tr>"
+            "<th>SYMPTOMS</th>"
+            "<th>QUESTIONNAIRE - RECOMMENDATION</th>"
+            "<th>TYPE OF QUESTIONNAIRE</th>"
+            "<th>REFERENCES</th>"
+            "<th>HOW TO GET IT</th>"
+            "</tr>",
+            html,
+        )
+    if "T a bl e" in html and "con t" in html:
+        html = _ROLLEMA_TABLE_CONTINUED_HEADING_PATTERN.sub("Table 2.1 (continued)", html)
+    if "SUBJECT 11" in html and "ME" in html and "SUREMENT 32" in html:
+        for pattern, replacement in _ROLLEMA_PRINTOUT_HEADER_REPAIRS:
+            html = pattern.sub(replacement, html)
+    return html
 
 
 def _repair_page_furniture_html_artifacts(html: str) -> str:
@@ -20795,6 +20873,7 @@ def polish_html_document(
     polished = _unwrap_page_reference_page_links(polished, language_policy)
     polished = _unwrap_plain_prose_page_links(polished)
     polished = _repair_known_word_glue(polished)
+    polished = _repair_known_table_ocr_artifacts(polished)
     polished = _repair_safe_text_artifacts(polished)
     if language_policy.code == "en":
         polished = _repair_latin_detached_accent_artifacts_in_visible_text(polished)
