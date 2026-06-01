@@ -7,13 +7,19 @@ from uuid import uuid4
 from zoteropdf2md.single_file_html import (
     _add_figure_anchors,
     _add_section_anchors,
+    _figure_caption_num_from_visible,
     _fix_orphaned_sup_tags,
+    _fix_false_sup_citations_in_decimals_and_figure_labels,
     _fix_subscript_equation_spill,
     _link_figure_refs,
+    _link_unlinked_numeric_superscripts_to_existing_refs,
     _link_section_refs,
     _repair_figure_ref_links_misclassified_as_refs,
+    _repair_known_word_glue,
+    _repair_latin_detached_accent_artifacts_in_visible_text,
     _repair_sentence_breaks_around_float_units,
     _repair_sup_figure_chain_continuations,
+    _split_table_units_before_section_headings,
     _to_data_url,
     _validate_data_url,
     close_katex_v8_context,
@@ -238,10 +244,25 @@ def test_polish_html_document_autolinks_plain_web_urls() -> None:
         "<p>Conference paper doi:10.1109/MEMSYS.2013.6474424.</p>"
         "<p>Journal paper doi: 10.3389/fncir.2017.00020</p>"
         "<p>Split DOI doi: 10.1002/ nau.22813</p>"
+        "<p>Split DOI suffix doi: 10.1111/ de sc.12374</p>"
+        "<p>Short split DOI suffix doi: 10.1186/ g m155</p>"
+        "<p>Publisher word DOI doi:10.1126/ science.153.3732.197</p>"
         "<p>Publisher DOI doi:10.4028/ www.scientific.net/AMM.510.163</p>"
+        "<p>PDF DOI URL https://onlinelibrary.wiley.com/doi/pdf/10 .1111/ j.1444-0938.2007.00120.x</p>"
+        "<p>PNAS supplement www.pnas.org/lookup/suppl/doi:10.1073/pnas.1006199107/-/DCSupplemental.</p>"
         "<p>Repository record [10.4028/www.scientific.net/AMM.510.163]</p>"
         '<p>Proc. Natl. Acad. Sci. U.S.A <a href="https://doi.org/10.1073/pnas.1221113110">'
         ". 110, 18279-18284. doi: 10.1073/</a> pnas.1221113110</p>"
+        '<p>Split DOI anchor <a href="https://doi.org/10.1111/desc.12374">doi: 10.1111/</a> '
+        'de <a href="https://doi.org/10.1111/desc.12374">sc.12374</a></p>'
+        '<p>Split DOI start <a href="https://doi.org/10.1111/j.1551-6709.2009.01040.x">doi:</a> '
+        '10 <a href="https://doi.org/10.1111/j.1551-6709.2009.01040.x">.1111/j.1551-6709.2009.01040.x</a></p>'
+        '<p>Split HTTP DOI anchor <a href="http://doi.org/10.1167/iovs.15-18991">'
+        ". 2016;57(11):4948-4961, doi:10.1167/</a> iovs.15-18991.</p>"
+        '<p>Split DOI head anchor doi:10.1590/ '
+        '<a href="https://doi.org/10.1590/S1984-46702010000500002">S1984-46702010000500002</a></p>'
+        '<p>Split DOI URL path <a href="https://doi.org/10.1146/annure">'
+        "https://doi.org/10.1146/annure</a> v.bioeng.10.061807.160529</p>"
         "<p>Digital Object Identifier 10.1109/TBCAS.2017.2731370</p>"
         '<p>Apps include <a href="https://www.wysa.com/">https://www.wysa.com/</a>and '
         '<a href="https://woebothealth.com/">https://woebothealth.com/</a>.</p>'
@@ -258,13 +279,30 @@ def test_polish_html_document_autolinks_plain_web_urls() -> None:
     assert ">10.1109/MEMSYS.2013.6474424</a>." in polished
     assert 'href="https://doi.org/10.3389/fncir.2017.00020"' in polished
     assert 'href="https://doi.org/10.1002/nau.22813"' in polished
+    assert 'href="https://doi.org/10.1111/desc.12374"' in polished
+    assert 'href="https://doi.org/10.1186/gm155"' in polished
+    assert 'href="https://doi.org/10.1126/science.153.3732.197"' in polished
     assert 'href="https://doi.org/10.4028/www.scientific.net/AMM.510.163"' in polished
+    assert 'href="https://onlinelibrary.wiley.com/doi/pdf/10.1111/j.1444-0938.2007.00120.x"' in polished
+    assert 'href="https://www.pnas.org/lookup/suppl/doi:10.1073/pnas.1006199107/-/DCSupplemental"' in polished
+    assert 'lookup/suppl/doi:<a href=' not in polished
     assert polished.count(">10.4028/www.scientific.net/AMM.510.163</a>") == 2
     assert "10.4028/ www.scientific.net" not in polished
+    assert "10.1111/ de sc" not in polished
+    assert "10 .1111/ j" not in polished
     assert "AMM.510.163]</a>" not in polished
     assert ">10.4028/www.scientific.net/AMM.510.163</a>]" in polished
     assert 'doi: <a href="https://doi.org/10.1073/pnas.1221113110">10.1073/pnas.1221113110</a>' in polished
     assert "doi: 10.1073/</a> pnas" not in polished
+    assert 'doi: <a href="https://doi.org/10.1111/desc.12374">10.1111/desc.12374</a>' in polished
+    assert 'doi: <a href="https://doi.org/10.1111/j.1551-6709.2009.01040.x">10.1111/j.1551-6709.2009.01040.x</a>' in polished
+    assert ">10.1167/iovs.15-18991</a>" in polished
+    assert "doi:10.1167/</a> iovs" not in polished
+    assert 'doi:<a href="https://doi.org/10.1590/S1984-46702010000500002">10.1590/S1984-46702010000500002</a>' in polished
+    assert 'href="https://doi.org/10.1146/annurev.bioeng.10.061807.160529"' in polished
+    assert "annure</a> v.bioeng" not in polished
+    assert "10.1111/</a> de <a" not in polished
+    assert ">doi:</a> 10 <a" not in polished
     assert 'Digital Object Identifier <a href="https://doi.org/10.1109/TBCAS.2017.2731370"' in polished
     assert 'https://www.wysa.com/</a> and <a href="https://woebothealth.com/"' in polished
     assert '<a href="#ref-1">[1]</a>' in polished
@@ -278,6 +316,9 @@ def test_polish_html_document_splits_doi_metadata_from_following_prose() -> None
         "The bar plots in Figure 7 illustrate trial-by-trial completion times.</p>"
         "<p>Source https://doi.org/10.1371/journal.pone.0199389.g005 "
         "As before, time to complete each trial was normalized and compared.</p>"
+        '<p><a href="https://doi.org/10.1371/journal.pone.0223755.t001">'
+        "https://doi.org/10.1371/journal.pone.0223755.t001</a> one used a guide dog "
+        "and two used no aid. Of those using visual aids, only one subject tested the LEO Belt.</p>"
         '<p id="ref-8">Reference DOI: https://doi.org/10.1000/example '
         "The journal title continues here.</p>"
         "</body></html>"
@@ -300,6 +341,307 @@ def test_polish_html_document_splits_doi_metadata_from_following_prose() -> None
     assert 'id="ref-8"' in polished
     assert "The journal title continues here.</p>" in compact
     assert "</p> <p>The journal title continues here." not in compact
+    assert (
+        '<a href="https://doi.org/10.1371/journal.pone.0223755.t001">'
+        "https://doi.org/10.1371/journal.pone.0223755.t001</a></p>"
+    ) in polished
+    assert "<p>one used a guide dog and two used no aid." in polished
+
+
+def test_polish_html_document_moves_table_doi_body_tail_out_of_table_unit() -> None:
+    html = (
+        "<html><body>"
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">Table 1. Participant information.</p>'
+        "<table><tr><td>1</td><td>24</td></tr></table>"
+        '<p block-type="Text" class="z2m-table-note">'
+        '<a href="https://doi.org/10.1371/journal.pone.0249996.t001">'
+        "https://doi.org/10.1371/journal.pone.0249996.t001</a> "
+        "switch, the first stimulation started at 40% intensity output. "
+        "If no phosphenes were present, TMS intensity output was increased.</p>"
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert (
+        '<p block-type="Text" class="z2m-table-note">'
+        '<a href="https://doi.org/10.1371/journal.pone.0249996.t001">'
+        "https://doi.org/10.1371/journal.pone.0249996.t001</a></p>"
+    ) in polished
+    assert "</p></div> <p>switch, the first stimulation started" in compact
+
+
+def test_polish_html_document_splits_distinct_nested_figure_units() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 1. First result.</p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Second result.</p>'
+        "</div></div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    assert 'id="fig-2"' not in fig1_match.group(0)
+    assert polished.index('<div id="fig-1"') < polished.index('<div id="fig-2"')
+    assert polished.index("Figure 1. First result.</p></div>") < polished.index('<div id="fig-2"')
+
+
+def test_polish_html_document_splits_figure_unit_before_swallowed_body_tail() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Fig 1. First result.</b> Apparatus overview.</p>'
+        '<p block-type="Text">The following paragraph belongs to the article body.</p>'
+        '<span id="page-3-0"> </span>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig 2. Second result.</p>'
+        "</div></div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig1_match is not None
+    assert "The following paragraph belongs" not in fig1_match.group(0)
+    assert 'id="fig-2"' not in fig1_match.group(0)
+    assert '</div><p block-type="Text">The following paragraph belongs' in compact
+
+
+def test_polish_html_document_splits_caption_doi_body_tail_and_repairs_sentence() -> None:
+    html = (
+        "<html><body>"
+        "<p>The aerodynamic drag forces could be neglected as being less than the</p>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 1. Sketch of the boundary conditions. doi:'
+        '<a href="https://doi.org/10.1371/journal.pone.0047111.g001" '
+        'target="_blank" rel="noopener noreferrer">'
+        "10.1371/journal.pone.0047111.g001</a> surface tension forces. "
+        "Given these assumptions the steady-state equations apply.</p>"
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig1_match is not None
+    assert "surface tension forces" not in fig1_match.group(0)
+    assert 'href="https://doi.org/10.1371/journal.pone.0047111.g001"</p>' not in polished
+    assert "less than the surface tension forces. Given these assumptions" in compact
+
+
+def test_polish_html_document_splits_caption_body_tail_after_repaired_doi_path() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig7.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 7. Canonical layout of the model. '
+        '<a href="https://doi.org/10.1371/journal." target="_blank" rel="noopener noreferrer">'
+        "https://doi.org/10.1371/journal.</a> pcbi.1000651.g007 "
+        "the intrinsic features and predictions of this model are described below.</p>"
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    fig7_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-7")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig7_match is not None
+    assert "the intrinsic features" not in fig7_match.group(0)
+    assert "journal.pcbi.1000651.g007</a>" in fig7_match.group(0)
+    assert "</div> <p>the intrinsic features and predictions of this model" in compact
+
+
+def test_polish_html_document_keeps_uppercase_body_tail_outside_terminal_caption_doi() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Text">The actuators alert users about obstacles in VR.</p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Fig 2. (A) Picture of the ETA tested in this study '
+        "and (B) subject wearing the ETA together with the VR device.</b> "
+        '<a href="https://doi.org/10.1371/journal.pdig.0000275.g002">'
+        "https://doi.org/10.1371/journal.pdig.0000275.g002</a> "
+        "In its original configuration, the ETA was connected to a camera and a processing unit "
+        "that were combined to form a computer vision system able to detect obstacles.</p>"
+        "</div>"
+        '<p block-type="Text">When the ETA was interfaced with the VR platform, the function changed.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig2_match is not None
+    assert "In its original configuration" not in fig2_match.group(0)
+    assert "journal.pdig.0000275.g002</a> In its original" not in compact
+    assert "</div> <p>In its original configuration" in compact
+
+
+def test_polish_html_document_does_not_reabsorb_lowercase_body_tail_after_caption_doi() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Text">Most of the complexity of these equations is described below.</p>'
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig7.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 7. Canonical layout of the foveal confluence. '
+        "Plus and minus signs signify representations of the upper and lower visual field. "
+        "doi:10.1371/journal.pcbi.1000651.g007 "
+        "the intrinsic features and predictions of this model with realistic parameters "
+        "suggest that this model is inadequate to describe the architecture.</p>"
+        "</div>"
+        '<p block-type="Text">This is because the shift is most easily conceptualized in Cartesian space.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    fig7_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-7")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig7_match is not None
+    assert "the intrinsic features" not in fig7_match.group(0)
+    assert "journal.pcbi.1000651.g007</a> the intrinsic" not in compact
+    assert "</div> <p>the intrinsic features and predictions of this model" in compact
+
+
+def test_polish_html_document_splits_caption_after_terminal_ref_citation_tail() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig6.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 6. Improved data visualization. '
+        'Data in Figures 2(A-C) were published previously.<sup>'
+        '<a href="#ref-24" class="z2m-ref-link">24</a></sup> '
+        "temperature below 45-C at low pH and below 70-C at pH 6-8.</p>"
+        "</div>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 25))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    fig6_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-6")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig6_match is not None
+    assert "temperature below" not in fig6_match.group(0)
+    assert "<p>temperature below 45-C at low pH" in polished
+
+
+def test_polish_html_document_splits_unclosed_figure_unit_before_body_tail() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig 1. First result.</p>'
+        '<p block-type="Text">This paragraph was swallowed by the figure wrapper.</p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig 2. Second result.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig1_match is not None
+    assert "This paragraph was swallowed" not in fig1_match.group(0)
+    assert 'id="fig-2"' not in fig1_match.group(0)
+
+
+def test_polish_html_document_splits_unclosed_figure_unit_before_next_image_block() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig3a.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="fig3b.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Fig 3.</b> Spectral frequency displays.</p>'
+        '<p><img src="fig4.jpg"/></p>'
+        '<p id="fig-4" class="z2m-figure-caption"><b>Fig 4.</b> Navigation performance.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert "Spectral frequency displays" in fig3
+    assert "fig4.jpg" not in fig3
+    assert "Fig 4." not in fig3
+
+
+def test_polish_html_document_splits_late_figure_unit_before_body_heading_and_next_figure() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig3a.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="fig3b.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Fig 3.</b> Spectral frequency displays.</p>'
+        "<p>2.5 Experimental protocol Testing was carried out in a large laboratory.</p>"
+        '<p><img src="fig4.jpg"/></p>'
+        '<p id="fig-4" class="z2m-figure-caption"><b>Fig 4.</b> Navigation performance.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert "Experimental protocol" not in fig3
+    assert "fig4.jpg" not in fig3
+    assert "Fig 4." not in fig3
+    assert "</div><p>2.5 Experimental protocol Testing was carried out" in compact
 
 
 def test_polish_html_document_unescapes_safe_anchor_snippets() -> None:
@@ -329,6 +671,57 @@ def test_polish_html_document_repairs_split_visible_url_anchor_text() -> None:
 
     assert f'found online at: <a href="{expected_url}">{expected_url}</a></p>' in polished
     assert "fncir.</a> 2017.00020" not in polished
+
+
+def test_polish_html_document_repairs_scheme_split_same_href_url_fragments() -> None:
+    url = "https://www.who.int/news-room/fact-sheets/detail/blindness-and-visual-impairment"
+    tango_url = (
+        "https://www.businessinsider.com/google-tango-2017-5?r=US&IR=T"
+        "#in-this-demo-tango-is-used-in-a-classroom-to-show-a-bunch-of-students-a-virtual-globe-"
+        "floating-in-the-middle-of-the-room-2"
+    )
+    html = (
+        "<html><body>"
+        '<p>Available online: https://'
+        f'<a href="{url}">www.who.int</a> / news-room/fact-sheets/detail/ '
+        f'<a href="{url}">blindness-and-visual-impairment</a> '
+        "(accessed on 10 September 2020).</p>"
+        '<p>Project site: https://<a href="https://soundofvision.net/">soundofvision.net</a> / '
+        "(accessed on 10 September 2020).</p>"
+        '<p>Factsheet: http://'
+        '<a href="http://www.who.int/mediacentre/factsheets/fs282/en/">www.who.int</a> / '
+        '<a href="http://www.who.int/mediacentre/factsheets/fs282/en/">mediacentre</a> '
+        "/factsheets/fs282/en/ (accessed).</p>"
+        '<p><a href="www.ada.gov/lodblind.htm">6www.ada.gov/lodblind.htm</a></p>'
+        '<p>Waiver ( <a href="http://creativecom mons.org/publicdomain/zero/1.0/) applies">'
+        "http://creativecom mons.org/publicdomain/zero/1.0/) applies</a> to data.</p>"
+        '<p>Shop <a href="https://shop.aph.org/">https://shop.aph.org/https://shop.aph.org/</a>.</p>'
+        '<p>Google Tango (https://'
+        f'<a href="{tango_url}">www.businessinsider.com</a> /google-tango-2017-5?r=US&amp;IR=T#in-this '
+        f'<a href="{tango_url}">demo-tango-is-used-in-a-classroom-to-show-a-bunch-of-students-a-virtual-globe-floating-in-the</a> '
+        f'<a href="{tango_url}">middle-of-the-room-2)</a> device.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert f'Available online: <a href="{url}">{url}</a> (accessed' in polished
+    assert '<a href="https://soundofvision.net/">https://soundofvision.net/</a> (accessed' in polished
+    assert (
+        '<a href="http://www.who.int/mediacentre/factsheets/fs282/en/">'
+        "http://www.who.int/mediacentre/factsheets/fs282/en/</a> (accessed)"
+    ) in polished
+    assert '<a href="www.ada.gov/lodblind.htm">6 www.ada.gov/lodblind.htm</a>' in polished
+    assert (
+        'Waiver ( <a href="http://creativecommons.org/publicdomain/zero/1.0/">'
+        "http://creativecommons.org/publicdomain/zero/1.0/</a>) applies to data."
+    ) in polished
+    assert 'Shop <a href="https://shop.aph.org/">https://shop.aph.org/</a>.' in polished
+    tango_html_url = tango_url.replace("&", "&amp;")
+    assert f'Google Tango (<a href="{tango_html_url}">{tango_html_url}</a>) device.' in polished
+    assert "https://<a" not in polished
+    assert "6www." not in polished
+    assert " / news-room" not in polished
 
 
 def test_polish_html_document_merges_same_href_text_anchor_fragments() -> None:
@@ -603,6 +996,493 @@ def test_polish_html_document_links_sup_citations_to_references() -> None:
     ) in polished
 
 
+def test_polish_html_document_cleans_reference_numbering_artifacts() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work<sup>32</sup> is cited.</p>"
+        "<h4>References</h4><ul>"
+        "<li>31. Prior, A. (2020). Baseline reference.</li>"
+        "<li>33. 32 De Nunzio, C. (2021). The diagnosis of benign obstruction.</li>"
+        "<li>25 33. Bishr, M. (2016). Medical management 3. of benign prostatic hyperplasia.</li>"
+        "<li>34. Khorsheed, M. (2012). Challenges and Opportunities, Jeddah "
+        "35. Al-Fawzan, M. (2014). Fostering university collaboration.</li>"
+        "<li>36. 36Novadaq, Operator's Manual.</li>"
+        "</ul></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert '<li id="ref-32"><span class="z2m-ref-num">32.</span> De Nunzio' in compact
+    assert '<li id="ref-33"><span class="z2m-ref-num">33.</span> Bishr' in compact
+    assert "Medical management of benign prostatic hyperplasia" in compact
+    assert '<li id="ref-35"><span class="z2m-ref-num">35.</span> Al-Fawzan' in compact
+    assert '<li id="ref-36"><span class="z2m-ref-num">36.</span> Novadaq' in compact
+    assert "33. 32 De Nunzio" not in compact
+    assert "25 33. Bishr" not in compact
+    assert "36Novadaq" not in compact
+
+
+def test_polish_html_document_moves_interleaved_backmatter_before_references() -> None:
+    html = """
+    <html><body>
+    <p>The conclusion cites prior work 1.</p>
+    <h3>DATA AVAILABILITY STATEMENT</h3>
+    <p>The raw data will be made available by the authors.</p>
+    <h3>ETHICS STATEMENT</h3>
+    <p>The studies involving human participants were reviewed and approved by Simon Jones, Department of Computer Science,</p>
+    <h2>REFERENCES</h2>
+    <p block-type="ListGroup"><ul>
+      <li>1. Alpha, A. (2020). First article.</li>
+      <li>2. Beta, B. (2021). Second article.</li>
+    </ul></p>
+    <p block-type="Text">University of Bath, United Kingdom. Participation in the study was entirely voluntary and written informed consent was provided to participate in this study.</p>
+    <h2>AUTHOR CONTRIBUTIONS</h2>
+    <p>PH created the original idea for this project.</p>
+    <h2>FUNDING</h2>
+    <p>Research was supported by a university grant.</p>
+    <p block-type="ListGroup"><ul>
+      <li>3. Gamma, G. (2022). Third article.</li>
+    </ul></p>
+    </body></html>
+    """
+
+    polished = polish_html_document(html)
+
+    references_pos = polished.index("REFERENCES")
+    assert polished.index("University of Bath") < references_pos
+    assert polished.index("AUTHOR CONTRIBUTIONS") < references_pos
+    assert polished.index("FUNDING") < references_pos
+    assert polished.index("Alpha, A.") > references_pos
+    assert polished.index("Gamma, G.") > references_pos
+
+
+def test_polish_html_document_strips_line_numbers_before_unnumbered_reference_items() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4><ul>"
+        "<li>25 5 H. Li, X. He, Z. Kang. Carbon dots.</li>"
+        "<li>105 41 Y. Yan, M. Zhang, K. Gong. Chem. Mater.</li>"
+        "</ul></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "25 5 H. Li" not in compact
+    assert "105 41 Y. Yan" not in compact
+    assert '<li id="ref-5"><span class="z2m-ref-num">5.</span> H. Li' in compact
+    assert '<li id="ref-41"><span class="z2m-ref-num">41.</span> Y. Yan' in compact
+
+
+def test_polish_html_document_strips_four_digit_reference_line_numbers_and_links_late_sup_range() -> None:
+    html = (
+        "<html><body>"
+        "<p>Lower frequency bands contained most power<sup>106\u2013108</sup>.</p>"
+        "<h4>References</h4><ul>"
+        "<li>1161 106. Smith, M. A. Spatial and Temporal Scales of Neuronal Correlation. "
+        "<i>Journal of Neuroscience</i> <b>28</b>, 12591-12603 (2008).</li>"
+        "<li>1162 Primary Visual Cortex continuation.</li>"
+        "<li>1163 107. Vinje, W. E. and Gallant, J. L. Sparse coding and decorrelation. "
+        "<i>Science</i> <b>287</b>, 1273-1276 (2000).</li>"
+        "<li>1164 during natural vision continuation.</li>"
+        "<li>1165 108. Morales-Gregorio, A. et al. Neural manifolds in V1 change. "
+        "<i>Cell Reports</i> <b>43</b>, (2024).</li>"
+        "</ul></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    ref_section = polished[polished.index("References") :]
+
+    assert '<li id="ref-106"><span class="z2m-ref-num">106.</span> Smith' in ref_section
+    assert '<li id="ref-107"><span class="z2m-ref-num">107.</span> Vinje' in ref_section
+    assert '<li id="ref-108"><span class="z2m-ref-num">108.</span> Morales-Gregorio' in ref_section
+    assert "Primary Visual Cortex continuation." in ref_section
+    assert "during natural vision continuation." in ref_section
+    assert 'id="ref-109"' not in ref_section
+    assert "1161 106." not in ref_section
+    assert "1162 Primary" not in ref_section
+    assert '<a href="#ref-106" class="z2m-ref-link">106</a>' in body
+    assert '<a href="#ref-108" class="z2m-ref-link">108</a>' in body
+
+
+def test_polish_html_document_recovers_missing_reference_entry_from_pdf_profile() -> None:
+    html = (
+        "<html><body>"
+        "<p>Hernia repair outcomes were compared [158].</p>"
+        "<h4>References</h4><ul>"
+        '<li>[157] C. Schug-Pass, D. A. Jacob, and F. Kockerling, "Biomechanical properties," '
+        "Hernia, vol. 17, pp. 773-777, 2013.</li>"
+        '<li>[159] M. Cambal, P. Zonca, and B. Hrbaty, "Comparison of self-gripping mesh," '
+        "Bratislavske Lekarske Listy, vol. 113, pp. 103-107, 2012.</li>"
+        "</ul></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries": [
+                {
+                    "page": 24,
+                    "number": 158,
+                    "text": (
+                        'R. H. Fortelny, A. H. Petter-Puchner, C. May et al., "The impact '
+                        "of atraumatic fibrin sealant vs. staple mesh fixation in TAPP hernia repair "
+                        'on chronic pain and quality of life," Surgical Endoscopy and Other '
+                        "Interventional Techniques, vol. 26, no. 1, pp. 249-254, 2012."
+                    ),
+                }
+            ],
+        },
+    )
+    ref_section = polished[polished.index("References") :]
+
+    assert 'id="ref-158"' in ref_section
+    assert "Fortelny" in ref_section
+    assert "atraumatic fibrin sealant" in ref_section
+    assert '<span class="z2m-ref-num">158.</span>' in ref_section
+    assert 'href="#ref-158"' in polished[: polished.index("References")]
+
+
+def test_polish_html_document_links_remaining_plain_superscript_ranges_in_superscript_docs() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 20))
+    html = (
+        "<html><body>"
+        '<p>Prior work<sup><a href="#ref-7" class="z2m-ref-link">7</a></sup> '
+        "and patient studies<sup>18,19</sup> reported sensitivity.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+
+    assert '<a href="#ref-18" class="z2m-ref-link">18</a>' in polished
+    assert '<a href="#ref-19" class="z2m-ref-link">19</a>' in polished
+    assert "<sup>18,19</sup>" not in polished
+
+
+def test_polish_html_document_links_flattened_et_al_citations_without_profile() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 18))
+    html = (
+        "<html><body>"
+        "<p>Prior systems Ding et al. 15 / Palmom et al. 16 / "
+        "Albellard et al. 17 reported feedback modes.</p>"
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'Ding et al.<sup><a href="#ref-15" class="z2m-ref-link">15</a></sup>' in polished
+    assert 'Palmom et al.<sup><a href="#ref-16" class="z2m-ref-link">16</a></sup>' in polished
+    assert 'Albellard et al.<sup><a href="#ref-17" class="z2m-ref-link">17</a></sup>' in polished
+
+
+def test_late_unlinked_superscript_relink_only_handles_et_al_context() -> None:
+    refs = "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 69))
+    html = (
+        "<html><body>"
+        "<p>The circuit follows Tehovnik et al.<sup>68</sup> during calibration, "
+        "but hardware notes<sup>2</sup> remain footnote-like.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    fixed = _link_unlinked_numeric_superscripts_to_existing_refs(html)
+    body = fixed[: fixed.index("References")]
+
+    assert 'Tehovnik et al.<sup><a href="#ref-68" class="z2m-ref-link">68</a></sup>' in body
+    assert "notes<sup>2</sup>" in body
+    assert 'href="#ref-2"' not in body
+
+
+def test_late_unlinked_superscript_relink_links_existing_numeric_ranges_before_references() -> None:
+    refs = "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 110))
+    html = (
+        "<html><body>"
+        '<p>Most power was concentrated in lower bands (<a href="#fig-2" '
+        'class="z2m-fig-link">Figure 2E</a>,F)<sup>106\u2013108</sup>.</p>'
+        "<h4>References</h4><ol>"
+        '<li id="ref-106">Reference note<sup>106\u2013108</sup>.</li>'
+        f"{refs}</ol>"
+        "</body></html>"
+    )
+
+    fixed = _link_unlinked_numeric_superscripts_to_existing_refs(html)
+    body = fixed[: fixed.index("References")]
+    references = fixed[fixed.index("References") :]
+
+    assert '<a href="#ref-106" class="z2m-ref-link">106</a>' in body
+    assert '<a href="#ref-108" class="z2m-ref-link">108</a>' in body
+    assert "<sup>106\u2013108</sup>" not in body
+    assert "Reference note<sup>106\u2013108</sup>" in references
+
+
+def test_polish_html_document_links_spaced_et_al_after_existing_superscripts() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 26))
+    html = (
+        "<html><body>"
+        '<p block-type="Text">Variations in flow rate were reported.'
+        '<sup><a href="#ref-22" class="z2m-ref-link">22</a></sup> '
+        "Fantl et al 10 calls it multiple peak, and specifies 20% of <i>Q</i> max. "
+        "Pauwels et al 11 names this shape undulating.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'Fantl et al<sup><a href="#ref-10" class="z2m-ref-link">10</a></sup>' in polished
+    assert 'Pauwels et al<sup><a href="#ref-11" class="z2m-ref-link">11</a></sup>' in polished
+    assert "Fantl et al 10" not in polished
+
+
+def test_polish_html_document_links_spaced_et_al_in_bracket_numeric_docs() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 26))
+    html = (
+        "<html><body>"
+        '<p block-type="Text">A bracket citation remains primary '
+        '<a href="#ref-22" class="z2m-ref-link">[22]</a>. '
+        "Fantl et al 10 calls it multiple peak, and specifies 20% of <i>Q</i> max.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+
+    assert 'href="#ref-22"' in polished
+    assert 'Fantl et al<sup><a href="#ref-10" class="z2m-ref-link">10</a></sup>' in polished
+    assert "Fantl et al 10" not in polished
+
+
+def test_polish_html_document_links_split_et_al_two_digit_citation() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 22))
+    html = (
+        "<html><body>"
+        '<p block-type="Text">Chou et al16 and Jorgensen et al1\n'
+        '7 call this shape "tall and peaked".</p>'
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'Chou et al<sup><a href="#ref-16" class="z2m-ref-link">16</a></sup>' in polished
+    assert 'Jorgensen et al<sup><a href="#ref-17" class="z2m-ref-link">17</a></sup>' in polished
+    assert "Jorgensen et al1" not in polished
+    assert 'href="#ref-1"' not in polished[: polished.index("References")]
+
+
+def test_polish_html_document_repairs_split_et_al_two_digit_link() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 22))
+    html = (
+        "<html><body>"
+        '<p block-type="Text">and Jorgensen et al<sup>'
+        '<a href="#ref-1" class="z2m-ref-link">1</sup> </a> 7 '
+        'call this shape "high flow".</p>'
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'Jorgensen et al<sup><a href="#ref-17" class="z2m-ref-link">17</a></sup>' in body
+    assert 'href="#ref-1" class' not in body
+    assert "> 7" not in body
+
+
+def test_polish_html_document_links_split_et_al_two_digit_before_page_linked_verb() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 22))
+    html = (
+        "<html><body>"
+        '<p block-type="Text">Ghobish refined the definition, and Jensen et al2\n'
+        '0 <a href="#page-6-0">define</a> intermittent flow as lasting 15 s.</p>'
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'Jensen et al<sup><a href="#ref-20" class="z2m-ref-link">20</a></sup>' in polished
+    assert "Jensen et al2" not in polished
+
+
+def test_polish_html_document_links_flattened_dot_and_range_superscripts() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 28))
+    html = (
+        "<html><body>"
+        "<p>Nearby landmarks.18-22 This approach was used. "
+        "The maps combine landmark recognition.12,13,26,27 However, maintenance is hard.</p>"
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'landmarks.<sup><a href="#ref-18" class="z2m-ref-link">18</a>-' in polished
+    assert '<a href="#ref-22" class="z2m-ref-link">22</a></sup>' in polished
+    assert 'recognition.<sup><a href="#ref-12" class="z2m-ref-link">12</a>,' in polished
+    assert "landmarks.18-22" not in polished
+    assert "recognition.12,13,26,27" not in polished
+
+
+def test_polish_html_document_links_flattened_dot_ranges_in_bracket_profile() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 29))
+    html = (
+        "<html><body>"
+        '<p>A normal bracket citation remains <a href="#ref-3" class="z2m-ref-link">[3]</a>. '
+        "Nearby landmarks.18-22 These apps are GPS-based.23-25 "
+        "Landmark recognition.12,13,26,27 may help. A final solution.28 follows.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-3"' in body
+    assert 'landmarks.<sup><a href="#ref-18" class="z2m-ref-link">18</a>-' in body
+    assert 'apps are GPS-based.<sup><a href="#ref-23" class="z2m-ref-link">23</a>-' in body
+    assert 'recognition.<sup><a href="#ref-12" class="z2m-ref-link">12</a>,' in body
+    assert 'solution.<sup><a href="#ref-28" class="z2m-ref-link">28</a></sup>' in body
+    assert "landmarks.18-22" not in body
+    assert "recognition.12,13,26,27" not in body
+
+
+def test_polish_html_document_links_repeated_flattened_single_superscripts() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 67))
+    html = (
+        "<html><body>"
+        "<p>Training supports independence. 66 It also compensates for reduced visual information 66 "
+        "and supports people across the life span. 66 A later study agreed.</p>"
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'independence. <sup><a href="#ref-66" class="z2m-ref-link">66</a></sup> It' in polished
+    assert 'span. <sup><a href="#ref-66" class="z2m-ref-link">66</a></sup> A later' in polished
+    assert "independence. 66 It" not in polished
+
+
+def test_polish_html_document_repairs_nested_reference_anchor_wrappers() -> None:
+    refs = "".join(f"<li>{idx}. Ref {idx}.</li>" for idx in range(1, 104))
+    html = (
+        "<html><body>"
+        "<p>Prior work [52, 74, 75] was cited.</p>"
+        "<p>Mapping [91], [103] is useful.</p>"
+        "<p>Complications <a href=\"javascript:void(0)\">["
+        '<a href="#ref-6" class="z2m-ref-link">6</a>,</a> '
+        '<a href="#ref-7" class="z2m-ref-link">7</a>].</p>'
+        '<p>Legacy PMID: <a href="http://example.test">23844067</a></a> Smith.</p>'
+        '<p>Available: <a href="https://play.google.com/store/apps/details?id=com.app">'
+        "https://play.google.com/store/apps/details?id=com.app</a></a> (2015).</p>"
+        '<p>The inaccessible routes have been mentione <a href="#ref-6" class="z2m-ref-link">'
+        'd [<a href="#ref-6" class="z2m-ref-link">6</a>, '
+        '<a href="#ref-7" class="z2m-ref-link">7</a>].</a></p>'
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="javascript:void(0)"' not in polished
+    assert "</a></a>" not in polished
+    assert "mentioned [" in polished
+    assert "mentione " not in polished
+    assert re.search(r'<a href="#ref-52"[^>]*>52</a>,\s*<a href="#ref-74"', polished)
+    assert re.search(r'\[<a href="#ref-6"[^>]*>6</a>,\s*<a href="#ref-7"', polished)
+    assert re.search(
+        r'<a href="#ref-91"[^>]*>\[91\]</a>,\s*<a href="#ref-103"[^>]*>\[103\]</a>',
+        polished,
+    )
+
+
+def test_polish_html_document_removes_malformed_outer_author_year_ref_anchor() -> None:
+    html = (
+        "<html><body>"
+        "<p>The finding was in contrast to Teng and Whitney ("
+        '<a href="#ref-12" class="z2m-ref-link">2011) and Thaler et al. (2014a).</p>'
+        "<h3>Results</h3>"
+        '<p id="fig-2"><img src="fig2.jpg"/></p>'
+        '<p>Fig. <a href="#fig-2" class="z2m-fig-link">2)</a> summarizes performance.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 13))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-12"' not in body
+    assert "Teng and Whitney (2011) and Thaler et al. (2014a)." in re.sub(r"\s+", " ", body)
+    assert re.search(r'<a\b[^>]*href="#ref-12"[\s\S]*<a\b', body) is None
+
+
+def test_polish_html_document_removes_malformed_outer_italic_ref_anchor() -> None:
+    html = (
+        "<html><body>"
+        '<p><i><a href="#ref-35" class="z2m-ref-link">Nada et al. (2015)</i> '
+        "placed sensors near landmarks. Later work ("
+        '<i><a href="#ref-48" class="z2m-ref-link">Vera</a></i> Zenteno 2018) agreed.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 49))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    flat = re.sub(r"\s+", " ", body)
+
+    assert 'href="#ref-35"' not in body
+    assert "Nada et al. (2015)" in flat
+    assert re.search(r'<a\b[^>]*href="#ref-35"[\s\S]*<a\b', body) is None
+
+
+def test_polish_html_document_keeps_plain_sup_footnotes_in_bracket_numeric_docs() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 30))
+    html = (
+        "<html><body>"
+        '<p>A bracket citation remains primary <a href="#ref-21" class="z2m-ref-link">[21]</a>.</p>'
+        "<p>The sensor belt holds components,<sup>2</sup> a controller,<sup>3</sup> "
+        "and battery. <sup>6</sup> All components are listed.</p>"
+        "<p>The haptic rendering stacked outlines into a 2 1<sup>2</sup>D structure.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+
+    body = polished[: polished.index("References")]
+    assert 'href="#ref-21"' in body
+    assert 'href="#ref-2"' not in body
+    assert 'href="#ref-3"' not in body
+    assert 'href="#ref-6"' not in body
+    assert "2 1<sup>2</sup>D" in body
+
+
 def test_polish_html_document_leaves_ambiguous_plain_comma_refs_when_numbers_already_linked() -> None:
     refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 42))
     html = (
@@ -712,6 +1592,90 @@ def test_polish_html_document_repairs_ocr_split_final_letter_citations() -> None
     assert '<a href="#ref-14" class="z2m-ref-link">,14</a></sup>.' in polished
     assert "functio " not in polished
     assert ">n13</a>" not in polished
+
+
+def test_polish_html_document_repairs_ref_anchor_ocr_split_word_fragments() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 61))
+    html = (
+        "<html><body>"
+        "<p>Silverstein' "
+        '<a href="#ref-13" class="z2m-ref-link">s13</a> described the task.</p>'
+        '<p>The main subcortical input to the AD <a href="#ref-38" class="z2m-ref-link">n56.</a></p>'
+        '<p>Methods adopted in the 1990 <a href="#ref-29" class="z2m-ref-link">s60</a>.</p>'
+        '<p>Pressure P <a href="#ref-36" class="z2m-ref-link">a36.</a> remained stable.</p>'
+        '<p>The stimulus se <a href="#ref-11" class="z2m-ref-link">t11.</a> continued.</p>'
+        '<p>The questionnaire was referenced as se <a href="#ref-18" class="z2m-ref-link">e18</a>.</p>'
+        '<p>The next step tw <a href="#ref-32" class="z2m-ref-link">o32</a> succeeded.</p>'
+        '<p>The visual ag <a href="#ref-20" class="z2m-ref-link">e20</a> range was broad.</p>'
+        '<p>A small-scale ma <a href="#ref-13" class="z2m-ref-link">p13.</a> was studied.</p>'
+        '<p>The assessment was more object iv <a href="#ref-3" class="z2m-ref-link">e3</a>.</p>'
+        '<p>Visual cortex V <a href="#ref-34" class="z2m-ref-link">153.</a> was studied.</p>'
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'Silverstein\'s<sup><a href="#ref-13" class="z2m-ref-link">13</a></sup>' in body
+    assert 'ADn<sup><a href="#ref-56" class="z2m-ref-link">56</a></sup>.' in body
+    assert '1990s<sup><a href="#ref-60" class="z2m-ref-link">60</a></sup>.' in body
+    assert 'Pa<sup><a href="#ref-36" class="z2m-ref-link">36</a></sup>.' in body
+    assert 'set<sup><a href="#ref-11" class="z2m-ref-link">11</a></sup>.' in body
+    assert 'see<sup><a href="#ref-18" class="z2m-ref-link">18</a></sup>.' in body
+    assert 'two<sup><a href="#ref-32" class="z2m-ref-link">32</a></sup> succeeded' in body
+    assert 'age<sup><a href="#ref-20" class="z2m-ref-link">20</a></sup> range' in body
+    assert 'map<sup><a href="#ref-13" class="z2m-ref-link">13</a></sup>.' in body
+    assert 'objective<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>.' in body
+    assert 'V1<sup><a href="#ref-53" class="z2m-ref-link">53</a></sup>.' in body
+    assert 'href="#ref-38"' not in body
+    assert 'href="#ref-29"' not in body
+    assert 'href="#ref-34"' not in body
+
+
+def test_polish_html_document_retargets_or_unwraps_mismatched_ref_labels() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 61))
+    html = (
+        "<html><body>"
+        '<p>The estimates are current<sup><a href="#ref-33" class="z2m-ref-link">55</a>'
+        '<a href="#ref-56" class="z2m-ref-link">,56,</a></sup> across trials.</p>'
+        '<p>Later work <a href="#ref-27" class="z2m-ref-link">57</a> confirmed this.</p>'
+        '<p>Copyright Elsevier 201 <a href="#ref-64" class="z2m-ref-link">986</a>.</p>'
+        '<p>Performance <a href="#ref-15" class="z2m-ref-link">'
+        "could be achieved with as few as 325 (Srivastava, Troyk,</a> "
+        "and Dagnelie, 2009) phosphenes.</p>"
+        f"<h4>References</h4><ul>{refs}</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-55" class="z2m-ref-link">55</a>' in body
+    assert '<a href="#ref-56" class="z2m-ref-link">,56,</a>' in body
+    assert '<a href="#ref-57" class="z2m-ref-link">57</a>' in body
+    assert 'href="#ref-33"' not in body
+    assert 'href="#ref-27"' not in body
+    assert 'href="#ref-64"' not in body
+    assert 'href="#ref-15"' not in body
+    assert "could be achieved with as few as 325" in body
+
+
+def test_polish_html_document_keeps_bracket_citations_near_group_word() -> None:
+    html = (
+        "<html><body>"
+        "<p>Over 35 million of this group are classified as blind [1, 2]. "
+        "A large proportion of sight loss remains without a cure [3].</p>"
+        "<h4>References</h4><ol>"
+        "<li>Reference one.</li><li>Reference two.</li><li>Reference three.</li>"
+        "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '[<a href="#ref-1" class="z2m-ref-link">1</a>, <a href="#ref-2" class="z2m-ref-link">2</a>]' in body
+    assert '<a href="#ref-3" class="z2m-ref-link">[3]</a>' in body
 
 
 def test_polish_html_document_repairs_ocr_split_page_link_citation_after_references() -> None:
@@ -1102,17 +2066,26 @@ def test_polish_html_document_unwraps_page_links_on_reference_list_numbers() -> 
         '<li id="ref-2"><a href="#page-0-0">2.</a> Auvray M. Learning to perceive.</li>'
         '<li id="ref-3"><b><a href="#page-0-0"><span class="z2m-ref-num">3.</span></a></b> '
         "Marron JA. Orientation-mobility performance.</li>"
+        '<li id="ref-4"><span class="z2m-ref-num">4.</span> Minich JA. Lateral. '
+        '<a href="#page-17-0">2016</a>;5(1).</li>'
+        '<li id="ref-5"><span class="z2m-ref-num">5.</span> W<a href="#page-8-11">3</a>C '
+        "Accessibility Initiative. 2022.</li>"
         "</ul></body></html>"
     )
 
     polished = polish_html_document(html, table_caption_language="en")
+    ref_section = polished[polished.index("References"):]
 
     assert '<a href="#page-0-0"><span class="z2m-ref-num">1.</span></a>' not in polished
     assert '<a href="#page-0-0">2.</a>' not in polished
     assert '<a href="#page-0-0"><span class="z2m-ref-num">3.</span></a>' not in polished
+    assert 'href="#page-17-0"' not in ref_section
+    assert 'href="#page-8-11"' not in ref_section
     assert '<span class="z2m-ref-num">1.</span> Levy-Tzedek' in polished
     assert re.search(r"(?:>2\.</span>|>2\.) Auvray", polished)
     assert '<b><span class="z2m-ref-num">3.</span></b> Marron' in polished
+    assert "Lateral. 2016;5(1)." in polished
+    assert "W3C Accessibility Initiative" in polished
 
 
 def test_polish_html_document_normalizes_hallucinated_ru_figure_caption_label() -> None:
@@ -1903,6 +2876,286 @@ def test_polish_html_document_repairs_sentence_split_across_affiliation_block_wi
     assert "daniel.ting@duke-nus.edu.sg" in polished
 
 
+def test_polish_html_document_repairs_sentence_split_across_sidebar_metadata() -> None:
+    html = (
+        "<html><body>"
+        "<p>Conclusion The diagnostic accuracy is insufficient and reliability remains insufficiently</p>"
+        "<h4>Strengths and limitations of this study</h4>"
+        '<p block-type="ListGroup"><ul><li>Broad systematic search.</li></ul></p>'
+        "<p>researched. Better study designs are needed.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "reliability remains insufficiently researched. Better study designs are needed." in flat
+    assert "Strengths and limitations of this study" in flat
+    assert polished.count("researched. Better study designs are needed.") == 1
+
+
+def test_polish_html_document_repairs_body_paragraph_misclassified_as_front_matter() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-front-matter">Patients with a history of lower urinary system surgery were ex-</p>'
+        "<h4>Main Points:</h4>"
+        '<p block-type="ListGroup"><ul><li>Uroflowmetry is an essential test.</li></ul></p>'
+        "<p>cluded, and a total of 83 patients were included in the study.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "surgery were excluded, and a total of 83 patients" in flat
+    assert "Main Points:" in flat
+
+
+def test_polish_html_document_repairs_sentence_split_across_metadata_tail() -> None:
+    html = (
+        "<html><body>"
+        "<p>Many visual computing algorithms turn</p>"
+        "<p>This work was performed in cooperation with a museum.</p>"
+        '<p>DOI <a href="https://doi.org/10.1145/2037820.2037822">10.1145/2037820.2037822</a> '
+        '<a href="http://doi.acm.org/10.1145/2037820.2037822">http://doi.acm.org/10.1145/2037820.2037822</a> '
+        "out to be equally well suited for tactile media.</p>"
+        "<h2>Related Work</h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "Many visual computing algorithms turn out to be equally well suited for tactile media." in flat
+    assert "10.1145/2037820.2037822" in flat
+    assert "DOI" in flat
+
+
+def test_polish_html_document_repairs_acm_permission_body_intrusion() -> None:
+    html = (
+        "<html><body>"
+        "<p>Interestingly, many visual computing algorithms turn "
+        "by others than ACM must be honored. Abstracting with credit is permitted. "
+        "Permissions may be requested from Publications Dept., ACM, Inc., "
+        "or permissions@acm.org.</p>"
+        "<p>This work was performed in cooperation with a museum.</p>"
+        '<p>DOI <a href="https://doi.org/10.1145/2037820.2037822">'
+        "10.1145/2037820.2037822</a> "
+        '<a href="http://doi.acm.org/10.1145/2037820.2037822">'
+        "http://doi.acm.org/10.1145/2037820.2037822</a> "
+        "out to be equally well suited for tactile media.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "many visual computing algorithms turn out to be equally well suited" in flat
+    assert "by others than ACM must be honored" in flat
+    assert "z2m-front-matter" in polished
+    assert "DOI" in flat
+
+
+def test_polish_html_document_repairs_acm_turn_out_across_metadata_blocks() -> None:
+    html = (
+        "<html><body>"
+        "<p>Interestingly, many visual computing algorithms turn</p>"
+        "<p>This work was performed in cooperation with a museum.</p>"
+        "<p>All paintings copyright by the museum.</p>"
+        "<p>Permission to make digital copies is granted. Copyrights for components "
+        "of this work owned by others than ACM must be honored. Permissions may be "
+        "requested at permissions@acm.org.</p>"
+        "<p>© 2011 ACM 1556-4673/2011/11-ART5 $10.00</p>"
+        '<p>DOI <a href="https://doi.org/10.1145/2037820.2037822">'
+        "10.1145/2037820.2037822</a> "
+        '<a href="http://doi.acm.org/10.1145/2037820.2037822">'
+        "http://doi.acm.org/10.1145/2037820.2037822</a> "
+        "out to be equally well suited for tactile media.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "many visual computing algorithms turn out to be equally well suited" in flat
+    assert "by others than ACM must be honored" in flat
+    assert not re.search(r"algorithms turn\s*</p>", polished)
+
+
+def test_polish_html_document_moves_inline_clearvision_footnote_intrusion() -> None:
+    html = (
+        "<html><body>"
+        "<p>These printers are readily available in communal locations such as libraries or schools. "
+        "2 ClearVision project: www.clearvisionproject.org "
+        "In summary, our work makes the following contributions: A novel system.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "schools. In summary, our work makes" in flat
+    assert "2 ClearVision project:" in flat
+    assert "www.clearvisionproject.org" in flat
+    assert "z2m-footnote" in polished
+
+
+def test_polish_html_document_splits_clearvision_footnote_body_tail() -> None:
+    html = (
+        "<html><body>"
+        "<p>These printers are readily available in communal locations such as libraries or schools.</p>"
+        '<p><sup>2</sup> <a href="http://www.clearvisionproject.org/">ClearVision project:</a> '
+        '<a href="www.clearvisionproject.org">www.clearvisionproject.org</a></p>'
+        "<p>In summary, our work makes the following contributions:</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "schools.</p><p>In summary, our work makes" in flat
+    assert re.search(r"<p>In summary, our work makes", polished) is not None
+    footnote = re.search(r'<p[^>]*class="z2m-footnote"[\s\S]*?</p>', polished)
+    assert footnote is not None
+    assert "In summary" not in footnote.group(0)
+
+
+def test_polish_html_document_inserts_summary_boundary_after_small_animals_imaging() -> None:
+    html = (
+        "<html><body>"
+        "<p>The fluorescence contrast is very promising for small animals imaging "
+        "In summary, the nanomicelles could be employed for NIR in vivo imaging.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "small animals imaging. In summary, the nanomicelles" in flat
+
+
+def test_polish_html_document_moves_box_body_tail_out_of_body_paragraph() -> None:
+    html = (
+        "<html><body>"
+        "<p>Oscillatory cycles have a dual role. They organize sequential neuronal events as well as "
+        "The temporal characteristics of brain oscillations are remarkably preserved across mammals. "
+        "Brain-body oscillations span several orders of magnitude. Heartbeat rhythms bias the amplitude "
+        "of various brain oscillations<sup>155</sup>.</p>"
+        '<div id="box-1" class="z2m-float-unit z2m-box-unit">'
+        '<h3 class="z2m-box-heading">Box 1 | Brain-body rhythms</h3>'
+        '<p class="z2m-box-body">Periodic events coordinate neuronal activity.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+    box = re.search(r'<div id="box-1"[\s\S]*?</div>', polished)
+
+    assert "events as well as The temporal characteristics" not in flat
+    assert "They organize sequential neuronal events.</p>" in flat
+    assert box is not None
+    assert "The temporal characteristics of brain oscillations" in box.group(0)
+
+
+def test_polish_html_document_moves_glossary_out_of_body_paragraph_split() -> None:
+    html = (
+        "<html><body>"
+        "<p>CNV could also be related to the haemodynamic response in the cortex, "
+        "and thus indirectly to heartbeat variation, when human subjects judge duration 274. "
+        "Studies</p>"
+        "<h3><b>Glossary</b></h3>"
+        "<h4>Cross-frequency phase-amplitude coupling</h4>"
+        "<p>The most prominent law underlying the hierarchy of brain oscillators.</p>"
+        "<h4>Working memory</h4>"
+        "<p>A mechanism that allows information to be briefly held.</p>"
+        "<p>relating timing and subjective experience of timing to infraslow and ultraslow "
+        "oscillations are rare.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "judge duration 274. Studies relating timing and subjective experience" in flat
+    assert "Studies Glossary Cross-frequency" not in flat
+    assert flat.index("Studies relating timing") < flat.index("Glossary")
+
+
+def test_polish_html_document_repairs_figure_caption_tail_taken_as_body_text() -> None:
+    html = (
+        "<html><body>"
+        "<p>We found that all these forms of WM control used the cortical sheet. "
+        "The idea is that during the initial encoding of the sequence, different spatiovectors "
+        "extracted from 2 s (back) delay trials. Then data from 1 s (blue), 1.41 s (green), "
+        "2.83 s (red) and 4 s (cyan) are plotted using the same weight vectors. "
+        "c The 4-array spatial distribution is shown. Source data are provided as Source Data file. "
+        "Panel a was created with clip art images from DESIGNALIKIE, Limited.</p>"
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="data:image/png;base64,AA=="/></p>'
+        '<p class="z2m-figure-caption">Figure 5. Spatial patterns of control-related activity. '
+        "They are projected using the eight-session average dPCA weight.</p></div>"
+        '<p block-type="Text" class="has-continuation">temporal patterns of gamma are activated '
+        "for the first vs second item.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "different spatio-temporal patterns of gamma are activated" in flat
+    assert "dPCA weight vectors extracted from 2 s (back) delay trials" in flat
+    assert "different spatiovectors extracted" not in flat
+
+
+def test_polish_html_document_repairs_3d_space_split_by_float_run() -> None:
+    html = (
+        "<html><body>"
+        "<p>The expert described subjects and mutual position in the (hypothetic)</p>"
+        '<div id="fig-19" class="z2m-float-unit z2m-figure-unit"><p>Figure 19. Prototype.</p></div>'
+        '<div id="fig-20" class="z2m-float-unit z2m-figure-unit"><p>Figure 20. Prototype.</p></div>'
+        "<p>3D space. After this explanation, the panel tried again.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "mutual position in the (hypothetic) 3D space. After this explanation" in flat
+    assert polished.count("3D space. After this explanation") == 1
+
+
+def test_polish_html_document_repairs_blockquote_sentence_split_by_float() -> None:
+    html = (
+        "<html><body>"
+        "<blockquote><p>Only longer</p></blockquote>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit"><p>Figure 2. Map.</p></div>'
+        "<p>term studies will determine whether the implant is active.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "Only longer term studies will determine whether the implant is active." in flat
+    assert polished.count("term studies will determine") == 1
+
+
+def test_polish_html_document_moves_inline_author_email_intrusion() -> None:
+    html = (
+        "<html><body>"
+        "<p>Lesions were excluded. A John G. Webster john.webster@wisc.edu major and essential "
+        "step in the medical evaluation is physical examination.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "A major and essential step in the medical evaluation is physical examination." in flat
+    assert "John G. Webster john.webster@wisc.edu" in flat
+
+
 def test_polish_html_document_marks_affiliation_block_with_style_class() -> None:
     html = (
         "<html><body>"
@@ -1971,6 +3224,93 @@ def test_polish_html_document_keeps_multi_image_single_caption_inside_figure_uni
     assert "Text after the figure." in after_wrapper
 
 
+def test_polish_html_document_pairs_caption_after_image_run_across_empty_bridge() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="fig11a.jpg"/></p>'
+        '<p><img src="fig11b.jpg"/></p>'
+        '<p block-type="Text"></p>'
+        "<p>Fig. 11. Empirical analysis on hyperparameters.</p>"
+        "<p>Text after the figure.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    wrapper_start = polished.index('<div id="fig-11" class="z2m-float-unit z2m-figure-unit">')
+    wrapper_end = polished.index("</div>", wrapper_start)
+    wrapper = polished[wrapper_start:wrapper_end]
+    after_wrapper = polished[wrapper_end:]
+
+    assert 'src="fig11a.jpg"' in wrapper
+    assert 'src="fig11b.jpg"' in wrapper
+    assert "Figure 11. Empirical analysis" in wrapper
+    assert "z2m-missing-figure-warning" not in wrapper
+    assert "Figure 11. Empirical analysis" not in after_wrapper
+    assert "Text after the figure." in after_wrapper
+
+
+def test_polish_html_document_pairs_caption_after_image_run_across_caption_note() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="fig2a.jpg"/></p>'
+        '<p><img src="fig2b.jpg"/></p>'
+        '<p block-type="Text">* User-defined criteria for the question "What electronic travel aids do you use": '
+        "22C#1-Aipoly Vision, 22C#2-Envision AI. ** User-defined criteria for the question "
+        '"If you would create a novel aid, what functions would be important": '
+        "26C#1-interactive tactile map, 26C#2-nearby objects recognition.</p>"
+        '<p><b>Figure 2.</b> The importance of chosen criteria as defined by the respondents.</p>'
+        "<p>Text after the figure.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    wrapper_start = polished.index('<div id="fig-2" class="z2m-float-unit z2m-figure-unit">')
+    wrapper_end = polished.index("</div>", wrapper_start)
+    wrapper = polished[wrapper_start:wrapper_end]
+    after_wrapper = polished[wrapper_end:]
+
+    assert 'src="fig2a.jpg"' in wrapper
+    assert 'src="fig2b.jpg"' in wrapper
+    assert "User-defined criteria" in wrapper
+    assert 'href="#fig-2"' in wrapper
+    assert "The importance of chosen criteria" in wrapper
+    assert "z2m-missing-figure-warning" not in wrapper
+    assert "The importance of chosen criteria" not in after_wrapper
+    assert "Text after the figure." in after_wrapper
+
+
+def test_polish_html_document_does_not_pair_caption_forward_across_body_prose() -> None:
+    html = (
+        "<html><body>"
+        "<p>Fig. 6. Route in the virtual environment.</p>"
+        "<h3>Article running header</h3>"
+        '<p><img src="fig7.jpg"/></p>'
+        "<p>Fig. 7. Simulation in progress, with patient on bed.</p>"
+        "<h1>Experiments</h1>"
+        "<p block-type=\"Text\">The wheelchair condition is shown in Figure 8.</p>"
+        '<p><img src="fig8.jpg"/></p>'
+        "<p>Fig. 8. Patient preparing for starting a trial session.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig7_match = re.search(r'<div id="fig-7"[\s\S]*?</div>', polished)
+    fig8_match = re.search(r'<div id="fig-8"[\s\S]*?</div>', polished)
+    assert fig7_match is not None
+    assert fig8_match is not None
+    fig7 = fig7_match.group(0)
+    fig8 = fig8_match.group(0)
+    assert 'src="fig7.jpg"' in fig7
+    assert 'src="fig8.jpg"' not in fig7
+    assert "Simulation in progress" in fig7
+    assert 'src="fig8.jpg"' in fig8
+    assert "Patient preparing" in fig8
+    assert "z2m-missing-figure-warning" not in fig8
+
+
 def test_polish_html_document_absorbs_external_matching_figure_caption() -> None:
     html = (
         "<html><body>"
@@ -1984,7 +3324,9 @@ def test_polish_html_document_absorbs_external_matching_figure_caption() -> None
     )
 
     polished = polish_html_document(html, table_caption_language="en", polish_language="ru")
-    wrapper_start = polished.index('<div id="fig-5-24" class="z2m-float-unit z2m-figure-unit">')
+    wrapper_match = re.search(r'<div[^>]*id="fig-5-24"[^>]*class="[^"]*z2m-figure-unit[^"]*"[^>]*>', polished)
+    assert wrapper_match is not None
+    wrapper_start = wrapper_match.start()
     wrapper_end = polished.index("</div>", wrapper_start)
     wrapper = polished[wrapper_start:wrapper_end]
     after_wrapper = polished[wrapper_end:]
@@ -2126,7 +3468,7 @@ def test_polish_html_document_repairs_sentence_split_by_wrapped_float_unit() -> 
 
     assert "questionnaire validated for the assessment of LUTS" in flat
     assert flat.count("the assessment of LUTS") == 1
-    assert '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">' in polished
+    assert re.search(r'<div id="fig-1" class="[^"]*\bz2m-float-unit\b[^"]*\bz2m-figure-unit\b', polished)
 
 
 def test_polish_html_document_strips_running_header_inside_float_split() -> None:
@@ -2143,7 +3485,7 @@ def test_polish_html_document_strips_running_header_inside_float_split() -> None
     assert repairs == 1
     assert "lymphatic anatomy were reduced by the self-controlled protocol." in polished
     assert "Combined Imaging in Breast Cancer were reduced" not in polished
-    assert '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">' in polished
+    assert re.search(r'<div id="fig-1" class="[^"]*\bz2m-float-unit\b[^"]*\bz2m-figure-unit\b', polished)
 
 
 def test_polish_html_document_repairs_acronym_continuation_after_float() -> None:
@@ -2255,10 +3597,12 @@ def test_polish_html_document_merges_body_tail_across_table_notes_and_figure() -
         "<p>P values &lt;0.001 for all</p>"
         "<p><b>Table 1. Patient demographics.</b></p>"
         "<table><tbody><tr><td>A</td><td>B</td></tr></tbody></table>"
-        "<p><sup>пїЅ</sup> : statistically significant</p>"
+        "<p>* : statistically significant</p>"
         "<p>Median value(IQR) or number of cases(%)</p>"
+        "<p>Positive value = increased symptoms, negative value = decreased symptoms</p>"
         "<p>Abbreviations RARP: robot-assisted radical prostatectomy</p>"
         "<p>CLSS: core lower urinary tract symptom score, QOL index: quality of life index</p>"
+        "<p>Delta PVR, post-RARP residual urine volume - pre-RARP residual urine volume.</p>"
         '<p><a href="https://doi.org/10.1371/journal.pone.0275069.t001">'
         "https://doi.org/10.1371/journal.pone.0275069.t001</a></p>"
         '<p><img src="fig2.jpg"/></p>'
@@ -2272,8 +3616,13 @@ def test_polish_html_document_merges_body_tail_across_table_notes_and_figure() -
 
     assert "P values &lt;0.001 for all three parameters). These tendencies were confirmed." in flat
     assert "QOL index: quality of life index three parameters" not in flat
+    assert "decreased symptoms three parameters" not in flat
     assert '<div id="table-1" class="z2m-float-unit z2m-table-unit' in polished
     assert '<div id="fig-2" class="z2m-float-unit z2m-figure-unit' in polished
+    assert (
+        'class="z2m-table-note">Positive value = increased symptoms, negative value = decreased symptoms</p>'
+        in polished
+    )
 
 
 def test_polish_html_document_marks_adjacent_float_units_as_one_visual_run() -> None:
@@ -2445,6 +3794,50 @@ def test_polish_html_document_repairs_sentence_split_by_long_figure_chain() -> N
     assert "This equivalent resistor changes the system's impedance." in polished
     assert polished.count("equivalent resistor changes the system's impedance.") == 1
     assert '<p class="z2m-figure-caption">Fig. 6. Measurement principle.</p>' in polished
+
+
+def test_polish_html_document_keeps_in_text_figure_reference_out_of_float_gap() -> None:
+    html = (
+        "<html><body>"
+        "<p>The field of view was measured empirically by moving tags through the reader.</p>"
+        '<p><a href="#fig-4" class="z2m-fig-link">Figure 4</a> shows the operating range '
+        "of the tag reader as a function of the angle between</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Figure 2.</b> Segmentation of a digital tag.</p>'
+        "</div>"
+        "<p>the tag reader and the normal to the tag. The reader can identify coded numbers.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = " ".join(polished.split())
+
+    assert "angle between the tag reader and the normal to the tag" in flat
+    assert "Figure 2. Segmentation of a digital tag. the tag reader" not in flat
+
+
+def test_polish_html_document_repairs_float_sentence_after_late_page_anchor_gap() -> None:
+    html = (
+        "<html><body>"
+        '<p><a href="#fig-4" class="z2m-fig-link">Figure 4</a> shows the reading range '
+        "as a function of the angle between</p>"
+        '<span id="page-3-0"></span>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Test apparatus.</p>'
+        "</div>"
+        "<p>the tag reader and the normal to the tag. The reader is reliable.</p>"
+        '<p id="fig-4"><img src="fig4.jpg"/></p>'
+        "<p>Figure 4. Reading range.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    flat = re.sub(r"\s+", " ", polished)
+
+    assert "angle between the tag reader and the normal to the tag." in flat
+    assert "</div> <p>the tag reader and the normal" not in flat
 
 
 def test_polish_html_document_repairs_sentence_split_with_table_caption_gap() -> None:
@@ -2699,6 +4092,72 @@ def test_polish_html_document_repairs_sentence_split_across_box_block() -> None:
     assert '<h3 class="z2m-box-body">Glossary of key terms</h3>' in polished
 
 
+def test_polish_html_document_moves_for_these_reasons_tail_out_of_box() -> None:
+    html = (
+        "<html><body>"
+        "<p>The population size matters when evaluating whether an approach will be "
+        "practically viable and sustainable. For these</p>"
+        "<h2>BOX 1</h2>"
+        "<h3>Indirect translation: examples inspired by optogenetic circuit analysis</h3>"
+        "<p>In one approach to indirect translation, laboratory models provide a testing ground.</p>"
+        "<p>These examples illustrate how optogenetics can guide treatment design.</p>"
+        "<p>reasons, a transdiagnostic approach aimed at alleviating a specific symptom may make the most sense.</p>"
+        "<h2>Preclinical disease models</h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, polish_language="en")
+    flat = " ".join(polished.split())
+
+    assert "For these In one approach" not in flat
+    assert "For these reasons, a transdiagnostic approach" in flat
+    box_match = re.search(r'<div id="box-1"[\s\S]*?</div>', polished)
+    assert box_match is not None
+    assert "reasons, a transdiagnostic" not in box_match.group(0)
+    assert polished.index("For these reasons") > polished.index("</div>")
+    assert polished.index("For these reasons") < polished.index("Preclinical disease models")
+
+
+def test_polish_html_document_keeps_split_figure_caption_continuations_out_of_body() -> None:
+    html = (
+        "<html><body>"
+        "<p block-type=\"Text\">Viral vectors and gene therapy payloads could, "
+        "in principle, also trigger global</p>"
+        "<p><img src=\"fig4.png\"/></p>"
+        "<p><b>Fig. 4 | Direct delivery methods.</b> Gene vector delivery may be "
+        "targeted to the cell bodies or to</p>"
+        "<p block-type=\"Text\">projection targets for additional specificity.</p>"
+        "<p block-type=\"Text\">innate or adaptive immune responses that are toxic.</p>"
+        "<p block-type=\"Text\">Delivery cannot completely prevent vector entry into "
+        "the systemic circulation</p>"
+        "<p><img src=\"fig5.png\"/></p>"
+        "<p><b>Fig. 5 | Human immune responses.</b> Clinical experience has not "
+        "revealed destruction of</p>"
+        "<p block-type=\"Text\">transduced target cells behind the BBB. b, Human "
+        "immune responses to AAV vectors.</p>"
+        "<p block-type=\"Text\">(with some serotypes more likely to leak than others). "
+        "AAV DNA could also be detected.</p>"
+        "<p block-type=\"Text\">The light delivery devices themselves, if needed, also</p>"
+        "<p><img src=\"fig7.png\"/></p>"
+        "<p><b>Fig. 7 | Regulatory pathways.</b> The agency considers a notified "
+        "body (medical device)</p>"
+        "<p block-type=\"Text\">and the Committee for Advanced Therapies (gene therapy).</p>"
+        "<p block-type=\"Text\">require evaluation for robustness and safety.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, polish_language="en")
+    flat = " ".join(polished.split())
+
+    assert "also trigger global innate or adaptive immune responses" in flat
+    assert "also trigger global projection targets" not in flat
+    assert "cell bodies or to projection targets for additional specificity" in flat
+    assert "systemic circulation (with some serotypes more likely to leak than others)" in flat
+    assert "revealed destruction of transduced target cells behind the BBB" in flat
+    assert "The light delivery devices themselves, if needed, also require evaluation" in flat
+    assert "body (medical device) and the Committee for Advanced Therapies" in flat
+
+
 def test_polish_html_document_does_not_reorder_table_without_formula_context() -> None:
     html = (
         "<html><body>"
@@ -2947,6 +4406,105 @@ def test_polish_html_document_merges_unnumbered_reference_continuation() -> None
     assert re.search(r'id="ref-\d+">People,"', polished) is None
 
 
+def test_polish_html_document_merges_lowercase_unnumbered_reference_continuation() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>Bishr, M., Boehm, K., Trudeau, V., Tian, Z., Dell'Oglio, P., "
+        "Schiffmann, J., & Saad, F. (2016). Medical management</li>"
+        "<li>of benign prostatic hyperplasia: Results from a population-based study. "
+        "Canadian Urological Association Journal, 10(1-2), 55.</li>"
+        "<li>Choudhury, S. (2010). Which voiding position is associated with lowest flow rates?</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "Medical management of benign prostatic hyperplasia" in compact
+    assert re.search(r'id="ref-2"[\s\S]{0,120}Choudhury, S\.', polished) is not None
+    assert re.search(r'id="ref-\d+"[\s\S]{0,80}of benign prostatic hyperplasia', polished) is None
+
+
+def test_polish_html_document_merges_journal_title_reference_continuation() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>DECARLO, D., FINKELSTEIN, A., RUSINKIEWICZ, S., AND SANTELLA, A. "
+        "2003. Suggestive contours for conveying shape.</li>"
+        "<li>ACM Transactions on Graphics (SIGGRAPH '03) 22, 3 (July), 848-855.</li>"
+        "<li>DICARLO, J., AND WANDELL, B. 2000. Rendering high dynamic range images.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "Suggestive contours for conveying shape. ACM Transactions on Graphics" in compact
+    assert re.search(r'id="ref-2"[\s\S]{0,120}DICARLO, J\.', polished) is not None
+    assert re.search(r'id="ref-\d+"[\s\S]{0,80}ACM Transactions', polished) is None
+
+
+def test_polish_html_document_preserves_numbered_lowercase_author_reference() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>247. Safaie, M. et al. Turning the body into a clock.</li>"
+        "<li>248. van Rijn, H. Towards ecologically valid interval timing.</li>"
+        "<li>249. Hodos, W. Complex response patterns.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert re.search(r'id="ref-248"[\s\S]{0,80}van Rijn, H\.', polished) is not None
+    assert "clock. van Rijn" not in re.sub(r"\s+", " ", polished)
+
+
+def test_polish_html_document_merges_numbered_lowercase_reference_line_continuation() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>31. Demir A, Karadag MA. Abdominal or transrectal ultrasonographic prostate volume and cystoscopic prostatic</li>"
+        "<li>32. urethral length measurements to determine the surgical technique. J Urol Surg 2016;3:119-22.</li>"
+        "<li>33. 32 De Nunzio C, Lombardo R. The diagnosis of benign prostatic obstruction.</li>"
+        "<li>34. 33 Guzelsoy M. Role of transition zone index.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "prostatic urethral length measurements" in compact
+    assert '<li id="ref-32"><span class="z2m-ref-num">32.</span> De Nunzio' in compact
+    assert '<li id="ref-33"><span class="z2m-ref-num">33.</span> Guzelsoy' in compact
+    assert "33. 32 De Nunzio" not in compact
+
+
+def test_polish_html_document_separates_reference_study_group_author_glue() -> None:
+    html = (
+        "<html><body>"
+        "<h4>References</h4>"
+        "<ul>"
+        "<li>RNS System in Epilepsy Study GroupMorrell MJ. Responsive cortical stimulation.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Study Group. Morrell MJ" in polished
+    assert "Study GroupMorrell" not in polished
+
+
 def test_polish_html_document_wraps_superscript_profile_page_ref_links() -> None:
     html = (
         "<html><body>"
@@ -2998,6 +4556,40 @@ def test_polish_html_document_links_bracket_refs_after_numbered_references_headi
     assert "[1] First technical report" not in polished
 
 
+def test_polish_html_document_accepts_line_numbered_bibliography_heading() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work [1] supports the approach.</p>"
+        "<h4>898 <b>Bibliography</b></h4>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>899 1. First bibliography item.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="ref-1"' in polished
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in polished
+
+
+def test_polish_html_document_accepts_compact_roman_references_heading() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work [1] supports the approach.</p>"
+        "<h4>V.REFERENCES</h4>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>First bibliography item.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="ref-1"' in polished
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in polished
+
+
 def test_polish_html_document_links_page_bracket_refs_with_swallowed_parenthesis() -> None:
     html = (
         "<html><body>"
@@ -3040,6 +4632,27 @@ def test_polish_html_document_links_bracket_citation_ranges_and_lists() -> None:
 
     for ref_id in (1, 4, 11, 12, 34, 35, 40, 43):
         assert f'href="#ref-{ref_id}"' in polished
+
+
+def test_polish_html_document_links_void_anchor_bracket_citations() -> None:
+    html = (
+        "<html><body>"
+        '<p>Prior work <a href="javascript:void(0)"> [1] </a> and '
+        '<a href="javascript:void(0)"> [2-4]. </a> supports this.</p>'
+        "<h4>References</h4>"
+        "<ul>" + "".join(f"<li>Ref {i}.</li>" for i in range(1, 5)) + "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "javascript:void(0)" not in body
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in body
+    assert (
+        '[<a href="#ref-2" class="z2m-ref-link">2</a>-'
+        '<a href="#ref-4" class="z2m-ref-link">4</a>].'
+    ) in body
 
 
 def test_polish_html_document_relinks_existing_anchor_inside_bracket_citation_list() -> None:
@@ -3412,6 +5025,40 @@ def test_polish_html_document_repairs_front_matter_marker_ocr() -> None:
     assert 'href="#ref-2"' in polished[frontmatter_end:]
 
 
+def test_polish_html_document_repairs_front_matter_department_affiliation_glue() -> None:
+    html = (
+        "<html><body>"
+        "<h1>A prototype power assist wheelchair</h1>"
+        "<p>Richard Simpson*1,2,3, Edmund LoPresti4, Steve Hayashi2</p>"
+        "<p><span id=\"page-0-0\"></span>Address: 1Department of Rehabilitation Science and Technology; "
+        "University of Pittsburgh, USA 2Human Engineering Research Labs; "
+        "VA Pittsburgh Healthcare System, USA, 3Department of Bioengineering; "
+        "University of Pittsburgh, USA and 4AT Sciences; Pittsburgh, PA, USA</p>"
+        '<p block-type="ListGroup" class="z2m-front-matter"><ul>'
+        '<li block-type="ListItem"><i>1Department of Physiology, LLRM Medical College</i></li>'
+        '<li block-type="ListItem"><span id="page-1-0"></span>2Department of Bioengineering</li>'
+        "</ul></p>"
+        "<p>IRCCS San Raffaele Scientific, InstituteDepartment of Obstetrics and Gynecology, Milano</p>"
+        "<h2>Abstract</h2>"
+        "<p>The wheelchair avoided obstacles during testing.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    frontmatter_end = polished.index("Abstract")
+    frontmatter = polished[:frontmatter_end]
+
+    assert "1Department" not in frontmatter
+    assert "2Human" not in frontmatter
+    assert "3Department" not in frontmatter
+    assert "<sup>1</sup>Department of Rehabilitation" in frontmatter
+    assert "<sup>2</sup>Human Engineering" in frontmatter
+    assert "<sup>3</sup>Department of Bioengineering" in frontmatter
+    assert "<sup>1</sup>Department of Physiology" in frontmatter
+    assert "<sup>2</sup>Department of Bioengineering" in frontmatter
+    assert "Institute Department of Obstetrics" in frontmatter
+
+
 def test_polish_html_document_does_not_mark_late_body_paragraph_as_front_matter() -> None:
     html = (
         "<html><body>"
@@ -3544,7 +5191,11 @@ def test_polish_html_document_discloses_caption_without_image_and_adds_target_st
     assert "z2m-missing-figure-warning" in polished
     assert "Figure 1 image was not extracted" in polished
     assert '<div id="fig-1" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">' in polished
-    assert '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">' in polished
+    assert re.search(
+        r'<p\b(?=[^>]*\bz2m-missing-figure-warning\b)(?=[^>]*\bz2m-figure-target\b)(?=[^>]*\brole="note")',
+        polished,
+    )
+    assert 'data-z2m-origin="caption-only-target"' in polished
     assert '<p class="z2m-figure-caption">Figure 1. Caption survived, but the image did not.</p>' in polished
     assert "scroll-margin-top" in polished
     assert ":target" in polished
@@ -3600,6 +5251,34 @@ def test_polish_html_document_drops_stale_same_label_missing_figure_warning() ->
     assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
     assert 'id="fig-2"' in polished
     assert "z2m-missing-figure-unit" not in polished
+
+
+def test_polish_html_document_merges_caption_only_missing_unit_with_previous_image_unit() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-2" class="z2m-fig-link">Figure 2</a>.</p>'
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit z2m-float-run-start">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 1. Overall system description.</p>'
+        "</div>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit z2m-float-run-mid">'
+        '<p><img src="fig2.jpg"/></p>'
+        "</div>"
+        '<p id="fig-2"><b>Figure 2.</b> Architecture of the system.</p>'
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="fig2.jpg"' in fig2
+    assert "Architecture of the system" in fig2
+    assert "Figure 2 image was not extracted" not in polished
+    assert "z2m-missing-figure-unit" not in fig2
+    assert polished.count('id="fig-1"') == 1
 
 
 def test_polish_html_document_does_not_warn_for_in_text_subfigure_sentence() -> None:
@@ -3749,6 +5428,45 @@ def test_polish_html_document_splits_converted_math_tag_equation_from_prose() ->
     assert 'class="z2m-equation-row"' in polished
     assert '<span class="z2m-eq-num">(1)</span>' in polished
     assert '<p block-type="Text">To make (1) more clear.</p>' in polished
+
+
+def test_polish_html_document_splits_html_math_tag_equation_from_where_prose() -> None:
+    html = (
+        '<html><body>'
+        '<p block-type="Equation"><math display="block">'
+        r"W(n) = 0.5 \left[1 - \cos\left(\frac{2\pi n}{m}\right)\right], "
+        r"\ n = 0, 1, \dots, m<sup class=\"z2m-unit-exp\">-1</sup>"
+        '</math> (3) where m is the shifting length of the window function. '
+        "Figure 2 shows the waveform.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'class="z2m-equation-row"' in polished
+    assert '<span class="z2m-eq-num">(3)</span>' in polished
+    assert '<p block-type="Text">where m is the shifting length of the window function. Figure 2 shows' in polished
+    assert 'block-type="Equation"><math display="block"' in polished
+    assert "(3) where m is" not in polished
+
+
+def test_polish_html_document_does_not_merge_equation_paragraph_with_where_text() -> None:
+    html = (
+        '<html><body>'
+        '<p block-type="Equation"><math display="block">'
+        r"W(n) = 0.5 \left[1 - \cos\left(\frac{2\pi n}{m}\right)\right]"
+        "</math> (3)</p>"
+        '<p block-type="Text">where m is the shifting length of the window function. '
+        "Figure 2 shows the waveform.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'class="z2m-equation-row"' in polished
+    assert '<span class="z2m-eq-num">(3)</span>' in polished
+    assert '<p block-type="Text">where m is the shifting length of the window function. Figure 2 shows' in polished
+    assert "(3) where m is" not in polished
 
 
 def test_polish_html_document_repairs_common_omega_zero_ratio_ocr() -> None:
@@ -3929,6 +5647,94 @@ def test_polish_html_document_splits_collapsed_dot_bulleted_reference_item() -> 
     assert '<span class="z2m-ref-num">8.</span> Wilson J' in ref_section
     assert '[<a href="#ref-2" class="z2m-ref-link">2</a>, <a href="#ref-3" class="z2m-ref-link">3</a>]' in body
     assert '[<a href="#ref-7" class="z2m-ref-link">7</a>, <a href="#ref-8" class="z2m-ref-link">8</a>]' in body
+
+
+def test_polish_html_document_splits_implicit_reference_before_number_gap() -> None:
+    html = (
+        "<html><body>"
+        "<p>Electronic canes are compared in prior work [23, 24].</p>"
+        "<h4>References</h4>"
+        "<ul>"
+        "<li>22. Buchs, G.; Simon, N.; Maidenbaum, S.; Amedi, A. Waist-up Protection for Blind Individuals. "
+        "<i>Restor. Neurol. Neurosci.</i> <b>2017</b>, <i>35</i>, 225-235. "
+        '<a href="http://dx.doi.org/10.3233/RNN-160686">[CrossRef]</a> '
+        "dos Santos, A.D.P.; Medola, F.O.; Cinelli, M.J.; Garcia Ramirez, A.R.; Sandnes, F.E. "
+        "Are Electronic White Canes Better than Traditional Canes? <i>Univ. Access Inf. Soc.</i> "
+        "<b>2021</b>, <i>20</i>, 93-103. "
+        '<a href="http://dx.doi.org/10.1007/s10209-020-00712-z">[CrossRef]</a></li>'
+        "<li>24. Dakopoulos, D.; Bourbakis, N.G. Wearable Obstacle Avoidance Electronic Travel Aids. "
+        "<i>IEEE Trans. Syst.</i> <b>2010</b>, <i>40</i>, 25-35.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    ref22 = re.search(r'<li id="ref-22"[\s\S]*?</li>', polished)
+
+    assert ref22 is not None
+    assert "dos Santos" not in ref22.group(0)
+    assert re.search(r'<li id="ref-23"[\s\S]{0,180}dos Santos', polished) is not None
+    assert re.search(r'<li id="ref-24"[\s\S]{0,180}Dakopoulos', polished) is not None
+    assert '<a href="#ref-23" class="z2m-ref-link">23</a>' in body
+    assert '<a href="#ref-24" class="z2m-ref-link">24</a>' in body
+
+
+def test_polish_html_document_splits_implicit_reference_after_medline_link() -> None:
+    html = (
+        "<html><body>"
+        "<p>Biomechanical analysis is used in rehabilitation [23, 24].</p>"
+        "<h4>References</h4>"
+        "<ul>"
+        "<li>22. Kober SE, Wood G, Hofer D, Kreuzig W, Kiefer M, Neuper C. "
+        "Virtual reality in neurologic rehabilitation of spatial disorientation. "
+        "J Neuroeng Rehabil 2013 Feb 08;10:17. "
+        '<a href="http://www.ncbi.nlm.nih.gov/pubmed/23394289">[Medline: 23394289]</a> '
+        "van den Bogert AJ, Geijtenbeek T, Even-Zohar O, Steenbrink F, Hardin EC. "
+        "A real-time system for biomechanical analysis of human movement and muscle function. "
+        "Med Biol Eng Comput 2013 Oct;51(10):1069-1077. "
+        '<a href="http://www.ncbi.nlm.nih.gov/pubmed/23884905">[Medline: 23884905]</a></li>'
+        "<li>24. de Rooij IJM, van de Port IGL, Visser-Meily JMA, Meijer JG. "
+        "Virtual reality gait training versus non-virtual reality gait training. Trials 2019;20:89.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    ref22 = re.search(r'<li id="ref-22"[\s\S]*?</li>', polished)
+
+    assert ref22 is not None
+    assert "van den Bogert" not in ref22.group(0)
+    assert re.search(r'<li id="ref-23"[\s\S]{0,180}van den Bogert', polished) is not None
+    assert re.search(r'<li id="ref-24"[\s\S]{0,180}de Rooij', polished) is not None
+    assert '<a href="#ref-23" class="z2m-ref-link">23</a>' in body
+    assert '<a href="#ref-24" class="z2m-ref-link">24</a>' in body
+
+
+def test_polish_html_document_splits_numbered_institutional_reference_tail() -> None:
+    html = (
+        "<html><body>"
+        "<p>Museum accessibility programs are summarized in prior work [12, 13].</p>"
+        "<h4>References</h4>"
+        "<ul>"
+        "<li>11. Museo del Prado. Touching the Prado. Available online: "
+        '<a href="https://www.museodelprado.es/en/touching-the-prado">https://example.test/prado</a> '
+        "(accessed on 9 November 2020). 12. The Andy Warhol Museum. Available online: "
+        '<a href="https://www.warhol.org/accessibility-accommodations/">https://example.test/warhol</a> '
+        "(accessed on 9 November 2020).</li>"
+        "<li>13. Candlin, F. The dubious inheritance of touch. <i>J. Vis. Culture</i> <b>2006</b>.</li>"
+        "</ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert re.search(r'<li id="ref-12"[\s\S]{0,180}Andy Warhol Museum', polished) is not None
+    assert re.search(r'<li id="ref-13"[\s\S]{0,180}Candlin', polished) is not None
+    assert '<a href="#ref-12" class="z2m-ref-link">12</a>' in body
+    assert '<a href="#ref-13" class="z2m-ref-link">13</a>' in body
 
 
 def test_polish_html_document_keeps_short_dot_separator_reference_item_unsplit() -> None:
@@ -4219,6 +6025,23 @@ def test_polish_html_document_repairs_unit_letter_absorbed_into_ref_link() -> No
     assert "s28" not in body
 
 
+def test_polish_html_document_moves_leading_paren_out_of_ref_link_label() -> None:
+    html = (
+        "<html><body>"
+        '<p>We saw the same pattern in Extended Data Fig. 6 '
+        '<a href="#ref-2" class="z2m-ref-link">)2</a>.</p>'
+        "<h4>References</h4>"
+        "<ul><li>One.</li><li>Two.</li></ul>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert ')<a href="#ref-2" class="z2m-ref-link">2</a>.' in body
+    assert ')2</a>' not in body
+
+
 def test_polish_html_document_does_not_treat_datasheet_feature_lists_as_references() -> None:
     html = (
         "<html><body>"
@@ -4383,6 +6206,10 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
         "<p>The M2 occlusion and 350M 2 model label are not square-meter units.</p>"
         "<p>The grating covered 1.5 ◦ × 1.5 ◦ and was baked at 200 ◦ C.</p>"
         "<p>The window covered 1.5 <i>◦ ×</i> 1.5 <i>◦</i> and was baked at 350 <i>◦</i> C.</p>"
+        '<p>Conductivity <a href="#ref-215">12.6 mS cm </a> − 1 at −40 C.</p>'
+        "<p>The map devoted cortex to representation of 1 <b>◦</b> of visual space.</p>"
+        "<p>Luminance was 30.3 c d m − 2 and 16.8 cd m − 2.</p>"
+        "<p>The tactile map covered 1,200 <i> m </i> <sup> 2 </sup> and 400 <i>m</i><sup>2</sup>.</p>"
         "</body></html>"
     )
     polished = polish_html_document(html, table_caption_language="en")
@@ -4403,6 +6230,14 @@ def test_polish_html_document_normalizes_scientific_units_and_degree_symbol() ->
     assert "200°C" in polished
     assert "350°C" in polished
     assert "<i>◦" not in polished
+    assert '12.6 mS cm<sup class="z2m-unit-exp">-1</sup></a> at −40 C' in polished
+    assert "1° of visual space" in polished
+    assert '30.3 cd m<sup class="z2m-unit-exp">-2</sup>' in polished
+    assert '16.8 cd m<sup class="z2m-unit-exp">-2</sup>' in polished
+    assert '1,200 m<sup class="z2m-unit-exp">2</sup>' in polished
+    assert '400 m<sup class="z2m-unit-exp">2</sup>' in polished
+    assert "c d m" not in polished
+    assert "<b>◦" not in polished
 
 
 def test_polish_html_document_keeps_prose_outside_inline_unit_formula_tail() -> None:
@@ -4836,9 +6671,14 @@ def test_polish_html_document_repairs_already_linked_unit_exponent() -> None:
         '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>.</p>'
         '<p>Dissolution was ~20 nm d<sup>-<a href="#ref-1" class="z2m-ref-link">1</a></sup>.</p>'
         '<p>Doping was 10<sup>20</sup> cm<sup>-<a href="#ref-3" class="z2m-ref-link">3</a></sup>.</p>'
+        '<p>Dose was 4.25 mg·kg<sup>-<a href="#ref-1" class="z2m-ref-link">1</a></sup>·'
+        'h<sup>-<a href="#ref-1" class="z2m-ref-link">1</a></sup>.</p>'
+        '<p>Resistance was dyne sec cm<sup>-<a href="#ref-5" class="z2m-ref-link">5</a></sup>.</p>'
+        '<p>Cycling rate was maintained at 60 revolutionsmin <sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>.</p>'
+        '<p>Cardiac output was reported in L min <sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>.</p>'
         '<p>Bending stiffness was 3.3 × 10−12 N <a href="#ref-2" class="z2m-ref-link">m2</a>.</p>'
         '<p>Electrode sites had areas of 14 × 24 µm <a href="#ref-2" class="z2m-ref-link">2</a>.</p>'
-        "<h4>References</h4><ul><li>Ref one.</li><li>Ref two.</li><li>Ref three.</li></ul>"
+        "<h4>References</h4><ul><li>Ref one.</li><li>Ref two.</li><li>Ref three.</li><li>Ref four.</li><li>Ref five.</li></ul>"
         "</body></html>"
     )
     polished = polish_html_document(html, table_caption_language="en")
@@ -4847,11 +6687,16 @@ def test_polish_html_document_repairs_already_linked_unit_exponent() -> None:
     assert 'mm s<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'nm d<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'cm<sup class="z2m-unit-exp">-3</sup>' in polished
+    assert 'kg<sup class="z2m-unit-exp">-1</sup>·h<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert 'dyne sec cm<sup class="z2m-unit-exp">-5</sup>' in polished
+    assert 'revolutions min<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert 'L min<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'N m<sup class="z2m-unit-exp">2</sup>' in polished
     assert 'µm<sup class="z2m-unit-exp">2</sup>' in polished
     assert 'href="#ref-1"' not in body
     assert 'href="#ref-2"' not in body
     assert 'href="#ref-3"' not in body
+    assert 'href="#ref-5"' not in body
 
 
 def test_polish_html_document_repairs_ml_per_second_ocr_unit_exponent() -> None:
@@ -5142,6 +6987,14 @@ def test_add_figure_anchors_handles_wrapped_caption_label() -> None:
     assert 'id="fig-2"' in result
 
 
+def test_add_figure_anchors_handles_supplementary_caption_label() -> None:
+    html = '<p><b>Supplementary Figure 11</b> . Effect of the sensing condition.</p>'
+    result, found = _add_figure_anchors(html)
+
+    assert found == {"supplementary-11"}
+    assert 'id="fig-supplementary-11"' in result
+
+
 def test_add_figure_anchors_skips_subfigure_body_sentence() -> None:
     html = "<p>Figure 2(B) shows the full impedance plot for the electrodes.</p>"
     result, found = _add_figure_anchors(html)
@@ -5186,6 +7039,14 @@ def test_link_figure_refs_wraps_decimal_and_chapter_style_numbers() -> None:
     assert '<a href="#fig-57-5" class="z2m-fig-link">Figure\xa057-5</a>' in linked
     assert 'href="#fig-3"' not in linked
     assert 'href="#fig-57"' not in linked
+
+
+def test_link_figure_refs_links_supplementary_refs_to_supplementary_targets() -> None:
+    html = "<p>See Supplementary Figure 11 and Figure 11 for the paired controls.</p>"
+    linked = _link_figure_refs(html, {"supplementary-11", "11"})
+
+    assert '<a href="#fig-supplementary-11" class="z2m-fig-link">Supplementary Figure\xa011</a>' in linked
+    assert '<a href="#fig-11" class="z2m-fig-link">Figure\xa011</a>' in linked
 
 
 def test_link_figure_refs_wraps_plural_multipanel_refs() -> None:
@@ -5437,7 +7298,7 @@ def test_polish_html_document_recovers_unlabeled_panel_figure_target() -> None:
     )
     polished = polish_html_document(html, table_caption_language="en")
 
-    assert '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">' in polished
+    assert re.search(r'<div id="fig-1" class="[^"]*\bz2m-float-unit\b[^"]*\bz2m-figure-unit\b', polished)
     assert '<p class="z2m-figure-target"><img src="_page_0_Figure_7.jpeg"/></p>' in polished
     assert (
         '<p class="z2m-figure-caption">lower limit of normal). (A) Before surgery. '
@@ -5565,6 +7426,65 @@ def test_polish_html_document_repairs_sentence_split_by_figure_with_page_anchor_
     assert '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">' in polished
 
 
+def test_polish_html_document_repairs_sentence_split_by_table_with_abbreviation_note() -> None:
+    html = (
+        "<html><body>"
+        "<p>The postoperative angle was different in each group, but there was no significant</p>"
+        '<span id="page-5-0"> </span>'
+        "<table><tbody><tr><th>Group</th><th>Value</th></tr><tr><td>A</td><td>1</td></tr></tbody></table>"
+        "<p>Abbreviation: HKAA, hip-knee-ankle angle.</p>"
+        "<table><tbody><tr><th>Group</th><th>mMPTA</th></tr><tr><td>B</td><td>2</td></tr></tbody></table>"
+        "<p>difference between the two groups before and after surgery.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "there was no significant difference between the two groups" in compact
+    assert "there was no significant</p>" not in polished
+
+
+def test_repair_sentence_breaks_around_float_units_allows_math_heavy_paragraphs() -> None:
+    katex_bloat = '<span class="katex-html">' + ("<span></span>" * 900) + "</span>"
+    html = (
+        "<html><body>"
+        f"<p>For each image P_i, eccentricity r_i = x_i + 2x_i^2 with{katex_bloat}</p>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig6.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 6. Prior experiment.</p>'
+        "</div>"
+        "<p>x_i ~ U(0, 1) and size sigma_i = 2r_i + 1.</p>"
+        "</body></html>"
+    )
+
+    repaired, count = _repair_sentence_breaks_around_float_units(html)
+    visible = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", repaired))
+
+    assert count == 1
+    assert "with x_i ~ U(0, 1)" in visible
+    assert "with</p>" not in repaired
+
+
+def test_polish_html_document_repairs_math_split_after_katex_render() -> None:
+    html = (
+        "<html><body>"
+        "<p>For each image \\(P_i\\), eccentricity \\(r_i = x_i + 2x_i^2\\) with</p>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig6.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 6. Prior experiment.</p>'
+        "</div>"
+        "<p>\\(x_i \\sim U(0, 1)\\) and size \\(\\sigma_i = 2r_i + 1\\).</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    with_idx = polished.index("with")
+
+    assert polished.find('data-z2m-tex="\\(x_i', with_idx, with_idx + 9000) != -1
+    assert re.search(r"with\s*</p>\s*<div\b[^>]*\bid=\"fig-6\"", polished) is None
+
+
 def test_polish_html_document_repairs_author_year_split_across_frontmatter_and_figure_gap() -> None:
     html = (
         "<html><body>"
@@ -5639,6 +7559,106 @@ def test_polish_html_document_retargets_existing_page_figure_link() -> None:
     assert 'href="#page-2-2"' not in polished
 
 
+def test_polish_html_document_unwraps_late_split_see_page_anchor_tail() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-13-0"></span>'
+        '<p class="z2m-front-matter">Competing interest: '
+        '<a href="#page-13-0">See</a><a href="#page-13-0">page 14</a> '
+        'of the <a href="http://creativecommons.org/licenses/by/4.0/">Creative Commons</a> '
+        "Attribution License.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count('href="#page-13-0"') == 1
+    assert "page 14 of the" in re.sub(r"\s+", " ", polished)
+
+
+def test_polish_html_document_does_not_move_license_tail_into_competing_interest() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-13-0"></span>'
+        '<span id="page-14-0"></span>'
+        "<p>None of the technologies available</p>"
+        '<p class="z2m-front-matter">*For correspondence: meister@caltech.edu</p>'
+        '<p>Competing interest: <a href="#page-13-0">See</a> '
+        '<a href="#page-13-0">page 14</a></p>'
+        '<p>Funding: <a href="#page-14-0">See page 15</a> today deliver the high data rate.</p>'
+        '<p class="z2m-front-matter">Received: 24 April 2018 Accepted: 27 October 2018</p>'
+        '<p class="z2m-front-matter">Reviewing editor: Fred Rieke, University of Washington</p>'
+        '<p class="z2m-front-matter">Copyright Liu et al. '
+        "This article is distributed under the terms of the "
+        '<a href="http://creativecommons.org/licenses/by/4.0/">Creative Commons</a> '
+        '<a href="http://creativecommons.org/licenses/by/4.0/">Attribution License,</a> '
+        "which permits unrestricted use and redistribution.</p>"
+        "<p><img data-z2m-src=\"_page_1_Picture_1.jpeg\" /></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert polished.count('href="#page-13-0"') == 1
+    assert "Competing interest:" in compact
+    competing_paragraph = re.search(r"<p[^>]*>[^<]*Competing interest:[\s\S]*?</p>", polished)
+    assert competing_paragraph is not None
+    assert "Creative Commons" not in competing_paragraph.group(0)
+    assert "This article is distributed under the terms of the" in compact
+
+
+def test_polish_html_document_retargets_supplementary_page_figure_link() -> None:
+    html = (
+        "<html><body>"
+        '<p>The assay is shown in Supplementary <a href="#page-8-0">Figure 11</a> '
+        'and in <a href="#page-9-0">Figure 11</a>.</p>'
+        "<p><b>Supplementary Figure 11</b> . Effect of the sensing condition.</p>"
+        "<p><b>Figure 11</b> Main text control.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-supplementary-11"' in polished
+    assert 'id="fig-11"' in polished
+    assert 'href="#fig-supplementary-11"' in polished
+    assert 'href="#fig-11"' in polished
+    assert 'Supplementary <a href="#fig-supplementary-11" class="z2m-fig-link">Figure 11</a>' in polished
+    assert 'href="#page-8-0"' not in polished
+    assert 'href="#page-9-0"' not in polished
+
+
+def test_polish_html_document_does_not_insert_missing_warning_for_supplementary_caption() -> None:
+    html = (
+        "<html><body>"
+        "<p>See Supplementary Figure 3 for the auxiliary calibration.</p>"
+        "<p><b>Supplementary Figure 3</b> . Auxiliary calibration.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-supplementary-3"' in polished
+    assert 'href="#fig-supplementary-3"' in polished
+    assert "Figure supplementary-3 image was not extracted" not in polished
+
+
+def test_polish_html_document_repairs_figure_ref_split_by_line_number_block() -> None:
+    html = (
+        "<html><body>"
+        "<p>The IEDC was stable in Figure 564 </p>"
+        "<p>8C). Similarly, the average IEDC stayed stable.</p>"
+        "<p>Figure 8. Electrode map summary.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Figure 564" not in polished
+    assert '<a href="#fig-8" class="z2m-fig-link">Figure\xa08C</a>' in polished
+
+
 def test_polish_html_document_retargets_page_figure_lists_ranges_and_subpanels() -> None:
     html = (
         "<html><body>"
@@ -5670,6 +7690,25 @@ def test_polish_html_document_retargets_page_figure_lists_ranges_and_subpanels()
     assert 'href="#page-9-0"' not in polished
     assert 'href="#page-9-1"' not in polished
     assert 'href="#page-17-0"' not in polished
+
+
+def test_polish_html_document_keeps_bracket_citations_from_figure_chain_linking() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 1. Electrode placement.</p>"
+        "<p>Figure 7. Acquisition settings.</p>"
+        "<p>The electrodes were positioned as shown in Fig. 1 and the settings presented in [6, 7].</p>"
+        "<h4>References</h4>"
+        "<ol>" + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 8)) + "</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#fig-1"' in body
+    assert '[<a href="#ref-6" class="z2m-ref-link">6</a>, <a href="#ref-7" class="z2m-ref-link">7</a>]' in body
+    assert re.search(r"\[[^\]]*#fig-7", body) is None
 
 
 def test_polish_html_document_unwraps_unresolved_semantic_page_links() -> None:
@@ -6058,6 +8097,13 @@ def test_add_figure_anchors_handles_fig_transliteration_in_caption() -> None:
     assert 'id="fig-3"' in result
 
 
+def test_figure_caption_detection_ignores_body_reference_verbs() -> None:
+    assert _figure_caption_num_from_visible("Figure 2 plots the change in gaze angle.") is None
+    assert _figure_caption_num_from_visible("Figure 1 showcases the generated samples.") is None
+    assert _figure_caption_num_from_visible("Figure 2 visualizes the generated samples.") is None
+    assert _figure_caption_num_from_visible("Figure 12. F1 confidence curve.") == "12"
+
+
 def test_polish_html_document_pairs_image_grid_with_caption_run() -> None:
     html = (
         "<html><body>"
@@ -6125,6 +8171,636 @@ def test_polish_html_document_does_not_alias_caption_that_starts_next_image_run(
     assert '<span id="fig-5" class="z2m-float-alias"></span>' not in fig4
     assert 'src="fig6.jpg"' in fig6
     assert "Figure 6." in fig6
+
+
+def test_polish_html_document_does_not_reuse_previous_image_across_body_prose() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 9. Example of LIDAR scan obtained in floor mode.</p>"
+        '<p><img src="fig9.jpg"/></p>'
+        "<p block-type=\"Text\">Figure 9 shows an example of raw LIDAR data. "
+        "The line is estimated using [Figure 10(a)].</p>"
+        "<p>Figure 10. Procedure used to estimate the frontal line.</p>"
+        '<p><img src="fig10.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig9_match = re.search(r'<div id="fig-9"[\s\S]*?</div>', polished)
+    fig10_match = re.search(r'<div id="fig-10"[\s\S]*?</div>', polished)
+    assert fig9_match is not None
+    assert fig10_match is not None
+    fig9 = fig9_match.group(0)
+    fig10 = fig10_match.group(0)
+
+    assert 'src="fig9.jpg"' in fig9
+    assert "Figure 9." in fig9
+    assert "shows an example of raw LIDAR" not in fig9
+    assert 'src="fig10.jpg"' in fig10
+    assert "Figure 10." in fig10
+    assert 'src="fig9.jpg"' not in fig10
+    assert "shows an example of raw LIDAR" not in fig10
+    body_match = re.search(r'<p\b[^>]*>\s*<a href="#fig-9"[\s\S]*?shows an example of raw LIDAR[\s\S]*?</p>', polished)
+    assert body_match is not None
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_figure_plots_as_body_reference() -> None:
+    html = (
+        "<html><body>"
+        "<h3>Results</h3>"
+        "<p block-type=\"Text\">Figure 2 plots the change in gaze angle for all subjects.</p>"
+        '<p><img src="fig2.jpg"/></p>'
+        "<p>Figure 2. Comparison of saccade amplitudes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(r'<div id="fig-2"[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="fig2.jpg"' in fig2
+    assert "Figure 2." in fig2
+    assert "plots the change in gaze angle" not in fig2
+    assert re.search(r'<p\b[^>]*\bz2m-missing-figure-warning\b', polished) is None
+    body_match = re.search(r'<p\b[^>]*>\s*<a href="#fig-2"[\s\S]*?plots the change in gaze angle[\s\S]*?</p>', polished)
+    assert body_match is not None
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_spaced_panel_figure_shows_as_body_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p block-type=\"Text\">Figure 4 D shows model and simulated predictions for patient data.</p>"
+        '<p><img src="fig4.jpg"/></p>'
+        "<p>Figure 4. Phosphene size as function of current amplitude.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig4_match = re.search(r'<div id="fig-4"[\s\S]*?</div>', polished)
+    assert fig4_match is not None
+    assert 'src="fig4.jpg"' in fig4_match.group(0)
+    assert "Phosphene size as function" in fig4_match.group(0)
+    body_match = re.search(
+        r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-4")[^>]*>[\s\S]*?model and simulated predictions[\s\S]*?</p>',
+        polished,
+    )
+    assert body_match is not None
+    assert 'href="#fig-4"' in body_match.group(0)
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_panel_chain_figure_examines_as_body_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p block-type=\"Text\">Figure 7 B and C examines the predicted effect of electrode size.</p>"
+        '<p><img src="fig7.jpg"/></p>'
+        "<p>Figure 7. Using virtual patients to predict perceptual outcomes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig7_match = re.search(r'<div id="fig-7"[\s\S]*?</div>', polished)
+    assert fig7_match is not None
+    assert 'src="fig7.jpg"' in fig7_match.group(0)
+    assert "Using virtual patients" in fig7_match.group(0)
+    body_match = re.search(
+        r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-7")[^>]*>[\s\S]*?predicted effect of electrode size[\s\S]*?</p>',
+        polished,
+    )
+    assert body_match is not None
+    assert 'href="#fig-7"' in body_match.group(0)
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_parenthetical_panel_phrase_shows_as_body_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p block-type=\"Text\">Figure 4 (left panels) shows the variable error in the navigation tasks.</p>"
+        '<p><img src="fig4.jpg"/></p>'
+        "<p>Figure 4. Variable-error maps for allocentric and egocentric tasks.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig4_match = re.search(r'<div id="fig-4"[\s\S]*?</div>', polished)
+    assert fig4_match is not None
+    fig4 = fig4_match.group(0)
+    assert 'src="fig4.jpg"' in fig4
+    assert "Variable-error maps" in fig4
+    assert "left panels" not in fig4
+    body_match = re.search(
+        r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-4")[^>]*>[\s\S]*?variable error[\s\S]*?</p>',
+        polished,
+    )
+    assert body_match is not None
+    assert 'href="#fig-4"' in body_match.group(0)
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_panel_range_shows_as_body_reference() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="fig3.jpg"/></p>'
+        "<p>Fig. 3 The software acquires the video and displays flow versus time.</p>"
+        "<p block-type=\"Text\">Figure 5a-c show the mean differences between predetermined volumes.</p>"
+        '<p><img src="fig5.jpg"/></p>'
+        "<p>Fig. 5 a\u2013c Bland-Altman plots for total voided volume.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(r'<div id="fig-3"[\s\S]*?</div>', polished)
+    fig5_match = re.search(r'<div id="fig-5"[\s\S]*?</div>', polished)
+    assert fig3_match is not None
+    assert fig5_match is not None
+    fig3 = fig3_match.group(0)
+    fig5 = fig5_match.group(0)
+    assert 'src="fig3.jpg"' in fig3
+    assert 'src="fig5.jpg"' not in fig3
+    assert 'id="fig-5" class="z2m-float-alias"' not in fig3
+    assert 'src="fig5.jpg"' in fig5
+    body_match = re.search(
+        r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-5")[^>]*>[\s\S]*?mean differences[\s\S]*?</p>',
+        polished,
+    )
+    assert body_match is not None
+    assert 'href="#fig-5"' in body_match.group(0)
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_repeated_number_panel_range_as_body_reference() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="fig4.jpg"/></p>'
+        "<p>Fig. 4. Maze navigational behaviours and results.</p>"
+        "<p block-type=\"Text\">Fig 4I\u20134K show the learning curves over six trials.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig4_match = re.search(r'<div id="fig-4"[\s\S]*?</div>', polished)
+    assert fig4_match is not None
+    fig4 = fig4_match.group(0)
+    assert 'src="fig4.jpg"' in fig4
+    assert "Maze navigational behaviours" in fig4
+    assert "learning curves" not in fig4
+    body_match = re.search(r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-4")[^>]*>[\s\S]*?learning curves[\s\S]*?</p>', polished)
+    assert body_match is not None
+    assert 'href="#fig-4"' in body_match.group(0)
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_treats_validates_and_details_as_body_figure_verbs() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="fig8.jpg"/></p>'
+        "<p>Figure 8. Confusion matrix for the detector.</p>"
+        "<p block-type=\"Text\">Figure 8 validates the confusion matrix produced through the approach.</p>"
+        '<p><img src="fig13.jpg"/></p>'
+        "<p>Figure 13. Collision counts for each mode.</p>"
+        "<p block-type=\"Text\">Figure 13 details the number of collisions for each mode.</p>"
+        '<p><img src="fig4.jpg"/></p>'
+        "<p>Figure 4. Corticospinal axon topography.</p>"
+        "<p block-type=\"Text\">Figure 4 exemplifies the topography of corticospinal axons.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    for fig_id, image, caption, body in [
+        ("fig-8", "fig8.jpg", "Confusion matrix", "validates the confusion matrix"),
+        ("fig-13", "fig13.jpg", "Collision counts", "details the number of collisions"),
+        ("fig-4", "fig4.jpg", "Corticospinal axon topography", "exemplifies the topography"),
+    ]:
+        fig_match = re.search(rf'<div id="{fig_id}"[\s\S]*?</div>', polished)
+        assert fig_match is not None
+        fig = fig_match.group(0)
+        assert f'src="{image}"' in fig
+        assert caption in fig
+        assert body not in fig
+    assert len(re.findall(r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-)[^>]*>[\s\S]*?</p>', polished)) >= 2
+
+
+def test_polish_html_document_drops_duplicate_id_from_body_figure_reference() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-9" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig9.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 9. Scaling of unsupervised pretraining.</p>'
+        "</div>"
+        '<p block-type="Text" id="fig-9">Fig. <a href="#fig-9" class="z2m-fig-link">9B</a> '
+        "contrasts decoding curves in the two pretraining settings.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count('id="fig-9"') == 1
+    body_match = re.search(r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-9")[^>]*>[\s\S]*?contrasts decoding[\s\S]*?</p>', polished)
+    assert body_match is not None
+    assert 'href="#fig-9"' in body_match.group(0)
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_figure_caption_num_ignores_decimal_or_hyphen_body_references() -> None:
+    assert _figure_caption_num_from_visible("Figure 4-39 shows the cross-sectional view.") is None
+    assert _figure_caption_num_from_visible("Figure 3.11 provides further demonstration.") is None
+    assert _figure_caption_num_from_visible("Figure 2. 8 shows the traces of electrical activity.") is None
+    assert _figure_caption_num_from_visible("Figure 3.10. Calibration curves of the flow rate measurement.") == "3-10"
+    assert _figure_caption_num_from_visible("Figure 2. 6 The topography of the electrodes.") == "2-6"
+
+
+def test_polish_html_document_does_not_anchor_decimal_figure_body_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 2. 8 shows the traces of electrical and mechanical activity of the heart.</p>"
+        '<p>See <a href="#fig-3-10" class="z2m-fig-link">Figure 3.10</a>.</p>'
+        '<p id="fig-3-10">Figure 3.10. Calibration curves of the flow rate measurement.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-2"' not in polished
+    assert "Figure 2. 8 shows the traces" in polished
+    assert 'id="fig-3-10"' in polished
+
+
+def test_polish_html_document_retargets_spaced_decimal_caption_before_image() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-2-6" class="z2m-fig-link">Figure 2.6</a>.</p>'
+        '<p id="fig-2-6">Figure 2. 6 The topography of the electrodes.</p>'
+        '<p><img src="fig26.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig_match = re.search(r'<div id="fig-2-6"[\s\S]*?</div>', polished)
+    assert fig_match is not None
+    assert 'src="fig26.jpg"' in fig_match.group(0)
+    caption_match = re.search(
+        r'<p\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-2-6")[^>]*>[\s\S]*?topography[\s\S]*?</p>',
+        polished,
+    )
+    assert caption_match is not None
+    assert 'href="#fig-2-6"' in polished
+
+
+def test_polish_html_document_drops_duplicate_id_from_figure_chain_body_reference() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-4-62" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig462.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4-62. First result.</p>'
+        "</div>"
+        '<div id="fig-4-63" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig463.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4-63. Second result.</p>'
+        "</div>"
+        '<p block-type="Text" id="fig-4-62">Figure 4-62 and Figure 4-63 shows the shapes of the deformation.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count('id="fig-4-62"') == 1
+    body_match = re.search(
+        r'<p\b(?=[^>]*block-type="Text")(?![^>]*\bid="fig-4-62")[^>]*>[\s\S]*?Figure 4[.-]\s*62 and Figure 4-63[\s\S]*?</p>',
+        polished,
+    )
+    assert body_match is not None
+    assert "z2m-figure-caption" not in body_match.group(0)
+
+
+def test_polish_html_document_retargets_caption_only_id_to_following_image() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-1" class="z2m-fig-link">Figure 1</a>.</p>'
+        '<p id="fig-1">Figure 1. Mean percentage error rate for interventions.</p>'
+        "<h2>Percentage of instructor interventions to total locations</h2>"
+        '<p><img src="fig1.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig_match = re.search(r'<div id="fig-1"[\s\S]*?</div>', polished)
+    assert fig_match is not None
+    assert 'src="fig1.jpg"' in fig_match.group(0)
+    caption_match = re.search(r'<p\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-1")[^>]*>[\s\S]*?Mean percentage error rate[\s\S]*?</p>', polished)
+    assert caption_match is not None
+    assert 'href="#fig-1"' in polished
+
+
+def test_polish_html_document_retargets_caption_id_to_image_with_page_anchor() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-1" class="z2m-fig-link">Figure 1</a>.</p>'
+        '<p><span id="page-1-0"></span><img src="fig1.jpg"/></p>'
+        "<p>Parallel in-silico discovery of bacterial gene transfer mechanism relevant to AMR</p>"
+        '<p id="fig-1">Figure 1. The system design and experimental validation summary.</p>'
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    target_match = re.search(r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?fig1\.jpg[\s\S]*?</div>', polished)
+    assert target_match is not None
+    caption_match = re.search(
+        r'<p\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-1")[^>]*>[\s\S]*?system design[\s\S]*?</p>',
+        polished,
+    )
+    assert caption_match is not None
+    assert 'href="#fig-1"' in polished
+
+
+def test_polish_html_document_retargets_caption_id_across_short_ocr_prose_gap() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-4" class="z2m-fig-link">Figure 4</a>.</p>'
+        '<p><img src="fig4a.jpg"/></p>'
+        '<p><img src="fig4b.jpg"/></p>'
+        "<p>curvatures. c, Nano-bio interfaces can assess intracellular structures and modulate the cytoskeleton.</p>"
+        '<p id="fig-4">Fig. 4 | Nanotopographical interfaces for probing cellular processes.</p>'
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig4_match = re.search(r'<div\b(?=[^>]*\bid="fig-4")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig4_match is not None
+    fig4 = fig4_match.group(0)
+    assert 'src="fig4a.jpg"' in fig4
+    assert 'src="fig4b.jpg"' in fig4
+    caption_match = re.search(
+        r'<p\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-4")[^>]*>[\s\S]*?Nanotopographical[\s\S]*?</p>',
+        polished,
+    )
+    assert caption_match is not None
+    assert 'href="#fig-4"' in polished
+
+
+def test_polish_html_document_does_not_retarget_caption_id_across_table_unit() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-8" class="z2m-fig-link">Figure 8</a>.</p>'
+        '<p><img src="candidate.jpg"/></p>'
+        '<div id="table-4" class="z2m-float-unit z2m-table-unit"><p>Table 4. Intervening table.</p><table><tr><td>x</td></tr></table></div>'
+        '<p id="fig-8">Figure 8. Caption after a table.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert not re.search(r'<div\b(?=[^>]*\bid="fig-8")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?candidate\.jpg', polished)
+    assert "Caption after a table" in polished
+    fig8_match = re.search(r'<div\b(?=[^>]*\bid="fig-8")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig8_match is not None
+    assert "z2m-missing-figure-warning" in fig8_match.group(0)
+
+
+def test_polish_html_document_wraps_unretargeted_caption_only_target_as_missing() -> None:
+    html = (
+        "<html><body>"
+        '<p>Compare <a href="#fig-5" class="z2m-fig-link">Figure 5</a>.</p>'
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig4.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Previous image.</p>'
+        "</div>"
+        '<p id="fig-5">Figure 5. Missing image caption.</p>'
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig6.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 6. Following image.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig5_match = re.search(r'<div\b(?=[^>]*\bid="fig-5")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig5_match is not None
+    fig5 = fig5_match.group(0)
+    assert "Figure 5 image was not extracted" in fig5
+    assert 'data-z2m-origin="caption-only-target"' in fig5
+    assert "Missing image caption" in fig5
+    assert 'src="fig4.jpg"' not in fig5
+    assert 'src="fig6.jpg"' not in fig5
+    assert not re.search(r'<p\b(?=[^>]*\bid="fig-5")[^>]*>[\s\S]*?Missing image caption', polished)
+
+
+def test_polish_html_document_keeps_details_of_caption_as_figure_caption() -> None:
+    html = (
+        "<html><body>"
+        '<p>See <a href="#fig-2" class="z2m-fig-link">Figure 2</a>.</p>'
+        '<p><b><a href="#fig-2" class="z2m-fig-link">Figure 2</a></b> '
+        "Details of the Palazzo Ducale Gothic lodges.</p>"
+        '<p><img src="fig2.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig_match = re.search(r'<div id="fig-2"[\s\S]*?</div>', polished)
+    assert fig_match is not None
+    fig2 = fig_match.group(0)
+    assert 'src="fig2.jpg"' in fig2
+    assert "Details of the Palazzo Ducale" in fig2
+    assert 'href="#fig-2"' in polished
+
+
+def test_polish_html_document_keeps_3d_title_out_of_figure_number() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="fig2.jpg"/></p>'
+        '<p><span id="page-2-0"> </span> Figure 2. 3D high-density multiple electrode sheets.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(r'<div id="fig-2"[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="fig2.jpg"' in fig2
+    assert "3D high-density multiple electrode sheets" in fig2
+    assert 'id="fig-2-3"' not in polished
+
+
+def test_polish_html_document_absorbs_external_caption_after_existing_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig3.jpg"/></p>'
+        "</div>"
+        '<p class="z2m-figure-caption"><b>Figure 3.</b> Brain activity associated with navigation.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(r'<div id="fig-3"[\s\S]*?</div>', polished)
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert 'src="fig3.jpg"' in fig3
+    assert "Brain activity associated with navigation" in fig3
+    assert not re.search(r'</div>\s*<p\b[^>]*\bz2m-figure-caption\b[^>]*>\s*<b>\s*Figure 3\.', polished)
+
+
+def test_polish_html_document_does_not_absorb_plain_image_with_different_figure_id() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig3a.jpg"/></p>'
+        "</div>"
+        '<p id="fig-2"><img src="fig2.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 3. Seed connectivity map.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(r'<div id="fig-3"[\s\S]*?</div>', polished)
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert 'src="fig3a.jpg"' in fig3
+    assert 'src="fig2.jpg"' not in fig3
+    assert 'id="fig-2" class="z2m-float-alias"' not in fig3
+
+
+def test_polish_html_document_expands_continuation_only_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig3a.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 3. Cont.</p>'
+        "</div>"
+        '<p id="fig-3" class="z2m-figure-target"><img src="fig3b.jpg"/></p>'
+        '<p class="z2m-figure-caption"><b>Figure 3.</b> Gait velocity measurements.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(r'<div id="fig-3"[\s\S]*?</div>', polished)
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert 'src="fig3a.jpg"' in fig3
+    assert 'src="fig3b.jpg"' in fig3
+    assert "Figure 3. Cont." in fig3
+    assert "Gait velocity measurements" in fig3
+    assert not re.search(r'</div>\s*<p\b[^>]*\bid="fig-3"\b', polished)
+
+
+def test_polish_html_document_expands_existing_caption_unit_with_next_same_label_image() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig3a.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 3: Bland Altman plot for baseline data.</p>'
+        "</div>"
+        '<p id="fig-3"><img src="fig3b.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 3: Bland Altman plot for exercise data.</p>'
+        "<p>Discussion starts here.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(r'<div id="fig-3"[\s\S]*?</div>', polished)
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    after = polished[fig3_match.end() :]
+    assert 'src="fig3a.jpg"' in fig3
+    assert 'src="fig3b.jpg"' in fig3
+    assert "baseline data" in fig3
+    assert "exercise data" in fig3
+    assert not re.search(r'<p\b[^>]*\bid="fig-3"\b', after)
+    assert "Discussion starts here." in after
+
+
+def test_polish_html_document_wraps_caption_id_after_image_run_and_page_furniture() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="femur-model.jpg"/></p>'
+        '<p block-type="Text" class="z2m-front-matter">Downloaded from Wiley Online Library. '
+        "See the Terms and Conditions; OA articles are governed by the applicable Creative Commons License.</p>"
+        '<p id="fig-2">Figure 2 Measurement of the femoral valgus angle in the three-dimensional model.</p>'
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(r'<div id="fig-2"[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    after = polished[fig2_match.end() :]
+    assert 'src="femur-model.jpg"' in fig2
+    assert "Figure 2 Measurement of the femoral" in fig2
+    assert "Wiley Online Library" not in fig2
+    assert "Wiley Online Library" not in polished
+    assert not re.search(r'<p\b[^>]*\bid="fig-2"\b', after)
+    assert "Body text resumes." in after
+
+
+def test_polish_html_document_does_not_suppress_missing_warning_across_previous_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 1. Existing image.</p>'
+        "</div>"
+        '<p id="fig-2"><b>Figure 2.</b> Missing system architecture.</p>'
+        '<p>See Figure 2 for the architecture.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(r'<div id="fig-2"[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert "z2m-missing-figure-unit" in fig2
+    assert "z2m-missing-figure-warning" in fig2
+    assert "Missing system architecture" in fig2
+    assert 'src="fig1.jpg"' not in fig2
+
+
+def test_split_table_unit_before_heading_preserves_following_figure_close() -> None:
+    html = (
+        '<div id="table-4" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">TABLE 4. Results.</p>'
+        '<h3 id="section-6-5">6.5 Comparison of Results</h3>'
+        '<p>Figure 1 shows the training loss.</p>'
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 1: Training loss.</p>'
+        "</div>"
+    )
+
+    repaired = _split_table_units_before_section_headings(html)
+
+    assert '<div id="table-4" class="z2m-float-unit z2m-table-unit">' in repaired
+    assert '<p class="z2m-table-caption">TABLE 4. Results.</p></div><h3' in repaired
+    fig_start = repaired.index('<div id="fig-1"')
+    fig_end = repaired.index("</div>", fig_start)
+    fig = repaired[fig_start:fig_end]
+    assert 'src="fig1.jpg"' in fig
+    assert "Figure 1: Training loss." in fig
+    assert repaired[fig_end : fig_end + 6] == "</div>"
 
 
 def test_polish_html_document_pairs_caption_before_image_after_prior_figure_target() -> None:
@@ -6381,7 +9057,7 @@ def test_polish_html_document_unwraps_unresolved_section_appendix_equation_page_
         '<p>Values are defined in <a href="#page-6-0">Eq 1</a> and Appendix '
         '<a href="#page-7-0">A)</a>.</p>'
         '<p>Later we discuss Section <a href="#page-8-0">4.1,</a> but the heading is missing.</p>'
-        '<p>Plural ranges stay as page navigation when no semantic target exists in Sections 3.4, 4 and '
+        '<p>Plural ranges also unwrap when no semantic target exists in Sections 3.4, 4 and '
         '<a href="#page-8-1">5.</a></p>'
         "</body></html>"
     )
@@ -6395,7 +9071,41 @@ def test_polish_html_document_unwraps_unresolved_section_appendix_equation_page_
     assert 'href="#page-6-0"' not in polished
     assert 'href="#page-7-0"' not in polished
     assert 'href="#page-8-0"' not in polished
-    assert '<a href="#page-8-1">5.</a>' in polished
+    assert 'href="#page-8-1"' not in polished
+
+
+def test_polish_html_document_unwraps_stale_numeric_page_links_for_p33_patterns() -> None:
+    html = (
+        "<html><body>"
+        + "".join(f'<span id="page-{idx}-0"></span>' for idx in range(1, 11))
+        + '<p>Participants are summarized in Tab. <a href="#page-1-0">1)</a>.</p>'
+        '<p>The prototype is described in Sect. <a href="#page-2-0">2)</a>.</p>'
+        '<p>Details appear in Additional File <a href="#page-3-0">5)</a>.</p>'
+        '<p>Videos are available in Multimedia Appendices 1 and <a href="#page-4-0">2.</a></p>'
+        '<p>The device must satisfy Req. <a href="#page-5-0">2)</a>.</p>'
+        '<p>The control signal is read in Listing 4, line <a href="#page-6-0">49)</a>.</p>'
+        '<p>The loss function is described with formula <a href="#page-7-0">16.</a></p>'
+        '<p>Training remained difficult (Kolarik et al. <a href="#page-8-0">2014;</a> '
+        'Worchel et al. 1950).</p>'
+        '<p>Several reports support this claim <a href="#page-9-0">37.</a></p>'
+        '<p>Video captioning is abbreviated as <a href="#page-10-0">VC</a> in this section.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "Tab. 1)" in compact
+    assert "Sect. 2)" in compact
+    assert "Additional File 5)" in compact
+    assert "Multimedia Appendices 1 and 2." in compact
+    assert "Req. 2)" in compact
+    assert "Listing 4, line 49)" in compact
+    assert "formula 16." in compact
+    assert "Kolarik et al. 2014;" in compact
+    assert "claim 37." in compact
+    assert "as VC in this section" in compact
+    assert 'href="#page-' not in polished
 
 
 def test_polish_html_document_unwraps_split_unresolved_figure_table_page_labels() -> None:
@@ -6525,7 +9235,8 @@ def test_polish_html_document_repairs_recent_meine_link_false_positives() -> Non
     assert 'href="#page-8-1"' not in polished
     assert 'href="#page-8-2"' not in polished
     assert 'href="#page-8-3"' not in polished
-    assert '<a href="#page-8-4">5.</a>' in polished
+    assert 'href="#page-8-4"' not in polished
+    assert "Sections 3.4, 4 and 5." in compact
     assert 'effect size <a href="#ref-1"' not in polished
     assert "effect size 1,5" in compact
     assert 'href="#page-4-0"' not in polished
@@ -6577,6 +9288,7 @@ def test_polish_html_document_repairs_page_anchor_letter_glued_superscript_citat
         '<p>Responses were stable in the absence of visual cue <a href="#page-12-0">s14,26</a> '
         '\u2013 <a href="#page-12-0">28.</a></p>'
         '<p>The main subcortical input to the AD <a href="#page-12-0">n12.</a> Future studies continue.</p>'
+        '<p>Frequency differences were about 3-60 H <a href="#page-15-0">z12,</a> respectively.</p>'
         '<p>We performed a demixed principal components analysis (dPCA '
         '<a href="#page-10-1">)20</a> to compress the data.</p>'
         "<h4>References</h4>"
@@ -6600,6 +9312,7 @@ def test_polish_html_document_repairs_page_anchor_letter_glued_superscript_citat
     assert 'visual cues<sup><a href="#ref-14" class="z2m-ref-link">14</a>,' in compact
     assert '<a href="#ref-28" class="z2m-ref-link">28.</a></sup>' in compact
     assert 'input to the ADn<sup><a href="#ref-12" class="z2m-ref-link">12</a></sup>.' in compact
+    assert '60 Hz<sup><a href="#ref-12" class="z2m-ref-link">12</a></sup>,' in compact
     assert '(dPCA)<sup><a href="#ref-20" class="z2m-ref-link">20</a></sup>' in compact
 
 
@@ -6688,6 +9401,33 @@ def test_polish_html_document_repairs_nested_author_year_reference_links() -> No
     assert '<a href="#ref-3" class="z2m-ref-link"><a' not in body
     assert 'href="#ref-3"' not in body
     assert "(Biederman, 1987)." in body
+
+
+def test_polish_html_document_unlinks_author_year_filter_level_number() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior studies describe the method (Smith, 2010; Jones, 2011; Brown, 2012; "
+        "Lee, 2013; Patel, 2014).</p>"
+        '<p>The control curves were smoothed with an Olympic filter level <sup>'
+        '<a href="#ref-2" class="z2m-ref-link">2</a></sup>). For this experiment, '
+        "the sampled signal was retained.</p>"
+        "<h4>References</h4>"
+        "<ol>"
+        "<li id=\"ref-1\">Smith A. Method paper. 2010.</li>"
+        "<li id=\"ref-2\">Jones B. Filter paper. 2011.</li>"
+        "<li id=\"ref-3\">Brown C. Method paper. 2012.</li>"
+        "<li id=\"ref-4\">Lee D. Method paper. 2013.</li>"
+        "<li id=\"ref-5\">Patel E. Method paper. 2014.</li>"
+        "</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    flat = " ".join(body.split())
+
+    assert 'href="#ref-2"' not in body
+    assert "Olympic filter level 2). For this experiment" in flat
 
 
 def test_polish_html_document_repairs_dangling_outer_reference_anchor() -> None:
@@ -7039,6 +9779,56 @@ def test_polish_html_document_unlinks_author_year_footnote_markers() -> None:
     assert "(Cogan 2008; Larson and Meng 2019; Merrill et al. 2005)<sup>5</sup>" in polished
 
 
+def test_polish_html_document_unlinks_author_year_pdf_footnote_definition_refs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Parallelized laboratories used identical configurations and research objectives"
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>. '
+        "Each laboratory published outputs to the shared archive.</p>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        '<p><span id="page-9-0"></span><math display="inline"><sup>^'
+        '<a href="#ref-2" class="z2m-ref-link">2</a></sup></math> '
+        "There is no limit to the number of connected systems.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 4))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-2"' not in body
+    assert "research objectives<sup>2</sup>" in body
+    assert "There is no limit to the number of connected systems" in body
+
+
+def test_polish_html_document_unlinks_author_year_fraction_and_plain_footnote_defs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<p>The stimulation function was f(I)"
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>/'
+        '<a href="#ref-2" class="z2m-ref-link">2</a></sup>, '
+        "where I is current and K is a fitting parameter.</p>"
+        '<p><span id="page-11-0"></span><sup>'
+        '<a href="#ref-1" class="z2m-ref-link">1</a></sup> '
+        "A photocoagulation laser was used for the lesion.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 4))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-2"' not in body
+    assert "f(I)<sup>1/2</sup>, where I is current" in body
+    assert "<sup>1</sup> A photocoagulation laser" in body
+
+
 def test_polish_html_document_keeps_numeric_citations_in_mixed_author_year_docs() -> None:
     html = (
         "<html><body>"
@@ -7057,6 +9847,110 @@ def test_polish_html_document_keeps_numeric_citations_in_mixed_author_year_docs(
 
     assert 'bladder emptying.<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>' in polished
     assert 'impedance<sup>2</sup> for recording' in polished
+
+
+def test_polish_html_document_unlinks_author_year_numbered_sequences() -> None:
+    html = (
+        "<html><body>"
+        "<p>To guide the model, in experiments "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> and 3, '
+        "we compared graphics "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> to 8. '
+        "The sessions were scheduled between "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> and 14 days. '
+        "The disease was stage "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>. '
+        "The error term was (0.2)"
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>. '
+        "The vibration used tactors "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> and 7 at the same time. '
+        "They attended two sessions (sessions "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> and '
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>) of training. '
+        "Responses had z score "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>. '
+        "The work presents "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>) a review and 2) methods. '
+        "Small areas lower than beta / 4"
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>) were merged. '
+        "The computer requires (6-2)"
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> the entering of data. '
+        "The model was used to investigate "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>) validity and 2) value. '
+        "The contrast was (luminance 1 - luminance "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>)/(luminance 1 + luminance '
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>). '
+        "The caption listed targ "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> and targ '
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>. '
+        "The tool should be administered between ages "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> and 3.5 years old.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 4))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-2"' not in body
+    assert "experiments 2 and 3" in body
+    assert "graphics 1 to 8" in body
+    assert "between 2 and 14 days" in body
+    assert "stage 2." in body
+    assert "(0.2)<sup>2</sup>" in body
+    assert "tactors 3 and 7" in body
+    assert "sessions 2 and 3) of training" in body
+    assert "z score 2." in body
+    assert "presents 1) a review and 2) methods" in body
+    assert "beta / 4<sup>2</sup>)" in body
+    assert "(6-2)<sup>1</sup> the entering of data" in body
+    assert "investigate 1) validity and 2) value" in body
+    assert "luminance 1 - luminance 2)/(luminance 1 + luminance 2)" in body
+    assert "caption listed targ 1 and targ 2" in body
+    assert "between ages 1 and 3.5 years old" in body
+
+
+def test_polish_html_document_unlinks_author_year_decimal_comma_runs() -> None:
+    html = (
+        "<html><body>"
+        "<p>The software Mimics (3-matic v"
+        '<sup><a href="#ref-5" class="z2m-ref-link">5</a>,'
+        '<a href="#ref-1" class="z2m-ref-link">1</a></sup>) was used. '
+        "Targets were at egocentric distances of "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,'
+        '<a href="#ref-5" class="z2m-ref-link">5</a></sup>, 3.1, or 6 m. '
+        "The audio-extended variant of Qwen"
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a>,'
+        '<a href="#ref-5" class="z2m-ref-link">5</a></sup> 1.5B was tested. '
+        "The diameters of the five comparison discs were "
+        '<sup><a href="#ref-5" class="z2m-ref-link">5</a>,'
+        '<a href="#ref-1" class="z2m-ref-link">1</a></sup>, 9, and 13.5 cm. '
+        "A linear regression resulted in a slope of "
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a>,'
+        '<a href="#ref-7" class="z2m-ref-link">7</a></sup>.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 8))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-2"' not in body
+    assert 'href="#ref-5"' not in body
+    assert 'href="#ref-7"' not in body
+    assert "3-matic v5.1" in body
+    assert "distances of 1.5, 3.1, or 6 m" in body
+    assert "Qwen2.5 1.5B" in body
+    assert "diameters of the five comparison discs were 5.1, 9" in body
+    assert "slope of 2.7" in body
 
 
 def test_polish_html_document_unlinks_author_year_software_version_refs() -> None:
@@ -7302,6 +10196,35 @@ def test_polish_html_document_unlinks_statistical_superscript_decimal_runs() -> 
     assert '<a href="#ref-6" class="z2m-ref-link">6</a>' in body
 
 
+def test_polish_html_document_unlinks_sample_size_value_refs_but_keeps_citations() -> None:
+    html = (
+        "<html><body>"
+        "<p>The final sample size of the early-blind group was "
+        '<sup><a href="#ref-11" class="z2m-ref-link">11</a></sup>.</p>'
+        "<p>Sample size was "
+        '<sup><a href="#ref-32" class="z2m-ref-link">32</a></sup> to 63.</p>'
+        "<p>Effect sizes and attrition rates were similar to those observed in the pilot study."
+        '<sup><a href="#ref-21" class="z2m-ref-link">21</a></sup></p>'
+        "<p>Our sample size is comparable to previous studies testing the same tasks "
+        '<a href="#ref-31" class="z2m-ref-link">31</a>,'
+        '<a href="#ref-32" class="z2m-ref-link">32</a>.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 34))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+    compact = re.sub(r"\s+", " ", body)
+
+    assert 'href="#ref-11"' not in body
+    assert "early-blind group was <sup>11</sup>" in compact
+    assert "Sample size was <sup>32</sup> to 63" in compact
+    assert '<a href="#ref-21" class="z2m-ref-link">21</a>' in body
+    assert '<a href="#ref-31" class="z2m-ref-link">31</a>' in body
+    assert '<a href="#ref-32" class="z2m-ref-link">32</a>' in body
+
+
 def test_polish_html_document_unlinks_author_year_enumerated_item_refs() -> None:
     html = (
         "<html><body>"
@@ -7365,6 +10288,26 @@ def test_polish_html_document_unwraps_author_year_ref_links_with_multiple_author
     assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> and' in body
 
 
+def test_polish_html_document_unwraps_year_only_author_year_ref_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>Earlier work (Kellogg <a href="#ref-12" class="z2m-ref-link">1962;</a> '
+        'Milne et al. <a href="#ref-12" class="z2m-ref-link">2014a;</a> '
+        'Rice and Feinstein <a href="#ref-12" class="z2m-ref-link">1965;</a> '
+        'Teng and Whitney <a href="#ref-12" class="z2m-ref-link">2011</a>; '
+        'Thaler et al. <a href="#ref-12" class="z2m-ref-link">2014)</a> was cited.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 13))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-12"' not in body
+    assert "Kellogg 1962; Milne et al. 2014a; Rice and Feinstein 1965; Teng and Whitney 2011; Thaler et al. 2014)" in body
+
+
 def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
     html = (
         "<html><body>"
@@ -7380,6 +10323,65 @@ def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
     assert 'href="#ref-2"' not in polished
     assert '\u03bcC cm<sup class="z2m-unit-exp">-2</sup>' in polished
     assert 'href="#ref-13"' in polished
+
+
+def test_polish_html_document_unwraps_ph_range_false_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>No major change was observed at pH 4 and <sup><a href="#ref-5" class="z2m-ref-link">5</a></sup> '
+        'or at pH 6-<a href="#fig-8" class="z2m-fig-link">8</a>. '
+        'The array was implanted in Monkeys 3 and <a href="#fig-4" class="z2m-fig-link">4</a>. '
+        'Infusion ran over <sup><a href="#ref-4" class="z2m-ref-link">4</a></sup> to 6 minutes. '
+        'Patients had WHO functional classes <sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> '
+        'and <sup><a href="#ref-3" class="z2m-ref-link">3</a></sup>, while one cohort had functional class '
+        '<sup><a href="#ref-4" class="z2m-ref-link">4</a></sup>. '
+        'Signals reached area <sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> first and area '
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> subsequently. '
+        'The previous result was reported in 200 <a href="#ref-9" class="z2m-ref-link">9)</a>. '
+        'Prior work remains cited<sup><a href="#ref-10" class="z2m-ref-link">10</a></sup>.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 11))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "pH 4 and 5" in body
+    assert "pH 6-8" in body
+    assert "Monkeys 3 and 4" in body
+    assert "over 4 to 6 minutes" in body
+    assert "WHO functional classes 2 and 3" in body
+    assert "functional class 4" in body
+    assert "area 3 first and area 1 subsequently" in body
+    assert "2009)" in body
+    assert 'href="#ref-4"' not in body
+    assert 'href="#ref-5"' not in body
+    assert 'href="#fig-8"' not in body
+    assert 'href="#fig-4"' not in body
+    assert 'href="#ref-9"' not in body
+    assert 'href="#ref-3"' not in body
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-10"' in body
+
+
+def test_polish_html_document_repairs_italic_linked_unit_exponent_false_ref() -> None:
+    html = (
+        "<html><body>"
+        '<p>Cone density was 15,000/<i> mm </i> '
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> at the fovea, '
+        'fields reached 400 T<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>/m, '
+        'and Q=41,253 deg <sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> in a circle.</p>'
+        "<h4>References</h4><ol><li>Reference one.</li><li>Reference two.</li></ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-2"' not in body
+    assert '<i> mm </i><sup class="z2m-unit-exp">2</sup>' in body
+    assert '400 T<sup class="z2m-unit-exp">2</sup>/m' in body
+    assert '41,253 deg<sup class="z2m-unit-exp">2</sup> in a circle' in body
 
 
 def test_polish_html_document_links_superscript_citations_before_lowercase_continuations() -> None:
@@ -7612,6 +10614,7 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
         'fact uses CNC-millin <a href="#ref-1">g m</a> achines, supp '
         '<a href="www.agisoft.ru">ort structures in a</a> dditive production, alternati '
         '<a href="#page-7-9">ves</a>, <a href="#page-3-0">pr</a> inting services, '
+        'organic diet intervention signifi <a href="#refhub-13">cantly reduces</a> exposure, '
         'technical <a href="#page-7-5">ly</a>, high <a href="#page-5-0">)</a> '
         '<a href="#page-5-0">w</a> ere, thr <a href="#page-2-0">ee</a> different, '
         'straightfo <a href="#page-5-0">rw</a> ard, Gener <a href="#page-7-13">al</a> '
@@ -7632,6 +10635,7 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
     assert "specifically include, which has to be interpreted" in polished
     assert "Additional expressiveness follows. This fact uses CNC-milling machines" in polished
     assert "support structures in additive production, alternatives, printing services" in polished
+    assert 'organic diet intervention significantly <a href="#refhub-13"> reduces</a> exposure' in polished
     assert "technically, high) were, three different, straightforward" in polished
     assert "General digital, and Barcelona" in polished
     assert "Leporini et al.; Ghiani, Leporini &amp; Paterno" in polished
@@ -7827,6 +10831,91 @@ def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_no
     assert 'data-name="fac\u0412\u0451ade"' in polished
     assert "<code>fac\u0412\u0451ade O\u0412\u0491Donnell</code>" in polished
     assert "<pre>Sch\u0412\u0401afer</pre>" in polished
+
+
+def test_latin_detached_accent_repair_handles_plain_dot_above() -> None:
+    html = (
+        "<html><body>"
+        "<p>ACM Reference Format: Karolina Pakenait \u02d9 e, "
+        "Adwait Sharma, \u02d9 and Peter Hall.</p>"
+        "<p>Pakenait \u02d9 e\u02d9 et al. detected salient objects.</p>"
+        '<li id="ref-42">Karolina Pakenait \u02d9 e and Peter M \u02d9 Hall.</li>'
+        "</body></html>"
+    )
+
+    repaired = _repair_latin_detached_accent_artifacts_in_visible_text(html)
+
+    assert "Pakenait\u0117" in repaired
+    assert "Pakenait \u02d9 e" not in repaired
+    assert "Peter M. Hall" in repaired
+    assert "\u02d9 and Peter Hall" not in repaired
+
+
+def test_latin_detached_accent_repair_converts_arcminute_symbol() -> None:
+    html = (
+        "<html><body>"
+        "<h4><b>Abbreviations</b></h4>"
+        "<p>\u0412\u0491 Symbol for minutes of arc DBS Deep brain stimulation</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "\u2032 Symbol for minutes of arc DBS" in polished
+    assert "\u00b4 Symbol for minutes of arc" not in polished
+
+
+def test_large_html_known_word_glue_repairs_safe_ligature_phrases() -> None:
+    html = (
+        "<html><body>"
+        "<p>The old scan reported slow urine ow rates and a white ght stimulus. "
+        "It signifi cantly used a fuorescent tube in Urofowmetery studies with a urofowmeter. "
+        "The suf cient battery powered fowmeters had bene ts. "
+        "Insuf cient fluid fowed above low fowrates with clinical signifcance.</p>"
+        "<code>urine ow should stay in code</code>"
+        + (" " * 500001)
+        + "</body></html>"
+    )
+
+    repaired = _repair_known_word_glue(html)
+
+    assert "urine flow rates" in repaired
+    assert "white light stimulus" in repaired
+    assert "significantly used a fluorescent tube in Uroflowmetry studies with a uroflowmeter" in repaired
+    assert "sufficient battery powered flowmeters" in repaired
+    assert "had benefits" in repaired
+    assert "Insufficient fluid flowed above low flow rates with clinical significance" in repaired
+    assert "<code>urine ow should stay in code</code>" in repaired
+
+
+def test_large_html_false_sup_repair_unlinks_statistical_r_squared() -> None:
+    html = (
+        "<html><body>"
+        '<p>The higher the value of R <sup> <a href="#ref-2" class="z2m-ref-link">2</a> '
+        "</sup>, the better the regression line fits.</p>"
+        + (" " * 500001)
+        + "</body></html>"
+    )
+
+    repaired = _fix_false_sup_citations_in_decimals_and_figure_labels(html)
+
+    assert 'href="#ref-2"' not in repaired
+    assert "R <sup>2</sup>" in repaired
+
+
+def test_large_html_false_sup_repair_unlinks_cortical_layer_number() -> None:
+    html = (
+        "<html><body>"
+        "<p>FIG. 13. The molecular layer (cortical layer "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>) remained intact.</p>'
+        + (" " * 500001)
+        + "</body></html>"
+    )
+
+    repaired = _fix_false_sup_citations_in_decimals_and_figure_labels(html)
+
+    assert 'href="#ref-1"' not in repaired
+    assert "cortical layer 1) remained intact" in repaired
 
 
 def test_polish_html_document_keeps_english_ocr_repairs_en_only() -> None:

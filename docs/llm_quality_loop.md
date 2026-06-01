@@ -13,12 +13,14 @@ workflow is:
 5. Record every newly spotted manual manifestation in the append-only manual
    observation ledger before promoting it into an audit pattern, repair, or
    false-positive rule.
-6. During problem analysis, render the implicated source PDF page or pages and
-   compare the visual page against `01.en.raw.html` and `02.en.polish.html`
-   before classifying the root cause or choosing a repair. Record the rendered
-   page evidence in the analysis notes. If the stage-local PDF is missing for
-   a converted-stage artifact, search the Zotero/source_exports PDF candidates
-   recorded in the pack before declaring the source PDF unavailable.
+6. During problem analysis, render the implicated source PDF page or pages,
+   extract the PDF text layer for those same pages, and compare both signals
+   against `01.en.raw.html` and `02.en.polish.html` before classifying the root
+   cause or choosing a repair. This is mandatory because the PDF text layer can
+   be correct while the generated HTML is broken. Record both evidence paths in
+   the analysis notes. If the stage-local PDF is missing for a converted-stage
+   artifact, search the Zotero/source_exports PDF candidates recorded in the
+   pack before declaring the source PDF unavailable.
 7. If one `P*` defect id mixes different root causes or artifact mechanisms,
    split or refine the classification before, or together with, the repair.
    For example, body citation failures stay in `P04`, while table/float
@@ -50,6 +52,7 @@ Use a previous run directory that already contains `raw_cache/` and `profiles/`.
 The command writes a new run directory with `polish/`, `audit_tree/`,
 `audit_full_checks.json`, `quality_history_entry.json`, `quality_compare.json`,
 `quality_gate_report.json`, `pattern_observations.json`,
+`source_pdf_map.json`, `pdf_problem_evidence_report.json`,
 `llm_analysis_pack.json`, and `llm_analysis_prompt.md`.
 
 This is the mandatory loop shape for code patches. By default `observe` now
@@ -63,6 +66,18 @@ detection, and the selected polish policy for every accepted document.
 (`required_test_command` in `configs/llm_quality_gates.json`, currently
 `python -m pytest -q`) before audit/history/gates. Use `--skip-tests` only for
 exploratory audit runs that do not include code changes.
+
+When `require_pdf_text_layer_diagnostics` is enabled in the gate config,
+`observe` writes `source_pdf_map.json` and runs the audit with
+`--pdf-diagnostics`, so the audit can use the original PDF text layer even when
+`00.source.pdf` is absent from the stage directory.
+
+For the articles selected into the LLM problem pack, `observe` also writes
+`pdf_problem_evidence_report.json` plus `pdf_problem_evidence/` artifacts. Each
+available source PDF must produce a same-page text-layer excerpt and a rendered
+page image before the problem classification is considered complete. Missing
+source PDFs are allowed only when the report records the unavailable candidate
+state.
 
 After every audit, `observe` must write `pattern_observations.json` and append
 the current all-article pattern summary to an accumulated JSONL history. The
@@ -190,15 +205,15 @@ The default pack ignores image-only defect ids from
 `configs/llm_quality_gates.json`. This keeps the review focused on text,
 citations, tables, structure, and OCR residue.
 
-The generated prompt treats PDF page render evidence as mandatory during
-problem analysis. For every article-local symptom selected for repair, render
-the source PDF page that contains the snippet, figure, table, footnote, or
-nearby page anchor; compare that screenshot/page image with raw and polished
-HTML before deciding whether the defect is a parser bug, OCR/layout artifact,
-audit false positive, or missing source asset. If `source_pdf_present=false` in
-the pack, inspect `source_pdf_candidates` from Zotero/source_exports first and
-record the unavailable PDF as an analysis limitation only when no candidate can
-be rendered.
+The generated prompt treats PDF page render and PDF text-layer evidence as
+mandatory during problem analysis. For every article-local symptom selected for
+repair, render the source PDF page that contains the snippet, figure, table,
+footnote, or nearby page anchor; extract the text layer for that same page; and
+compare both with raw and polished HTML before deciding whether the defect is a
+parser bug, OCR/layout artifact, audit false positive, or missing source asset.
+If `source_pdf_present=false` in the pack, inspect `source_pdf_candidates` from
+Zotero/source_exports first and record the unavailable PDF as an analysis
+limitation only when no candidate can be rendered.
 
 ## Gate Only
 

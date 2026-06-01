@@ -101,7 +101,7 @@ def test_analyze_pair_reports_manual_review_defect_shapes() -> None:
             "P01",
             "P02",
             "P03",
-            "P04",
+            "P04R",
             "P06",
             "P07",
             "P08",
@@ -118,6 +118,38 @@ def test_analyze_pair_reports_manual_review_defect_shapes() -> None:
             "P19",
         }
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_rendered_katex_unit_text_for_p06() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Air flow was \\(0.36 m s^{-1}\\).</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><head><style>.z2m-ref-link{}</style></head><body>",
+                    '<p>Air flow was <span class="z2m-math z2m-math-inline" role="math" '
+                    'data-z2m-tex="\\(0.36 m s^{-1}\\)">'
+                    '<span class="katex"><span class="katex-html" aria-hidden="true">'
+                    "<span>0.36</span><span>m</span><span>s</span><span>−</span><span>1</span>"
+                    "</span></span></span> at the top of the incubator.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P06" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -142,6 +174,41 @@ def test_analyze_pair_does_not_report_p03_for_early_body_bracket_citations() -> 
                     "<h4>References</h4>",
                     "<ol>",
                     *[f"<li>Reference {idx}.</li>" for idx in range(1, 12)],
+                    "</ol>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P03" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p03_for_early_zebrafish_body_citations() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>We first examined whether larval zebrafish maintain their pitch during "
+                    'spontaneous swim bouts <sup><a href="#ref-42" class="z2m-ref-link">42</a></sup>. '
+                    "To measure behavior we used the Scalable Apparatus to Measure Posture and "
+                    'Locomotion (SAMPL) <sup><a href="#ref-43" class="z2m-ref-link">43</a></sup>.</p>',
+                    "<h4>References</h4>",
+                    "<ol>",
+                    *[f"<li>Reference {idx}.</li>" for idx in range(1, 44)],
                     "</ol>",
                     "</body></html>",
                 ]
@@ -186,6 +253,146 @@ def test_analyze_pair_accepts_wrapped_missing_figure_unit() -> None:
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         assert "P13" not in defect_ids
         assert "P14" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_marks_caption_only_missing_warning_as_not_quality_counted() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "caption only missing figure sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><head><style>:target{outline:1px solid blue}[id^=\"fig-\"]{scroll-margin-top:42vh}</style></head><body>"
+            '<p>See <a href="#fig-5" class="z2m-fig-link">Figure 5</a>.</p>'
+            '<div id="fig-5" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+            '<p data-z2m-origin="caption-only-target" class="z2m-missing-figure-warning z2m-figure-target">'
+            "Figure 5 image was not extracted into this HTML.</p>"
+            '<p class="z2m-figure-caption">Figure 5. Caption survived, but the image did not.</p>'
+            "</div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert len(p62) == 1
+        assert p62[0]["extra"]["quality_counted"] is False
+        assert p62[0]["extra"]["warning_origin"] == "caption-only-target"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p14_for_duplicate_figure_ids() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "duplicate figure id sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><head><style>:target{outline:1px solid blue}[id^=\"fig-\"]{scroll-margin-top:42vh}</style></head><body>"
+            '<p>See <a href="#fig-1" class="z2m-fig-link">Figure 1</a>.</p>'
+            '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+            '<p class="z2m-figure-target"><img src="fig1-a.jpg"/></p>'
+            '<p class="z2m-figure-caption">Figure 1. Extracted image.</p>'
+            "</div>"
+            '<p id="fig-1">Figure 1. Duplicate caption-only target from another embedded document.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P13" not in defect_ids
+        assert "P14" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_body_figure_references_for_p13() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "figure prose references sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>Figure 1 provides a visual comparison of generated samples across datasets.</p>"
+            "<p>Fig. 3 depicts the first prototype we fabricated.</p>"
+            "<p>Fig. 2 , represents the cleaner closed in the manner to hold the covering.</p>"
+            "<p>FIG. 1 depicts an exploded perspective view of the system.</p>"
+            "<p>Figure 2f summarizes literature results at a specific condition.</p>"
+            "<p>Figure 4a ,b represents a recent progress in this direction.</p>"
+            "<p>Figure 1 A snapshot of the output 6 Figure 2 : Uroflow Dashboard preview7 Figure 3 Different symptoms.</p>"
+            "<p>Figure 6</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P13" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_plain_caption_without_image_for_p13() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "plain caption only sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Figure 5. Caption survived, but no image is nearby.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P13" in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_list_of_figures_table_for_p13() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "list of figures sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<table><tbody><tr><th>Figure 98.</th>"
+            "<th>Oversized daguerreotype caption in the list of figures.</th>"
+            "<th>348</th></tr></tbody></table>"
+            '<div id="fig-98" class="z2m-float-unit z2m-figure-unit">'
+            '<p class="z2m-figure-target"><img src="data:image/png;base64,AA=="/></p>'
+            "<p>Figure 98. Oversized daguerreotype caption.</p></div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P13" not in {defect["id"] for defect in result["defects_found"]}
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -298,6 +505,127 @@ def test_analyze_pair_splits_missing_figure_warning_contexts() -> None:
         assert p62a[0]["extra"]["figure_label"] == "1"
         assert p62b[0]["extra"]["p62_subtype"] == "nearby_image_ambiguous_label"
         assert p62[0]["extra"]["p62_subtype"] == "no_nearby_image"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_classify_missing_warning_across_body_prose_as_p62b() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<div id="fig-1" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">',
+                    '<p class="z2m-missing-figure-warning z2m-figure-target">Figure 1 image was not extracted into this HTML.</p>',
+                    '<p class="z2m-figure-caption">Figure 1. Missing overview image.</p>',
+                    "</div>",
+                    "<p>Ordinary prose separates the missing figure from the next visual.</p>",
+                    '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">',
+                    '<p class="z2m-figure-target"><img src="data:image/png;base64,abc"/></p>',
+                    '<p class="z2m-figure-caption">Figure 2. Next figure image.</p>',
+                    "</div>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert any(defect["extra"]["figure_label"] == "1" for defect in p62)
+        assert "P62B" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_classify_missing_warning_across_previous_figure_unit_as_p62a() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">',
+                    '<p class="z2m-figure-target"><img src="data:image/png;base64,abc"/></p>',
+                    '<p class="z2m-figure-caption">Figure 5. Extracted previous figure.</p>',
+                    "</div>",
+                    '<div id="fig-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">',
+                    '<p class="z2m-missing-figure-warning z2m-figure-target">Figure 6 image was not extracted into this HTML.</p>',
+                    '<p class="z2m-figure-caption">Figure 6. Caption survived, but no image is nearby.</p>',
+                    "</div>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert "P62A" not in defect_ids
+        assert "P62B" not in defect_ids
+        assert any(defect["extra"]["figure_label"] == "6" for defect in p62)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_nearby_image_offsets_ignore_different_labeled_figure_unit() -> None:
+    audit = _load_audit_module()
+    blocks = audit._parse_blocks(
+        "<html><body>"
+        '<div id="fig-8" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="data:image/png;base64,abc"/></p>'
+        '<p class="z2m-figure-caption">Figure 8. Previous extracted image.</p>'
+        "</div>"
+        '<p id="fig-10">Figure 10. Caption survived, but its image is absent.</p>'
+        "</body></html>"
+    )
+
+    target = next(block for block in blocks if block.id == "fig-10")
+
+    assert audit._nearby_image_offsets(blocks, target.index, label="10") == []
+    assert audit._nearby_image_offsets(blocks, target.index, label=None) == [-1]
+
+
+def test_analyze_pair_allows_single_image_multiple_caption_alias_for_p57() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "compound figure alias sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<div id="fig-12" class="z2m-float-unit z2m-figure-unit">'
+            '<span id="fig-13" class="z2m-float-alias"></span>'
+            '<p class="z2m-figure-target"><img src="data:image/png;base64,abc"/></p>'
+            '<p class="z2m-figure-caption"><b>Fig. 12.</b> F1 confidence curve.</p>'
+            '<p class="z2m-figure-caption"><b>Fig. 13.</b> Precision recall curve.</p>'
+            "</div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P57" not in {defect["id"] for defect in result["defects_found"]}
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -592,6 +920,60 @@ def test_analyze_pair_splits_table_sup_ranges_from_body_p04() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_affiliation_markers_in_frontmatter_table_for_p04t() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><table><tr><td>"
+            "1 Large-scale mapping of artificial perceptions "
+            "Antonio Lozano 1,2, Xing Chen 1,3, Mike La Grouw 1, "
+            "Eduardo Fernandez 2,4 and Pieter Roelfsema 1,6,7,8. "
+            "1 Department of Vision and Cognition, Netherlands Institute for Neuroscience. "
+            "2 Division of Neurobiology, University of Denmark. "
+            "3 These authors contributed equally."
+            "</td></tr></table></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04T" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_search_statement_year_range_for_p04t() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><table><tr><td>"
+            "Set Number Concept Search Statement 5. PCL Devices #1 AND "
+            "('adhesion barrier'/exp OR 'mesh':ti,ab) AND [2011-2021]"
+            "</td></tr></table></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04T" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_splits_math_ranges_from_body_p04() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -611,8 +993,83 @@ def test_analyze_pair_splits_math_ranges_from_body_p04() -> None:
 
         defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
         assert "P04" not in defects_by_id
+        assert "P04M" not in defects_by_id
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_splits_interval_arrays_from_body_p04() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Converted to intervals: [4,9,12,14,56,59]</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04" not in defects_by_id
+        assert "P04M" not in defects_by_id
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_unlinked_sup_citation_range_in_math_context_as_p04m() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>The measured values were consistent with the magnetic-force model"
+            "<sup>28-31</sup>.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 32))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04" not in defects_by_id
         assert defects_by_id["P04M"]["severity"] == "warning"
         assert defects_by_id["P04M"]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_coordinate_points_as_p04m() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>The map size is [1000 x 1000], with starting and ending "
+            "points of [480, 500] and [900, 450], respectively.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04" not in defect_ids
+        assert "P04M" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -630,7 +1087,7 @@ def test_analyze_pair_prefers_body_p04_over_table_or_math_p04_splits() -> None:
             "<html><body>"
             "<table><tr><td>Author <sup>1,2</sup></td></tr></table>"
             "<p>Prior studies [1, 2] support the method.</p>"
-            "<h4>References</h4><ol><li>Ref one.</li><li>Ref two.</li></ol>"
+            '<h4>References</h4><ol><li id="ref-1">Ref one.</li><li id="ref-2">Ref two.</li></ol>'
             "</body></html>",
             encoding="utf-8",
         )
@@ -641,6 +1098,58 @@ def test_analyze_pair_prefers_body_p04_over_table_or_math_p04_splits() -> None:
         assert "P04" in defect_ids
         assert "P04T" not in defect_ids
         assert "P04M" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_classifies_p04_without_reference_targets() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Prior studies [1, 2] support the method.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04" not in defects_by_id
+        assert defects_by_id["P04N"]["severity"] == "warning"
+        assert defects_by_id["P04N"]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_classifies_p04_with_missing_reference_targets() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>Settings were presented in [6, 7].</p>"
+            '<h4>References</h4><ol><li id="ref-5">Merged ref.</li><li id="ref-8">Later ref.</li></ol>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04" not in defects_by_id
+        assert defects_by_id["P04R"]["severity"] == "warning"
+        assert defects_by_id["P04R"]["extra"]["missing_targets"] == [6, 7]
+        assert defects_by_id["P04R"]["extra"]["quality_counted"] is False
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -859,6 +1368,325 @@ def test_analyze_pair_does_not_report_p05_for_whole_bracket_ref_anchor_after_uni
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p05_for_sentence_final_sup_citation_before_ph() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>OAB should be investigated.'
+            '<sup><a href="#ref-10" class="z2m-ref-link">10</a></sup> '
+            "The most recent study shows a strong correlation between urine pH and symptoms."
+            '<sup><a href="#ref-11" class="z2m-ref-link">11</a></sup></p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 12))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_sentence_final_sup_citation_group() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>The range of phosphene sizes."
+            '<sup><a href="#ref-40" class="z2m-ref-link">40</a>,'
+            '<a href="#ref-41" class="z2m-ref-link">41</a></sup> '
+            "Furthermore, stimulus current can alter phosphene size.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 42))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_long_bracket_citation_before_phosphene() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>Prior work used uniform maps "
+            '[<a href="#ref-13" class="z2m-ref-link">13</a>, '
+            '<a href="#ref-18" class="z2m-ref-link">18</a>, '
+            '<a href="#ref-21" class="z2m-ref-link">21</a>, '
+            '<a href="#ref-22" class="z2m-ref-link">22</a>, '
+            '<a href="#ref-23" class="z2m-ref-link">23</a>, '
+            '<a href="#ref-24" class="z2m-ref-link">24</a>, '
+            '<a href="#ref-25" class="z2m-ref-link">25</a>, '
+            '<a href="#ref-26" class="z2m-ref-link">26</a>, '
+            '<a href="#ref-27" class="z2m-ref-link">27</a>, '
+            '<a href="#ref-29" class="z2m-ref-link">29</a>, '
+            '<a href="#ref-34" class="z2m-ref-link">34</a>-'
+            '<a href="#ref-36" class="z2m-ref-link">36</a>]. '
+            "The number of phosphenes was then matched.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 37))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_month_word_citation() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Recognition improved over the course of a month <a href="#ref-29" class="z2m-ref-link">29</a>.</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 30))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P05" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_author_degree_byline() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>ALPHA ONE, F.R.C.S.(SN), <a href="#ref-1" class="z2m-ref-link">1</a> '
+            'BETA TWO, M.D., <a href="#ref-4" class="z2m-ref-link">4</a> '
+            'GAMMA THREE, PH.D., <a href="#ref-1" class="z2m-ref-link">1</a>, '
+            '<a href="#ref-3" class="z2m-ref-link">3</a> DELTA FOUR, B.Sc., '
+            '<a href="#ref-1" class="z2m-ref-link">1</a> EPSILON FIVE, F.R.C.S.(SN), '
+            '<a href="#ref-2" class="z2m-ref-link">2</a></p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 5))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P05" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_animal_human_study_citations() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Sensitivity was reported in animal<sup><a href="#ref-17" class="z2m-ref-link">17</a></sup> '
+            'and human studies of retinal<sup><a href="#ref-18" class="z2m-ref-link">18</a>,'
+            '<a href="#ref-19" class="z2m-ref-link">19</a></sup> and cortical'
+            '<sup><a href="#ref-43" class="z2m-ref-link">43</a></sup> stimulation.</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 44))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P05" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_measurement_parenthetical_citation() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Specificity (68%-90%<a href="#ref-28" class="z2m-ref-link">28</a>) was measured '
+            'with rates (&lt;10 mL/s, &lt;15 mL/s, &lt;19 mL/s'
+            '<a href="#ref-28" class="z2m-ref-link">28</a>).</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 29))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P05" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_d2_type_receptor_citation() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Overexpression of D2-type dopamine receptors disrupts timing'
+            '<sup><a href="#ref-192" class="z2m-ref-link">192</a></sup>.</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 193))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P05" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_et_al_citation_near_ph() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Patients with PH were evaluated. Tonelli et al<sup>'
+            '<a href="#ref-10" class="z2m-ref-link">10</a></sup> compared methods.</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 11))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_parenthetical_tail_citation_after_units() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>The probe area was 15 × 60 µm<sup class="z2m-unit-exp">2</sup> '
+            '<a href="#ref-25" class="z2m-ref-link">)25</a>. '
+            "Critical challenges remained.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 26))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p05_for_clean_citation_after_unit_parenthetical() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>Similar macroporous networks can be formed into probes with advantages '
+            '(<a href="#fig-2" class="z2m-fig-link">Fig. 2c</a>, bottom) '
+            '<a href="#ref-50" class="z2m-ref-link">50</a>. '
+            "The stiffness is much lower than silicon probes (~10-9 Nm2, "
+            'cross-sectional area of 15 x 60 Вµm<sup class="z2m-unit-exp">2</sup>)'
+            '<a href="#ref-25" class="z2m-ref-link">25</a>.</p>'
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 51))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_resolves_stage_images_from_article_folder() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -915,6 +1743,71 @@ def test_analyze_pair_reports_reference_identity_mismatch_and_duplicates() -> No
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p22_for_numeric_value_rows() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    "<p>1.90 1.97 1.68 1.13 0.79</p>",
+                    '<p id="ref-1"><span class="z2m-ref-num">1.</span> Smith J. Example reference.</p>',
+                    '<p id="ref-2"><span class="z2m-ref-num">2.</span> Jones J. Another reference.</p>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P22" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p22_for_post_reference_numbered_outline() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<p id="ref-1"><span class="z2m-ref-num">1.</span> Smith J. Example reference. 2020.</p>',
+                    '<p id="ref-2"><span class="z2m-ref-num">2.</span> Jones J. Another reference. 2021.</p>',
+                    "<h2>Generated outline</h2>",
+                    "<p>1. Forward process: gradually adds Gaussian noise.</p>",
+                    "<p>2. Reverse process: removes this noise.</p>",
+                    "<h3>2.1 Multi-scale approaches</h3>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P22" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_residual_unit_only_tex_fragments() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -933,6 +1826,29 @@ def test_analyze_pair_reports_residual_unit_only_tex_fragments() -> None:
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         assert "P23" in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_tex_optional_numeric_argument_for_p07() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            '<html><body><p>The threshold equals <span class="z2m-math" role="math" '
+            'data-z2m-tex="\\(\\sqrt[3]{V_n}\\)">3 V_n</span> in this model.</p></body></html>',
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P07" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -1158,7 +2074,7 @@ def test_analyze_pair_reports_round25_blind_spots() -> None:
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         assert {"P25", "P26", "P27", "P28", "P30", "P31", "P32"}.issubset(defect_ids)
         assert "P06" in defect_ids
-        assert "P04" in defect_ids
+        assert "P04R" in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -1195,6 +2111,113 @@ def test_analyze_pair_counts_nested_bibliography_refs_before_reporting_id_gap() 
         assert "P26" not in defect_ids
         assert "P21" not in defect_ids
         assert "P22" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_embedded_numbered_references_inside_bibliography_item() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<ul><li id="ref-95"><span class="z2m-ref-num">95.</span> '
+                    "Trautmann, E. M. et al. Neural dynamics. Neuron 103, 292-308 (2019). "
+                    "96. Chen, X. et al. Customized implants. Journal of Neuroscience Methods 286, 38-55 (2017).</li>",
+                    '<li id="ref-96"><span class="z2m-ref-num">96.</span> Highlights item.</li></ul>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p26 = [defect for defect in result["defects_found"] if defect["id"] == "P26"]
+        assert p26
+        assert p26[0]["check"] == "Bibliography item contains embedded numbered references"
+        assert p26[0]["extra"]["embedded_number"] == 96
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_volume_number_as_embedded_reference() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    "<p>Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, "
+                    "David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio. "
+                    "Generative adversarial nets. In Z. Ghahramani, M. Welling, C. Cortes, "
+                    "N. Lawrence, and K.Q. Weinberger (eds.), Advances in Neural Information "
+                    "Processing Systems, volume 27. Curran Associates, Inc., 2014. "
+                    "URL https://example.org/paper.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P26" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_next_abstract_section_as_embedded_reference() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    "<p>1. Alenizi AM, Bienz M, Rajih E, et al. "
+                    "Uroflow Stop Test and Potency Recovery. Urology. 2015;86(4):766-771.</p>",
+                    "<p>Results: Patients recruited in the study were 100. "
+                    "Results according to PVR stratification are reported in Table 1. "
+                    "There were no significant differences among the groups. "
+                    "2. Martorana G., Sollini M.L., Fede Spicchiale C. "
+                    "Neurogenic overactive bladder and voiding dysfunction in multiple sclerosis patients.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p26 = [
+            defect
+            for defect in result["defects_found"]
+            if defect["id"] == "P26"
+            and defect["check"] == "Bibliography item contains embedded numbered references"
+        ]
+        assert not p26
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -1408,6 +2431,8 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
                     '<a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-1" class="z2m-ref-link">1</a>.</p>',
                     "<p>The absent semantic target is Figure 9A in the text.</p>",
                     '<p class="z2m-missing-figure-warning">Figure 1 image was not extracted into this HTML.</p>',
+                    '<p><img src="data:image/png;base64,AAAA"/></p>',
+                    "<p>Figure 2. Nearby different image caption.</p>",
                     '<p><a href="#page-1-0">[17,18].</a> remained a page citation.</p>',
                     "<p>Contact e-mail: simono v@neuro.nnov.ru remains split.</p>",
                     "<p>Here, we review relevant considerationsincluding the selection of methods.</p>",
@@ -1480,6 +2505,41 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p68_for_repaired_systemic_circulation_tail() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Delivery cannot completely prevent vector entry into the systemic circulation "
+                    "(with some serotypes more likely to leak than others 124). "
+                    "AAV DNA could also be detected in the systemic circulation.</p>",
+                    '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">',
+                    '<p class="z2m-figure-caption">Fig. 5 | Human immune responses. '
+                    "Clinical experience has not revealed destruction of transduced target cells "
+                    "behind the BBB.</p>",
+                    "</div>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P68" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_fulltext_batch_006_010_blind_spots() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -1519,6 +2579,40 @@ def test_analyze_pair_reports_fulltext_batch_006_010_blind_spots() -> None:
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         expected = {"P36", "P53", "P67", "P71", "P74", "P75", "P76", "P77", "P78"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p77_when_table_closed_before_sections() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<div class="z2m-float-unit z2m-table-unit">',
+                    "<p><b>Table 3.1:</b> curve features and thresholds.</p>",
+                    "</div>",
+                    "<h3>3.8. Data Acquisition</h3>",
+                    "<p>Records were stored.</p>",
+                    "<h3>3.9. Criteria for Use of Data</h3>",
+                    "<p>Invalid cases were removed.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P77" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -1688,6 +2782,69 @@ def test_analyze_pair_reports_fulltext_batch_021_025_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_p83_ignores_repaired_contiguous_phrases() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Despite the intensive investigation of adults and older children with these techniques, "
+                    "little is known about children.</p>",
+                    "<p>The collage of black icons on white background is printed on swell paper to form a "
+                    "tactile rendering of the photograph.</p>",
+                    "<p>MRI is now recommended as the standard of care for term infants with hypoxic "
+                    "ischaemic encephalopathy.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P83" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_p83_reports_license_tail_moved_into_competing_interest() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Competing interest: See page 14 of the Creative Commons "
+                    "Attribution License, which permits unrestricted use.</p>",
+                    "<p>Funding: See page 15 today deliver the high data rate.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P83" in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_fulltext_batch_026_030_blind_spots() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -1780,7 +2937,7 @@ def test_analyze_pair_reports_fulltext_batch_031_035_blind_spots() -> None:
         result = audit.analyze_pair(raw_path, polish_path)
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
-        expected = {"P67", "P71", "P83", "P87", "P91", "P92"}
+        expected = {"P67", "P71", "P87", "P91", "P92"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -1854,7 +3011,7 @@ def test_analyze_pair_reports_fulltext_batch_036_040_blind_spots() -> None:
         result = audit.analyze_pair(raw_path, polish_path)
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
-        expected = {"P66", "P67", "P71", "P81", "P82", "P83", "P84", "P90", "P92"}
+        expected = {"P66", "P67", "P71", "P81", "P82", "P84", "P90", "P92"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -1904,6 +3061,44 @@ def test_analyze_pair_reports_fulltext_batch_041_045_blind_spots() -> None:
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         expected = {"P67", "P71", "P76", "P81", "P82", "P83", "P86", "P88", "P90", "P92"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_bibliography_numbers_at_clean_li_boundaries() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    "<ul>",
+                    '<li id="ref-27"><span class="z2m-ref-num">27.</span> Bokhari, A. '
+                    "Paper presented at the The Saudi Economy Conference: Challenges and Opportunities, Jeddah</li>",
+                    '<li id="ref-28"><span class="z2m-ref-num">28.</span> Khorsheed, M. S. '
+                    "Fostering university-industry collaboration.</li>",
+                    '<li id="ref-281"><span class="z2m-ref-num">281.</span> Zhang, H. '
+                    "Traveling theta waves in the human hippocampus.</li>",
+                    '<li id="ref-282"><span class="z2m-ref-num">282.</span> Buzsaki, G. '
+                    "Brain rhythms have come of age.</li>",
+                    "</ul>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P90" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -2009,7 +3204,7 @@ def test_analyze_pair_reports_fulltext_batch_051_055_blind_spots() -> None:
         result = audit.analyze_pair(raw_path, polish_path)
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
-        expected = {"P36", "P67", "P71", "P72", "P75", "P83", "P90", "P91", "P92"}
+        expected = {"P36", "P67", "P71", "P72", "P75", "P90", "P91", "P92"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -2115,6 +3310,36 @@ def test_analyze_pair_reports_fulltext_batch_061_065_blind_spots() -> None:
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         expected = {"P36", "P66", "P67", "P71", "P75", "P76", "P78", "P83", "P90", "P91"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_p66_ignores_defne_reference_name() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<ol><li id="ref-142"><span class="z2m-ref-num">142.</span> '
+                    "Defne Circi, Ghazal Khalighinejad, and Anlan Chen. "
+                    "How well do large language models understand tables?</li></ol>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P66" not in {defect["id"] for defect in result["defects_found"]}
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -2308,7 +3533,7 @@ def test_analyze_pair_reports_fulltext_batch_076_080_blind_spots() -> None:
         result = audit.analyze_pair(raw_path, polish_path)
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
-        expected = {"P36", "P66", "P67", "P70", "P71", "P82", "P83", "P87", "P91"}
+        expected = {"P36", "P66", "P67", "P70", "P71", "P82", "P87", "P91"}
         assert expected.issubset(defect_ids), sorted(expected - defect_ids)
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
@@ -2470,6 +3695,219 @@ def test_analyze_pair_ignores_hyper_parameter_phase_and_spaced_year_false_positi
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_flattened_citation_shapes_inside_table_captions() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [
+            f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Author {i}.</li>'
+            for i in range(1, 18)
+        ]
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<div id="table-1" class="z2m-float-unit z2m-table-unit">',
+                    '<p class="z2m-table-caption">TABLE 1. Ding et al. 15 / Palmom et al. 16.</p>',
+                    "</div>",
+                    "<p>Ordinary body text has no flattened citation.</p>",
+                    "<h4>References</h4><ul>",
+                    *refs,
+                    "</ul></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P50" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_flattened_citation_shapes_inside_table_like_text() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [
+            f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Author {i}.</li>'
+            for i in range(1, 45)
+        ]
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Real-time Object detection Algorithm category Region "
+                    "Guo et al40 Li et al36 Li et al39 Time efficiency ROC curve "
+                    "Precision recall F-measure Algorithm score.</p>",
+                    "<h4>References</h4><ul>",
+                    *refs,
+                    "</ul></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P50" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_flattened_citation_shapes_inside_math_contexts() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [
+            f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Author {i}.</li>'
+            for i in range(1, 18)
+        ]
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>The current spread equation uses I = 1 + K * (rad - rad_e)2 I_input "
+                    "where surface.14 is a rendered OCR artifact, not a citation.</p>",
+                    "<h4>References</h4><ul>",
+                    *refs,
+                    "</ul></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P50" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_classifies_joined_infig_as_joined_word_not_p50() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [
+            f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Author {i}.</li>'
+            for i in range(1, 4)
+        ]
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Theexperiment tookplaceinasquare area and was reproduced inFig.1.</p>",
+                    "<h4>References</h4><ul>",
+                    *refs,
+                    "</ul></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P50" not in defect_ids
+        assert "P67" in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_flattened_shapes_inside_split_doi_url() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [
+            f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Author {i}.</li>'
+            for i in range(1, 12)
+        ]
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<p>Reference DOI <a href="https://doi.org/10.1146/annure">'
+                    "https://doi.org/10.1146/annure</a> v.bioeng.10.061807.160529.</p>",
+                    "<h4>References</h4><ul>",
+                    *refs,
+                    "</ul></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P50" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_hyphenated_d_labels_before_citations() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [
+            f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Author {i}.</li>'
+            for i in range(1, 35)
+        ]
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<p>Nanobodies Ty1 <a href="#ref-33" class="z2m-ref-link">33</a>, '
+                    'H11-D4 <a href="#ref-34" class="z2m-ref-link">34</a>, and '
+                    'Nb21 <a href="#ref-35" class="z2m-ref-link">35</a> were modified.</p>',
+                    "<h4>References</h4><ul>",
+                    *refs,
+                    "</ul></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P05" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_numbered_section_heading_after_references_block() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -2533,6 +3971,41 @@ def test_analyze_pair_does_not_report_p59_for_numeric_citation_dominant_article(
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p59_for_sparse_sup_numeric_article() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "sparse numeric sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Ref {i}.</li>' for i in range(1, 22)]
+        sup_body = (
+            '<p>Smith, 2000 and Jones, 2001 make the document look author-year. '
+            'Brown, 2002 and White, 2003 add more author-year evidence. '
+            'Vagus nerve stimulation<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> '
+            'and responsive neurostimulation (RNS)<sup><a href="#ref-3" class="z2m-ref-link">3</a>,'
+            '<a href="#ref-4" class="z2m-ref-link">4</a></sup> are discussed. '
+            'The pivotal trial<sup><a href="#ref-5" class="z2m-ref-link">5</a></sup> is cited too.</p>'
+        )
+        plain_links = "".join(
+            f'<p>Additional numeric citation evidence <a href="#ref-{i}" class="z2m-ref-link">{i}</a>.</p>'
+            for i in range(6, 17)
+        )
+        polish_path.write_text(
+            f"<html><body>{sup_body}{plain_links}<h4>References</h4><ul>{''.join(refs)}</ul></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P59" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_does_not_report_p60_for_bracketed_citation_lists() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -2549,6 +4022,15 @@ def test_analyze_pair_does_not_report_p60_for_bracketed_citation_lists() -> None
             '[<a href="#ref-21" class="z2m-ref-link">21</a>, '
             '<a href="#ref-33" class="z2m-ref-link">33</a>, '
             '<a href="#ref-37" class="z2m-ref-link">37</a>].</p>'
+            '<p>A sample size estimate was justified by prior work '
+            '[<a href="#ref-22" class="z2m-ref-link">22</a>].</p>'
+            '<p>Effect sizes and attrition rates were similar to those observed in the pilot study.'
+            '<sup><a href="#ref-21" class="z2m-ref-link">21</a></sup></p>'
+            '<p>Our sample size is comparable to previous studies testing the same tasks '
+            '<a href="#ref-31" class="z2m-ref-link">31</a>,'
+            '<a href="#ref-32" class="z2m-ref-link">32</a>.</p>'
+            '<p>Adapted from van Tulder et al, '
+            '<a href="#ref-20" class="z2m-ref-link">20</a> in line with criteria.</p>'
             '<p>The adult males group was discussed in '
             '[<a href="#ref-11" class="z2m-ref-link">11</a>-'
             '<a href="#ref-15" class="z2m-ref-link">15</a>].</p>'
@@ -2560,6 +4042,34 @@ def test_analyze_pair_does_not_report_p60_for_bracketed_citation_lists() -> None
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         assert "P60" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_p60_for_sample_size_value_links() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "sample size value link" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        refs = [f'<li id="ref-{i}"><span class="z2m-ref-num">{i}.</span> Ref {i}.</li>' for i in range(1, 40)]
+        polish_path.write_text(
+            "<html><body>"
+            '<p>The final sample size of the early-blind group was '
+            '<sup><a href="#ref-11" class="z2m-ref-link">11</a></sup>.</p>'
+            '<p>Sample size was <sup><a href="#ref-32" class="z2m-ref-link">32</a></sup> to 63.</p>'
+            f"<h4>References</h4><ul>{''.join(refs)}</ul></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects = [defect for defect in result["defects_found"] if defect["id"] == "P60"]
+        assert defects
+        assert defects[0]["extra"]["num"] in {"11", "32"}
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -2802,9 +4312,186 @@ def test_analyze_pair_reports_doi_body_merge_only_within_one_block() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_p61_accepts_supplementary_figure_target() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "supplementary figure sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>See <a href="#fig-supplementary-11" class="z2m-fig-link">Supplementary Figure 11</a> '
+            'and <a href="#fig-1" class="z2m-fig-link">Figure 1</a>.</p>'
+            '<p id="fig-supplementary-11">Supplementary Figure 11. Effect of the sensing condition.</p>'
+            '<p id="fig-1">Figure 1. Main overview.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P61" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_p61_is_not_quality_counted() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "missing figure reference sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>The setup is shown in Figure 7.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p61 = [defect for defect in result["defects_found"] if defect["id"] == "P61"]
+        assert len(p61) == 1
+        assert p61[0]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_p61_uses_compound_figure_reference_keys() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "compound figure ref sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>The relation is shown in Figure 2-1 and Fig. 3.5.</p>"
+            "<p>The Cole model in Figure 2.1a remains visible, and the robustness is tested in Figure 5. "
+            "100 random examples are generated.</p>"
+            '<div id="fig-2-1" class="z2m-float-unit z2m-figure-unit">'
+            '<p class="z2m-figure-target"><img src="fig21.jpg"/></p>'
+            '<p class="z2m-figure-caption">Figure 2-1. Conductivity summary.</p>'
+            "</div>"
+            '<div id="fig-3-5" class="z2m-float-unit z2m-figure-unit">'
+            '<p class="z2m-figure-target"><img src="fig35.jpg"/></p>'
+            '<p class="z2m-figure-caption">Figure 3.5. Flow-rate signal.</p>'
+            "</div>"
+            '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+            '<p class="z2m-figure-target"><img src="fig5.jpg"/></p>'
+            '<p class="z2m-figure-caption">Figure 5. Robustness test.</p>'
+            "</div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P61" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_accepts_split_prefix_supplementary_figure_link() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "split supplementary figure sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>The calibration is shown in Supplementary '
+            '<a href="#fig-supplementary-2" class="z2m-fig-link">Figure 2</a>.</p>'
+            '<p id="fig-supplementary-2">Supplementary Figure 2. Calibration summary.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P61" not in defect_ids
+        assert "P13" not in defect_ids
+        assert "P14" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_p61_ignores_external_supplementary_figure_ref() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "missing supplementary figure sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>The delayed response appears in Supplementary Figure 11.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P61" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_supplementary_caption_only_target_for_p13_p14() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "supplementary caption target sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>See <a href="#fig-supplementary-s2" class="z2m-fig-link">Supplementary Figure S2</a>.</p>'
+            '<p id="fig-supplementary-s2">Supplementary Figure S2 Prompt for generating queries.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P13" not in defect_ids
+        assert "P14" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_broken_url_audit_does_not_flag_url_followed_by_reference_year() -> None:
     audit = _load_audit_module()
 
     assert audit.BROKEN_URL_TEXT_RE.search("See https://example.org/path/ (2018).") is None
     assert audit.BROKEN_URL_TEXT_RE.search("IEEE Xplore https://ieeexplore.ieee.org/ 1 March 2021") is None
+    assert (
+        audit.BROKEN_URL_TEXT_RE.search(
+            "Resources http://www.easytactilegraphics.com/product/intact-sketchpad/ "
+            "http://www.sensationalbooks.com/products.html"
+        )
+        is None
+    )
+    assert (
+        audit.MALFORMED_URL_ANCHOR_BODY_RE.search(
+            '<a href="http://www.easytactilegraphics.com/product/intact-sketchpad/">'
+            "http://www.easytactilegraphics.com/product/intact-sketchpad/</a> "
+            '<a href="http://www.sensationalbooks.com/products.html">'
+            "http://www.sensationalbooks.com/products.html</a>"
+        )
+        is None
+    )
     assert audit.BROKEN_URL_TEXT_RE.search("See https://example.org/path/ next-fragment.") is not None

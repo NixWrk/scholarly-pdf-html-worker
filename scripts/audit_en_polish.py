@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 from bisect import bisect_right
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html import unescape
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -58,9 +60,9 @@ MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
     r"\s*(?:(?:hps|htps|ttps)://|https?://\s+|\d+www\.|"
     r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
     r"[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+)[\s\S]{0,300}?</a>|"
-    r"<a\b[^>]*\bhref\s*=\s*['\"]https?://[^'\"]+['\"][^>]*>"
+    r"<a\b[^>]*\bhref\s*=\s*(?P<split_quote>['\"])(?P<split_href>https?://[^'\"]+)(?P=split_quote)[^>]*>"
     r"\s*\(?https?://[^<]{1,120}/\s*</a>\s*"
-    r"<a\b[^>]*\bhref\s*=\s*['\"]https?://[^'\"]+['\"][^>]*>"
+    r"<a\b[^>]*\bhref\s*=\s*(?P=split_quote)(?P=split_href)(?P=split_quote)[^>]*>"
     r"\s*[A-Za-z0-9][^<]{0,120}</a>",
     re.IGNORECASE | re.DOTALL,
 )
@@ -76,6 +78,7 @@ TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.I
 REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
 REF_ID_RE = re.compile(r"^ref-(\d+)$", re.IGNORECASE)
 VISIBLE_REF_NUM_RE = re.compile(r"^\s*(\d{1,4})\.")
+EMBEDDED_REF_BOUNDARY_RE = re.compile(r"\s(?P<num>\d{1,4})\.\s+(?=[A-Z\u00c0-\u00de])")
 CITATION_RANGE_LIST_RE = re.compile(
     r"\[\s*\d+\s*(?:[-\u2013]\s*\d+|,\s*\d+)"
     r"(?:\s*,\s*\d+(?:\s*[-\u2013]\s*\d+)?)*\s*\]"
@@ -186,6 +189,7 @@ BROKEN_URL_TEXT_RE = re.compile(
     r"\bhttps?://\S+/(?:wp|news-room/north|contents/part1/ports-and|ports-and-container)\s+[A-Za-z0-9]|"
     r"\bhttps?://\S+/cgi/pt\?\s+[A-Za-z0-9]|"
     r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/\s+"
+    r"(?!https?://|www\.)"
     r"(?=[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*[A-Za-z._~:/?#\[\]@!$&'*+,;=%-])"
     r"[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]+|"
     r"\bhttps?://\S+\.(?:h\s+tml|xht\s+ml)\b|"
@@ -211,7 +215,7 @@ LOST_FF_WORD_RE = re.compile(
     r"fexible|ultrafexible|fbers|flms?|fbroin|biofuid|difusion|coefcient|"
     r"defcits|scafolds|feld-efect|fnger|galss|artiicial|scientiic|"
     r"certiication|deining|simpliication|irst|inluence|itness|worklow|"
-    r"frst|fne|fgurative|defne(?:d)?|profcient|beneft|"
+    r"frst|fne|fgurative|defned|profcient|beneft|"
     r"difcult(?:y|ies)?|staf|efort(?:s)?|confrm(?:ed|ing)?|clarifed|"
     r"infuenced|fndings|feld|ndings)\b|"
     r"(?:\u00ae|\u0412\u00ae)rst\b|"
@@ -234,6 +238,7 @@ LOST_FF_WORD_RE = re.compile(
 KNOWN_JOINED_WORD_RE = re.compile(
     r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
     r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
+    r"Theexperiment|tookplace|Thisarearepresented|hadtobeencoded|"
     r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional|"
     r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
     r"UFrecorded|SUFestimated|SUFdetermined|MRsafe|MRcompatible|"
@@ -289,7 +294,9 @@ FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
     r"also\s+and\s+the\s+Committee[\s\S]{0,2000}?require\s+evaluation|"
     r"trigger\s+global\s+projection\s+targets[\s\S]{0,2000}?"
     r"innate\s+or\s+adaptive\s+immune\s+responses|"
-    r"systemic\s+circulation[\s\S]{0,3000}?\(with\s+some\s+serotypes\s+more\s+likely\s+to\s+leak",
+    r"systemic\s+circulation[\s\S]{0,1800}?"
+    r"(?:transduced\s+target\s+cells|Human\s+immune\s+responses\s+to\s+AAV)"
+    r"[\s\S]{0,1800}?\(with\s+some\s+serotypes\s+more\s+likely\s+to\s+leak",
     re.IGNORECASE,
 )
 CORRUPT_EMAIL_LABEL_RE = re.compile(r"(?:\b[MmSs]e-mail:|[\u25a1\ufffd]\s*S?e-mail:)")
@@ -428,6 +435,17 @@ DETACHED_ACCENT_RE = re.compile(
 TABLE_SECTION_ABSORB_RE = re.compile(
     r"\bTable\s+3\.1:[\s\S]{0,3000}\b3\.8\.\s+Data\s+Acquisition"
     r"[\s\S]{0,3000}\b3\.9\.\s+Criteria\s+for\s+Use\s+of\s+Data\b",
+    re.IGNORECASE,
+)
+NUMERIC_VALUE_ROW_RE = re.compile(
+    r"^\s*(?:[-+]?\d+(?:\.\d+)?\s+){3,}[-+]?\d+(?:\.\d+)?\s*$"
+)
+REFERENCE_BIBLIOGRAPHIC_SIGNAL_RE = re.compile(
+    r"https?://|\bdoi\b|\b(?:pmid|arxiv|isbn)\b|"
+    r"\b(?:19|20)\d{2}\b|"
+    r"\b(?:journal|proceedings|conference|press|vol\.?|volume|pp\.?|pages?|"
+    r"IEEE|ACM|Springer|Elsevier|Nature|Science|JAMA|Lancet|Urol|Ophthalmol|"
+    r"Neurourol|Eur\s+J|Int\s+J)\b",
     re.IGNORECASE,
 )
 INTRA_WORD_SPACE_RE = re.compile(
@@ -590,7 +608,23 @@ FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
     r"[\s\S]{0,1600}\bThe\s+4-array\s+spatial\s+distribution\b|"
     r"\bdifferent\s+spatiovectors\s+extracted\s+from\s+2\s+s[\s\S]{0,1200}"
     r"\bSource\s+data\s+are\s+provided[\s\S]{0,300}\bPanel\s+a\b|"
-    r"\bCorrespondence\s+Author\s+participants\s+were\s+asked\s+to\s+complete\b",
+    r"\bCorrespondence\s+Author\s+participants\s+were\s+asked\s+to\s+complete\b|"
+    r"\bCompeting\s+interest:\s+See\s+page\s+\d+\s+of\s+the\s+Creative\s+Commons\s+Attribution\s+License\b",
+    re.IGNORECASE,
+)
+FLOAT_OR_METADATA_INTRUSION_MARKER_RE = re.compile(
+    r"\b(?:"
+    r"Fig(?:ure)?\.?|Figure|Table|Box|Panel\s+[a-z]|"
+    r"Strengths?\s+and\s+limitations?|Main\s+Points?|"
+    r"Review\s+Article|Source\s+data|"
+    r"From\s+the|Accepted\s+for\s+publication|Read\s+at\s+(?:the\s+)?annual\s+meeting|"
+    r"Supported\s+by|Department|University|Author(?:s?'?\s+addresses)?|"
+    r"Correspondence|Competing\s+Interests?|Creative\s+Commons|Permission|Copyright|DOI|"
+    r"john\.[A-Za-z0-9._%+-]+@|https?://|www\."
+    r")\b|"
+    r"\bas\s+well\s+as\s+The\s+temporal\s+characteristics\b|"
+    r"\bsmall\s+animals\s+imaging\s+In\s+summary\b|"
+    r"\b\[071\]\s+This\b",
     re.IGNORECASE,
 )
 ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
@@ -722,6 +756,10 @@ IMMEDIATE_EXTERNAL_FIGURE_CAPTION_RE = re.compile(
     r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>(?P<body>.*?)</p>",
     re.IGNORECASE | re.DOTALL,
 )
+FIGURE_CAPTION_NODE_RE = re.compile(
+    r"<(?:p|h[1-6])\b(?=[^>]*\bz2m-figure-caption\b)[^>]*>(?P<body>.*?)</(?:p|h[1-6])>",
+    re.IGNORECASE | re.DOTALL,
+)
 TABLE_DOI_APPEND_RE = re.compile(
     r"https?://doi\.org/10\.[^\s<]+\.t\d+\s+"
     r"(?P<tail>(?:[a-z]|\(?[a-z])[\s\S]{20,220})",
@@ -829,9 +867,22 @@ COMMA_DECIMAL_REF_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<right>\d{1,3})['\"][^>]*>\s*(?P=right)\s*</a>",
     re.IGNORECASE,
 )
-VISIBLE_FIGURE_REF_RE = re.compile(r"\b(?:Fig\.?|Figure)\s+(?P<num>\d{1,3})(?P<letter>[A-Z])?\b")
+VISIBLE_FIGURE_REF_RE = re.compile(
+    r"\b(?P<supp>(?:Supplementary|Supplemental|Suppl\.?)\s+)?"
+    r"(?:Fig\.?|Figure)\s+"
+    r"(?P<num>(?:S\s*)?\d{1,3}"
+    r"(?:\s*(?:[\-\u2010-\u2014]\s*\d{1,3}|\.\s*(?:\d{1,2}(?!\d)|\d{3}(?!\s+[A-Za-z]))))*)"
+    r"(?P<letter>[A-Z])?\b",
+    re.IGNORECASE,
+)
 FIGURE_LABEL_TEXT_RE = re.compile(
-    r"\b(?:Fig(?:ure)?\.?|Figure)\s+(?P<label>\d+(?:\s*[.\-\u2010-\u2014]\s*\d+)*[A-Za-z]?)\b",
+    r"\b(?:Fig(?:ure)?\.?|Figure)\s+"
+    r"(?P<label>\d+[A-Za-z]?|\d+(?:\s*[.\-\u2010-\u2014]\s*\d+(?!\s*[A-Za-z]))+)\b",
+    re.IGNORECASE,
+)
+SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
+    r"^\s*(?:Supplementary|Supplemental|Suppl\.?)\s+"
+    r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
     re.IGNORECASE,
 )
 MISSING_FIGURE_WARNING_BLOCK_RE = re.compile(
@@ -859,12 +910,22 @@ STAT_NUMERIC_CONTEXT_RE = re.compile(
 )
 MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE = re.compile(
     r"(?:\\\[|\\\(|"
-    r"\b(?:anova|array|class|classes|coordinate|coordinates|equation|eq\.?|"
-    r"formula|glm|heatmap|interval|likelihood|matrix|median|parameter|"
+    r"\b(?:anova|array|arrays|class|classes|coordinate|coordinates|equation|eq\.?|"
+    r"formula|glm|heatmap|interval|intervals|likelihood|matrix|median|parameter|"
     r"parameters|probability|range|scale|score|scores|threshold|vector|"
     r"values?)\b|"
     r"[=<>]|[\u00b0\u03bc\u03c0\u03c3\u03c4\u03a6\u2208\u2211\u2212\u2217"
     r"\u2219\u2223\u223c\u2248\u25e6])",
+    re.IGNORECASE,
+)
+NON_CITATION_BRACKET_RANGE_CONTEXT_RE = re.compile(
+    r"\b(?:amplitude|array|arrays|bounds?|class\s+scores?|coordinate|coordinates|"
+    r"current|dimension|dimensions|electrode\s+values?|feature|heatmap|input|"
+    r"interval|intervals|layer|layers|likelihood|map\s+size|matrix|median|"
+    r"normalization|normalized|output|parameters?|pixel|points?|probability|range|"
+    r"random\s+number|scale|score|scores|sigmoid|starting|STAI|threshold|values?|"
+    r"vector|vectors|VAS)\b|"
+    r"[=<>∈∑]",
     re.IGNORECASE,
 )
 TABLE_CAPTION_ID_RE = re.compile(
@@ -926,6 +987,93 @@ def _normalize_ws(text: str) -> str:
 
 def _strip_tags(fragment: str) -> str:
     return _normalize_ws(unescape(TAG_RE.sub(" ", fragment)))
+
+
+class _UnitDiagnosticTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if self.skip_depth:
+            self.skip_depth += 1
+            return
+
+        attr_map = {name.lower(): value or "" for name, value in attrs}
+        classes = set(attr_map.get("class", "").split())
+        if tag in {"script", "style"} or classes.intersection({"z2m-math", "katex", "katex-html"}):
+            self.skip_depth = 1
+            return
+        self.parts.append(" ")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if not self.skip_depth:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.skip_depth:
+            self.skip_depth -= 1
+            return
+        self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip_depth:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        return _normalize_ws(unescape(" ".join(self.parts)))
+
+
+def _unit_diagnostic_text_from_html(fragment: str) -> str:
+    parser = _UnitDiagnosticTextParser()
+    try:
+        parser.feed(fragment)
+        parser.close()
+    except Exception:
+        return _strip_tags(fragment)
+    return parser.text()
+
+
+def _inline_tex_contains_citation_bracket(tex: str) -> bool:
+    for match in re.finditer(r"\[\s*\d{1,4}\s*\]", tex):
+        prefix = tex[: match.start()]
+        if re.search(r"\\[A-Za-z]+\*?\s*$", prefix):
+            continue
+        return True
+    return False
+
+
+_REFERENCE_BOUNDARY_START_RE = re.compile(
+    r"\b(?P<num>\d{1,4})\.\s+"
+    r"(?P<name>[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,40})"
+)
+
+
+def _bibliography_numbering_residue_is_clean_reference_boundary(
+    polish_html: str,
+    residue: str,
+) -> bool:
+    starts = [
+        (int(match.group("num")), match.group("name"))
+        for match in _REFERENCE_BOUNDARY_START_RE.finditer(residue)
+    ]
+    if not starts:
+        return False
+    for number, name in starts:
+        li_match = re.search(
+            rf"<li\b(?=[^>]*\bid\s*=\s*['\"]ref-{number}['\"])[^>]*>"
+            rf"(?P<body>[\s\S]{{0,1200}}?)</li>",
+            polish_html,
+            re.IGNORECASE,
+        )
+        if li_match is None:
+            return False
+        li_text = _strip_tags(li_match.group("body"))
+        if re.search(rf"\b{number}\.\s+{re.escape(name)}", li_text) is None:
+            return False
+    return True
 
 
 def _line_at(text: str, offset: int) -> int:
@@ -1053,10 +1201,10 @@ def _structure_html(html: str) -> str:
 
 
 def _unit_diagnostic_texts(block: Block) -> list[str]:
-    cells = [_strip_tags(match.group("body")) for match in TABLE_CELL_RE.finditer(block.raw)]
+    cells = [_unit_diagnostic_text_from_html(match.group("body")) for match in TABLE_CELL_RE.finditer(block.raw)]
     if cells:
         return cells
-    return [block.text]
+    return [_unit_diagnostic_text_from_html(block.raw)]
 
 
 def _diagnostic_text(text: str) -> str:
@@ -1294,14 +1442,30 @@ def _has_nearby_image(blocks: list[Block], index: int, *, window: int = 6) -> bo
     return any(block.has_img for block in blocks[start:stop])
 
 
+def _normalize_figure_label_key(label: str) -> str | None:
+    label = re.sub(r"\s+", "", label)
+    label = re.sub(r"[.\-\u2010-\u2014]+", "-", label)
+    return label.strip("-").lower() or None
+
+
 def _figure_label_from_text(text: str) -> str | None:
     match = FIGURE_LABEL_TEXT_RE.search(text)
     if match is None:
         return None
-    label = match.group("label")
-    label = re.sub(r"\s+", "", label)
-    label = re.sub(r"[.\-\u2010-\u2014]+", "-", label)
-    return label.strip("-").lower() or None
+    return _normalize_figure_label_key(match.group("label"))
+
+
+def _figure_label_from_id(value: str) -> str | None:
+    match = re.fullmatch(r"fig-(?P<label>[A-Za-z0-9][A-Za-z0-9.\-\u2010-\u2014]*)", value, re.IGNORECASE)
+    if match is None:
+        return None
+    return _normalize_figure_label_key(match.group("label"))
+
+
+def _figure_unit_label(block: Block) -> str | None:
+    if block.tag != "div" or "z2m-figure-unit" not in block.classes:
+        return None
+    return _figure_label_from_id(block.id)
 
 
 def _nearest_figure_label(
@@ -1322,14 +1486,47 @@ def _nearest_figure_label(
     return None, None
 
 
-def _nearby_image_offsets(blocks: list[Block], index: int, *, window: int = 8) -> list[int]:
-    start = max(0, index - window)
-    stop = min(len(blocks), index + window + 1)
-    return [
-        candidate_index - index
-        for candidate_index in range(start, stop)
-        if candidate_index != index and blocks[candidate_index].has_img
-    ]
+def _nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None = None, window: int = 8) -> list[int]:
+    def _allows_missing_warning_image_scan(block: Block) -> bool:
+        unit_label = _figure_unit_label(block)
+        if label is not None and unit_label is not None and unit_label != label:
+            return False
+        block_label = _figure_label_from_text(block.text)
+        if label is not None and block_label is not None and block_label != label:
+            if (
+                block.id.startswith("fig-")
+                or block.classes & {"z2m-figure-caption", "z2m-figure-target"}
+                or _looks_like_figure_caption(block)
+            ):
+                return False
+        if block.has_img:
+            return True
+        if not block.text.strip():
+            return True
+        if block.classes & {
+            "z2m-missing-figure-warning",
+            "z2m-missing-figure-unit",
+            "z2m-figure-caption",
+            "z2m-figure-target",
+        }:
+            return True
+        if block.tag == "div" and block.classes & {"z2m-float-unit", "z2m-figure-unit"}:
+            return True
+        return block_label is not None
+
+    offsets: list[int] = []
+    for direction in (-1, 1):
+        stop = min(len(blocks), index + window + 1) if direction > 0 else max(-1, index - window - 1)
+        for candidate_index in range(index + direction, stop, direction):
+            block = blocks[candidate_index]
+            if block.has_img:
+                if not _allows_missing_warning_image_scan(block):
+                    break
+                offsets.append(candidate_index - index)
+                continue
+            if not _allows_missing_warning_image_scan(block):
+                break
+    return sorted(offsets)
 
 
 def _find_warning_block_index(blocks: list[Block], warning: Block) -> int | None:
@@ -1354,6 +1551,9 @@ def _classify_missing_figure_warning(
         "figure_label": label,
         "p62_subtype": "unclassified",
     }
+    if warning.attrs.get("data-z2m-origin") == "caption-only-target":
+        extra["quality_counted"] = False
+        extra["warning_origin"] = "caption-only-target"
     if index is None:
         if not any(block.has_img for block in polish_blocks):
             extra["p62_subtype"] = "no_nearby_image"
@@ -1372,7 +1572,7 @@ def _classify_missing_figure_warning(
             "extra": extra,
         }
 
-    image_offsets = _nearby_image_offsets(polish_blocks, index)
+    image_offsets = _nearby_image_offsets(polish_blocks, index, label=label)
     previous_image_offsets = [offset for offset in image_offsets if offset < 0]
     next_image_offsets = [offset for offset in image_offsets if offset > 0]
     previous_label, previous_label_distance = _nearest_figure_label(
@@ -1461,23 +1661,239 @@ def _is_handled_missing_figure_block(block: Block) -> bool:
     )
 
 
+def _ref_match_inside_sentence_final_superscript(raw: str, start: int, end: int) -> bool:
+    sup_open = raw.rfind("<sup", 0, start)
+    if sup_open < 0:
+        return False
+    prior_sup_close = raw.rfind("</sup", 0, start)
+    if prior_sup_close > sup_open:
+        return False
+    sup_close = raw.find("</sup>", end)
+    if sup_close < 0:
+        return False
+    before_text = _strip_tags(raw[max(0, sup_open - 96) : sup_open]).rstrip()
+    if not before_text or before_text[-1] not in ".!?)]":
+        return False
+    sup_body = raw[sup_open : sup_close + len("</sup>")]
+    if not re.search(r'\bhref\s*=\s*["\']#ref-\d+["\']', sup_body, re.IGNORECASE):
+        return False
+    after_text = _strip_tags(raw[sup_close + len("</sup>") : sup_close + len("</sup>") + 96]).lstrip()
+    return not after_text or bool(re.match(r"(?:[A-Z]|\(|\[|,|;|:)", after_text))
+
+
+def _ref_match_inside_author_et_al_citation(raw: str, start: int, end: int) -> bool:
+    left_text = _strip_tags(raw[max(0, start - 96) : start]).rstrip()
+    return re.search(r"\bet\s+al\.?\s*$", left_text, re.IGNORECASE) is not None
+
+
+def _ref_match_is_parenthetical_tail_citation(raw: str, start: int, end: int) -> bool:
+    anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
+    if anchor_end < 0:
+        return False
+    anchor_visible = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
+    if re.fullmatch(r"\)\s*\d{1,4}\s*\.?", anchor_visible) is None:
+        return False
+    right_text = _strip_tags(raw[anchor_end + len("</a>") : anchor_end + len("</a>") + 32]).lstrip()
+    return not right_text or right_text[0] in ".,;)]"
+
+
+def _block_looks_like_author_affiliation_byline(block: Block) -> bool:
+    text = _normalize_ws(block.text)
+    if len(text) > 1200:
+        return False
+    degree_hits = len(re.findall(r"\b(?:M\.D|Ph\.?D|F\.R\.C\.S|B\.Sc|M\.Sc)\.?", text, re.IGNORECASE))
+    short_ref_hits = len(re.findall(r"(?:^|[\s,])\d{1,2}(?=\s|,|$)", text))
+    return degree_hits >= 4 and short_ref_hits >= 4
+
+
+def _block_looks_like_frontmatter_affiliation_table(block: Block) -> bool:
+    if block.tag.lower() != "table" and "z2m-table-unit" not in block.classes:
+        return False
+    text = _normalize_ws(block.text)
+    if not text or len(text) > 2600:
+        return False
+    affiliation_hits = len(
+        re.findall(
+            r"\b(?:department|division|faculty|institute|laboratory|school|university|"
+            r"correspondence|authors?\s+contributed|netherlands|denmark)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    marker_hits = len(re.findall(r"(?:^|[\s,])\d{1,2}(?:,\d{1,2})*(?=\s|,|$)", text))
+    has_author_marker = bool(re.search(r"\b[A-Z][A-Za-z.-]+\s+[A-Z][A-Za-z.-]+\s+\d{1,2}(?:,\d{1,2})?", text))
+    return affiliation_hits >= 2 and marker_hits >= 4 and has_author_marker
+
+
+def _numbered_reference_block_is_likely_non_bibliographic(block: Block) -> bool:
+    if block.id.startswith("ref-"):
+        return False
+    text = _normalize_ws(block.text)
+    if re.match(r"^\s*\d+\.\d+(?:\.\d+)*\b", text):
+        return True
+    if REFERENCE_BIBLIOGRAPHIC_SIGNAL_RE.search(text):
+        return False
+    if re.match(r"^\s*\d+\.\s*\[?(?:optional|required)\]?\s", text, re.IGNORECASE):
+        return True
+    return True
+
+
+def _ref_visible_number_from_anchor(raw: str, start: int, end: int) -> tuple[int | None, int]:
+    anchor_end = raw.find("</a>", end, min(len(raw), end + 200))
+    if anchor_end < 0:
+        return None, end
+    label = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
+    number = _ref_anchor_visible_number(label)
+    return number, anchor_end + len("</a>")
+
+
+def _ref_match_is_month_word_citation(raw: str, start: int, end: int) -> bool:
+    number, anchor_end = _ref_visible_number_from_anchor(raw, start, end)
+    if number is None or number <= 12:
+        return False
+    left_text = _strip_tags(raw[max(0, start - 64) : start]).rstrip()
+    right_text = _strip_tags(raw[anchor_end : anchor_end + 32]).lstrip()
+    return re.search(r"\bmonth\s*$", left_text, re.IGNORECASE) is not None and (
+        not right_text or right_text[0] in ".,;:)]"
+    )
+
+
+def _ref_match_is_measurement_parenthetical_citation(raw: str, start: int, end: int) -> bool:
+    number, anchor_end = _ref_visible_number_from_anchor(raw, start, end)
+    if number is None:
+        return False
+    left_text = _strip_tags(raw[max(0, start - 140) : start])
+    right_text = _strip_tags(raw[anchor_end : anchor_end + 48]).lstrip()
+    if not right_text.startswith(")"):
+        return False
+    left_paren = left_text.rfind("(")
+    right_paren = left_text.rfind(")")
+    if left_paren < 0 or right_paren > left_paren:
+        return False
+    parenthetical = left_text[left_paren:]
+    return bool(re.search(r"(?:%|mL\s*/\s*s|mL\s+s|mmHg|cmH2O|L\s*/\s*s)", parenthetical, re.IGNORECASE))
+
+
+def _ref_match_follows_figure_or_unit_parenthetical_citation(raw: str, start: int, end: int) -> bool:
+    number, anchor_end = _ref_visible_number_from_anchor(raw, start, end)
+    if number is None:
+        return False
+    left_text = _strip_tags(raw[max(0, start - 260) : start]).rstrip()
+    right_text = _strip_tags(raw[anchor_end : anchor_end + 48]).lstrip()
+    if not left_text.endswith(")"):
+        return False
+    if right_text and right_text[0] not in ".,;:)]":
+        return False
+    right_paren = left_text.rfind(")")
+    left_paren = left_text.rfind("(", 0, right_paren)
+    if left_paren < 0:
+        return False
+    parenthetical = left_text[left_paren : right_paren + 1]
+    return bool(
+        re.search(r"\b(?:Fig|Figure)\.?\s*\d", parenthetical, re.IGNORECASE)
+        or re.search(
+            r"(?:%|mL\s*/\s*s|mL\s+s|mmHg|cmH2O|L\s*/\s*s|N\s*m\s*2|"
+            r"(?:u|Вµ|Ој|μ)m\s*2|mm\s*2|cm\s*2)",
+            parenthetical,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _ref_match_inside_animal_human_study_citation(raw: str, start: int, end: int) -> bool:
+    window = _normalize_ws(_strip_tags(raw[max(0, start - 320) : min(len(raw), end + 320)]))
+    return bool(
+        re.search(
+            r"\banimal\s*\d{1,3}\s+and\s+human\s+studies\s+of\s+retinal\s*\d{1,3}"
+            r"(?:\s*,\s*\d{1,3})?\s+and\s+cortical\s*\d{1,3}\s+stimulat\w*",
+            window,
+            re.IGNORECASE,
+        )
+        or re.search(r"\breport\s+\d{1,3}\s+by\s+that\s+group\b", window, re.IGNORECASE)
+    )
+
+
 def _linked_ref_near_non_citation_context(block: Block) -> bool:
+    if _block_looks_like_author_affiliation_byline(block):
+        return False
     for match in REF_LINK_RE.finditer(block.raw):
         if _ref_match_inside_bracketed_numeric_citation(block.raw, match.start(), match.end()):
             continue
+        if _ref_match_inside_sentence_final_superscript(block.raw, match.start(), match.end()):
+            continue
+        if _ref_match_inside_author_et_al_citation(block.raw, match.start(), match.end()):
+            continue
+        if _ref_match_is_parenthetical_tail_citation(block.raw, match.start(), match.end()):
+            continue
+        if _ref_match_is_month_word_citation(block.raw, match.start(), match.end()):
+            continue
+        if _ref_match_is_measurement_parenthetical_citation(block.raw, match.start(), match.end()):
+            continue
+        if _ref_match_follows_figure_or_unit_parenthetical_citation(block.raw, match.start(), match.end()):
+            continue
+        if _ref_match_inside_animal_human_study_citation(block.raw, match.start(), match.end()):
+            continue
         window_raw = block.raw[max(0, match.start() - 48): match.end() + 80]
         window_text = _strip_tags(window_raw)
-        if NONCITATION_CONTEXT_RE.search(window_text) or ML_PER_SECOND_CONTEXT_RE.search(window_text):
+        context_text = re.sub(r"\bD\d-type\b", "D-type", window_text, flags=re.IGNORECASE)
+        if re.search(r"\b[A-Za-z0-9]+-D\d+\s+\d{1,3}\b", context_text):
+            continue
+        if NONCITATION_CONTEXT_RE.search(context_text) or ML_PER_SECOND_CONTEXT_RE.search(context_text):
             return True
     return False
+
+
+def _block_is_float_or_table_context(block: Block) -> bool:
+    if block.id.lower().startswith(("fig-", "table-", "box-")):
+        return True
+    if block.classes & {
+        "z2m-figure-caption",
+        "z2m-figure-unit",
+        "z2m-table-caption",
+        "z2m-table-unit",
+        "z2m-box-caption",
+        "z2m-box-unit",
+        "z2m-missing-figure-warning",
+    }:
+        return True
+    return bool(re.match(r"^\s*(?:TABLE|Table|FIG(?:URE)?|Fig(?:ure)?\.?)\s+\d", block.text))
 
 
 def _reference_target_numbers(html: str) -> set[int]:
     return {int(number) for number in re.findall(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)}
 
 
+def _figure_key_from_visible_number(value: str) -> str:
+    value = re.sub(r"(?i)^s\s+(?=\d)", "s", value.strip())
+    value = re.sub(r"\s*[.\-\u2010-\u2014]\s*", "-", value)
+    return value.strip("-.").lower()
+
+
+def _figure_key_from_visible_match(match: re.Match[str]) -> str:
+    key = _figure_key_from_visible_number(match.group("num"))
+    if match.group("supp"):
+        return f"supplementary-{key}"
+    return key
+
+
+def _is_external_supplementary_figure_ref(match: re.Match[str]) -> bool:
+    key = _figure_key_from_visible_number(match.group("num"))
+    return bool(match.group("supp")) or key.startswith("s")
+
+
+def _is_supplementary_figure_block(block: Block) -> bool:
+    return block.id.lower().startswith("fig-supplementary-") or SUPPLEMENTARY_FIGURE_LABEL_RE.match(block.text) is not None
+
+
+def _figure_target_keys(html: str) -> set[str]:
+    return {
+        key.lower()
+        for key in re.findall(r"\bid\s*=\s*['\"]fig-([A-Za-z0-9-]+)['\"]", html, re.IGNORECASE)
+    }
+
+
 def _figure_target_numbers(html: str) -> set[int]:
-    return {int(number) for number in re.findall(r"\bid\s*=\s*['\"]fig-(\d+)['\"]", html, re.IGNORECASE)}
+    return {int(key) for key in _figure_target_keys(html) if key.isdigit()}
 
 
 def _non_reference_body_blocks(blocks: list[Block]) -> Iterable[Block]:
@@ -1499,19 +1915,19 @@ def _ref_anchor_visible_number(label: str) -> int | None:
     return int(numbers[0])
 
 
-def _has_nearby_fig_link(block: Block, figure_num: str, text_pos: int) -> bool:
+def _has_nearby_fig_link(block: Block, figure_key: str, text_pos: int) -> bool:
     raw_text = _strip_tags(block.raw)
     if text_pos >= len(raw_text):
         raw_window = block.raw
     else:
         raw_window = block.raw[max(0, text_pos - 180) : text_pos + 220]
-    return re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_num)}['\"]", raw_window, re.IGNORECASE) is not None
+    return re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_key)}['\"]", raw_window, re.IGNORECASE) is not None
 
 
 def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -> bool:
     ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
     anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
-    left = raw.rfind("[", max(0, anchor_start - 100), anchor_start)
+    left = raw.rfind("[", max(0, anchor_start - 240), anchor_start)
     if left < 0:
         return False
     right = raw.find("]", end, min(len(raw), end + 160))
@@ -1536,7 +1952,7 @@ def _ref_match_inside_bracketed_numeric_citation(raw: str, start: int, end: int)
         anchor_visible = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
         if re.fullmatch(r"\[\s*\d{1,4}\s*\]\s*\.?", anchor_visible, re.IGNORECASE):
             return True
-    left = raw.rfind("[", max(0, anchor_start - 100), anchor_start)
+    left = raw.rfind("[", max(0, anchor_start - 240), anchor_start)
     if left < 0:
         return False
     right = raw.find("]", end, min(len(raw), end + 160))
@@ -1553,6 +1969,51 @@ def _ref_match_inside_bracketed_numeric_citation(raw: str, start: int, end: int)
     )
 
 
+def _anchor_span_inside_match(raw: str, match: re.Match[str]) -> tuple[int, int]:
+    anchor = REF_ANCHOR_BODY_RE.search(raw[match.start() : match.end()])
+    if anchor is None:
+        return match.start(), match.end()
+    start = match.start() + anchor.start()
+    return start, match.start() + anchor.end()
+
+
+def _looks_like_sample_size_value_ref(raw: str, match: re.Match[str]) -> bool:
+    anchor_start, anchor_end = _anchor_span_inside_match(raw, match)
+    left_text = _strip_tags(raw[max(0, anchor_start - 240) : anchor_start])
+    right_text = _strip_tags(raw[anchor_end : anchor_end + 100]).lstrip()
+    if re.search(
+        r"\bsample\s+size\b[^.;:]{0,160}\b(?:was|were|is|=|:)\s*$",
+        left_text,
+        re.IGNORECASE,
+    ) is None:
+        return False
+    return (
+        not right_text
+        or re.match(
+            r"^(?:[\.,;:)]|to\b|[-\u2010-\u2014]|\d|participants?\b|patients?\b|subjects?\b|controls?\b)",
+            right_text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _looks_like_comma_decimal_stat_ref(raw: str, match: re.Match[str]) -> bool:
+    left_text = _strip_tags(raw[max(0, match.start() - 240) : match.start()])
+    return re.search(
+        r"(?:"
+        r"\beffect\s+size\b[^.;:]{0,140}\b(?:was|were|is|of|=|:)\s*|"
+        r"\ballocation\s+ratio\b[^.;:]{0,180}\b(?:was|were|is|of|=|:|G\*Power)\s*|"
+        r"\bG\*Power\s*|"
+        r"\bCohen(?:'s)?\s*d\s*=?\s*|"
+        r"\blogMAR\s*|"
+        r"\b(?:SD|SEM)\s*=?\s*"
+        r")$",
+        left_text,
+        re.IGNORECASE,
+    ) is not None
+
+
 def _looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
     body = match.group(0).strip()[1:-1]
     numbers = [int(item) for item in re.findall(r"\d+", body)]
@@ -1563,8 +2024,8 @@ def _looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
     left = text[max(0, match.start() - 100): match.start()].lower()
     return bool(
         re.search(
-            r"\b(?:vector|vectors|assignment|assignments|likelihood|likelihoods|"
-            r"score|scores|class|classes|elements|normalized|dividing)\b",
+            r"\b(?:vector|vectors|array|arrays|assignment|assignments|interval|intervals|"
+            r"likelihood|likelihoods|score|scores|class|classes|elements|normalized|dividing)\b",
             left,
         )
     )
@@ -1581,6 +2042,46 @@ def _looks_like_math_or_measurement_range(text: str, match: re.Match[str]) -> bo
     return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(window) is not None
 
 
+def _plain_bracket_range_is_likely_non_citation_math_or_measurement(text: str, match: re.Match[str]) -> bool:
+    body = match.group(0)
+    numbers = [int(value) for value in re.findall(r"\d+", body)]
+    if not numbers:
+        return False
+    left = text[max(0, match.start() - 80) : match.start()]
+    if re.search(
+        r"\b(?:prior|previous|related|reported|study|studies|work|works|literature|"
+        r"references?|refs?)\s*$",
+        left,
+        re.IGNORECASE,
+    ):
+        return False
+    right = text[match.end() : match.end() + 80]
+    window = text[max(0, match.start() - 180) : min(len(text), match.end() + 180)]
+    if any(number == 0 for number in numbers):
+        return True
+    if re.match(r"\s*(?:%|[munpµμ]?A|[munpµμ]?m|V|Hz|s|ms|kg|N)\b", right):
+        return True
+    if re.search(r"\b(?:map\s+size|starting|ending|points?)\b", window, re.IGNORECASE):
+        return True
+    if len(numbers) >= 3 and NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(window):
+        return True
+    return (
+        NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(window) is not None
+        and _looks_like_math_or_measurement_range(text, match)
+    )
+
+
+def _plain_bracket_range_is_likely_non_citation_table_text(text: str, match: re.Match[str]) -> bool:
+    body = match.group(0)
+    if re.fullmatch(r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body):
+        return True
+    window = text[max(0, match.start() - 220) : min(len(text), match.end() + 220)]
+    return bool(
+        re.search(r"\b(?:search\s+statement|set\s+number|concept|ti,\s*ab|exp\s+OR)\b", window, re.IGNORECASE)
+        and re.search(r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body)
+    )
+
+
 def _block_looks_like_math_or_measurement_range_context(block: Block) -> bool:
     text = block.text
     if STAT_NUMERIC_CONTEXT_RE.search(text):
@@ -1588,6 +2089,30 @@ def _block_looks_like_math_or_measurement_range_context(block: Block) -> bool:
     if re.search(r"\[\s*(?:0|[-\u2212])", text):
         return True
     return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(text) is not None
+
+
+def _looks_like_table_flattened_citation_context(text: str) -> bool:
+    if len(re.findall(r"\bet\s+al\.?\s*\d{1,3}\b", text, re.IGNORECASE)) < 2:
+        return False
+    return re.search(
+        r"\b(?:algorithm|category|curve|descriptors|efficiency|flow\s+rate|"
+        r"indicator|normal|compressive|constrictive|precision|recall|"
+        r"roc|score|smooth|tower-shaped)\b",
+        text,
+        re.IGNORECASE,
+    ) is not None
+
+
+def _flattened_sup_match_is_joined_figure_label(match: re.Match[str]) -> bool:
+    return re.match(r"\b[A-Za-z]*(?:fig|figure)\.\d{1,3}\b", match.group(0), re.IGNORECASE) is not None
+
+
+def _flattened_sup_match_is_doi_or_url_fragment(text: str, match: re.Match[str]) -> bool:
+    window = text[max(0, match.start() - 180) : min(len(text), match.end() + 120)]
+    return bool(
+        re.search(r"https?://(?:dx\.)?doi\.org/10\.\d{4,9}/", window, re.IGNORECASE)
+        or re.search(r"\bdoi\s*:?\s*10\.\d{4,9}/", window, re.IGNORECASE)
+    )
 
 
 def _looks_like_software_version_context(text: str, start: int) -> bool:
@@ -1643,7 +2168,23 @@ def _unlinked_citation_range_kind(block: Block) -> str:
     has_sup_range = _has_unlinked_sup_numeric_range(block)
     if not has_plain_range and not has_vector_range and not has_tagged_range and not has_sup_range:
         return ""
+    if (
+        has_unlinked_plain_match
+        and not has_sup_range
+        and match is not None
+        and _plain_bracket_range_is_likely_non_citation_math_or_measurement(block.text, match)
+    ):
+        return ""
     if _looks_like_float_or_caption(block):
+        if _block_looks_like_frontmatter_affiliation_table(block):
+            return ""
+        if (
+            has_unlinked_plain_match
+            and not has_sup_range
+            and match is not None
+            and _plain_bracket_range_is_likely_non_citation_table_text(block.text, match)
+        ):
+            return ""
         return "float"
     if (
         has_vector_range
@@ -1654,17 +2195,131 @@ def _unlinked_citation_range_kind(block: Block) -> str:
     return "body"
 
 
+def _unlinked_citation_candidate_numbers(block: Block) -> list[int]:
+    match = CITATION_RANGE_LIST_RE.search(block.text)
+    if match is not None:
+        return [int(value) for value in re.findall(r"\d+", match.group(0))]
+    for sup_match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
+        if "z2m-ref-link" not in sup_match.group(0):
+            return [int(value) for value in re.findall(r"\d+", sup_match.group("body"))]
+    for tagged_match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):
+        body = tagged_match.group("body")
+        if "<" not in body or "z2m-ref-link" in body:
+            continue
+        visible = _strip_tags(body)
+        if CITATION_RANGE_LIST_RE.fullmatch(f"[{visible}]") is not None:
+            return [int(value) for value in re.findall(r"\d+", visible)]
+    return []
+
+
+def _looks_like_figure_prose_reference_text(text: str) -> bool:
+    figure_label = (
+        r"(?:\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z](?:\s*,\s*[A-Za-z])?)?|"
+        r"\d+\s*\([A-Za-z]\))"
+    )
+    if re.match(
+        rf"^\s*(?:Figure|Fig\.?|FIGURE)\s+{figure_label}\s*(?:[,.;:]\s*)?"
+        r"(?:visually\s+)?(?:provides?|depicts?|is|are|was|were|demonstrates?|summari[sz]es?|"
+        r"shows?|showcases?|illustrates?|represents?|presents?|plots?|visuali[sz]es?|displays?|"
+        r"maps?|describes?|examines?|suggests?|validates?|details?|exemplif(?:y|ies)|reveals?|"
+        r"highlights?|contrasts?|compares?)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        rf"^\s*(?:Figure|Fig\.?|FIGURE)\s+{figure_label}\s*"
+        r"\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
+        r"same|both|all|main|inset|side|front|back|first|second|third)"
+        r"[\s\S]{0,80}\)\s+"
+        r"(?:provides?|depicts?|is|are|shows?|illustrates?|represents?|presents?)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    label_hits = re.findall(r"\b(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE)
+    if len(label_hits) >= 2 and re.search(r"\b\d{1,4}\s+(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE):
+        return True
+    if re.fullmatch(r"\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z])?\s*\.?\s*", text, re.IGNORECASE):
+        return True
+    return False
+
+
 def _looks_like_figure_caption(block: Block) -> bool:
     if block.id.startswith("fig-"):
         return True
     if FIG_CAPTION_RE.match(block.text) is None:
         return False
+    if not (block.classes & {"z2m-figure-caption", "z2m-figure-target"}) and _looks_like_figure_prose_reference_text(block.text):
+        return False
+    if re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+\s*"
+        r"\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
+        r"same|both|all|main|inset|side|front|back|first|second|third)"
+        r"(?:\s+(?:and|or|/)?\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
+        r"same|both|all|main|inset|side|front|back|first|second|third|panels?|panel|plots?|plot|images?|image))*"
+        r"\s*\)\s+"
+        r"(?:shows?|depicts?|illustrates?|examines?|suggests?|indicates?|presents?|represents?|validates?|details?|exemplif(?:y|ies))\b",
+        block.text,
+        re.IGNORECASE,
+    ):
+        return False
+    if re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\s*[\-\u2010-\u2014]\s*(?:\d+\s*)?[A-Za-z]\s+"
+        r"(?:shows?|depicts?|illustrates?|examines?|suggests?|indicates?|presents?|represents?|validates?|details?|exemplif(?:y|ies))\b",
+        block.text,
+        re.IGNORECASE,
+    ):
+        return False
     return re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?(?:\s*\([A-Za-z]\))?\s+"
-        r"(?:shows|showed|illustrates|presents|contains)\b",
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?\s+"
+        r"(?:shows|showed|showcases|illustrates|presents|contains|plots|visualizes|visualises|"
+        r"displays|maps|describes|examines|suggests|validates|details|exemplifies|represents|reveals|highlights)\b",
+        block.text,
+        re.IGNORECASE,
+    ) is None and re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?"
+        r"\s+(?:and|or|,|&)\s+[A-Za-z]\s+(?:shows?|depicts?|illustrates?|examines?|suggests?|validates?|details?|exemplif(?:y|ies))\b",
         block.text,
         re.IGNORECASE,
     ) is None
+
+
+def _figure_caption_number_from_caption_node(raw_body: str) -> int | None:
+    text = _strip_tags(raw_body)
+    match = re.match(r"\s*(?:Fig\.?|Figure|FIGURE)\s+(\d+)\b(?P<tail>[\s\S]*)$", text, re.IGNORECASE)
+    if match is None:
+        return None
+    tail = match.group("tail").lstrip()
+    if not tail or tail[:1] not in ".:|-":
+        return None
+    return int(match.group(1))
+
+
+def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelated: list[int]) -> bool:
+    if not unrelated:
+        return False
+    if len(re.findall(r"<img\b", body, re.IGNORECASE)) != 1:
+        return False
+    float_alias_nums = {
+        int(number)
+        for number in re.findall(
+            r"<span\b(?=[^>]*\bz2m-float-alias\b)[^>]*\bid\s*=\s*['\"]fig-(\d+)['\"]",
+            body,
+            re.IGNORECASE,
+        )
+    }
+    caption_nums = {
+        number
+        for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
+        for number in [_figure_caption_number_from_caption_node(caption_match.group("body"))]
+        if number is not None
+    }
+    expected = set(unrelated)
+    if not expected.issubset(float_alias_nums) or not expected.issubset(caption_nums):
+        return False
+    all_caption_nums = sorted(caption_nums | {wrapper_num})
+    return all_caption_nums == list(range(min(all_caption_nums), max(all_caption_nums) + 1))
 
 
 def _looks_like_float_or_caption(block: Block) -> bool:
@@ -1716,6 +2371,15 @@ def _ends_like_sentence_fragment(text: str) -> bool:
 def _starts_like_sentence_continuation(text: str) -> bool:
     text = text.strip()
     return bool(re.match(r"^(?:[a-z]|\(?[a-z])", text))
+
+
+def _looks_like_equation_continuation(block: Block) -> bool:
+    if block.block_type.lower() == "equation":
+        return True
+    if "z2m-math-display" in block.raw:
+        return True
+    text = block.text.strip()
+    return bool(re.match(r"^(?:\\[\[(]|[dD]\s*[tTV]\b|[A-Za-z]\s*=)", text))
 
 
 def _page_link_semantic_kind(html: str, match: re.Match[str]) -> str | None:
@@ -1989,7 +2653,9 @@ def _frontmatter_defects(raw_blocks: list[Block], polish_blocks: list[Block]) ->
         body_like = re.search(
             r"\b(?:abstract|introduction|generative artificial intelligence|clinical|methodology|"
             r"papers?|studies|review|museum|gallery|visitors?|participants?|technolog(?:y|ies|ical)|"
-            r"experimental|setup|tools?|toolkit|introduced|reported|developed|implementation)\b",
+            r"experimental|setup|tools?|toolkit|introduced|reported|developed|implementation|"
+            r"behavior|behaviour|records?|measure|measured|larval|zebrafish|swim|swimming|"
+            r"posture|locomotion)\b",
             block.text,
             re.IGNORECASE,
         )
@@ -2049,6 +2715,12 @@ def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
     defects: list[Defect] = []
     references_started = False
     unlinked_range_candidates: dict[str, Block] = {}
+    ref_numbers = {
+        int(match.group(1))
+        for block in polish_blocks
+        for match in (re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE),)
+        if match is not None
+    }
     saw_false_positive = False
     saw_ocr_citation = False
     saw_latex_sup = False
@@ -2112,20 +2784,59 @@ def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
             saw_false_positive = True
     if "body" in unlinked_range_candidates:
         block = unlinked_range_candidates["body"]
-        defects.append(
-            _defect(
-                defect_id="P04",
-                cc_class="CC-02",
-                check="Unlinked body citation range/list remains in polish",
-                severity="error",
-                block=block,
-                snippet=block.text,
-                stage=POLISH_STAGE,
-                hypothesis="Citation grammar misses body ranges, en-dash/hyphen spans, or comma-separated lists.",
-                proposed_fix_layer="EN polish citation parser",
-                regression_test="Link [1-4], [8-10], [11, 12], and mixed body citation list/range forms.",
+        candidate_numbers = _unlinked_citation_candidate_numbers(block)
+        missing_targets = [number for number in candidate_numbers if number not in ref_numbers]
+        if not ref_numbers:
+            defects.append(
+                _defect(
+                    defect_id="P04N",
+                    cc_class="CC-02/CC-13",
+                    check="Citation-like range/list has no bibliography targets to link",
+                    severity="warning",
+                    block=block,
+                    snippet=block.text,
+                    stage=POLISH_STAGE,
+                    hypothesis="Reference heading/list recognition failed, so citation parser cannot create valid #ref links.",
+                    proposed_fix_layer="EN polish bibliography heading and reference-list detection",
+                    regression_test="Citation ranges in articles with no recognized ref targets are classified separately from parser misses.",
+                    extra={"quality_counted": False, "candidate_numbers": candidate_numbers},
+                )
             )
-        )
+        elif candidate_numbers and missing_targets:
+            defects.append(
+                _defect(
+                    defect_id="P04R",
+                    cc_class="CC-02/CC-13",
+                    check="Citation-like range/list refers to missing bibliography targets",
+                    severity="warning",
+                    block=block,
+                    snippet=block.text,
+                    stage=POLISH_STAGE,
+                    hypothesis="Bibliography normalization skipped or merged some target numbers, so citation parser cannot link safely.",
+                    proposed_fix_layer="EN polish bibliography continuation split and reference ID gap repair",
+                    regression_test="Ranges such as [6, 7] remain separate from P04 when ref-6/ref-7 are absent.",
+                    extra={
+                        "quality_counted": False,
+                        "candidate_numbers": candidate_numbers,
+                        "missing_targets": missing_targets,
+                    },
+                )
+            )
+        else:
+            defects.append(
+                _defect(
+                    defect_id="P04",
+                    cc_class="CC-02",
+                    check="Unlinked body citation range/list remains in polish",
+                    severity="error",
+                    block=block,
+                    snippet=block.text,
+                    stage=POLISH_STAGE,
+                    hypothesis="Citation grammar misses body ranges, en-dash/hyphen spans, or comma-separated lists.",
+                    proposed_fix_layer="EN polish citation parser",
+                    regression_test="Link [1-4], [8-10], [11, 12], and mixed body citation list/range forms.",
+                )
+            )
     elif "float" in unlinked_range_candidates:
         block = unlinked_range_candidates["float"]
         defects.append(
@@ -2173,6 +2884,35 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
     saw_duplicate = False
     saw_gap = False
     saw_duplicate_prefix = False
+    saw_embedded_numbered_reference = False
+
+    def _looks_like_embedded_numbered_reference_tail(tail: str) -> bool:
+        text = tail.strip()
+        if len(text) < 18:
+            return False
+        if re.match(
+            r"^(?:The\s+)?[A-Z][A-Za-z0-9&'\u2019().,\- ]{3,90}\.\s+Available\s+online\b",
+            text,
+        ):
+            return True
+        return bool(
+            re.match(
+                r"^[A-Z][A-Za-z\u00c0-\u00ff'\u2019.-]+,\s+(?:[A-Z]|et\s+al\.?\b)",
+                text,
+            )
+            or re.match(
+                r"^[A-Z][A-Za-z\u00c0-\u00ff'\u2019.-]+\s+"
+                r"[A-Z][A-Za-z\u00c0-\u00ff'\u2019.-]+,\s+(?:[A-Z]|et\s+al\.?\b)",
+                text,
+            )
+        )
+
+    def _can_have_embedded_numbered_reference(
+        block: Block, visible_number: int | None, id_number: int | None
+    ) -> bool:
+        if visible_number is not None or id_number is not None:
+            return True
+        return block.attrs.get("data-z2m-audit-nested-ref-item") == "1"
 
     for block in polish_blocks:
         if REFERENCES_HEADING_RE.match(block.text):
@@ -2189,6 +2929,14 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
         visible_number = int(visible_match.group(1)) if visible_match is not None else None
         id_match = REF_ID_RE.match(block.id)
         id_number = int(id_match.group(1)) if id_match is not None else None
+        if id_number is None and NUMERIC_VALUE_ROW_RE.match(block.text):
+            continue
+        if (
+            visible_number is not None
+            and id_number is None
+            and _numbered_reference_block_is_likely_non_bibliographic(block)
+        ):
+            continue
         is_nested_audit_ref = block.attrs.get("data-z2m-audit-nested-ref-item") == "1"
         if id_number is not None:
             if is_nested_audit_ref:
@@ -2216,6 +2964,40 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
                 )
             )
             saw_duplicate_prefix = True
+
+        if not saw_embedded_numbered_reference and _can_have_embedded_numbered_reference(
+            block, visible_number, id_number
+        ):
+            text_without_prefix = VISIBLE_REF_NUM_RE.sub("", block.text, count=1)
+            for embedded_match in EMBEDDED_REF_BOUNDARY_RE.finditer(text_without_prefix):
+                embedded_number = int(embedded_match.group("num"))
+                if embedded_number > 500 or embedded_number in {visible_number, id_number}:
+                    continue
+                if not _looks_like_embedded_numbered_reference_tail(
+                    text_without_prefix[embedded_match.end() :]
+                ):
+                    continue
+                defects.append(
+                    _defect(
+                        defect_id="P26",
+                        cc_class="CC-02/CC-13",
+                        check="Bibliography item contains embedded numbered references",
+                        severity="warning",
+                        block=block,
+                        snippet=block.text,
+                        stage=POLISH_STAGE,
+                        hypothesis="Reference continuation merging swallowed one or more later bibliography entries into an earlier item.",
+                        proposed_fix_layer="EN polish bibliography continuation merge and line-number stripping",
+                        regression_test="Line-number-prefixed bibliography items such as '1161 106. Smith...' remain independent ref-106 entries.",
+                        extra={
+                            "embedded_number": embedded_number,
+                            "id_number": id_number,
+                            "visible_number": visible_number,
+                        },
+                    )
+                )
+                saw_embedded_numbered_reference = True
+                break
 
         if not saw_mismatch and id_number is not None and visible_number is not None and id_number != visible_number:
             defects.append(
@@ -2337,7 +3119,8 @@ def _unit_math_defects(raw_html: str, polish_blocks: list[Block]) -> list[Defect
 
     for block in polish_blocks:
         if MATH_TAG_WITH_CITATION_RE.search(block.raw) or any(
-            re.search(r"\[\d+\]", match.group(1)) for match in INLINE_TEX_RE.finditer(block.raw)
+            _inline_tex_contains_citation_bracket(match.group(1))
+            for match in INLINE_TEX_RE.finditer(block.raw)
         ):
             defects.append(
                 _defect(
@@ -2499,11 +3282,20 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
             )
             break
 
+    figure_id_counts = Counter(
+        match.group("id")
+        for match in re.finditer(r'\bid\s*=\s*(["\'])(?P<id>fig-[^"\']+)\1', polish_html, re.IGNORECASE)
+    )
+
     for block in polish_blocks:
+        if block.tag == "table":
+            continue
         is_figure_caption = _looks_like_figure_caption(block)
         if (
             is_figure_caption
+            and not _is_supplementary_figure_block(block)
             and not _is_handled_missing_figure_block(block)
+            and figure_id_counts.get(block.id, 0) <= 1
             and not _has_nearby_image(polish_blocks, block.index)
             and not _has_nearby_missing_figure_warning(polish_blocks, block.index)
         ):
@@ -2546,6 +3338,10 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
 
     for block in polish_blocks:
         if not block.id.startswith("fig-") or block.has_img:
+            continue
+        if figure_id_counts.get(block.id, 0) > 1:
+            continue
+        if _is_supplementary_figure_block(block):
             continue
         if _is_handled_missing_figure_block(block):
             continue
@@ -2895,6 +3691,8 @@ def _manual_blind_spot_defects(polish_html: str, polish_blocks: list[Block]) -> 
                 break
             if _looks_like_float_note(candidate):
                 continue
+            if _looks_like_equation_continuation(candidate):
+                break
             if candidate.tag == "p" and _starts_like_sentence_continuation(candidate.text):
                 defects.append(
                     _defect(
@@ -2960,7 +3758,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
     slim_html = _structure_html(polish_html)
     plain = _plain_text(slim_html)
     ref_targets = _reference_target_numbers(slim_html)
-    fig_targets = _figure_target_numbers(slim_html)
+    fig_targets = _figure_target_keys(slim_html)
     body_blocks = list(_non_reference_body_blocks(polish_blocks))
 
     for block in body_blocks:
@@ -3256,13 +4054,33 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         break
 
     for block in body_blocks:
+        if _block_is_float_or_table_context(block):
+            continue
         linkless_raw = re.sub(r"<a\b[^>]*>.*?</a>", " ", block.raw, flags=re.IGNORECASE | re.DOTALL)
         linkless_text = _strip_tags(linkless_raw)
         flattened_match = FLATTENED_SUP_CITATION_RE.search(linkless_text)
         if flattened_match is None:
             continue
+        if _flattened_sup_match_is_joined_figure_label(flattened_match):
+            continue
+        if _flattened_sup_match_is_doi_or_url_fragment(linkless_text, flattened_match):
+            continue
+        if (
+            re.search(r"https?://(?:dx\.)?doi\.org/10\.\d{4,9}/", block.raw, re.IGNORECASE)
+            and re.search(r"[A-Za-z]{3,}\.\d", flattened_match.group(0))
+        ):
+            continue
         number = int(flattened_match.group("num"))
         if number not in ref_targets:
+            continue
+        window = linkless_text[max(0, flattened_match.start() - 120) : flattened_match.end() + 160]
+        if not re.search(r"\bet\s+al\.?\s*\d", flattened_match.group(0), re.IGNORECASE):
+            if (
+                MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(window)
+                or _block_looks_like_math_or_measurement_range_context(block)
+            ):
+                continue
+        if _looks_like_table_flattened_citation_context(linkless_text):
             continue
         defects.append(
             _defect(
@@ -3447,16 +4265,15 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             for number in re.findall(r"\bid\s*=\s*['\"]fig-(\d+)['\"]", body, re.IGNORECASE)
         }
         caption_nums = {
-            int(number)
-            for number in re.findall(
-                r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>\s*(?:<a\b[^>]*>\s*)?"
-                r"(?:Fig\.?|Figure)\s+(\d+)\b",
-                body,
-                re.IGNORECASE | re.DOTALL,
-            )
+            number
+            for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
+            for number in [_figure_caption_number_from_caption_node(caption_match.group("body"))]
+            if number is not None
         }
         unrelated = sorted((alias_nums | caption_nums) - {wrapper_num})
         if not unrelated:
+            continue
+        if _figure_unit_allows_shared_image_alias(body, wrapper_num, unrelated):
             continue
         defects.append(
             _defect(
@@ -3518,7 +4335,13 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         if _ref_anchor_visible_number(_strip_tags(match.group("body"))) is not None
         and "<sup" in block.raw[max(0, match.start() - 40) : match.start()].lower()
     )
-    numeric_citation_dominant = numeric_ref_link_count >= 5 and numeric_sup_ref_link_count >= 5
+    numeric_citation_dominant = (
+        numeric_ref_link_count >= 5
+        and numeric_sup_ref_link_count >= 5
+    ) or (
+        numeric_ref_link_count >= 10
+        and numeric_sup_ref_link_count >= 3
+    )
     if author_year_count >= 4 and bracket_citation_count < 4 and not numeric_citation_dominant:
         for block in body_blocks:
             for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
@@ -3553,27 +4376,23 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
     for block in body_blocks:
         comma_match = COMMA_DECIMAL_REF_RE.search(block.raw)
         single_stat_match = SINGLE_STAT_REF_RE.search(block.raw)
-        if comma_match is not None and _ref_match_inside_bracketed_reference_list(
+        if comma_match is not None and _ref_match_inside_bracketed_numeric_citation(
             block.raw,
             comma_match.start(),
             comma_match.end(),
         ):
             comma_match = None
-        if single_stat_match is not None and _ref_match_inside_bracketed_reference_list(
+        if single_stat_match is not None and _ref_match_inside_bracketed_numeric_citation(
             block.raw,
             single_stat_match.start(),
             single_stat_match.end(),
         ):
             single_stat_match = None
         if comma_match is not None:
-            context = _strip_tags(block.raw[max(0, comma_match.start() - 180) : comma_match.end() + 180])
-            if re.search(
-                r"\b(?:effect\s+size|allocation\s+ratio|G\*Power|sample\s+size|"
-                r"statistical\s+power|power\s+analysis|Cohen)\b",
-                context,
-                re.IGNORECASE,
-            ) is None:
+            if not _looks_like_comma_decimal_stat_ref(block.raw, comma_match):
                 comma_match = None
+        if single_stat_match is not None and not _looks_like_sample_size_value_ref(block.raw, single_stat_match):
+            single_stat_match = None
         if comma_match is None and single_stat_match is None:
             continue
         defects.append(
@@ -3597,10 +4416,12 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         if _looks_like_float_or_caption(block):
             continue
         for match in VISIBLE_FIGURE_REF_RE.finditer(block.text):
-            figure_num = int(match.group("num"))
-            if figure_num in fig_targets:
+            figure_key = _figure_key_from_visible_match(match)
+            if _is_external_supplementary_figure_ref(match):
                 continue
-            if _has_nearby_fig_link(block, match.group("num"), match.start()):
+            if figure_key in fig_targets:
+                continue
+            if _has_nearby_fig_link(block, figure_key, match.start()):
                 continue
             defects.append(
                 _defect(
@@ -3614,7 +4435,12 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                     hypothesis="Figure extraction/wrapping did not create targets for all visible figure references.",
                     proposed_fix_layer="EN polish figure target completeness audit",
                     regression_test="References such as Figure 3D, Figure 4A, and Figure 4 report missing targets when no fig-3/fig-4 wrapper exists.",
-                    extra={"figure": figure_num, "visible_label": match.group(0)},
+                    extra={
+                        "figure": figure_key,
+                        "figure_key": figure_key,
+                        "visible_label": match.group(0),
+                        "quality_counted": False,
+                    },
                 )
             )
             break
@@ -3912,16 +4738,26 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
 
-    table_section_absorb_match = TABLE_SECTION_ABSORB_RE.search(plain)
-    if table_section_absorb_match is not None:
+    table_section_absorb_block: Block | None = None
+    table_section_absorb_match: re.Match[str] | None = None
+    for block in polish_blocks:
+        table_section_absorb_match = TABLE_SECTION_ABSORB_RE.search(block.text)
+        if table_section_absorb_match is not None:
+            table_section_absorb_block = block
+            break
+    if table_section_absorb_block is not None and table_section_absorb_match is not None:
         defects.append(
             _defect(
                 defect_id="P77",
                 cc_class="CC-07/CC-11/CC-13",
                 check="Table block absorbs following sections or figure captions",
                 severity="error",
-                block=None,
-                snippet=_snippet(plain, table_section_absorb_match.start(), table_section_absorb_match.end()),
+                block=table_section_absorb_block,
+                snippet=_snippet(
+                    table_section_absorb_block.text,
+                    table_section_absorb_match.start(),
+                    table_section_absorb_match.end(),
+                ),
                 stage=POLISH_STAGE,
                 hypothesis="A table/list extraction block kept reading through subsequent section headings and body paragraphs.",
                 proposed_fix_layer="EN polish table/list boundary and reading-order repair",
@@ -4094,7 +4930,14 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
             )
         )
 
-    float_or_metadata_interruption_match = FLOAT_OR_METADATA_INTERRUPTION_RE.search(plain)
+    float_or_metadata_interruption_match = next(
+        (
+            match
+            for match in FLOAT_OR_METADATA_INTERRUPTION_RE.finditer(plain)
+            if FLOAT_OR_METADATA_INTRUSION_MARKER_RE.search(match.group(0)) is not None
+        ),
+        None,
+    )
     if float_or_metadata_interruption_match is not None:
         defects.append(
             _defect(
@@ -4231,7 +5074,13 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
         )
 
     bibliography_numbering_residue_match = BIBLIOGRAPHY_NUMBERING_RESIDUE_RE.search(plain)
-    if bibliography_numbering_residue_match is not None:
+    if (
+        bibliography_numbering_residue_match is not None
+        and not _bibliography_numbering_residue_is_clean_reference_boundary(
+            polish_html,
+            bibliography_numbering_residue_match.group(0),
+        )
+    ):
         defects.append(
             _defect(
                 defect_id="P90",

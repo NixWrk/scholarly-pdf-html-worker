@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import hashlib
-from html import unescape
+from html import escape, unescape
 import json
 import os
 import re
@@ -37,7 +37,10 @@ from zoteropdf2md.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
 )
-from zoteropdf2md.citation_profile import infer_citation_style_from_text  # noqa: E402
+from zoteropdf2md.citation_profile import (  # noqa: E402
+    extract_reference_entries_from_pdf,
+    infer_citation_style_from_text,
+)
 from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
@@ -47,6 +50,8 @@ DEFAULT_GATE_CONFIG = ROOT / "configs" / "llm_quality_gates.json"
 DEFAULT_DEFECT_PATTERNS = ROOT / "configs" / "llm_defect_patterns.json"
 DEFAULT_PATTERN_HISTORY_NAME = "pattern_observation_history.jsonl"
 DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME = "manual_observation_ledger.jsonl"
+DEFAULT_SOURCE_PDF_MAP_NAME = "source_pdf_map.json"
+DEFAULT_PDF_PROBLEM_EVIDENCE_NAME = "pdf_problem_evidence_report.json"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -63,6 +68,15 @@ MISSING_WARNING_CLASS_RE = re.compile(
 IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
 DATA_Z2M_SRC_RE = re.compile(r"\bdata-z2m-src\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"<[^>]+>")
+BRACKET_NUMERIC_REF_TEXT_RE = re.compile(r"^\[\s*\d+(?:\s*(?:,|;|-|\u2013)\s*\d+)*\s*\]$")
+REFERENCE_NUMBER_BRACKET_RE = re.compile(
+    r"\breference\s+number\s*\[\s*\d+(?:\s*(?:,|;|-|\u2013)\s*\d+)*\s*\]",
+    re.IGNORECASE,
+)
+DATA_AVAILABILITY_CONTEXT_RE = re.compile(
+    r"\b(?:data\s+availability|openly\s+available|available\s+in\s+the|repository|datasets?)\b",
+    re.IGNORECASE,
+)
 
 
 def _slug(value: str, *, max_len: int = 80) -> str:
@@ -151,6 +165,29 @@ def _html_plain_text_for_profile(html: str) -> str:
     return unescape(re.sub(r"\s+", " ", text)).strip()
 
 
+def _visible_html_text(fragment: str) -> str:
+    text = re.sub(r"(?i)<br\s*/?>", " ", fragment)
+    text = TAG_RE.sub(" ", text)
+    return unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+def _is_data_availability_reference_number(ref_match: re.Match[str], html: str) -> bool:
+    body_text = _visible_html_text(ref_match.group("body"))
+    if not BRACKET_NUMERIC_REF_TEXT_RE.fullmatch(body_text):
+        return False
+    prefix = _visible_html_text(html[max(0, ref_match.start() - 700) : ref_match.start()])
+    suffix = _visible_html_text(html[ref_match.end() : min(len(html), ref_match.end() + 160)])
+    near_text = f"{prefix[-500:]} {body_text} {suffix[:160]}"
+    return bool(REFERENCE_NUMBER_BRACKET_RE.search(near_text) and DATA_AVAILABILITY_CONTEXT_RE.search(near_text))
+
+
+def _is_bracket_ref_link_for_style(ref_match: re.Match[str], html: str) -> bool:
+    body_text = _visible_html_text(ref_match.group("body"))
+    if "[" not in body_text or "]" not in body_text:
+        return False
+    return not _is_data_availability_reference_number(ref_match, html)
+
+
 def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, Any]:
     text = _html_plain_text_for_profile(raw_html)
     inferred_style, inferred_confidence, paren_count, bracket_count = infer_citation_style_from_text(text)
@@ -195,7 +232,7 @@ def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict
     bracket_ref_links = sum(
         1
         for ref_match in REF_ANCHOR_RE.finditer(html)
-        if "[" in ref_match.group("body") and "]" in ref_match.group("body")
+        if _is_bracket_ref_link_for_style(ref_match, html)
     )
     return {
         "article": article,
@@ -630,6 +667,318 @@ def _article_source_pdf_candidates(
     return deduped[:12]
 
 
+def write_source_pdf_map_for_run(
+    run_dir: Path,
+    manifest: dict[str, Any] | None = None,
+    *,
+    out_path: Path | None = None,
+) -> dict[str, Any]:
+    """Resolve source PDFs for audit text-layer diagnostics.
+
+    The audit tree often does not contain ``00.source.pdf`` files, while the
+    source run or Zotero storage still has the original PDF.  This map lets
+    ``audit_en_polish.py --pdf-diagnostics`` use those external PDFs.
+    """
+
+    run_dir = run_dir.resolve(strict=False)
+    manifest = manifest or _load_json(run_dir / "manifest.json", default={})
+    out_path = out_path or (run_dir / DEFAULT_SOURCE_PDF_MAP_NAME)
+    records: list[dict[str, Any]] = []
+    mapped: dict[str, dict[str, Any]] = {}
+    for item in manifest.get("articles") or []:
+        if not isinstance(item, dict):
+            continue
+        article = str(item.get("article_id") or item.get("article") or "")
+        if not article:
+            continue
+        candidates = _article_source_pdf_candidates(run_dir, article, {}, item)
+        selected = next((candidate for candidate in candidates if candidate.get("exists")), None)
+        record = {
+            "article": article,
+            "source_article": item.get("article"),
+            "pdf_path": selected.get("path") if selected else "",
+            "source": selected.get("source") if selected else "",
+            "exists": bool(selected),
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+        records.append(record)
+        if selected:
+            mapped[article] = record
+
+    report = {
+        "generated_at": _now(),
+        "run_dir": str(run_dir),
+        "status": "ready" if mapped else "empty",
+        "article_count": len(records),
+        "mapped_count": len(mapped),
+        "unmapped_count": len(records) - len(mapped),
+        "records": records,
+    }
+    _write_json(out_path, report)
+    return report
+
+
+def _pdf_text_pages(pdf_path: Path, *, max_pages: int | None = None) -> tuple[str, list[str], str | None]:
+    if not pdf_path.is_file():
+        return "missing", [], None
+
+    errors: list[str] = []
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            limit = len(doc) if not max_pages or max_pages <= 0 else min(len(doc), max_pages)
+            return "pymupdf", [doc.load_page(index).get_text("text") or "" for index in range(limit)], None
+        finally:
+            doc.close()
+    except ImportError as exc:
+        errors.append(f"pymupdf unavailable: {exc}")
+    except Exception as exc:  # pragma: no cover - PDF/parser specific
+        errors.append(f"pymupdf failed: {exc}")
+
+    try:
+        from pypdf import PdfReader  # type: ignore[import-not-found]
+
+        reader = PdfReader(str(pdf_path))
+        pages = list(reader.pages)
+        limit = len(pages) if not max_pages or max_pages <= 0 else min(len(pages), max_pages)
+        return "pypdf", [pages[index].extract_text() or "" for index in range(limit)], None
+    except ImportError as exc:
+        errors.append(f"pypdf unavailable: {exc}")
+    except Exception as exc:  # pragma: no cover - PDF/parser specific
+        errors.append(f"pypdf failed: {exc}")
+
+    return "unavailable", [], "; ".join(errors)
+
+
+def _tokenize_evidence_text(value: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9]{3,}", unescape(str(value)).casefold())
+        if not token.isdigit()
+    ]
+
+
+def _best_pdf_text_page(snippets: list[str], pages: list[str]) -> tuple[int, float]:
+    if not pages:
+        return 0, 0.0
+    snippet_tokens: set[str] = set()
+    for snippet in snippets:
+        snippet_tokens.update(_tokenize_evidence_text(snippet)[:80])
+    if not snippet_tokens:
+        return 1, 0.0
+
+    best_page = 1
+    best_score = -1.0
+    for index, page_text in enumerate(pages, start=1):
+        page_tokens = set(_tokenize_evidence_text(page_text))
+        if not page_tokens:
+            score = 0.0
+        else:
+            score = len(snippet_tokens & page_tokens) / max(1, len(snippet_tokens))
+        if score > best_score:
+            best_page = index
+            best_score = score
+    return best_page, max(0.0, best_score)
+
+
+def _render_pdf_evidence_page(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float) -> dict[str, Any]:
+    if not pdf_path.is_file():
+        return {"status": "missing_pdf", "path": "", "error": ""}
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            if page_number < 1 or page_number > len(doc):
+                return {
+                    "status": "page_out_of_range",
+                    "path": "",
+                    "error": f"page {page_number} outside 1..{len(doc)}",
+                }
+            page = doc.load_page(page_number - 1)
+            matrix = fitz.Matrix(float(zoom), float(zoom))
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            pixmap.save(str(out_path))
+            return {"status": "rendered", "path": str(out_path), "error": ""}
+        finally:
+            doc.close()
+    except ImportError as exc:
+        return {"status": "renderer_unavailable", "path": "", "error": str(exc)}
+    except Exception as exc:  # pragma: no cover - PDF/render specific
+        return {"status": "render_error", "path": "", "error": str(exc)}
+
+
+def _problem_snippets_for_evidence(article: dict[str, Any]) -> list[str]:
+    snippets: list[str] = []
+    for defect in article.get("defects") or []:
+        if isinstance(defect, dict) and defect.get("snippet"):
+            snippets.append(_compact_observation_text(defect.get("snippet"), max_len=800))
+    comparison = article.get("comparison") if isinstance(article.get("comparison"), dict) else {}
+    if comparison.get("article") and comparison.get("score_delta"):
+        snippets.append(f"comparison regression score_delta={comparison.get('score_delta')}")
+    return [snippet for snippet in snippets if snippet]
+
+
+def _attach_pdf_evidence_to_pack(pack: dict[str, Any], evidence_report: dict[str, Any]) -> dict[str, Any]:
+    evidence_by_article = {
+        str(item.get("article")): item
+        for item in evidence_report.get("articles") or []
+        if isinstance(item, dict) and item.get("article")
+    }
+    for article in pack.get("articles") or []:
+        if isinstance(article, dict):
+            article["pdf_problem_evidence"] = evidence_by_article.get(str(article.get("article")), {})
+    pack["pdf_problem_evidence_stage"] = {
+        "status": evidence_report.get("status"),
+        "report_path": evidence_report.get("report_path"),
+        "evidence_dir": evidence_report.get("evidence_dir"),
+        "selected_count": evidence_report.get("selected_count", 0),
+        "ready_count": evidence_report.get("ready_count", 0),
+        "source_pdf_unavailable_count": evidence_report.get("source_pdf_unavailable_count", 0),
+        "blocking_issue_count": evidence_report.get("blocking_issue_count", 0),
+        "required_checks": evidence_report.get("required_checks", []),
+    }
+    return pack
+
+
+def write_pdf_problem_evidence_stage(
+    run_dir: Path,
+    pack: dict[str, Any],
+    *,
+    gate_config: dict[str, Any] | None = None,
+    out_path: Path | None = None,
+) -> dict[str, Any]:
+    """Create PDF render/text-layer evidence requirements for selected problem articles."""
+
+    gate_config = gate_config or load_gate_config()
+    run_dir = run_dir.resolve(strict=False)
+    out_path = out_path or (run_dir / DEFAULT_PDF_PROBLEM_EVIDENCE_NAME)
+    evidence_dir = run_dir / "pdf_problem_evidence"
+    max_articles = int(gate_config.get("pdf_problem_evidence_max_articles") or 0)
+    selected_articles = list(pack.get("articles") or [])
+    if max_articles > 0:
+        selected_articles = selected_articles[:max_articles]
+    zoom = float(gate_config.get("pdf_problem_evidence_render_zoom") or 1.5)
+    max_pdf_pages = int(gate_config.get("pdf_problem_evidence_max_pdf_pages") or 80)
+    allow_missing_source_pdf = bool(gate_config.get("pdf_problem_evidence_allow_missing_source_pdf", True))
+
+    evidence_articles: list[dict[str, Any]] = []
+    ready_count = 0
+    unavailable_count = 0
+    blocking_issue_count = 0
+
+    for index, article in enumerate(selected_articles, start=1):
+        article_id = str(article.get("article") or f"article_{index}")
+        candidates = list(article.get("source_pdf_candidates") or [])
+        selected_pdf = next((candidate for candidate in candidates if candidate.get("exists")), None)
+        snippets = _problem_snippets_for_evidence(article)
+        article_dir = evidence_dir / f"{index:03d}_{_slug(article_id, max_len=72)}"
+        record: dict[str, Any] = {
+            "article": article_id,
+            "source_article": article.get("source_article"),
+            "status": "source_pdf_unavailable",
+            "source_pdf_available": bool(selected_pdf),
+            "source_pdf_path": selected_pdf.get("path") if selected_pdf else "",
+            "source_pdf_source": selected_pdf.get("source") if selected_pdf else "",
+            "source_pdf_candidate_count": len(candidates),
+            "required_checks": ["source_pdf_page_render", "source_pdf_text_layer"],
+            "problem_snippet_count": len(snippets),
+            "problem_snippets": snippets[:8],
+            "evidence_page": 0,
+            "text_layer_status": "not_run",
+            "text_layer_chars": 0,
+            "text_layer_page_count": 0,
+            "text_layer_page_limit": max_pdf_pages,
+            "text_layer_truncated_to_limit": False,
+            "text_layer_error": "",
+            "text_layer_excerpt_path": "",
+            "page_render_status": "not_run",
+            "page_render_path": "",
+            "page_render_error": "",
+            "match_score": 0.0,
+        }
+        if not selected_pdf:
+            unavailable_count += 1
+            record["unavailable_reason"] = "No existing source PDF candidate was found."
+            if not allow_missing_source_pdf:
+                blocking_issue_count += 1
+            evidence_articles.append(record)
+            continue
+
+        pdf_path = Path(str(selected_pdf.get("path") or "")).expanduser()
+        text_status, pages, text_error = _pdf_text_pages(pdf_path, max_pages=max_pdf_pages)
+        page_number, match_score = _best_pdf_text_page(snippets, pages)
+        if page_number <= 0 and pages:
+            page_number = 1
+        text_excerpt_path = ""
+        if page_number > 0 and pages:
+            text_excerpt_path = str(article_dir / f"page_{page_number:04d}.txt")
+            Path(text_excerpt_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(text_excerpt_path).write_text(pages[page_number - 1], encoding="utf-8", errors="replace")
+        render = (
+            _render_pdf_evidence_page(
+                pdf_path,
+                page_number or 1,
+                article_dir / f"page_{(page_number or 1):04d}.png",
+                zoom=zoom,
+            )
+            if page_number > 0 or pages
+            else {"status": "no_page_to_render", "path": "", "error": "No page text was extracted."}
+        )
+
+        text_chars = sum(len(page_text) for page_text in pages)
+        record.update(
+            {
+                "status": "ready",
+                "evidence_page": page_number,
+                "text_layer_status": text_status,
+                "text_layer_chars": text_chars,
+                "text_layer_page_count": len(pages),
+                "text_layer_page_limit": max_pdf_pages,
+                "text_layer_truncated_to_limit": len(pages) >= max_pdf_pages,
+                "text_layer_error": text_error or "",
+                "text_layer_excerpt_path": text_excerpt_path,
+                "page_render_status": render.get("status"),
+                "page_render_path": render.get("path"),
+                "page_render_error": render.get("error") or "",
+                "match_score": round(float(match_score), 4),
+            }
+        )
+        if text_chars <= 0 or render.get("status") != "rendered":
+            record["status"] = "incomplete"
+            blocking_issue_count += 1
+        else:
+            ready_count += 1
+        evidence_articles.append(record)
+
+    if not selected_articles:
+        status = "not_required"
+    elif blocking_issue_count:
+        status = "incomplete"
+    else:
+        status = "ready"
+    report = {
+        "generated_at": _now(),
+        "run_dir": str(run_dir),
+        "report_path": str(out_path),
+        "evidence_dir": str(evidence_dir),
+        "status": status,
+        "required_checks": ["source_pdf_page_render", "source_pdf_text_layer"],
+        "allow_missing_source_pdf": allow_missing_source_pdf,
+        "selected_count": len(selected_articles),
+        "ready_count": ready_count,
+        "source_pdf_unavailable_count": unavailable_count,
+        "blocking_issue_count": blocking_issue_count,
+        "articles": evidence_articles,
+    }
+    _write_json(out_path, report)
+    return report
+
+
 def _converted_manifest_by_pair(manifest: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     articles: dict[tuple[str, str], dict[str, Any]] = {}
     for article in manifest.get("articles") or []:
@@ -723,6 +1072,76 @@ def _apply_data_image_cache(html: str, image_cache: dict[str, str]) -> tuple[str
         return f"{prefix}{match.group(2)}{data_url}{match.group(4)}"
 
     return IMG_SRC_RE.sub(replace_src, html), replacements
+
+
+def _reference_id_gap_numbers(html: str) -> list[int]:
+    ids = sorted(
+        {
+            int(match.group(1))
+            for match in re.finditer(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)
+        }
+    )
+    if len(ids) < 2:
+        return []
+    gaps: list[int] = []
+    for left, right in zip(ids, ids[1:]):
+        if 0 < right - left <= 25:
+            gaps.extend(range(left + 1, right))
+    return gaps
+
+
+def _profile_has_reference_entries(profile: dict[str, Any]) -> bool:
+    return bool(profile.get("reference_entries"))
+
+
+def _reference_entry_record(entry: Any) -> dict[str, Any]:
+    return {
+        "page": int(getattr(entry, "page", 0) or 0),
+        "number": int(getattr(entry, "number", 0) or 0),
+        "text": str(getattr(entry, "text", "") or ""),
+    }
+
+
+def _enrich_profile_with_pdf_reference_entries_if_needed(
+    profile: dict[str, Any],
+    polished_html: str,
+    source_run_dir: Path,
+    article: str,
+    manifest_article: dict[str, Any],
+    pdf_reference_cache: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, Any], int, str]:
+    if _profile_has_reference_entries(profile):
+        return profile, 0, ""
+    gap_numbers = _reference_id_gap_numbers(polished_html)
+    if not gap_numbers:
+        return profile, 0, ""
+    gap_set = set(gap_numbers)
+    candidates = _article_source_pdf_candidates(source_run_dir, article, {}, manifest_article)
+    for candidate in candidates:
+        if not candidate.get("exists"):
+            continue
+        pdf_path = Path(str(candidate.get("path") or "")).expanduser()
+        if not pdf_path.is_file():
+            continue
+        cache_key = str(pdf_path.resolve(strict=False))
+        if cache_key not in pdf_reference_cache:
+            pdf_reference_cache[cache_key] = [
+                _reference_entry_record(entry)
+                for entry in extract_reference_entries_from_pdf(pdf_path)
+                if getattr(entry, "number", 0) and getattr(entry, "text", "")
+            ]
+        entries = pdf_reference_cache[cache_key]
+        matched = [entry for entry in entries if int(entry.get("number", 0) or 0) in gap_set]
+        if not matched:
+            continue
+        updated = dict(profile)
+        updated["reference_entries"] = entries
+        updated["reference_entries_status"] = "loaded_from_source_pdf_gap_recovery"
+        updated["reference_entries_count"] = len(entries)
+        updated["reference_entries_source_pdf"] = cache_key
+        updated["reference_entries_missing_ids"] = sorted(gap_set)
+        return updated, len(matched), cache_key
+    return profile, 0, ""
 
 
 def _manifest_article_for(manifest: dict[str, Any], article: str) -> dict[str, Any] | None:
@@ -952,6 +1371,10 @@ def repolish_cached_run(
     changed_count = 0
     restored_image_count = 0
     restored_image_source_counts: Counter[str] = Counter()
+    pdf_reference_recovery_count = 0
+    pdf_reference_recovery_source_counts: Counter[str] = Counter()
+    pdf_reference_entries_cache: dict[str, list[dict[str, Any]]] = {}
+    source_manifest = _load_json(source_run_dir / "manifest.json", default={})
 
     try:
         raw_files = sorted(raw_source_dir.glob(f"*.{RAW_STAGE}"))
@@ -973,6 +1396,7 @@ def repolish_cached_run(
 
         for index, raw_path in enumerate(raw_files, start=1):
             article = raw_path.name.removesuffix(f".{RAW_STAGE}")
+            manifest_article = _manifest_article_for(source_manifest, article) or {}
             profile_path = profile_source_dir / f"{article}.citation_profile.json"
             profile = (
                 _load_json(profile_path)
@@ -1025,6 +1449,25 @@ def repolish_cached_run(
                 citation_profile=profile,
                 polish_language=language_decision.selected_polish_language,
             )
+            profile, recovered_pdf_refs, pdf_reference_source = _enrich_profile_with_pdf_reference_entries_if_needed(
+                profile,
+                polished,
+                source_run_dir,
+                article,
+                manifest_article,
+                pdf_reference_entries_cache,
+            )
+            if recovered_pdf_refs:
+                pdf_reference_recovery_count += recovered_pdf_refs
+                pdf_reference_recovery_source_counts[pdf_reference_source] += recovered_pdf_refs
+                _write_json(out_profile, profile)
+                polished = polish_html_document(
+                    raw_html,
+                    table_caption_language="en",
+                    enable_citation_linkify=True,
+                    citation_profile=profile,
+                    polish_language=language_decision.selected_polish_language,
+                )
             data_image_cache, data_image_source = _cached_data_image_cache(source_run_dir, article, raw_html)
             polished, restored_images = _apply_data_image_cache(polished, data_image_cache)
             if restored_images:
@@ -1063,6 +1506,8 @@ def repolish_cached_run(
                     "changed": changed,
                     "restored_images": restored_images,
                     "restored_image_source": data_image_source,
+                    "pdf_reference_recovered": recovered_pdf_refs,
+                    "pdf_reference_source": pdf_reference_source,
                     "language_detection": language_decision.detection.to_dict(),
                     **language_fields,
                 }
@@ -1101,6 +1546,8 @@ def repolish_cached_run(
         "skip_reason_counts": dict(sorted(skip_reason_counts.items())),
         "restored_image_count": restored_image_count,
         "restored_image_source_counts": dict(sorted(restored_image_source_counts.items())),
+        "pdf_reference_recovery_count": pdf_reference_recovery_count,
+        "pdf_reference_recovery_source_counts": dict(sorted(pdf_reference_recovery_source_counts.items())),
         "profile_status_counts": dict(sorted(profile_status_counts.items())),
         "profile_style_counts": dict(sorted(profile_style_counts.items())),
         "articles": articles,
@@ -1136,7 +1583,15 @@ def load_gate_config(path: Path = DEFAULT_GATE_CONFIG) -> dict[str, Any]:
     return _load_json(path)
 
 
-def evaluate_quality_gate(comparison: dict[str, Any], gate_config: dict[str, Any]) -> dict[str, Any]:
+def evaluate_quality_gate(
+    comparison: dict[str, Any],
+    gate_config: dict[str, Any],
+    *,
+    article_review_report: dict[str, Any] | None = None,
+    audit_report: dict[str, Any] | None = None,
+    audit_command_report: dict[str, Any] | None = None,
+    pdf_problem_evidence_report: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     status = str(comparison.get("status") or "")
     if status == "no_previous_entry":
@@ -1184,6 +1639,116 @@ def evaluate_quality_gate(comparison: dict[str, Any], gate_config: dict[str, Any
                     }
                 )
 
+    article_review_summary: dict[str, Any] | None = None
+    if gate_config.get("require_article_review_stage", False):
+        if not isinstance(article_review_report, dict):
+            failures.append(
+                {
+                    "kind": "article_review_stage_missing",
+                    "message": "article_review_report.json was not generated for this run.",
+                }
+            )
+        else:
+            article_review_summary = {
+                "status": article_review_report.get("status"),
+                "review_dir": article_review_report.get("review_dir"),
+                "queue_count": article_review_report.get("queue_count"),
+                "mandatory_count": article_review_report.get("mandatory_count"),
+                "pending_mandatory_count": article_review_report.get("pending_mandatory_count"),
+                "selected_count": article_review_report.get("selected_count"),
+            }
+            if article_review_report.get("status") not in {"ready", "not_required"}:
+                failures.append(
+                    {
+                        "kind": "article_review_stage",
+                        "status": article_review_report.get("status"),
+                        "message": "Article review stage did not finish cleanly.",
+                    }
+                )
+            if gate_config.get("max_pending_mandatory_reviews") is not None:
+                pending_limit = int(gate_config.get("max_pending_mandatory_reviews") or 0)
+                pending = int(article_review_report.get("pending_mandatory_count") or 0)
+                if pending > pending_limit:
+                    failures.append(
+                        {
+                            "kind": "mandatory_review_pending",
+                            "observed": pending,
+                            "limit": pending_limit,
+                        }
+                    )
+
+    audit_pdf_summary: dict[str, Any] | None = None
+    if gate_config.get("require_pdf_text_layer_diagnostics", False):
+        audit_totals = {}
+        if isinstance(audit_report, dict):
+            audit_totals = dict((audit_report.get("corpus_summary") or {}).get("totals") or {})
+        audit_pdf_summary = {
+            "pdf_text_chars": int(audit_totals.get("pdf_text_chars") or 0),
+            "source_pdf_present": int(audit_totals.get("source_pdf_present") or 0),
+            "command_used_pdf_diagnostics": bool(
+                isinstance(audit_command_report, dict)
+                and audit_command_report.get("pdf_diagnostics_enabled")
+            ),
+            "pdf_map_path": (
+                audit_command_report.get("pdf_map_path")
+                if isinstance(audit_command_report, dict)
+                else None
+            ),
+        }
+        if not isinstance(audit_report, dict):
+            failures.append(
+                {
+                    "kind": "pdf_text_layer_diagnostics_missing",
+                    "message": "audit_full_checks.json was not available for PDF text-layer diagnostics validation.",
+                }
+            )
+        elif not audit_pdf_summary["command_used_pdf_diagnostics"]:
+            failures.append(
+                {
+                    "kind": "pdf_text_layer_diagnostics_disabled",
+                    "message": "Audit did not run with --pdf-diagnostics.",
+                }
+            )
+        elif audit_pdf_summary["source_pdf_present"] > 0 and audit_pdf_summary["pdf_text_chars"] <= 0:
+            failures.append(
+                {
+                    "kind": "pdf_text_layer_empty",
+                    "source_pdf_present": audit_pdf_summary["source_pdf_present"],
+                    "pdf_text_chars": audit_pdf_summary["pdf_text_chars"],
+                }
+            )
+
+    pdf_problem_evidence_summary: dict[str, Any] | None = None
+    if gate_config.get("require_pdf_problem_evidence_stage", False):
+        if not isinstance(pdf_problem_evidence_report, dict):
+            failures.append(
+                {
+                    "kind": "pdf_problem_evidence_stage_missing",
+                    "message": "pdf_problem_evidence_report.json was not generated for this run.",
+                }
+            )
+        else:
+            pdf_problem_evidence_summary = {
+                "status": pdf_problem_evidence_report.get("status"),
+                "report_path": pdf_problem_evidence_report.get("report_path"),
+                "evidence_dir": pdf_problem_evidence_report.get("evidence_dir"),
+                "selected_count": pdf_problem_evidence_report.get("selected_count", 0),
+                "ready_count": pdf_problem_evidence_report.get("ready_count", 0),
+                "source_pdf_unavailable_count": pdf_problem_evidence_report.get(
+                    "source_pdf_unavailable_count", 0
+                ),
+                "blocking_issue_count": pdf_problem_evidence_report.get("blocking_issue_count", 0),
+                "required_checks": pdf_problem_evidence_report.get("required_checks", []),
+            }
+            if pdf_problem_evidence_report.get("status") not in {"ready", "not_required"}:
+                failures.append(
+                    {
+                        "kind": "pdf_problem_evidence_stage",
+                        "status": pdf_problem_evidence_report.get("status"),
+                        "blocking_issue_count": pdf_problem_evidence_report.get("blocking_issue_count", 0),
+                    }
+                )
+
     return {
         "generated_at": _now(),
         "status": "fail" if failures else "pass",
@@ -1194,6 +1759,9 @@ def evaluate_quality_gate(comparison: dict[str, Any], gate_config: dict[str, Any
         "comparable_totals_delta": comparable_totals_delta,
         "new_article_count": int(comparison.get("new_article_count") or 0),
         "removed_article_count": int(comparison.get("removed_article_count") or 0),
+        "article_review_stage": article_review_summary,
+        "pdf_text_layer_diagnostics": audit_pdf_summary,
+        "pdf_problem_evidence_stage": pdf_problem_evidence_summary,
     }
 
 
@@ -1204,10 +1772,10 @@ def _defect_summary(defect: dict[str, Any], defect_patterns: dict[str, Any]) -> 
         "id": defect_id,
         "severity": defect.get("severity"),
         "check": defect.get("check"),
-        "snippet": defect.get("snippet"),
-        "hypothesis": defect.get("hypothesis"),
-        "proposed_fix_layer": defect.get("proposed_fix_layer"),
-        "regression_test": defect.get("regression_test"),
+        "snippet": _compact_observation_text(defect.get("snippet")),
+        "hypothesis": _compact_observation_text(defect.get("hypothesis"), max_len=300),
+        "proposed_fix_layer": _compact_observation_text(defect.get("proposed_fix_layer"), max_len=180),
+        "regression_test": _compact_observation_text(defect.get("regression_test"), max_len=240),
         "same_pattern_hits_across_corpus": defect.get("same_pattern_hits_across_corpus"),
         "known_pattern": pattern.get("pattern"),
         "known_criticality": pattern.get("criticality"),
@@ -1222,6 +1790,54 @@ def _comparison_by_article(comparison: dict[str, Any]) -> dict[str, dict[str, An
             if item.get("article"):
                 result[str(item["article"])] = {"bucket": bucket, **item}
     return result
+
+
+def _changed_without_quality_delta_reviews(
+    manifest: dict[str, Any],
+    comparison: dict[str, Any],
+    *,
+    entry_articles: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Articles changed by repolish but not explained by quality deltas.
+
+    These are mandatory sanity-review items: the patch touched the artifact, but
+    the run's targeted audit improvement/regression buckets did not explain the
+    change. They are the highest-risk blind spots for silent link/text drift.
+    """
+
+    deltas = _comparison_by_article(comparison)
+    entry_articles = entry_articles or {}
+    reviews: list[dict[str, Any]] = []
+    for item in manifest.get("articles") or []:
+        if not isinstance(item, dict) or not item.get("changed"):
+            continue
+        article_id = item.get("article_id") or item.get("article")
+        if not article_id:
+            continue
+        article_id = str(article_id)
+        comparison_item = deltas.get(article_id, {})
+        if comparison_item.get("bucket") != "unchanged":
+            continue
+        record = entry_articles.get(article_id, {}) if isinstance(entry_articles, dict) else {}
+        reviews.append(
+            {
+                "article": article_id,
+                "source_article": item.get("article") or article_id,
+                "reason": "changed_without_quality_delta",
+                "review_requirement": (
+                    "Mandatory sanity review: polish output changed, but the article was not in "
+                    "the improvement/regression set for the run."
+                ),
+                "score": record.get("score", 0),
+                "defect_ids": record.get("defect_ids", {}),
+                "comparison": comparison_item,
+                "raw_stage_path": item.get("raw_stage_path") or item.get("raw_cache_path"),
+                "polish_stage_path": item.get("polish_stage_path") or item.get("polish_path"),
+                "profile_path": item.get("profile_path"),
+            }
+        )
+    reviews.sort(key=lambda item: (-float(item.get("score") or 0), str(item.get("article") or "")))
+    return reviews
 
 
 def _defect_id_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
@@ -1645,6 +2261,8 @@ def write_manual_review_queue(
         if isinstance(article, dict) and article.get("article")
     }
     manifest_by_article = _manifest_article_by_id(manifest)
+    comparison = _load_json(run_dir / "quality_compare.json", default={"status": "no_previous_entry"})
+    deltas = _comparison_by_article(comparison)
     previous_state = _review_state_by_key(_existing_queue_items(run_dir / "manual_review_queue.json"))
 
     queue: list[dict[str, Any]] = []
@@ -1680,6 +2298,9 @@ def write_manual_review_queue(
             or assessment_article.get("artifact_hint")
             or manifest_article.get("artifact_hint")
         )
+        changed = bool(manifest_article.get("changed"))
+        comparison_item = deltas.get(article_id, {})
+        mandatory_changed_review = changed and comparison_item.get("bucket") == "unchanged"
         review_state = {}
         for key in (article_id, str(raw_stage_path or ""), str(polish_stage_path or "")):
             if key and key in previous_state:
@@ -1700,6 +2321,12 @@ def write_manual_review_queue(
                 "non_ignored_defect_ids": _defect_id_counts(non_ignored),
                 "severity_counts": _severity_counts(defects),
                 "non_ignored_severity_counts": _severity_counts(non_ignored),
+                "changed": changed,
+                "mandatory_review": mandatory_changed_review,
+                "mandatory_review_reason": (
+                    "changed_without_quality_delta" if mandatory_changed_review else ""
+                ),
+                "comparison_bucket": comparison_item.get("bucket", ""),
                 "raw_stage_path": raw_stage_path,
                 "polish_stage_path": polish_stage_path,
                 **review_state,
@@ -1708,6 +2335,7 @@ def write_manual_review_queue(
 
     queue.sort(
         key=lambda item: (
+            0 if item.get("mandatory_review") else 1,
             -float(item.get("score") or 0),
             -int(item.get("non_ignored_defect_count") or 0),
             -int(item.get("defect_count") or 0),
@@ -1716,6 +2344,209 @@ def write_manual_review_queue(
     )
     _write_json(run_dir / "manual_review_queue.json", queue)
     return queue
+
+
+def _stage_path_for_review(run_dir: Path, value: Any) -> Path | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    if not path.is_absolute():
+        run_candidate = (run_dir / path).resolve(strict=False)
+        if run_candidate.exists():
+            return run_candidate
+        root_candidate = (ROOT / path).resolve(strict=False)
+        if root_candidate.exists():
+            return root_candidate
+        return run_candidate
+    return path.resolve(strict=False)
+
+
+def _review_html_image_search_dirs(stage_path: Path) -> list[Path]:
+    article_dir = _article_dir_from_stage(stage_path)
+    candidates = [
+        stage_path.parent,
+        article_dir,
+        article_dir / "images",
+        article_dir / "figures",
+        article_dir / "assets",
+    ]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(resolved)
+    return deduped
+
+
+def _copy_review_html_with_inline_images(source_path: Path, target_path: Path) -> dict[str, Any]:
+    html = source_path.read_text(encoding="utf-8", errors="replace")
+    search_dirs = _review_html_image_search_dirs(source_path)
+    inlined = 0
+    missing: list[str] = []
+
+    def replace_src(match: re.Match[str]) -> str:
+        nonlocal inlined
+        src = unescape(match.group("src")).strip()
+        if _is_inline_or_remote_src(src):
+            return match.group(0)
+        for candidate in _local_image_candidates_from_dirs(src, search_dirs):
+            if not candidate.is_file():
+                continue
+            data_url = _to_data_url(candidate, detect_by_signature=True, log_func=None)
+            if data_url is None or not _validate_data_url(data_url, candidate):
+                continue
+            inlined += 1
+            prefix = _add_src_hint(match.group(1), src)
+            return f"{prefix}{match.group(2)}{data_url}{match.group(4)}"
+        missing.append(src)
+        return match.group(0)
+
+    copied = IMG_SRC_RE.sub(replace_src, html)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(copied, encoding="utf-8")
+    return {
+        "review_html": str(target_path),
+        "source_html": str(source_path),
+        "inlined_image_count": inlined,
+        "missing_image_count": len(missing),
+        "missing_image_srcs": sorted(set(missing))[:20],
+    }
+
+
+def _relative_review_href(review_dir: Path, target_path: Path) -> str:
+    try:
+        rel = target_path.resolve(strict=False).relative_to(review_dir.resolve(strict=False))
+    except ValueError:
+        rel = target_path.resolve(strict=False)
+    return urllib.parse.quote(str(rel).replace("\\", "/"), safe="/:#?&=%._-")
+
+
+def write_article_review_stage(
+    run_dir: Path,
+    review_queue: list[dict[str, Any]] | None = None,
+    *,
+    max_articles: int | None = None,
+) -> dict[str, Any]:
+    """Build the mandatory changed-article review bundle for a loop run."""
+
+    run_dir = run_dir.resolve(strict=False)
+    review_queue = review_queue if review_queue is not None else _existing_queue_items(run_dir / "manual_review_queue.json")
+    review_dir = run_dir / "article_review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+
+    mandatory_items = [item for item in review_queue if item.get("mandatory_review")]
+    pending_mandatory = [
+        item for item in mandatory_items if str(item.get("review_status") or "pending") == "pending"
+    ]
+    limit = len(mandatory_items) if max_articles is None or int(max_articles) <= 0 else int(max_articles)
+    selected_items = mandatory_items[:limit]
+
+    articles: list[dict[str, Any]] = []
+    copy_errors: list[dict[str, Any]] = []
+    for index, item in enumerate(selected_items, start=1):
+        article = str(item.get("article") or f"article_{index}")
+        source_path = _stage_path_for_review(run_dir, item.get("polish_stage_path"))
+        target_path = review_dir / f"{index:03d}_{_slug(article, max_len=72)}" / POLISH_STAGE
+        copy_info: dict[str, Any] = {}
+        if source_path is not None and source_path.is_file():
+            try:
+                copy_info = _copy_review_html_with_inline_images(source_path, target_path)
+            except Exception as exc:  # pragma: no cover - defensive artifact generation
+                copy_errors.append({"article": article, "polish_stage_path": str(source_path), "error": str(exc)})
+        else:
+            copy_errors.append(
+                {
+                    "article": article,
+                    "polish_stage_path": str(source_path) if source_path is not None else "",
+                    "error": "polish stage file is missing",
+                }
+            )
+
+        articles.append(
+            {
+                "article": article,
+                "source_article": item.get("source_article"),
+                "artifact_hint": item.get("artifact_hint"),
+                "reason": item.get("mandatory_review_reason") or item.get("reason") or "",
+                "review_status": item.get("review_status") or "pending",
+                "review_note": item.get("review_note") or "",
+                "raw_stage_path": item.get("raw_stage_path"),
+                "polish_stage_path": item.get("polish_stage_path"),
+                "review_html": copy_info.get("review_html"),
+                "review_href": (
+                    _relative_review_href(review_dir, Path(str(copy_info["review_html"])))
+                    if copy_info.get("review_html")
+                    else ""
+                ),
+                "inlined_image_count": int(copy_info.get("inlined_image_count") or 0),
+                "missing_image_count": int(copy_info.get("missing_image_count") or 0),
+                "missing_image_srcs": copy_info.get("missing_image_srcs") or [],
+            }
+        )
+
+    index_lines = [
+        "<!doctype html>",
+        '<html><head><meta charset="utf-8">',
+        "<title>Article Review Bundle</title>",
+        "<style>body{font-family:Arial,sans-serif;margin:24px;line-height:1.45}"
+        "table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:6px 8px;vertical-align:top}"
+        "th{background:#f3f5f7;text-align:left}code{font-size:12px}</style>",
+        "</head><body>",
+        "<h1>Article Review Bundle</h1>",
+        f"<p>Mandatory changed articles: {len(mandatory_items)}. Pending: {len(pending_mandatory)}. "
+        f"Included here: {len(articles)}.</p>",
+        "<table><thead><tr><th>#</th><th>Article</th><th>Status</th><th>Reason</th><th>Review HTML</th><th>Stage Path</th></tr></thead><tbody>",
+    ]
+    for index, item in enumerate(articles, start=1):
+        review_link = (
+            f'<a href="{escape(str(item.get("review_href") or ""), quote=True)}">open</a>'
+            if item.get("review_href")
+            else "missing"
+        )
+        index_lines.append(
+            "<tr>"
+            f"<td>{index}</td>"
+            f"<td><code>{escape(str(item.get('article') or ''))}</code></td>"
+            f"<td>{escape(str(item.get('review_status') or ''))}</td>"
+            f"<td>{escape(str(item.get('reason') or ''))}</td>"
+            f"<td>{review_link}</td>"
+            f"<td><code>{escape(str(item.get('polish_stage_path') or ''))}</code></td>"
+            "</tr>"
+        )
+    index_lines.extend(["</tbody></table>", "</body></html>"])
+    index_path = review_dir / "index.html"
+    index_path.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+
+    status = "ready"
+    if not mandatory_items:
+        status = "not_required"
+    elif copy_errors and len(copy_errors) == len(selected_items):
+        status = "error"
+    elif copy_errors:
+        status = "partial"
+
+    report = {
+        "generated_at": _now(),
+        "status": status,
+        "run_dir": str(run_dir),
+        "review_dir": str(review_dir),
+        "index_html": str(index_path),
+        "queue_count": len(review_queue),
+        "mandatory_count": len(mandatory_items),
+        "pending_mandatory_count": len(pending_mandatory),
+        "reviewed_mandatory_count": len(mandatory_items) - len(pending_mandatory),
+        "selected_count": len(articles),
+        "bundle_limit": limit,
+        "copy_error_count": len(copy_errors),
+        "copy_errors": copy_errors[:20],
+        "articles": articles,
+    }
+    _write_json(run_dir / "article_review_report.json", report)
+    return report
 
 
 def write_pattern_observations(
@@ -1846,6 +2677,8 @@ def build_analysis_pack(
     manifest = _load_json(run_dir / "manifest.json", default={})
     pattern_observations = _load_json(run_dir / "pattern_observations.json", default={})
     manual_observations = _load_json(run_dir / "manual_observation_summary.json", default={})
+    article_review_report = _load_json(run_dir / "article_review_report.json", default={})
+    pdf_problem_evidence_report = _load_json(run_dir / DEFAULT_PDF_PROBLEM_EVIDENCE_NAME, default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
     assessment_by_article = {
@@ -1854,6 +2687,11 @@ def build_analysis_pack(
         if article.get("article")
     }
     entry_articles = entry.get("articles") if isinstance(entry.get("articles"), dict) else {}
+    mandatory_changed_reviews = _changed_without_quality_delta_reviews(
+        manifest,
+        comparison,
+        entry_articles=entry_articles,
+    )
 
     candidates: list[dict[str, Any]] = []
     for article in audit.get("articles", []):
@@ -1946,7 +2784,7 @@ def build_analysis_pack(
             }
         )
 
-    return {
+    pack = {
         "generated_at": _now(),
         "run_dir": str(run_dir),
         "run_id": entry.get("run_id") or run_dir.name,
@@ -1969,6 +2807,16 @@ def build_analysis_pack(
         "removed_article_count": comparison.get("removed_article_count", 0),
         "regression_count": len(comparison.get("regressions") or []),
         "improvement_count": len(comparison.get("improvements") or []),
+        "mandatory_changed_review_count": len(mandatory_changed_reviews),
+        "mandatory_changed_review_articles": mandatory_changed_reviews[:50],
+        "article_review_stage": {
+            "status": article_review_report.get("status"),
+            "review_dir": article_review_report.get("review_dir"),
+            "index_html": article_review_report.get("index_html"),
+            "mandatory_count": article_review_report.get("mandatory_count", 0),
+            "pending_mandatory_count": article_review_report.get("pending_mandatory_count", 0),
+            "selected_count": article_review_report.get("selected_count", 0),
+        },
         "audit_defect_counts": audit.get("corpus_summary", {}).get("defect_counts", {}),
         "pattern_observations": {
             "history_path": pattern_observations.get("history_path"),
@@ -1990,6 +2838,9 @@ def build_analysis_pack(
         },
         "articles": articles,
     }
+    if isinstance(pdf_problem_evidence_report, dict) and pdf_problem_evidence_report:
+        _attach_pdf_evidence_to_pack(pack, pdf_problem_evidence_report)
+    return pack
 
 
 def render_llm_prompt(pack: dict[str, Any]) -> str:
@@ -2004,7 +2855,8 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Also add at least one guard/negative test when the repair could touch links, tags, math, code, language policy, or nearby article classes.",
         "Pattern observations must be accumulated globally across loop iterations before local manifestations are promoted into shared problem statements.",
         "Review the all-article current pattern summary and the cumulative pattern history before proposing a fix.",
-        "During problem analysis, render the implicated source PDF page(s) and compare the visual page against raw/polish HTML before classifying the root cause; when stage-local source_pdf_present=false, search the Zotero/source_exports PDF candidates listed in source_pdf_candidates before declaring the PDF unavailable.",
+        "During problem analysis, render the implicated source PDF page(s), extract the PDF text layer for those page(s), and compare both against raw/polish HTML before classifying the root cause; when stage-local source_pdf_present=false, search the Zotero/source_exports PDF candidates listed in source_pdf_candidates before declaring the PDF unavailable.",
+        "A problem classification is incomplete unless it cites source PDF page-render evidence and PDF text-layer evidence, or records that the source PDF/evidence was unavailable.",
         "Any newly noticed manual manifestation that is not already captured by the audit must be recorded in the manual observation ledger before analysis or repair.",
         "Manual observations stay raw until their cumulative groups justify a shared problem statement, except for clearly severe regressions.",
         "For every confirmed manual observation, add or update audit/repair/false-positive test coverage and mark the observation status/test_status.",
@@ -2015,7 +2867,7 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         "Return this structure:",
         "1. Critical findings by article.",
         "2. Cross-article patterns.",
-        "3. PDF page render evidence used, or why it was unavailable.",
+        "3. PDF page render and text-layer evidence used, or why either was unavailable.",
         "4. Patch plan with production file/function targets.",
         "5. Tests to add or update, including the focused artifact regression.",
         "6. Risks and gate checks to rerun.",
@@ -2033,6 +2885,13 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- comparison_status: `{pack.get('comparison_status')}`",
         f"- regression_count: `{pack.get('regression_count')}`",
         f"- improvement_count: `{pack.get('improvement_count')}`",
+        f"- mandatory_changed_review_count: `{pack.get('mandatory_changed_review_count')}`",
+        f"- article_review_status: `{(pack.get('article_review_stage') or {}).get('status')}`",
+        f"- article_review_index: `{(pack.get('article_review_stage') or {}).get('index_html')}`",
+        f"- article_review_pending_mandatory_count: `{(pack.get('article_review_stage') or {}).get('pending_mandatory_count')}`",
+        f"- pdf_problem_evidence_status: `{(pack.get('pdf_problem_evidence_stage') or {}).get('status')}`",
+        f"- pdf_problem_evidence_dir: `{(pack.get('pdf_problem_evidence_stage') or {}).get('evidence_dir')}`",
+        f"- pdf_problem_evidence_blocking_issues: `{(pack.get('pdf_problem_evidence_stage') or {}).get('blocking_issue_count')}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_comparable_totals_delta: `{json.dumps(pack.get('comparison_comparable_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- new_article_count: `{pack.get('new_article_count')}`",
@@ -2043,11 +2902,31 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- manual_observation_ledger_entries: `{(pack.get('manual_observations') or {}).get('ledger_entry_count')}`",
         f"- manual_observation_count: `{(pack.get('manual_observations') or {}).get('observation_count')}`",
         f"- manual_observation_group_count: `{(pack.get('manual_observations') or {}).get('group_count')}`",
-        "",
-        "## Accumulated Pattern Observations",
-        "",
-        "Use these grouped observations before judging any article-local symptom.",
     ]
+    mandatory_changed_reviews = pack.get("mandatory_changed_review_articles") or []
+    if mandatory_changed_reviews:
+        lines.extend(
+            [
+                "",
+                "## Mandatory Changed-Article Review",
+                "",
+                "Articles changed by repolish but absent from improvement/regression buckets must be manually checked before accepting the run.",
+            ]
+        )
+        for item in mandatory_changed_reviews[:12]:
+            lines.append(
+                f"- {item.get('article')}: score={item.get('score')} | "
+                f"defects={json.dumps(item.get('defect_ids', {}), ensure_ascii=False, sort_keys=True)} | "
+                f"raw={item.get('raw_stage_path')} | polish={item.get('polish_stage_path')}"
+            )
+    lines.extend(
+        [
+            "",
+            "## Accumulated Pattern Observations",
+            "",
+            "Use these grouped observations before judging any article-local symptom.",
+        ]
+    )
     pattern_observations = pack.get("pattern_observations") or {}
     problem_candidates = pattern_observations.get("problem_candidates") or []
     if problem_candidates:
@@ -2119,6 +2998,7 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"- source_pdf_present: `{(article.get('audit_summary') or {}).get('source_pdf_present')}`",
                 f"- source_pdf_origin: `{(article.get('audit_summary') or {}).get('source_pdf_origin')}`",
                 f"- source_pdf_candidates: `{json.dumps(article.get('source_pdf_candidates') or [], ensure_ascii=False)}`",
+                f"- pdf_problem_evidence: `{json.dumps(article.get('pdf_problem_evidence') or {}, ensure_ascii=False, sort_keys=True)}`",
                 "- defect snippets:",
             ]
         )
@@ -2153,6 +3033,9 @@ def write_analysis_pack(
         defect_patterns=defect_patterns,
         ignored_defect_ids=ignored_defect_ids,
     )
+    if gate_config.get("require_pdf_problem_evidence_stage", False):
+        evidence_report = write_pdf_problem_evidence_stage(run_dir, pack, gate_config=gate_config)
+        _attach_pdf_evidence_to_pack(pack, evidence_report)
     out_json = out_json or (run_dir / "llm_analysis_pack.json")
     out_prompt = out_prompt or (run_dir / "llm_analysis_prompt.md")
     _write_json(out_json, pack)
@@ -2161,7 +3044,13 @@ def write_analysis_pack(
     return pack
 
 
-def run_audit(run_dir: Path, roots: Iterable[Path] | None = None) -> None:
+def run_audit(
+    run_dir: Path,
+    roots: Iterable[Path] | None = None,
+    *,
+    enable_pdf_diagnostics: bool = False,
+    pdf_map_path: Path | None = None,
+) -> None:
     audit_roots = [root.resolve(strict=False) for root in roots] if roots else [run_dir / "audit_tree"]
     if not audit_roots:
         raise ValueError("No audit roots supplied.")
@@ -2181,6 +3070,10 @@ def run_audit(run_dir: Path, roots: Iterable[Path] | None = None) -> None:
         "--out",
         str(run_dir / "audit_full_checks.json"),
     ]
+    if enable_pdf_diagnostics:
+        command.append("--pdf-diagnostics")
+    if pdf_map_path is not None:
+        command.extend(["--pdf-map", str(pdf_map_path)])
     print(f"Audit started: roots={len(audit_roots)} out={run_dir / 'audit_full_checks.json'}", flush=True)
     run_dir.mkdir(parents=True, exist_ok=True)
     with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
@@ -2215,7 +3108,10 @@ def run_audit(run_dir: Path, roots: Iterable[Path] | None = None) -> None:
     _write_json(
         run_dir / "audit_command_report.json",
         {
+            "command": command,
             "roots": [str(root) for root in audit_roots],
+            "pdf_diagnostics_enabled": enable_pdf_diagnostics,
+            "pdf_map_path": str(pdf_map_path) if pdf_map_path is not None else "",
             "started_at": started,
             "finished_at": _now(),
             "returncode": returncode,
@@ -2299,7 +3195,24 @@ def run_test_command(command: str, run_dir: Path) -> dict[str, Any]:
 def _write_gate_report(run_dir: Path, gate_config_path: Path, out_path: Path | None = None) -> dict[str, Any]:
     comparison = _load_json(run_dir / "quality_compare.json")
     gate_config = load_gate_config(gate_config_path)
-    report = evaluate_quality_gate(comparison, gate_config)
+    article_review_path = run_dir / "article_review_report.json"
+    article_review_report = _load_json(article_review_path) if article_review_path.is_file() else None
+    audit_path = run_dir / "audit_full_checks.json"
+    audit_report = _load_json(audit_path) if audit_path.is_file() else None
+    audit_command_path = run_dir / "audit_command_report.json"
+    audit_command_report = _load_json(audit_command_path) if audit_command_path.is_file() else None
+    pdf_problem_evidence_path = run_dir / DEFAULT_PDF_PROBLEM_EVIDENCE_NAME
+    pdf_problem_evidence_report = (
+        _load_json(pdf_problem_evidence_path) if pdf_problem_evidence_path.is_file() else None
+    )
+    report = evaluate_quality_gate(
+        comparison,
+        gate_config,
+        article_review_report=article_review_report,
+        audit_report=audit_report,
+        audit_command_report=audit_command_report,
+        pdf_problem_evidence_report=pdf_problem_evidence_report,
+    )
     _write_json(out_path or (run_dir / "quality_gate_report.json"), report)
     return report
 
@@ -2347,12 +3260,22 @@ def observe(args: argparse.Namespace) -> int:
         else:
             manifest = prepare_converted_run(converted_roots, run_dir)
             print(f"Prepared converted stage run: articles={manifest['article_count']}")
+    gate_config = load_gate_config(args.gate_config)
     if args.run_tests:
-        gate_config = load_gate_config(args.gate_config)
         run_test_command(args.test_command or gate_config.get("required_test_command") or "python -m pytest -q", run_dir)
     if not args.skip_audit:
         audit_existing_converted = bool(converted_roots and not args.repolish_converted_raw)
-        run_audit(run_dir, roots=converted_roots if audit_existing_converted else None)
+        pdf_map_path: Path | None = None
+        if gate_config.get("require_pdf_text_layer_diagnostics", False):
+            pdf_map_report = write_source_pdf_map_for_run(run_dir, manifest)
+            if int(pdf_map_report.get("mapped_count") or 0) > 0:
+                pdf_map_path = run_dir / DEFAULT_SOURCE_PDF_MAP_NAME
+        run_audit(
+            run_dir,
+            roots=converted_roots if audit_existing_converted else None,
+            enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
+            pdf_map_path=pdf_map_path,
+        )
         if audit_existing_converted:
             normalize_converted_audit_article_ids(run_dir)
     if not args.skip_history:
@@ -2367,6 +3290,16 @@ def observe(args: argparse.Namespace) -> int:
         gate_config_path=args.gate_config,
         ignored_defect_ids=set(args.ignore_defect_id or []),
     )
+    review_bundle_limit = (
+        args.max_review_articles
+        if args.max_review_articles is not None
+        else gate_config.get("article_review_bundle_max_articles")
+    )
+    article_review_report = write_article_review_stage(
+        run_dir,
+        review_queue,
+        max_articles=review_bundle_limit,
+    )
     pattern_observations = write_pattern_observations(
         run_dir,
         defect_patterns_path=args.defect_patterns,
@@ -2376,7 +3309,6 @@ def observe(args: argparse.Namespace) -> int:
         run_dir,
         ledger_path=args.manual_observation_ledger,
     )
-    gate_report = _write_gate_report(run_dir, args.gate_config)
     pack = write_analysis_pack(
         run_dir,
         max_articles=args.max_articles,
@@ -2385,9 +3317,12 @@ def observe(args: argparse.Namespace) -> int:
         ignored_defect_ids=set(args.ignore_defect_id or []),
         manual_observation_ledger=args.manual_observation_ledger,
     )
+    gate_report = _write_gate_report(run_dir, args.gate_config)
     print(
         "LLM quality loop: "
         f"gate={gate_report['status']} review_queue={len(review_queue)} "
+        f"article_review={article_review_report['status']} "
+        f"mandatory_pending={article_review_report['pending_mandatory_count']} "
         f"patterns={pattern_observations['pattern_count']} "
         f"problem_candidates={len(pattern_observations['problem_candidates'])} "
         f"manual_observations={manual_observations['observation_count']} "
@@ -2479,6 +3414,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     )
     observe_parser.add_argument("--ignore-defect-id", action="append")
     observe_parser.add_argument("--max-articles", type=int, default=12)
+    observe_parser.add_argument(
+        "--max-review-articles",
+        type=int,
+        help=(
+            "Maximum mandatory changed articles to copy into article_review/index.html. "
+            "Zero or omission means all mandatory changed articles unless gate config sets a positive limit."
+        ),
+    )
     test_group = observe_parser.add_mutually_exclusive_group()
     test_group.add_argument(
         "--run-tests",

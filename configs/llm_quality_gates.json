@@ -1,6 +1,15 @@
 {
   "description": "Default gates for LLM-assisted EN polish experiments. Metrics listed here are expected to be lower-is-better, so positive deltas fail the gate.",
   "allow_missing_previous": true,
+  "require_article_review_stage": true,
+  "article_review_bundle_max_articles": 0,
+  "max_pending_mandatory_reviews": 0,
+  "require_pdf_text_layer_diagnostics": true,
+  "require_pdf_problem_evidence_stage": true,
+  "pdf_problem_evidence_max_articles": 12,
+  "pdf_problem_evidence_max_pdf_pages": 80,
+  "pdf_problem_evidence_render_zoom": 1.5,
+  "pdf_problem_evidence_allow_missing_source_pdf": true,
   "ignored_defect_ids_for_analysis": ["P13", "P16", "P20", "P61", "P62"],
   "max_regressions": 0,
   "max_total_deltas": {

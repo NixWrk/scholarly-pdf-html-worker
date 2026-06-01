@@ -1,8 +1,10 @@
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
+import scripts.llm_quality_loop as llm_quality_loop
 from scripts.llm_quality_loop import (
     assess_polish_html,
     build_analysis_pack,
@@ -17,6 +19,9 @@ from scripts.llm_quality_loop import (
     render_llm_prompt,
     run_audit,
     run_test_command,
+    write_pdf_problem_evidence_stage,
+    write_source_pdf_map_for_run,
+    write_article_review_stage,
     write_manual_review_queue,
     write_manual_observation_summary,
     write_pattern_observations,
@@ -109,6 +114,149 @@ def test_quality_gate_uses_comparable_totals_when_corpus_changes() -> None:
     assert report["comparable_totals_delta"] == {"score": -1, "defects": 0}
 
 
+def test_quality_gate_requires_article_review_stage_when_configured() -> None:
+    comparison = {
+        "status": "ok",
+        "totals_delta": {"score": 0, "defects": 0},
+        "regressions": [],
+        "improvements": [],
+    }
+    gate_config = {
+        "max_regressions": 0,
+        "max_total_deltas": {"score": 0, "defects": 0},
+        "require_article_review_stage": True,
+    }
+
+    missing_report = evaluate_quality_gate(comparison, gate_config)
+
+    assert missing_report["status"] == "fail"
+    assert {failure["kind"] for failure in missing_report["failures"]} == {"article_review_stage_missing"}
+
+    ready_report = evaluate_quality_gate(
+        comparison,
+        gate_config,
+        article_review_report={
+            "status": "ready",
+            "review_dir": "article_review",
+            "mandatory_count": 2,
+            "pending_mandatory_count": 2,
+            "selected_count": 2,
+        },
+    )
+
+    assert ready_report["status"] == "pass"
+    assert ready_report["article_review_stage"]["pending_mandatory_count"] == 2
+
+
+def test_quality_gate_fails_when_mandatory_article_review_is_pending() -> None:
+    comparison = {
+        "status": "ok",
+        "totals_delta": {"score": 0, "defects": 0},
+        "regressions": [],
+        "improvements": [],
+    }
+    gate_config = {
+        "max_regressions": 0,
+        "max_total_deltas": {"score": 0, "defects": 0},
+        "require_article_review_stage": True,
+        "max_pending_mandatory_reviews": 0,
+    }
+
+    report = evaluate_quality_gate(
+        comparison,
+        gate_config,
+        article_review_report={
+            "status": "ready",
+            "review_dir": "article_review",
+            "mandatory_count": 2,
+            "pending_mandatory_count": 1,
+            "selected_count": 2,
+        },
+    )
+
+    assert report["status"] == "fail"
+    assert {failure["kind"] for failure in report["failures"]} == {"mandatory_review_pending"}
+
+
+def test_quality_gate_requires_pdf_text_and_problem_evidence_when_configured() -> None:
+    comparison = {
+        "status": "ok",
+        "totals_delta": {"score": 0, "defects": 0},
+        "regressions": [],
+        "improvements": [],
+    }
+    gate_config = {
+        "max_regressions": 0,
+        "max_total_deltas": {"score": 0, "defects": 0},
+        "require_pdf_text_layer_diagnostics": True,
+        "require_pdf_problem_evidence_stage": True,
+    }
+
+    missing_report = evaluate_quality_gate(comparison, gate_config)
+
+    assert missing_report["status"] == "fail"
+    assert {
+        "pdf_text_layer_diagnostics_missing",
+        "pdf_problem_evidence_stage_missing",
+    }.issubset({failure["kind"] for failure in missing_report["failures"]})
+
+    ready_report = evaluate_quality_gate(
+        comparison,
+        gate_config,
+        audit_report={
+            "corpus_summary": {"totals": {"source_pdf_present": 2, "pdf_text_chars": 1200}}
+        },
+        audit_command_report={"pdf_diagnostics_enabled": True, "pdf_map_path": "source_pdf_map.json"},
+        pdf_problem_evidence_report={
+            "status": "ready",
+            "report_path": "pdf_problem_evidence_report.json",
+            "evidence_dir": "pdf_problem_evidence",
+            "selected_count": 1,
+            "ready_count": 1,
+            "blocking_issue_count": 0,
+            "required_checks": ["source_pdf_page_render", "source_pdf_text_layer"],
+        },
+    )
+
+    assert ready_report["status"] == "pass"
+    assert ready_report["pdf_text_layer_diagnostics"]["pdf_text_chars"] == 1200
+    assert ready_report["pdf_problem_evidence_stage"]["ready_count"] == 1
+
+
+def test_write_article_review_stage_builds_mandatory_bundle(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    stage_dir = run_dir / "article_a" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / "01.en.raw.html"
+    polish_path = stage_dir / "02.en.polish.html"
+    raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+    polish_path.write_text("<html><body><p>Changed polish.</p></body></html>", encoding="utf-8")
+
+    report = write_article_review_stage(
+        run_dir,
+        [
+            {
+                "article": "article_a",
+                "source_article": "Article A",
+                "mandatory_review": True,
+                "mandatory_review_reason": "changed_without_quality_delta",
+                "review_status": "pending",
+                "raw_stage_path": str(raw_path),
+                "polish_stage_path": str(polish_path),
+            }
+        ],
+        max_articles=0,
+    )
+
+    assert report["status"] == "ready"
+    assert report["mandatory_count"] == 1
+    assert report["pending_mandatory_count"] == 1
+    assert report["selected_count"] == 1
+    assert Path(report["index_html"]).is_file()
+    assert Path(report["articles"][0]["review_html"]).is_file()
+    assert "Changed polish." in Path(report["articles"][0]["review_html"]).read_text(encoding="utf-8")
+
+
 def test_analysis_pack_filters_ignored_defects_and_adds_pattern_metadata(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _write_json(
@@ -189,6 +337,76 @@ def test_analysis_pack_filters_ignored_defects_and_adds_pattern_metadata(tmp_pat
     assert "article_a" in prompt
     assert "text-cleanup" in prompt
     assert "focused artifact regression" in prompt
+
+
+def test_analysis_pack_lists_changed_articles_without_quality_delta(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "corpus_summary": {"defect_counts": {}},
+            "articles": [
+                {
+                    "article": "article_a",
+                    "raw_stage_path": "raw_a.html",
+                    "polish_stage_path": "polish_a.html",
+                    "defects_found": [],
+                },
+                {
+                    "article": "article_b",
+                    "raw_stage_path": "raw_b.html",
+                    "polish_stage_path": "polish_b.html",
+                    "defects_found": [],
+                },
+            ],
+        },
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 2, "totals": {}, "articles": []})
+    _write_json(
+        run_dir / "quality_history_entry.json",
+        {
+            "run_id": "run_changed",
+            "totals": {"score": 5},
+            "articles": {
+                "article_a": {"score": 5, "defect_ids": {"P61": 1}},
+                "article_b": {"score": 2, "defect_ids": {}},
+            },
+        },
+    )
+    _write_json(
+        run_dir / "quality_compare.json",
+        {
+            "status": "ok",
+            "regressions": [],
+            "improvements": [{"article": "article_b", "score_delta": -1}],
+            "unchanged": [{"article": "article_a", "score_delta": 0}],
+        },
+    )
+    _write_json(
+        run_dir / "manifest.json",
+        {
+            "article_count": 2,
+            "articles": [
+                {
+                    "article_id": "article_a",
+                    "article": "Doc A",
+                    "changed": True,
+                    "raw_stage_path": "raw_a.html",
+                    "polish_stage_path": "polish_a.html",
+                },
+                {"article_id": "article_b", "article": "Doc B", "changed": True},
+            ],
+        },
+    )
+
+    pack = build_analysis_pack(run_dir, gate_config={"ignored_defect_ids_for_analysis": []})
+
+    assert pack["mandatory_changed_review_count"] == 1
+    assert pack["mandatory_changed_review_articles"][0]["article"] == "article_a"
+    assert pack["mandatory_changed_review_articles"][0]["reason"] == "changed_without_quality_delta"
+    prompt = render_llm_prompt(pack)
+    assert "Mandatory Changed-Article Review" in prompt
+    assert "article_a" in prompt
 
 
 def test_analysis_pack_adds_zotero_source_pdf_candidates(tmp_path: Path) -> None:
@@ -292,6 +510,74 @@ def test_analysis_pack_falls_back_to_zotero_storage_by_attachment_key(tmp_path: 
     assert candidates[0]["source"] == f"zotero_storage.{attachment_key}"
 
 
+def test_source_pdf_map_resolves_existing_candidates_for_pdf_diagnostics(tmp_path: Path, monkeypatch) -> None:
+    run_dir = tmp_path / "run"
+    zotero_root = tmp_path / "zotero"
+    attachment_key = "KEY12345"
+    article_id = f"Zotero_Elvis_D_{attachment_key}_571527_Article"
+    source_pdf = zotero_root / "Zotero_Elvis_Data" / "storage" / attachment_key / "paper.pdf"
+    source_pdf.parent.mkdir(parents=True)
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv("ZOTERO_PATH_PREFIX_MAP", f"/zotero_roots/pc_zotero={zotero_root}")
+
+    report = write_source_pdf_map_for_run(
+        run_dir,
+        {"articles": [{"article_id": article_id, "article": "Article"}]},
+    )
+
+    assert report["status"] == "ready"
+    assert report["mapped_count"] == 1
+    assert report["records"][0]["pdf_path"] == str(source_pdf.resolve(strict=False))
+    assert (run_dir / "source_pdf_map.json").is_file()
+
+
+def test_pdf_problem_evidence_stage_requires_render_and_text_layer(tmp_path: Path, monkeypatch) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        assert max_pages == 80
+        return "fake", ["First page.", "The PDF text layer has the correct DOI boundary."], None
+
+    def fake_render(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float):
+        assert page_number == 2
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"png")
+        return {"status": "rendered", "path": str(out_path), "error": ""}
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fake_render)
+
+    report = write_pdf_problem_evidence_stage(
+        run_dir,
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "source_pdf_candidates": [{"path": str(source_pdf), "exists": True, "source": "test"}],
+                    "defects": [
+                        {
+                            "id": "P75",
+                            "snippet": "correct DOI boundary",
+                        }
+                    ],
+                }
+            ]
+        },
+        gate_config={"pdf_problem_evidence_max_articles": 12, "pdf_problem_evidence_render_zoom": 1.0},
+    )
+
+    article = report["articles"][0]
+    assert report["status"] == "ready"
+    assert article["status"] == "ready"
+    assert article["evidence_page"] == 2
+    assert article["text_layer_status"] == "fake"
+    assert Path(article["text_layer_excerpt_path"]).is_file()
+    assert Path(article["page_render_path"]).is_file()
+
+
 def test_observe_runs_configured_tests_by_default() -> None:
     args = parse_args(
         [
@@ -300,10 +586,13 @@ def test_observe_runs_configured_tests_by_default() -> None:
             "source_run",
             "--out-dir",
             "out_run",
+            "--max-review-articles",
+            "7",
         ]
     )
 
     assert args.run_tests is True
+    assert args.max_review_articles == 7
 
     args = parse_args(
         [
@@ -355,7 +644,9 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     assert "manual observation ledger" in prompt
     assert "refine the P classification" in prompt
     assert "render the implicated source PDF page" in prompt
-    assert "PDF page render evidence" in prompt
+    assert "extract the PDF text layer" in prompt
+    assert "PDF page render and text-layer evidence" in prompt
+    assert "pdf_problem_evidence_status" in prompt
     assert "source_pdf_candidates" in prompt
     assert "search the Zotero/source_exports PDF candidates" in prompt
 
@@ -545,6 +836,49 @@ def test_assessment_does_not_count_bracket_link_after_unit_sup_as_mixed_style() 
     assert assessment["sup_ref_links"] == 0
     assert assessment["href_counts"]["ref_links"] == 1
     assert assessment["mixed_citation_style"] is False
+
+
+def test_assessment_ignores_data_availability_reference_number_as_mixed_style() -> None:
+    html = (
+        "<html><body>"
+        '<p>The indoor OD dataset<sup><a href="#ref-33" class="z2m-ref-link">33</a></sup> was used.</p>'
+        "<h2>Data availability</h2>"
+        "<p>The data that support the findings of this study are openly available in the Kaggle repository, "
+        'reference number <a href="#ref-33" class="z2m-ref-link">[33]</a>.</p>'
+        '<ol><li id="ref-33">Dataset reference.</li></ol>'
+        "</body></html>"
+    )
+
+    assessment = assess_polish_html(
+        "article_a",
+        html,
+        {"status": "ok", "style": "unknown", "confidence": "low"},
+    )
+
+    assert assessment["sup_ref_links"] == 1
+    assert assessment["bracket_ref_links"] == 0
+    assert assessment["href_counts"]["ref_links"] == 2
+    assert assessment["mixed_citation_style"] is False
+
+
+def test_assessment_counts_inline_bracket_link_as_mixed_style() -> None:
+    html = (
+        "<html><body>"
+        '<p>The indoor OD dataset<sup><a href="#ref-33" class="z2m-ref-link">33</a></sup> was used, '
+        'but a later paragraph cites <a href="#ref-12" class="z2m-ref-link">[12]</a>.</p>'
+        '<ol><li id="ref-12">Reference.</li><li id="ref-33">Dataset reference.</li></ol>'
+        "</body></html>"
+    )
+
+    assessment = assess_polish_html(
+        "article_a",
+        html,
+        {"status": "ok", "style": "unknown", "confidence": "low"},
+    )
+
+    assert assessment["sup_ref_links"] == 1
+    assert assessment["bracket_ref_links"] == 1
+    assert assessment["mixed_citation_style"] is True
 
 
 def test_prepare_converted_run_preserves_duplicate_articles_as_unique_ids(tmp_path: Path) -> None:
@@ -758,6 +1092,59 @@ def test_write_manual_review_queue_keeps_all_artifacts_and_filters_ignored(tmp_p
     assert queue[1]["review_status"] == "pending"
 
 
+def test_write_manual_review_queue_prioritizes_changed_articles_without_quality_delta(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "raw_stage_path": "raw_a.html",
+                    "polish_stage_path": "polish_a.html",
+                    "defects_found": [{"id": "P67", "severity": "warning", "check": "Text residue"}],
+                },
+                {
+                    "article": "article_b",
+                    "raw_stage_path": "raw_b.html",
+                    "polish_stage_path": "polish_b.html",
+                    "defects_found": [{"id": "P67", "severity": "warning", "check": "Text residue"}],
+                },
+            ]
+        },
+    )
+    _write_json(
+        run_dir / "quality_history_entry.json",
+        {"articles": {"article_a": {"score": 1}, "article_b": {"score": 9}}},
+    )
+    _write_json(
+        run_dir / "quality_compare.json",
+        {
+            "status": "ok",
+            "regressions": [],
+            "improvements": [{"article": "article_b", "score_delta": -1}],
+            "unchanged": [{"article": "article_a", "score_delta": 0}],
+        },
+    )
+    _write_json(
+        run_dir / "manifest.json",
+        {
+            "articles": [
+                {"article_id": "article_a", "changed": True},
+                {"article_id": "article_b", "changed": True},
+            ]
+        },
+    )
+
+    queue = write_manual_review_queue(run_dir, gate_config={"ignored_defect_ids_for_analysis": []})
+
+    assert [item["article"] for item in queue] == ["article_a", "article_b"]
+    assert queue[0]["mandatory_review"] is True
+    assert queue[0]["mandatory_review_reason"] == "changed_without_quality_delta"
+    assert queue[0]["comparison_bucket"] == "unchanged"
+    assert queue[1]["mandatory_review"] is False
+
+
 def test_write_pattern_observations_accumulates_across_loop_iterations(tmp_path: Path) -> None:
     history_path = tmp_path / "pattern_history.jsonl"
     defect_patterns = {
@@ -883,6 +1270,69 @@ def test_repolish_cached_run_auto_policy_keeps_en_corpus_only(tmp_path: Path) ->
     assert manifest["skipped_articles"][0]["skip_reason"] == "detected_ru_not_en"
     assert (tmp_path / "run" / "audit_tree" / "en_doc" / "02.en.polish.html").is_file()
     assert not (tmp_path / "run" / "audit_tree" / "ru_doc").exists()
+
+
+def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source"
+    raw_cache = source / "raw_cache"
+    profiles = source / "profiles"
+    raw_cache.mkdir(parents=True)
+    profiles.mkdir(parents=True)
+    pdf_path = tmp_path / "zotero" / "storage" / "NFX7BLRP" / "spotnitz.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    raw_html = (
+        "<html><body>"
+        "<p>This study discusses hernia repair outcomes and cites a randomized trial [158].</p>"
+        "<h4>References</h4><ul>"
+        '<li>[157] C. Schug-Pass, D. A. Jacob, and F. Kockerling, "Biomechanical properties," '
+        "Hernia, vol. 17, pp. 773-777, 2013.</li>"
+        '<li>[159] M. Cambal, P. Zonca, and B. Hrbaty, "Comparison of self-gripping mesh," '
+        "Bratislavske Lekarske Listy, vol. 113, pp. 103-107, 2012.</li>"
+        "</ul></body></html>"
+    )
+    (raw_cache / "spotnitz.01.en.raw.html").write_text(raw_html, encoding="utf-8")
+    _write_json(profiles / "spotnitz.citation_profile.json", {"status": "ok", "style": "unknown", "confidence": "low"})
+    _write_json(
+        source / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article": "spotnitz",
+                    "article_id": "spotnitz",
+                    "source_pdf_path": str(pdf_path),
+                }
+            ]
+        },
+    )
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "extract_reference_entries_from_pdf",
+        lambda _path: [
+            SimpleNamespace(
+                page=24,
+                number=158,
+                text=(
+                    'R. H. Fortelny, A. H. Petter-Puchner, C. May et al., "The impact '
+                    "of atraumatic fibrin sealant vs. staple mesh fixation in TAPP hernia repair "
+                    'on chronic pain and quality of life," Surgical Endoscopy, 2012.'
+                ),
+            )
+        ],
+    )
+
+    manifest = repolish_cached_run(source, tmp_path / "run", polish_language="en")
+    polished = (tmp_path / "run" / "polish" / "spotnitz.02.en.polish.html").read_text(encoding="utf-8")
+    profile = json.loads(
+        (tmp_path / "run" / "profiles" / "spotnitz.citation_profile.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["pdf_reference_recovery_count"] == 1
+    assert manifest["articles"][0]["pdf_reference_recovered"] == 1
+    assert 'id="ref-158"' in polished
+    assert "Fortelny" in polished
+    assert profile["reference_entries_status"] == "loaded_from_source_pdf_gap_recovery"
 
 
 def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) -> None:
