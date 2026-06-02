@@ -1589,6 +1589,18 @@ def _classify_missing_figure_warning(
     if warning.attrs.get("data-z2m-origin") == "caption-only-target":
         extra["quality_counted"] = False
         extra["warning_origin"] = "caption-only-target"
+    if index is not None:
+        context_start = max(0, index - 4)
+        context_stop = min(len(polish_blocks), index + 5)
+        for context_block in polish_blocks[context_start:context_stop]:
+            if not _is_handled_missing_figure_block(context_block):
+                continue
+            unit_label = _figure_unit_label(context_block) or _figure_label_from_text(context_block.text)
+            if label is not None and unit_label is not None and unit_label != label:
+                continue
+            extra["quality_counted"] = False
+            extra.setdefault("warning_origin", "missing-figure-unit")
+            break
     if index is None:
         if not any(block.has_figure_visual for block in polish_blocks):
             extra["p62_subtype"] = "no_nearby_image"
@@ -1661,6 +1673,17 @@ def _classify_missing_figure_warning(
             "proposed_fix_layer": "EN polish figure image/caption association",
             "extra": extra,
         }
+
+    if not image_offsets and (
+        same_next_caption
+        and next_label_distance is not None
+        and next_label_distance <= 2
+        or same_previous_caption
+        and previous_label_distance is not None
+        and previous_label_distance <= 2
+    ):
+        extra["quality_counted"] = False
+        extra.setdefault("warning_origin", "caption-only-caption")
 
     if image_offsets:
         extra["p62_subtype"] = "nearby_image_ambiguous_label"
@@ -5345,12 +5368,45 @@ def find_pairs(roots: Iterable[Path]) -> list[tuple[Path, Path]]:
 def _add_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for article in articles:
+        seen = {
+            defect["id"]
+            for defect in article["defects_found"]
+            if _defect_quality_counted(defect)
+        }
+        for defect_id in seen:
+            counts[defect_id] = counts.get(defect_id, 0) + 1
+    observed_counts = _observed_corpus_hit_counts(articles)
+    for article in articles:
+        for defect in article["defects_found"]:
+            defect_id = defect["id"]
+            defect["same_pattern_hits_across_corpus"] = counts.get(defect_id, 0)
+            defect["same_pattern_observed_hits_across_corpus"] = observed_counts.get(defect_id, 0)
+    return counts
+
+
+def _defect_quality_counted(defect: dict[str, Any]) -> bool:
+    extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+    return extra.get("quality_counted") is not False
+
+
+def _observed_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for article in articles:
         seen = {defect["id"] for defect in article["defects_found"]}
         for defect_id in seen:
             counts[defect_id] = counts.get(defect_id, 0) + 1
-    for article in articles:
-        for defect in article["defects_found"]:
-            defect["same_pattern_hits_across_corpus"] = counts.get(defect["id"], 0)
+    return counts
+
+
+def _non_quality_corpus_hit_counts(
+    observed_counts: dict[str, int],
+    quality_counts: dict[str, int],
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for defect_id, observed_count in observed_counts.items():
+        non_quality_count = observed_count - quality_counts.get(defect_id, 0)
+        if non_quality_count > 0:
+            counts[defect_id] = non_quality_count
     return counts
 
 
@@ -5387,6 +5443,11 @@ def _assemble_report(
         "article_count": len(articles),
         "corpus_summary": {
             "defect_counts": defect_counts,
+            "observed_defect_counts": _observed_corpus_hit_counts(articles),
+            "non_quality_defect_counts": _non_quality_corpus_hit_counts(
+                _observed_corpus_hit_counts(articles),
+                defect_counts,
+            ),
             "totals": _corpus_totals(articles),
         },
         "articles": articles,

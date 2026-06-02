@@ -324,6 +324,87 @@ def test_analyze_pair_marks_caption_only_missing_warning_as_not_quality_counted(
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_marks_handled_missing_figure_unit_as_not_quality_counted() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "handled missing figure unit sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><head><style>:target{outline:1px solid blue}[id^=\"fig-\"]{scroll-margin-top:42vh}</style></head><body>"
+            '<p>See <a href="#fig-2" class="z2m-fig-link">Figure 2</a>.</p>'
+            '<div id="fig-2" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+            '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+            "Figure 2 image was not extracted into this HTML.</p>"
+            '<p class="z2m-figure-caption">Figure 2. Caption survived, but the image did not.</p>'
+            "</div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert len(p62) == 1
+        assert p62[0]["extra"]["quality_counted"] is False
+        assert p62[0]["extra"]["warning_origin"] == "missing-figure-unit"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_marks_adjacent_caption_missing_warning_as_not_quality_counted() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "adjacent missing caption sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<p>The taxonomy is shown in Figure 1.</p>'
+            '<p class="z2m-missing-figure-warning" role="note">'
+            "Figure 1 image was not extracted into this HTML.</p>"
+            "<h4><b>Figure 1. NCC MERP harm score.</b></h4>"
+            "<p>Category A has the capacity to cause error.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        p62 = [defect for defect in result["defects_found"] if defect["id"] == "P62"]
+        assert len(p62) == 1
+        assert p62[0]["extra"]["quality_counted"] is False
+        assert p62[0]["extra"]["warning_origin"] == "caption-only-caption"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_add_corpus_hit_counts_ignores_non_quality_defects() -> None:
+    audit = _load_audit_module()
+    articles = [
+        {
+            "defects_found": [
+                {"id": "P61", "extra": {"quality_counted": False}},
+                {"id": "P62", "extra": {"quality_counted": False}},
+                {"id": "P67", "extra": {}},
+            ]
+        },
+        {"defects_found": [{"id": "P61", "extra": {"quality_counted": False}}]},
+    ]
+
+    counts = audit._add_corpus_hit_counts(articles)
+
+    assert counts == {"P67": 1}
+    assert articles[0]["defects_found"][0]["same_pattern_hits_across_corpus"] == 0
+    assert articles[0]["defects_found"][0]["same_pattern_observed_hits_across_corpus"] == 2
+
+
 def test_analyze_pair_does_not_report_p14_for_duplicate_figure_ids() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
