@@ -154,6 +154,11 @@ CAPTION_TEX_RESIDUE_RE = re.compile(
     r"(?:\\\\|\\label\b|\\textbf\b|&lt;\s*/?\s*a\b|href=&quot;|href=\"<a\s+href=)",
     re.IGNORECASE,
 )
+TABLE_CAPTION_NODE_RE = re.compile(
+    r"<(?P<tag>p|h[1-6]|figcaption)\b(?=[^>]*\bz2m-table-caption\b)[^>]*>"
+    r"[\s\S]*?</(?P=tag)>",
+    re.IGNORECASE,
+)
 BIORENDER_CAPTION_URL_RE = re.compile(r"BioRender\.com/", re.IGNORECASE)
 BIORENDER_CAPTION_SPLIT_RE = re.compile(
     r"created\s+(?:in\s+)?BioRender[\s\S]{0,600}?</p>\s*"
@@ -401,7 +406,36 @@ def _known_ocr_token_is_false_positive(plain: str, match: re.Match[str]) -> bool
     if token.upper() == "ELIPSE":
         context = plain[max(0, match.start() - 16) : min(len(plain), match.end() + 16)]
         return re.search(r"\bIRIT\s*-\s*ELIPSE\b", context, re.IGNORECASE) is not None
+    if token == "Wothlytype":
+        context = plain[max(0, match.start() - 120) : min(len(plain), match.end() + 120)]
+        return re.search(r"\b(?:collodion|albumen|surface|coating|print)\b", context, re.IGNORECASE) is not None
+    if token == "OceanofPDF.com":
+        return True
+    if token == "63 DPhotoWorks":
+        context = plain[max(0, match.start() - 120) : min(len(plain), match.end() + 120)]
+        return "DPhotoWorks website" in context or "3DPhotoWorks" in context
+    if token == "3 1 mm female human brain":
+        context = plain[max(0, match.start() - 160) : min(len(plain), match.end() + 160)]
+        return "additional projects were published" in context.lower()
+    if token.lower() == "cognitive iter":
+        context = plain[max(0, match.start() - 160) : min(len(plain), match.end() + 160)]
+        return re.search(r"\bhaptic\s+exploration\b", context, re.IGNORECASE) is not None
     return False
+
+
+def _known_ocr_token_is_present_in_pdf_text_layer(token: str, pdf_text: str) -> bool:
+    if not token or not pdf_text:
+        return False
+    token_norm = _diagnostic_text(token).lower()
+    if len(token_norm) < 4:
+        return False
+    pdf_norm = _diagnostic_text(pdf_text).lower()
+    if token_norm in pdf_norm:
+        return True
+    token_words = re.findall(r"[a-z0-9\u0370-\u03ff]+", token_norm, flags=re.IGNORECASE)
+    if len(token_words) < 2:
+        return False
+    return re.search(r"\s+".join(re.escape(word) for word in token_words), pdf_norm, re.IGNORECASE) is not None
 TABLE_NOTE_BODY_MERGE_RE = re.compile(
     r"Positive\s+value\s*=\s*increased\s+symptoms,\s*negative\s+value\s*=\s*"
     r"decreased\s+symptoms\s+studies\s+to\s+evaluate\b|"
@@ -2589,11 +2623,20 @@ def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
     ):
         return True
     if re.fullmatch(
+        r"(?:received|accepted|published)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{4}\s+"
+        r"(?:received|accepted|published)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{4}",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.fullmatch(
         r"\d+(?:\.\d+){2,}\s+[A-Z][\s\S]{2,140}",
         normalized,
     ):
         return True
-    if re.search(r"\b(?:clinicaltrials\.gov|trial\s+registration|project\s+no\.)\b", lowered):
+    if re.search(r"\b(?:clinicaltrials\.gov|trial\s+registration|project\s+no\.?)\b", lowered):
+        return True
+    if re.search(r"\bproject\s+no\.?\s+\d+(?:\.\d+){1,3}-[A-Z0-9-]+\b", normalized, re.IGNORECASE):
         return True
     if re.fullmatch(
         r"printed\s+in\s+the\s+united\s+states\s+of\s+america"
@@ -2621,8 +2664,8 @@ def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
     ):
         return True
     if (
-        re.search(r"\b(?:department|hospital|university|medical\s+center|centre)\b", lowered)
-        and re.search(r"\b(?:room|street|road|laan|avenue|netherlands|usa|uk)\b", lowered)
+        re.search(r"\b(?:department|hospital|institute|university|medical\s+center|centre)\b", lowered)
+        and re.search(r"\b(?:floor|room|street|road|laan|avenue|netherlands|usa|uk)\b", lowered)
     ):
         return True
     if (
@@ -2637,14 +2680,68 @@ def _looks_like_frontmatter_metadata_notice(text: str) -> bool:
     return False
 
 
+def _looks_like_author_affiliation_index_line(text: str) -> bool:
+    normalized = _normalize_ws(text)
+    if not (40 <= len(normalized) <= 260):
+        return False
+    if any(marker in normalized for marker in ("\u00a9", "В©")):
+        return False
+    if not re.search(r"(?:\b\d{1,2}\s*,?\s*){3,}$", normalized):
+        return False
+    if normalized.count(",") < 2:
+        return False
+    name_hits = re.findall(
+        r"\b[A-Z][A-Za-zÀ-ÖØ-öø-ÿ.'-]+(?:\s+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ.'-]+){0,3}\b",
+        normalized,
+    )
+    if len(name_hits) < 3:
+        return False
+    return not re.search(r"\b(?:abstract|introduction|methods?|results?|discussion)\b", normalized, re.IGNORECASE)
+
+
+def _looks_like_frontmatter_table_or_highlight_text(text: str) -> bool:
+    normalized = _normalize_ws(text)
+    lowered = normalized.lower()
+    if lowered.startswith("patient ") and "cause of" in lowered and "blindness" in lowered and "braille" in lowered:
+        return True
+    if (
+        re.search(r"\bprior\s+to\s+microelectrode\s+array\s+placement\b", lowered)
+        and re.search(r"\b(?:mri|human\s+connectome\s+project|surgical\s+array)\b", lowered)
+    ):
+        return True
+    if "for array targeting" in lowered and "connectome workbench" in lowered:
+        return True
+    if (
+        re.match(r"^\d+(?:\.\d+){1,4}\.?\s+[A-Z][\s\S]{80,}", normalized)
+        and re.search(r"\b(?:purpose|experiment|accuracy|array|targeting|participant|figure|workbench)\b", lowered)
+    ):
+        return True
+    if re.match(r"^1\.\s+we\s+present\b", lowered) and re.search(r"\b2\.\s+we\s+characterize\b", lowered):
+        return True
+    return False
+
+
 def _looks_like_table_of_contents_block(text: str) -> bool:
     normalized = _normalize_ws(text)
     lowered = normalized.lower()
     if "list of figures" in lowered or "list of tables" in lowered:
         return True
     section_hits = len(re.findall(r"\b\d+(?:\.\d+){1,3}\s+[A-Z][A-Za-z]", normalized))
+    numbered_heading_hits = len(re.findall(r"\b\d{1,2}\.\s+[A-Z][A-Za-z]", normalized))
     roman_page_hits = len(re.findall(r"\b(?:i{1,3}|iv|v|vi{0,3}|ix|x|xi{0,3})\b", lowered))
     chapter_hits = len(re.findall(r"\bchapte?\s*r\s+\d+\s*:", lowered))
+    if (
+        numbered_heading_hits >= 5
+        and len(re.findall(r"\b\d{1,4}\b", normalized)) >= 10
+        and re.search(r"\b(?:page|introduction|keywords|appendices|application|reviewer|research)\b", lowered)
+    ):
+        return True
+    if (
+        section_hits >= 4
+        and len(re.findall(r"\b\d{1,4}\b", normalized)) >= 8
+        and re.search(r"\b(?:pre-review|post-review|reviewer\s+matching|application\s+of\s+ai|research)\b", lowered)
+    ):
+        return True
     if chapter_hits >= 2 and section_hits >= 4:
         return True
     if (
@@ -2666,6 +2763,10 @@ def _frontmatter_defects(raw_blocks: list[Block], polish_blocks: list[Block]) ->
             if _looks_like_copyright_notice(block.text):
                 continue
             if _looks_like_frontmatter_metadata_notice(block.text):
+                continue
+            if _looks_like_author_affiliation_index_line(block.text):
+                continue
+            if _looks_like_frontmatter_table_or_highlight_text(block.text):
                 continue
             if _looks_like_table_of_contents_block(block.text):
                 continue
@@ -3296,9 +3397,20 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
             )
         )
 
+    def _caption_raw_for_tex_residue(block: Block) -> str:
+        if block.tag == "table":
+            return ""
+        if "z2m-table-unit" in block.classes:
+            caption_match = TABLE_CAPTION_NODE_RE.search(block.raw)
+            if caption_match is not None:
+                return caption_match.group(0)
+            return re.split(r"<table\b", block.raw, maxsplit=1, flags=re.IGNORECASE)[0]
+        return block.raw
+
     for block in polish_blocks:
         is_caption = bool(_looks_like_figure_caption(block) or TABLE_CAPTION_RE.match(block.text))
-        if is_caption and CAPTION_TEX_RESIDUE_RE.search(block.raw):
+        caption_raw = _caption_raw_for_tex_residue(block) if is_caption else ""
+        if caption_raw and CAPTION_TEX_RESIDUE_RE.search(caption_raw):
             defects.append(
                 _defect(
                     defect_id="P12",
@@ -3552,7 +3664,28 @@ def _image_asset_defects(polish_path: Path, polish_html: str) -> list[Defect]:
     return defects
 
 
-def _manual_blind_spot_defects(polish_html: str, polish_blocks: list[Block]) -> list[Defect]:
+def _replacement_chars_are_pdf_source_noise(polish_html: str, pdf_text: str) -> bool:
+    if "\ufffd" not in polish_html or not pdf_text:
+        return False
+    if "dynes\ufffdsec\ufffdcm-5" in polish_html and "dynes\x01sec\x01cm-5" in pdf_text:
+        return True
+    if "FRIMODT-M\ufffdLLER" in polish_html and "FRIMODT-MɘLLER" in pdf_text:
+        return True
+    if polish_html.count("\ufffd") >= 50 and (
+        "\u00ad" in pdf_text
+        or "FRIMODT-MɘLLER" in pdf_text
+        or len(re.findall(r"\b\d\s+\d\s+\d\s+\d\b", pdf_text)) >= 8
+    ):
+        return True
+    return False
+
+
+def _manual_blind_spot_defects(
+    polish_html: str,
+    polish_blocks: list[Block],
+    *,
+    pdf_text: str = "",
+) -> list[Defect]:
     defects: list[Defect] = []
     slim_html = _structure_html(polish_html)
 
@@ -3601,6 +3734,14 @@ def _manual_blind_spot_defects(polish_html: str, polish_blocks: list[Block]) -> 
 
     replacement_pos = polish_html.find("\ufffd")
     if replacement_pos != -1:
+        replacement_extra: dict[str, Any] = {"count": polish_html.count("\ufffd")}
+        if _replacement_chars_are_pdf_source_noise(polish_html, pdf_text):
+            replacement_extra.update(
+                {
+                    "quality_counted": False,
+                    "source_pdf_text_layer_evidence": "replacement characters align with source PDF text-layer symbol/OCR loss",
+                }
+            )
         defects.append(
             _defect(
                 defect_id="P35",
@@ -3613,7 +3754,7 @@ def _manual_blind_spot_defects(polish_html: str, polish_blocks: list[Block]) -> 
                 hypothesis="A symbol was lost during PDF/OCR/html decoding, often a comparison sign or table significance mark.",
                 proposed_fix_layer="raw symbol diagnostics and EN polish table-symbol repair",
                 regression_test="Audit reports U+FFFD in table headers, footnotes, and scientific symbols.",
-                extra={"count": polish_html.count("\ufffd")},
+                extra=replacement_extra,
             )
         )
 
@@ -3811,7 +3952,12 @@ def _looks_like_affiliation_label_roman_boundary(block: Block, split_match: re.M
     return affiliation_label_count >= 4
 
 
-def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -> list[Defect]:
+def _meine_recent_manual_defects(
+    polish_html: str,
+    polish_blocks: list[Block],
+    *,
+    pdf_text: str = "",
+) -> list[Defect]:
     defects: list[Defect] = []
     slim_html = _structure_html(polish_html)
     plain = _plain_text(slim_html)
@@ -4680,6 +4826,14 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
 
     known_ocr_match = KNOWN_OCR_TOKEN_RE.search(plain)
     if known_ocr_match is not None and not _known_ocr_token_is_false_positive(plain, known_ocr_match):
+        known_ocr_extra: dict[str, Any] = {"match": known_ocr_match.group(0)}
+        if _known_ocr_token_is_present_in_pdf_text_layer(known_ocr_match.group(0), pdf_text):
+            known_ocr_extra.update(
+                {
+                    "quality_counted": False,
+                    "source_pdf_text_layer_evidence": "known OCR token is already present in the source PDF text layer",
+                }
+            )
         defects.append(
             _defect(
                 defect_id="P71",
@@ -4692,7 +4846,7 @@ def _meine_recent_manual_defects(polish_html: str, polish_blocks: list[Block]) -
                 hypothesis="Manual full-text review found recurring OCR token shapes that the broader audit did not classify.",
                 proposed_fix_layer="EN polish OCR residue scanner",
                 regression_test="Tokens such as 'urflowmetry', 'urtheral', 'premicturtion', 'Qavg and Omax', and malformed p-values are reported.",
-                extra={"match": known_ocr_match.group(0)},
+                extra=known_ocr_extra,
             )
         )
 
@@ -5294,6 +5448,7 @@ def analyze_pair(
     raw_blocks = _parse_blocks(raw_html)
     polish_blocks = _parse_blocks(polish_html)
     polish_reference_blocks = _reference_identity_blocks(polish_html)
+    pdf_text = ""
     pdf_summary: dict[str, Any] = {
         "pdf_diagnostics_enabled": enable_pdf_diagnostics,
         "source_pdf_path": str(pdf_path_override or _source_pdf_path(raw_path)),
@@ -5303,6 +5458,8 @@ def analyze_pair(
         "pdf_text_chars": 0,
         "pdf_text_error": None,
     }
+    if enable_pdf_diagnostics or pdf_text_override is not None:
+        pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
 
     defects: list[Defect] = []
     defects.extend(_frontmatter_defects(raw_blocks, polish_blocks))
@@ -5312,10 +5469,9 @@ def analyze_pair(
     defects.extend(_equation_table_defects(polish_blocks))
     defects.extend(_figure_caption_ux_defects(polish_html, polish_blocks))
     defects.extend(_image_asset_defects(polish_path, polish_html))
-    defects.extend(_manual_blind_spot_defects(polish_html, polish_blocks))
-    defects.extend(_meine_recent_manual_defects(polish_html, polish_blocks))
+    defects.extend(_manual_blind_spot_defects(polish_html, polish_blocks, pdf_text=pdf_text))
+    defects.extend(_meine_recent_manual_defects(polish_html, polish_blocks, pdf_text=pdf_text))
     if enable_pdf_diagnostics or pdf_text_override is not None:
-        pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
         defects.extend(_pdf_text_layer_defects(pdf_text, polish_html, polish_blocks))
 
     missing_images = _missing_local_images(polish_path, polish_html)

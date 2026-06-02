@@ -9802,6 +9802,48 @@ def test_polish_html_document_restores_mojibake_significance_and_threshold_marke
     assert "пїЅ" not in polished
 
 
+def test_polish_html_document_repairs_known_replacement_char_symbols() -> None:
+    html = (
+        "<html><body>"
+        '<a href="http://CRAN.R-project.org/package\ufffd=\ufffdnlme">nlme</a>'
+        '<a href="https://doi.org/10.1007/s10143-004-\ufffd0337-6">doi</a>'
+        "<h4>\ufffd <b>IMPLICATIONS FOR REHABILITATION</b></h4>"
+        "<ul><li>\ufffd Higher educational institutions need training.</li></ul>"
+        "<table><tr><td>EB1*\ufffd</td><td>Obesity\ufffd</td></tr></table>"
+        '<p class="z2m-table-note">\ufffd <b>LB</b>: Late blind \ufffd\ufffd <b>EB</b>: Early blind</p>'
+        "<p>Signs with text height &gt; 20 pixels, 11-20 pixels, and \ufffd 10 pixels were red.</p>"
+        '<p>obesity as \ufffd27.5 kg/m<sup class="z2m-unit-exp">2</sup> and SVRI '
+        '(dynes\ufffdsec\ufffdcm-5\ufffdm<sup class="z2m-unit-exp">2</sup>).</p>'
+        "<p><b>systolic blood pressure</b> \ufffd <b>140 mmHg</b> or "
+        "<b>diastolic blood pressure</b> \ufffd <b>90 mmHg</b>.</p>"
+        "<table><tr><th>Adjusted Model 1\ufffd</th></tr></table><p><sup>\ufffd</sup> Model 1 was adjusted.</p>"
+        "<p>Correlations used \ufffd = p <i> &lt; </i> .05; \ufffd\ufffd = p <i> &lt; </i> .01.</p>"
+        "<p>The stream line was ca. 80 <i> \\\\m. </i></p>"
+        "<p>Retief M, Let\ufffdsosa R. SilkeK\ufffdrcher.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "\ufffd" not in polished
+    assert "package=nlme" in polished
+    assert "10.1007/s10143-004-0337-6" in polished
+    assert "<li>Higher educational institutions need training.</li>" in polished
+    assert "EB1**" in polished
+    assert "* <b>LB</b>: Late blind ** <b>EB</b>: Early blind" in polished
+    assert "and &le; 10 pixels" in polished
+    assert "obesity as &ge;27.5 kg/m" in polished
+    assert "<b>systolic blood pressure</b> &ge; <b>140 mmHg</b>" in polished
+    assert "<b>diastolic blood pressure</b> &ge; <b>90 mmHg</b>" in polished
+    assert "Adjusted Model 1*" in polished
+    assert "<sup>*</sup> Model 1 was adjusted" in polished
+    assert "dynes&middot;sec&middot;cm-5&middot;m" in polished
+    assert "* = p <i> &lt; </i> .05; ** = p <i> &lt; </i> .01" in polished
+    assert "80 µm." in polished
+    assert "Letšosa" in polished
+    assert "SilkeKärcher" in polished
+
+
 def test_polish_html_document_drops_journal_page_furniture_and_preserves_sentence() -> None:
     html = (
         "<html><body>"
@@ -9815,6 +9857,42 @@ def test_polish_html_document_drops_journal_page_furniture_and_preserves_sentenc
 
     assert "Processes 2021" not in polished
     assert "This role may be performed by friends" in polished
+
+
+def test_polish_html_document_drops_repository_and_publisher_chrome_pages() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="flore-cover.png"/></p>'
+        "<h1>FLORE Repository istituzionale dell'Università degli Studi di Firenze</h1>"
+        "<h1><b>Different Strategies for Rapid Prototyping of Digital Bas-Reliefs</b></h1>"
+        "<h3>Original Citation:</h3><p>/ M. Carfagni; L. Puggelli.</p>"
+        "<p>La data sopra indicata si riferisce al Repository FloRe (Article begins on next page)</p>"
+        "<p>Applied Mechanics and Materials Vol. 510 real article starts.</p>"
+        "<h1><b>Articles you may be interested in</b></h1>"
+        "<p>A handheld fluorescence molecular tomography system for intraoperative optical imaging.</p>"
+        "<p>Magnetic resonance-guided near-infrared tomography of the breast.</p>"
+        '<p><img src="aip-real-page.png"/></p>'
+        '<p><img src="rug-cover.png"/></p>'
+        '<h1 class="z2m-front-matter">University of Groningen</h1>'
+        "<p>IMPORTANT NOTE: You are advised to consult the publisher's version.</p>"
+        "<p>Downloaded from the University of Groningen/UMCG research database.</p>"
+        "<p>Download date: 31-10-2022</p>"
+        '<p><img src="rug-real-page.png"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "FLORE Repository" not in polished
+    assert "Article begins on next page" not in polished
+    assert "Articles you may be interested in" not in polished
+    assert "University of Groningen" not in polished
+    assert "IMPORTANT NOTE" not in polished
+    assert "flore-cover.png" not in polished
+    assert "rug-cover.png" not in polished
+    assert "Applied Mechanics and Materials Vol. 510 real article starts." in polished
+    assert "aip-real-page.png" in polished
+    assert "rug-real-page.png" in polished
 
 
 def test_polish_html_document_strips_dense_pdf_line_numbers_without_units_or_citations() -> None:
@@ -11010,6 +11088,20 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
         "grade 1\u00bc0-4.9 mm, grade 2\u00bc5-10 mm, grade 3\u00bcmore than 10 mm, "
         "eBDetheque, milivolt, nanomicells, DirectX- R, BOO i, symphisis, "
         "14 C-beled, and Computer Based Method ?.</p>"
+        "<p>Wherev <sup>2</sup> stayed split, TQma<sup>x</sup>, PdetQma<sup>x</sup>, "
+        'sys-<span id="page-8-0"> </span> tem, and DirectX- <sup>R</sup> remained.</p>'
+        "<p>pv0:05, 63 DPhotoWorks, and thev have stayed. The data are coma separated "
+        "with a plent of samples at 31.6 8 C. IPelvic organ prolapse, agumentation, "
+        "DWT values -2 mm, \u0399mproving access, form eBDtheque, enzymelinked assays, "
+        "p, pj]of triangles, Ote this: DO: 10.1039/example, and If inal remained.</p>"
+        '<p>Reference split reached r=0.9 <a href="#ref-9">526 30 31 33 52)</a>. '
+        "Solid .999 fine silver sheet (left)999 fine silver clad copper (right). "
+        "The symptom hispareunia stayed in the abstract.</p>"
+        "<table><tr><td>A 40-grain bath contains appro </td><td> ximately 8.25% "
+        "by weight.</td></tr></table>"
+        '<table><tr><th></th><th>Avo<sup class="z2m-table-fn">i</sup></th>'
+        "<th>irdupois</th><th>Metric</th></tr></table>"
+        "<p><i>Actual temperatures were 31.6 </i> 8 <i> C and 35.9 </i> 8 <i> C.</i></p>"
         "<p>Algorithm uses VoiceCommands and AIType.</p>"
         "</body></html>"
     )
@@ -11039,6 +11131,21 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
     assert "grade 1 = 0-4.9 mm, grade 2 = 5-10 mm, grade 3 = more than 10 mm" in polished
     assert "eBDtheque, millivolt, nanomicelles, DirectX-R, BOOI, symphysis" in polished
     assert "14C-labeled, and Computer Based Method?" in polished
+    assert "Where v<sup>2</sup> stayed split, TQmax, PdetQmax" in polished
+    assert "system, and DirectX-R remained" in polished
+    assert "p<0.05, 3DPhotoWorks, and they have stayed" in polished
+    assert "comma-separated with plenty of samples at 31.6 °C" in polished
+    assert "Pelvic organ prolapse, augmentation, DWT values >2 mm" in polished
+    assert "Improving access, from eBDtheque, enzyme-linked assays" in polished
+    assert "p, pj] of triangles, Cite this: doi:" in polished
+    assert "10.1039/example" in polished
+    assert "and I_final remained" in polished
+    assert "r=0.9526 30 31 33 52)" in polished
+    assert "sheet (left). .999 fine silver clad copper" in polished
+    assert "symptom dyspareunia stayed in the abstract" in polished
+    assert "contains approximately</td><td> 8.25% by weight" in polished
+    assert '<th colspan="2">Avoirdupois</th>' in polished
+    assert "Actual temperatures were 31.6 °C and 35.9 °C" in polished
     assert "Algorithm uses VoiceCommands and AIType" in polished
     assert "Dmax=Dminw1:5" not in polished
     assert "theexperiment" not in polished.lower()

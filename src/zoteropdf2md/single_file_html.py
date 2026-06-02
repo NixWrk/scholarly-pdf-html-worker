@@ -3622,6 +3622,8 @@ def _fix_latex_text_commands(html: str) -> str:
     html = _LATEX_ITALIC_PATTERN.sub(r"<em>\1</em>", html)
     html = _LATEX_TEXTRM_PATTERN.sub(r"\1", html)
     html = _LATEX_TEXT_PATTERN.sub(r"\1", html)
+    html = re.sub(r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*\.\s*</i>", r"\1 µm.", html, flags=re.IGNORECASE)
+    html = re.sub(r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*</i>", r"\1 µm", html, flags=re.IGNORECASE)
     return html
 
 
@@ -15494,6 +15496,194 @@ def _repair_table_significance_markers(html: str) -> str:
     return html
 
 
+def _repair_known_replacement_char_symbols(html: str) -> str:
+    """Restore high-confidence symbols that OCR emitted as U+FFFD."""
+    if "\ufffd" not in html:
+        return html
+
+    html = html.replace("package\ufffd=\ufffdnlme", "package=nlme")
+    html = html.replace("10.1007/s10143-004-\ufffd0337-6", "10.1007/s10143-004-0337-6")
+    html = html.replace("SilkeK\ufffdrcher", "SilkeKärcher")
+    html = html.replace("Let\ufffdsosa", "Letšosa")
+    html = html.replace("FRIMODT-M\ufffdLLER", "FRIMODT-MØLLER")
+    html = html.replace("FRI-MODT-M\ufffdLLER", "FRI-MODT-MØLLER")
+    html = html.replace("EB1*\ufffd", "EB1**")
+    html = html.replace("dynes\ufffdsec\ufffdcm-5\ufffdm", "dynes&middot;sec&middot;cm-5&middot;m")
+    html = html.replace("dynes\ufffdsec\ufffdcm-5", "dynes&middot;sec&middot;cm-5")
+
+    html = re.sub(r">\s*\ufffd\s*(?=<b>\s*IMPLICATIONS\s+FOR\s+REHABILITATION\b)", "> ", html, flags=re.IGNORECASE)
+    html = re.sub(r"(<li\b[^>]*>)\s*\ufffd\s*", r"\1", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ufffd\ufffd\s*(?=<b>\s*EB\b)", "** ", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ufffd\s*(?=<b>\s*LB\b)", "* ", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ufffd\ufffd(?=\s*=\s*p\s*(?:<i>\s*)?&lt;)", "**", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ufffd(?=\s*=\s*p\s*(?:<i>\s*)?&lt;)", "*", html, flags=re.IGNORECASE)
+    html = re.sub(r"\band\s*\ufffd\s*(?=10\s+pixels\b)", "and &le; ", html, flags=re.IGNORECASE)
+    html = re.sub(r"<sup>\s*\ufffd\s*</sup>(?=\s*Obesity\s+was\s+defined\b)", "<sup>*</sup>", html, flags=re.IGNORECASE)
+    html = re.sub(r"<sup>\s*\ufffd\s*</sup>(?=\s*Model\s+1\b)", "<sup>*</sup>", html, flags=re.IGNORECASE)
+    html = html.replace("Obesity\ufffd", "Obesity*")
+    html = html.replace("Model 1\ufffd", "Model 1*")
+    html = re.sub(r"\ufffd(?=\s*<b>\s*(?:140|90)\s+mmHg\b)", "&ge;", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ufffd(?=\s*(?:27\.5\s*kg/m|50\s+years|50\s+years\s+old|140\s+mmHg|90\s+mmHg))", "&ge;", html)
+    return html
+
+
+def _repair_second_echelon_ocr_residue_html(html: str) -> str:
+    markers = (
+        "Wherev",
+        "TQma",
+        "PdetQma",
+        "sys-",
+        "DirectX-",
+        "pv0:05",
+        "0.999 0995",
+        "r=0.9 ",
+        "left)999",
+        "Avo<sup",
+        "Avoi",
+        "63 DPhotoWorks",
+        "thev",
+        "flow flow flow flow",
+        "BOO i",
+        "Appel's Sir i",
+        "14 C-beled",
+        "secondsmm-2",
+        "p, pj]of",
+        "F igures",
+        "appro ximately",
+        "appro </t",
+        "If inal",
+        "coma separated",
+        "plent",
+        "8 C",
+        "8 <i",
+        "IPelvic",
+        "hispareunia",
+        "agumentation",
+        "DWT values -2 mm",
+        "\u0399mproving",
+        "form eBDtheque",
+        "enzymelinked",
+        "Ote this: DO",
+        "0995",
+        "Sir<sup",
+        "C-beled",
+        "List of F",
+        "APPEND<sup",
+        "main:",
+        "ODs/MB",
+    )
+    if not any(marker in html for marker in markers):
+        return html
+
+    sup_x = r"<sup\b[^>]*>\s*x\s*</sup>"
+    sup_r = r"<sup\b[^>]*>\s*R\s*</sup>"
+    page_anchor = r"(?:<span\b[^>]*\bid\s*=\s*['\"]page-[^'\"]+['\"][^>]*>\s*</span>\s*)?"
+    html = re.sub(rf"\bWherev\s*(<sup\b[^>]*>\s*2\s*</sup>)", r"Where v\1", html, flags=re.IGNORECASE)
+    html = re.sub(rf"\bTQma\s*{sup_x}", "TQmax", html)
+    html = re.sub(rf"\bPdetQma\s*{sup_x}", "PdetQmax", html)
+    html = re.sub(rf"\bsys-\s*{page_anchor}tem\b", "system", html, flags=re.IGNORECASE)
+    html = re.sub(rf"\bDirectX-\s*{sup_r}", "DirectX-R", html)
+
+    html = re.sub(r"\bpv0:05\b", "p<0.05", html)
+    html = re.sub(r"\b0\.999\s+0995\b", "0.999 0.995", html)
+    html = re.sub(r"\br=0\.9\s+(840|526)\b", r"r=0.9\1", html)
+    html = re.sub(r"\bleft\)999\b", "left). .999", html)
+    html = re.sub(
+        r"<th\b[^>]*>\s*Avo\s*<sup\b[^>]*>\s*i\s*</sup>\s*</th>\s*<th\b[^>]*>\s*irdupois\s*</th>",
+        '<th colspan="2">Avoirdupois</th>',
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"<th\b[^>]*>\s*Avoi\s*</th>\s*<th\b[^>]*>\s*irdupois\s*</th>",
+        '<th colspan="2">Avoirdupois</th>',
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"<th\b[^>]*>\s*A\s*</th>\s*<th\b[^>]*>\s*oirdupois\s*</th>",
+        '<th colspan="2">Avoirdupois</th>',
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(r"\b63\s+DPhotoWorks\b", "3DPhotoWorks", html)
+    html = re.sub(r"\band\s+thev\s+have\b", "and they have", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bflow\s+flow\s+flow\s+flow\b", "flow", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bBOO\s+i\b", "BOOI", html)
+    html = re.sub(r"\bAppel's\s+Sir\s+i\b", "Apple's Siri", html, flags=re.IGNORECASE)
+    html = re.sub(r"\b14\s+C-beled\b", "14C-labeled", html)
+    html = re.sub(r"\bsecondsmm-2\b", "s/mm2", html)
+    html = re.sub(r"\bp,\s*pj\]of\b", "p, pj] of", html)
+    html = re.sub(r"\bF\s+igures\b", "Figures", html)
+    html = re.sub(r"\bf\s+igures\b", "figures", html)
+    html = re.sub(r"\bappro\s+ximately\b", "approximately", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bIf\s+inal\b", "I_final", html)
+    html = re.sub(r"\bcoma\s+separated\b", "comma-separated", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ba\s+plent\s+of\b", "plenty of", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bplent\b", "plenty", html, flags=re.IGNORECASE)
+    html = re.sub(r"\b(\d+(?:\.\d+)?)\s+8\s+C\b", r"\1 °C", html)
+    html = re.sub(r"\bIPelvic\b", "Pelvic", html)
+    html = re.sub(r"\bhispareunia\b", "dyspareunia", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bagumentation\b", "augmentation", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bDWT\s+values\s+-2\s+mm\b", "DWT values >2 mm", html)
+    html = re.sub(r"\b\u0399mproving\b", "Improving", html)
+    html = re.sub(r"\bform\s+eBDtheque\b", "from eBDtheque", html, flags=re.IGNORECASE)
+    html = re.sub(r"\benzymelinked\b", "enzyme-linked", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bOte\s+this:\s+DO:", "Cite this: DOI:", html, flags=re.IGNORECASE)
+    html = re.sub(r"(<td\b[^>]*>\s*)0995(?=\s*[–-])", r"\g<1>0.995", html)
+    html = re.sub(r"\br=0\.9\s*<a\b[^>]*>\s*840\s+45\s*</a>", "r=0.9840 45", html)
+    html = re.sub(
+        r"\br=0\.9\s*<a\b[^>]*>\s*526\s+30\s+31\s+33\s+52\)\s*</a>",
+        "r=0.9526 30 31 33 52)",
+        html,
+    )
+    html = re.sub(r"\bAppel's\s+Sir\s*<sup\b[^>]*>\s*i\s*</sup>", "Apple's Siri", html, flags=re.IGNORECASE)
+    html = re.sub(r"<sup\b[^>]*>\s*14\s*</sup>\s*C-beled\b", "<sup>14</sup>C-labeled", html, flags=re.IGNORECASE)
+    html = re.sub(
+        r"List\s+of\s+F\s*</t([dh])>\s*<t([dh])\b(?P<attrs>[^>]*)>\s*igures",
+        r"List of Figures</t\1><t\2\g<attrs>>",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"\bappro\s*</t([dh])>\s*<t([dh])\b(?P<attrs>[^>]*)>\s*ximately",
+        r"approximately</t\1><t\2\g<attrs>>",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"\bappro\s*</td>\s*<td>\s*ximately\b",
+        "approximately</td><td>",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"(<i\b[^>]*>\s*)(\d+(?:\.\d+)?)\s*</i>\s*8\s*<i\b[^>]*>\s*C\b",
+        r"\g<1>\2 °C",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"(\d+(?:\.\d+)?)\s*</i>\s*8\s*<i\b[^>]*>\s*C\b",
+        r"\1 °C",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(r"\bmain:\s*(?=\d)", "mean: ", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bODs/MB\b", "QDs/MB", html)
+    html = re.sub(
+        r"\b(?P<head>APPEND|Append)\s*<sup\b[^>]*>\s*ix\s*</sup>",
+        lambda m: "APPENDIX" if m.group("head").isupper() else "Appendix",
+        html,
+    )
+    html = re.sub(
+        r"\b(?P<head>APPEND|Append)\s+ix\b",
+        lambda m: "APPENDIX" if m.group("head").isupper() else "Appendix",
+        html,
+    )
+    return html
+
+
 def _mark_wide_table_layout(html: str) -> str:
     """Mark very wide tables so the readability container expands."""
     found_wide = False
@@ -16156,6 +16346,64 @@ def _drop_repeated_page_furniture(html: str) -> str:
         cursor = node.end()
     out_parts.append(html[cursor:])
     return "".join(out_parts)
+
+
+_PUBLISHER_CHROME_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"<h[1-6]\b[^>]*>\s*(?:<[^>]+>\s*)*FLORE\s+Repository\s+istituzionale"
+        r"[\s\S]{0,800}?</h[1-6]>"
+        r"[\s\S]{0,200000}?\bArticle\s+begins\s+on\s+next\s+page\b[\s\S]{0,500}?</p>\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<h[1-6]\b[^>]*>\s*(?:<b>\s*)?Articles\s+you\s+may\s+be\s+interested\s+in"
+        r"(?:\s*</b>)?\s*</h[1-6]>"
+        r"[\s\S]{0,120000}?(?=<p\b[^>]*>\s*<img\b)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<h[1-6]\b[^>]*>\s*(?:<[^>]+>\s*)*University\s+of\s+Groningen"
+        r"[\s\S]{0,800}?</h[1-6]>"
+        r"[\s\S]{0,160000}?<p\b[^>]*>\s*Download\s+date\s*:[\s\S]{0,500}?</p>\s*",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _expand_span_start_to_leading_image_paragraph(html: str, start: int) -> int:
+    prefix = html[:start]
+    search_start = max(0, len(prefix) - 2_000_000)
+    paragraph_start = prefix.lower().rfind("<p", search_start)
+    if paragraph_start < 0:
+        return start
+    candidate = html[paragraph_start:start]
+    if re.fullmatch(r"<p\b[^>]*>\s*<img\b[\s\S]*?</p>\s*", candidate, flags=re.IGNORECASE):
+        return paragraph_start
+    return start
+
+
+def _drop_publisher_chrome_pages(html: str) -> str:
+    spans: list[tuple[int, int]] = []
+    for pattern in _PUBLISHER_CHROME_BLOCK_PATTERNS:
+        for match in pattern.finditer(html):
+            spans.append((_expand_span_start_to_leading_image_paragraph(html, match.start()), match.end()))
+    if not spans:
+        return html
+
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    out: list[str] = []
+    cursor = 0
+    for start, end in merged:
+        out.append(html[cursor:start])
+        cursor = end
+    out.append(html[cursor:])
+    return "".join(out)
 
 
 def _strip_pdf_running_header_prefix_from_body(body: str) -> tuple[str, bool]:
@@ -21301,6 +21549,7 @@ def polish_html_document(
     polished = _unwrap_nested_fig_links(polished)
     polished = _drop_page_header_footer_paragraphs(polished)
     polished = _drop_repeated_page_furniture(polished)
+    polished = _drop_publisher_chrome_pages(polished)
     polished = drop_repeated_phrases(polished)
     polished = _normalize_glued_roman_suffixes(polished)
     polished = _normalize_table_cell_roman_suffixes(polished)
@@ -21308,6 +21557,7 @@ def polish_html_document(
     polished = _repair_variable_table_fn_splits(polished)
     polished = _normalize_table_cell_soft_breaks(polished)
     polished = _repair_table_significance_markers(polished)
+    polished = _repair_known_replacement_char_symbols(polished)
     polished = _fix_latex_text_commands(polished)
     polished = _unwrap_spurious_math_captions(polished)
     polished = _fix_subscript_equation_spill(polished)
@@ -21491,6 +21741,7 @@ def polish_html_document(
     polished = _unwrap_page_reference_page_links(polished, language_policy)
     polished = _unwrap_plain_prose_page_links(polished)
     polished = _repair_known_word_glue(polished)
+    polished = _repair_second_echelon_ocr_residue_html(polished)
     polished = _repair_known_table_ocr_artifacts(polished)
     polished = _repair_safe_text_artifacts(polished)
     if language_policy.code == "en":
@@ -21588,6 +21839,7 @@ def polish_html_document(
     polished = _fix_false_sup_citations_in_decimals_and_figure_labels(polished)
     if language_policy.code == "en":
         polished = _repair_english_ocr_text_artifacts(polished)
+    polished = _repair_second_echelon_ocr_residue_html(polished)
     polished = _normalize_double_escaped_url_anchor_text(polished)
     return polished
 

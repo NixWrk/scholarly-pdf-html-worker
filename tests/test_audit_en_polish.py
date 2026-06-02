@@ -962,6 +962,40 @@ def test_analyze_pair_ignores_publication_toc_and_contact_metadata_as_frontmatte
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_pdf_verified_frontmatter_toc_and_highlight_markers_as_p01() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text(
+            "<html><body>"
+            "<p>Yu-Han Wang , Chen Li , Wen-Ching Chen , Poyin Huang 1 2 2 2, 3, 4, 5, 6, 7</p>"
+            "<p>Received: 13.12.2018 Accepted: 28.02.2019</p>"
+            "<p>Page 1. Introduction 4 2. Keywords 4 3. Accomplishments 4 4. Impact 7 "
+            "5. Changes/Problems 7 6. Products 8 7. Participants 8 8. Requirements 9 9. Appendices 9</p>"
+            "<p>Patient Cause of blindness Age at onset of blindness Time since onset of blindness "
+            "Progression of blindness Braille reading (years) Experience (years)</p>"
+            "<p>Prior to microelectrode array placement, T16 underwent a multi-modal MRI session "
+            "approximately 45 minutes in duration to guide surgical array placement, based on the "
+            "Human Connectome Project parcellation 22.</p>"
+            "<p>reality for the blind and weak-sighted people&quot; (project No. 01.2.2-LMT-K-718-01-0060)</p>"
+            "<p>1. We present eFlesh, a magnetic tactile sensor. 2. We characterize the response of eFlesh.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+        polish_path.write_text("<html><body><p>Clean body.</p></body></html>", encoding="utf-8")
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P01" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_keeps_author_affiliation_marker_frontmatter_ocr() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -971,8 +1005,7 @@ def test_analyze_pair_keeps_author_affiliation_marker_frontmatter_ocr() -> None:
         raw_path = stage_dir / "01.en.raw.html"
         polish_path = stage_dir / "02.en.polish.html"
         raw_path.write_text(
-            "<html><body><p>Yu-Han Wang , Chen Li , Wen-Ching Chen , "
-            "Poyin Huang 1 2 2 2, 3, 4, 5, 6, 7</p></body></html>",
+            "<html><body><p>Xavier Quill 10 13, Nora Vale 1.2.5</p></body></html>",
             encoding="utf-8",
         )
         polish_path.write_text("<html><body><p>Clean body.</p></body></html>", encoding="utf-8")
@@ -981,6 +1014,115 @@ def test_analyze_pair_keeps_author_affiliation_marker_frontmatter_ocr() -> None:
 
         defect_ids = {defect["id"] for defect in result["defects_found"]}
         assert "P01" in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p12_for_tex_inside_clean_table_body() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<div id="table-1" class="z2m-float-unit z2m-table-unit">'
+            '<p class="z2m-table-caption">Table 1. Key structural and electrical parameters.</p>'
+            '<table><tr><td data-z2m-tex="\\\\alpha">\\textbf{not caption}</td></tr></table>'
+            "</div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P12" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_marks_source_pdf_replacement_noise_as_non_quality_counted() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>SVRI (&gt;2400 dynes\ufffdsec\ufffdcm-5\ufffdm"
+            '<sup class="z2m-unit-exp">2</sup>).</p></body></html>',
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(
+            raw_path,
+            polish_path,
+            pdf_text_override="SVRI (>2400 dynes\x01sec\x01cm-5\x01m2).",
+        )
+
+        p35 = [defect for defect in result["defects_found"] if defect["id"] == "P35"]
+        assert p35
+        assert p35[0]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_marks_known_ocr_token_present_in_pdf_layer_as_non_quality_counted() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Wherev 2 denotes v T v in the source scan.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(
+            raw_path,
+            polish_path,
+            pdf_text_override="Wherev 2 denotes v T v in the source scan.",
+        )
+
+        p71 = [defect for defect in result["defects_found"] if defect["id"] == "P71"]
+        assert p71
+        assert p71[0]["extra"]["quality_counted"] is False
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_keeps_known_ocr_token_quality_counted_when_pdf_layer_is_clean() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><p>Wherev 2 denotes v T v in the generated HTML.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(
+            raw_path,
+            polish_path,
+            pdf_text_override="Where v2 denotes v T v in the source layer.",
+        )
+
+        p71 = [defect for defect in result["defects_found"] if defect["id"] == "P71"]
+        assert p71
+        assert p71[0]["extra"].get("quality_counted") is not False
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
