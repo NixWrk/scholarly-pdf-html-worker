@@ -523,6 +523,57 @@ def test_polish_html_document_unwraps_section_title_page_anchor_in_prose() -> No
     assert "3.3.2 Evaluation criteria for concepts." in polished
 
 
+def test_polish_html_document_repairs_confirmed_float_body_residue_from_pdf_review() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Text">All analyses showed the Response Rate was expected since '
+        'the "Marked" Response (of which the ADAS-Cog score is the '
+        '<span id="page-5-2"> </span> Bolded rows show the distribution across all sites. </p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit"><p><img src="fig2.jpg"/></p></div>'
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit"><p><img src="fig4.jpg"/></p></div>'
+        '<p block-type="Text" class="has-continuation"> main determinant) was more frequent '
+        "than the other types of responses.</p>"
+        '<p block-type="Text">While moving through the environment, contextual auditory and '
+        "spatial information is acquired sequentially and is continuously updated, allowing "
+        "the Control player exit </p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit"><p><img src="fig2b.jpg"/></p></div>'
+        "<p>jewel</p><p>player</p><p>Game</p>"
+        '<p class="z2m-figure-caption">FIGURE 2 | Virtual rendering of an existing building.</p>'
+        "<p>jewel</p><p>exit</p><p>monster</p>"
+        "<p> user to build a corresponding mental representation of the building's spatial layout. "
+        "Spatial cues are updated after each step.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "ADAS-Cog score is the main determinant) was more frequent" in compact
+    assert '<p class="z2m-table-note"><span id="page-5-2"> </span> Bolded rows show' in polished
+    assert "score is the <span id=\"page-5-2\"> </span> Bolded rows" not in polished
+    assert "allowing the user to build a corresponding mental representation" in compact
+    assert "Control player exit" not in compact
+    assert not re.search(r"<p>\s*(?:jewel|player|Game|exit|monster)\s*</p>", polished)
+
+
+def test_polish_html_document_merges_split_summary_table_note_continuation() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-table-note"><sup>*</sup> The basis for the <b>assumed risk</b> (e.g.</p>'
+        '<p>the median control group risk across studies) is provided in footnotes. '
+        'The <b>corresponding risk</b> is based on the assumed risk in the comparison group. '
+        '<b>CI:</b> Confidence interval; </p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert '(e.g. the median control group risk across studies)' in compact
+    assert 'class="z2m-table-note"' in polished
+    assert "<p>the median control group risk" not in polished
+
+
 def test_polish_html_document_splits_distinct_nested_figure_units() -> None:
     html = (
         "<html><body>"
@@ -11211,6 +11262,32 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
     assert "Leporini et al.; Ghiani, Leporini &amp; Paterno" in polished
     assert "<code>ob je ct s w ould</code>" in polished
     assert '<a href="https://example.test/B%20rain-computer">B rain-computer</a>' in polished
+
+
+def test_polish_html_document_repairs_pdf_verified_remaining_intra_word_spaces() -> None:
+    html = (
+        "<html><body>"
+        "<p>References mentioned a virtual environ ment, Behav. Neuro sci., "
+        "and Parkin sonism Relat Disord.</p>"
+        "<p>The protocol required disconti nuation of the infusion before transport.</p>"
+        "<p>RUTHERFO RD, M. cited the Inter national Standard IEC 601-2-19.</p>"
+        '<p><a href="https://refhub.example/sref16">Parkin</a>'
+        '<a href="https://refhub.example/sref16">sonism Relat. Disorders</a></p>'
+        '<p><a href="https://refhub.example/sref17">Effects of age on virtual environ</a>'
+        '<a href="https://refhub.example/sref17">ment place navigation and Behav. Neuro</a> sci.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "virtual environment" in polished
+    assert "Behav. Neurosci." in polished
+    assert "Parkinsonism Relat Disord" in polished
+    assert "discontinuation of the infusion" in polished
+    assert "RUTHERFORD, M. cited the International Standard" in polished
+    assert ">Parkinsonism</a>" in polished
+    assert ">Effects of age on virtual environment</a>" in polished
+    assert "Behav. Neurosci.</a>" in polished
 
 
 def test_polish_html_document_repairs_joined_word_residuals_from_audit() -> None:

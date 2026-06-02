@@ -2090,6 +2090,44 @@ def test_analyze_pair_does_not_report_p22_for_post_reference_numbered_outline() 
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p22_for_local_abstract_references() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h2>8 | Uroflow Stop Test and Potency Recovery</h2>",
+                    *[f"<p>Abstract prose line {idx}.</p>" for idx in range(1, 25)],
+                    "<h4>References</h4>",
+                    '<p id="ref-1">1. Alenizi AM, Bienz M, Rajih E, et al. Uroflow Stop Test after prostatectomy.</p>',
+                    "<h2>9 | Another conference abstract</h2>",
+                    "<h4>References</h4>",
+                    '<p id="ref-1">1. AtД±lgan AE, Eren EГ‡. Mojibake local abstract reference.</p>',
+                    "<h2>10 | Title-first abstract bibliography</h2>",
+                    "<h4>References</h4>",
+                    '<p id="ref-1">1. Quality of Life in Patients with Bladder Cancer Undergoing Ileal Conduit. '
+                    "In Vivo. doi: 10.21873/invivo.11216 . PMID: 29275311.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P22" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_residual_unit_only_tex_fragments() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -2653,6 +2691,54 @@ def test_analyze_pair_reports_meine_manual_blind_spots() -> None:
         assert {"P33", "P34", "P35", "P36", "P37", "P38", "P39", "P40", "P41"}.issubset(defect_ids)
         assert result["summary"]["polish_page_links"] == 2
         assert result["summary"]["polish_replacement_chars"] == 1
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_uses_pdf_text_layer_to_ignore_source_float_sentence_splits() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>There is only one location of the greatest derivative, negative or</p>",
+                    '<div id="table-1" class="z2m-float-unit z2m-table-unit"><table><tr><td>Value</td></tr></table></div>',
+                    "<p>positive, depending on the directions of the currents in the coil sections.</p>",
+                    "<p>No tumors developed in either</p>",
+                    '<div id="fig-7" class="z2m-float-unit z2m-figure-unit">'
+                    '<p class="z2m-figure-caption">Figure 7. Tumors in a dish.</p></div>',
+                    "<p>sham- or field-exposed animals.</p>",
+                    "<p>This feature makes these coils negative or</p>",
+                    '<div id="table-c67" class="z2m-float-unit z2m-table-unit">'
+                    '<p class="z2m-table-caption">Table 1. Coil comparison.</p>'
+                    "<table><tr><td>Value</td></tr></table></div>",
+                    "<p>positive, depending on the directions of the currents in the coil sections.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        pdf_text = (
+            "There is only one location of the greatest derivative, negative or "
+            "Table 1. The maximum E and derivative at the nerve location for various coils "
+            "positive, depending on the directions of the currents in the coil sections. "
+            "N0 turnors devcloped in e1ther Figure 7. Tumors in a dish "
+            "sham- or field-exposed animals. This ieafure makes these coils negative or "
+            "Table 1. Noisy text layer material positive depending on current direction."
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path, pdf_text_override=pdf_text)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P30" not in defect_ids
+        assert "P40" not in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 

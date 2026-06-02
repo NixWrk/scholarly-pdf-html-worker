@@ -2097,6 +2097,10 @@ _EN_OCR_PHRASE_REPAIRS = (
     (re.compile(r"\benj\s+oy\b", re.IGNORECASE), "enjoy"),
     (re.compile(r"\bB rain-computer\b"), "Brain-computer"),
     (re.compile(r"\bIta ly\b"), "Italy"),
+    (re.compile(r"\benviron\s+ment\b", re.IGNORECASE), "environment"),
+    (re.compile(r"\bNeuro\s+sci\b", re.IGNORECASE), "Neurosci"),
+    (re.compile(r"\bParkin\s+sonism\b", re.IGNORECASE), "Parkinsonism"),
+    (re.compile(r"\bdisconti\s+nuation\b", re.IGNORECASE), "discontinuation"),
     (re.compile(r"\bBel humeur\b"), "Belhumeur"),
     (re.compile(r"\bLeporin i\b"), "Leporini"),
     (re.compile(r"\badvanta-\s*[\u00a8\u02d9]\s*geous\b", re.IGNORECASE), "advantageous"),
@@ -15756,6 +15760,17 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "APPEND<sup",
         "main:",
         "ODs/MB",
+        "Beha v. Neurosci",
+        "Parkin",
+        "virtual environ",
+        "Behav. Neuro",
+        "environ ment",
+        "Parkin sonism",
+        "Neuro sci",
+        "disconti nuation",
+        "Wilhel mina",
+        "RUTHERFO RD",
+        "Inter national",
     )
     if not any(marker in html for marker in markers):
         return html
@@ -15856,6 +15871,17 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
     )
     html = re.sub(r"\bmain:\s*(?=\d)", "mean: ", html, flags=re.IGNORECASE)
     html = re.sub(r"\bODs/MB\b", "QDs/MB", html)
+    html = re.sub(r"\bBeha\s+v\.\s+Neurosci\.", "Behav. Neurosci.", html, flags=re.IGNORECASE)
+    html = re.sub(r"\benviron\s+ment\b", "environment", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bParkin\s+sonism\b", "Parkinsonism", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bNeuro\s+sci\b", "Neurosci", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bParkin\s*</a>\s*(<a\b[^>]*>)\s*sonism\b", r"Parkinsonism</a> \1", html)
+    html = re.sub(r"\benviron\s*</a>\s*(<a\b[^>]*>)\s*ment\b", r"environment</a> \1", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bNeuro\s*</a>\s*sci\.", "Neurosci.</a>", html)
+    html = re.sub(r"\bdisconti\s+nuation\b", "discontinuation", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bWilhel\s+mina\b", "Wilhelmina", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bRUTHERFO\s+RD\b", "RUTHERFORD", html)
+    html = re.sub(r"\bInter\s+national\b", "International", html, flags=re.IGNORECASE)
     html = re.sub(
         r"\b(?P<head>APPEND|Append)\s*<sup\b[^>]*>\s*ix\s*</sup>",
         lambda m: "APPENDIX" if m.group("head").isupper() else "Appendix",
@@ -18284,6 +18310,29 @@ def _split_table_note_body_continuations(html: str) -> tuple[str, int]:
     return "".join(out_parts), splits
 
 
+_SPLIT_TABLE_NOTE_CONTINUATION_RE = re.compile(
+    r"(?P<open><p\b(?=[^>]*\bz2m-table-note\b)[^>]*>)"
+    r"(?P<head>[\s\S]{0,1400}?\(e\.g\.)\s*</p>\s*"
+    r"(?P<tail_open><p\b(?![^>]*\b(?:z2m-table-note|z2m-figure-caption|z2m-front-matter)\b)[^>]*>)\s*"
+    r"(?P<tail>the\s+median\s+control\s+group\s+risk\s+across\s+studies\)"
+    r"[\s\S]{0,1200}?\bConfidence\s+interval;\s*)</p>",
+    re.IGNORECASE,
+)
+
+
+def _merge_split_table_note_continuation_paragraphs(html: str) -> tuple[str, int]:
+    """Merge table-note paragraphs split by a PDF line/table boundary."""
+    repairs = 0
+
+    def _repair(match: re.Match[str]) -> str:
+        nonlocal repairs
+        repairs += 1
+        return f"{match.group('open')}{match.group('head').rstrip()} {match.group('tail').lstrip()}</p>"
+
+    repaired = _SPLIT_TABLE_NOTE_CONTINUATION_RE.sub(_repair, html)
+    return repaired, repairs
+
+
 def _repair_sentence_breaks_around_figure_blocks(html: str) -> tuple[str, int]:
     nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
     if not nodes:
@@ -18981,6 +19030,28 @@ _LUSCHER_BOX_FOR_THESE_REASONS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_MOUSSAVI_RESPONSE_TABLE_NOTE_INTRUSION_RE = re.compile(
+    r"(?P<body_open><p\b[^>]*>)"
+    r"(?P<body_prefix>[\s\S]{0,5200}?\bADAS-Cog\s+score\s+is\s+the)\s*"
+    r"(?P<page_anchor><span\b[^>]*\bid\s*=\s*['\"]page-[^'\"]+['\"][^>]*>\s*</span>\s*)?"
+    r"Bolded\s+rows\s+show\s+the\s+distribution\s+across\s+all\s+sites\.\s*</p>\s*"
+    r"(?P<floats>(?:<div\b(?=[^>]*\bz2m-figure-unit\b)[\s\S]*?</div>\s*)+)"
+    r"(?P<cont_open><p\b(?=[^>]*\bhas-continuation\b)[^>]*>)\s*"
+    r"(?P<cont_body>main\s+determinant\)[\s\S]{0,2200}?)\s*</p>",
+    re.IGNORECASE,
+)
+
+_CONNORS_FIG2_LABEL_BODY_INTRUSION_RE = re.compile(
+    r"(?P<body_open><p\b[^>]*>)"
+    r"(?P<body_prefix>[\s\S]{0,2600}?\ballowing\s+the)\s+"
+    r"Control\s+player\s+exit\s*</p>\s*"
+    r"(?P<middle>[\s\S]{0,900000}?)"
+    r"(?P<cont_open><p\b[^>]*>)\s*"
+    r"(?P<cont_body>user\s+to\s+build\s+a\s+corresponding\s+mental\s+representation"
+    r"[\s\S]{0,4200}?)\s*</p>",
+    re.IGNORECASE,
+)
+
 
 def _repair_known_float_body_intrusions(html: str) -> tuple[str, int]:
     """Restore known float/body continuations split around boxes and figures."""
@@ -19075,7 +19146,38 @@ def _repair_known_float_body_intrusions(html: str) -> tuple[str, int]:
             f"{match.group('float')}"
         )
 
+    def _repair_moussavi_response_table_note(match: re.Match[str]) -> str:
+        nonlocal repairs
+        repairs += 1
+        note_anchor = match.group("page_anchor") or ""
+        merged_body = _merge_sentence_parts(match.group("body_prefix"), match.group("cont_body"))
+        table_note = (
+            f'<p class="z2m-table-note">{note_anchor}'
+            "Bolded rows show the distribution across all sites.</p>"
+        )
+        return (
+            f"{match.group('body_open')}{merged_body}</p>\n"
+            f"{table_note}\n"
+            f"{match.group('floats')}"
+        )
+
+    def _repair_connors_fig2_label_body(match: re.Match[str]) -> str:
+        nonlocal repairs
+        middle = re.sub(
+            r"<p\b[^>]*>\s*(?:jewel|player|Game|exit|monster|Control)\s*</p>\s*",
+            "",
+            match.group("middle"),
+            flags=re.IGNORECASE,
+        )
+        repairs += 1
+        merged_body = _merge_sentence_parts(match.group("body_prefix"), match.group("cont_body"))
+        return f"{match.group('body_open')}{merged_body}</p>\n{middle}"
+
     html = plos_figure_doi_body.sub(_repair_plos_figure_doi_body, html)
+    if "Bolded rows show the distribution across all sites" in html and "main determinant)" in html:
+        html = _MOUSSAVI_RESPONSE_TABLE_NOTE_INTRUSION_RE.sub(_repair_moussavi_response_table_note, html)
+    if "Control player exit" in html and "user to build a corresponding mental representation" in html:
+        html = _CONNORS_FIG2_LABEL_BODY_INTRUSION_RE.sub(_repair_connors_fig2_label_body, html)
     if "They organize sequential neuronal events" in html:
         html = _BUZSAKI_BOX_BODY_INTRUSION_RE.sub(_repair_buzsaki_box, html)
     if "relating timing" in html:
@@ -21830,6 +21932,7 @@ def polish_html_document(
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)
     polished, _ = _reorder_table_block_away_from_formula_context(polished)
     polished, _ = _split_table_note_body_continuations(polished)
+    polished, _ = _merge_split_table_note_continuation_paragraphs(polished)
     polished = _mark_footnote_paragraphs_and_refs(polished)
     polished = _split_url_footnote_prose_tails(polished)
     polished = _repair_page_footnote_ref_links(polished)
@@ -22032,6 +22135,7 @@ def polish_html_document(
     polished = _repair_prose_prefixed_url_anchor_tail(polished)
     polished = _split_doi_metadata_body_paragraphs(polished)
     polished = _move_body_tail_after_table_doi_note_out_of_table_unit(polished)
+    polished, _ = _merge_split_table_note_continuation_paragraphs(polished)
     polished = _split_figure_caption_internal_body_tails(polished)
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)

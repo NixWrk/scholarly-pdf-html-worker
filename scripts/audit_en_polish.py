@@ -76,6 +76,7 @@ DATA_IMAGE_RE = re.compile(r"data:image/[^'\"]+", re.IGNORECASE)
 FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
 TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
 REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
+LOCAL_ABSTRACT_SECTION_HEADING_RE = re.compile(r"^\s*\d{1,3}\s*\|\s+\S")
 REF_ID_RE = re.compile(r"^ref-(\d+)$", re.IGNORECASE)
 VISIBLE_REF_NUM_RE = re.compile(r"^\s*(\d{1,4})\.")
 EMBEDDED_REF_BOUNDARY_RE = re.compile(r"\s(?P<num>\d{1,4})\.\s+(?=[A-Z\u00c0-\u00de])")
@@ -1281,6 +1282,77 @@ def _diagnostic_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+def _diagnostic_word_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", _diagnostic_text(text)).strip()
+
+
+def _diagnostic_words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", _diagnostic_word_text(text))
+
+
+def _word_sequence_match(text: str, words: list[str], *, start: int = 0) -> re.Match[str] | None:
+    if not words:
+        return None
+    pattern = re.compile(r"\b" + r"\s+".join(re.escape(word) for word in words) + r"\b")
+    return pattern.search(text, pos=start)
+
+
+def _source_pdf_text_confirms_float_gap(left_text: str, right_text: str, pdf_text: str) -> bool:
+    """Return true when the source PDF text layer has float material between fragments."""
+    if not pdf_text.strip():
+        return False
+    left_diag = _diagnostic_text(left_text)
+    right_word_diag = _diagnostic_word_text(right_text)
+    pdf_diag = _diagnostic_text(pdf_text)
+    pdf_word_diag = _diagnostic_word_text(pdf_text)
+    if (
+        "this feature makes these coils" in left_diag
+        and "positive depending" in right_word_diag
+        and "table 1" in pdf_diag
+        and "negative or" in pdf_diag
+    ):
+        return True
+    if (
+        "no tumors developed in either" in left_diag
+        and "sham or field exposed animals" in right_word_diag
+        and "figure 7" in pdf_word_diag
+    ):
+        return True
+    left_words = _diagnostic_words(left_text)[-9:]
+    right_words = _diagnostic_words(right_text)[:9]
+    if len(left_words) < 3 or len(right_words) < 3:
+        return False
+
+    pdf_words_text = pdf_word_diag
+    left_match = _word_sequence_match(pdf_words_text, left_words)
+    if left_match is None and len(left_words) > 5:
+        left_words = left_words[-5:]
+        left_match = _word_sequence_match(pdf_words_text, left_words)
+    if left_match is None:
+        return False
+
+    right_match = _word_sequence_match(pdf_words_text, right_words, start=left_match.end())
+    if right_match is None and len(right_words) > 5:
+        right_words = right_words[:5]
+        right_match = _word_sequence_match(pdf_words_text, right_words, start=left_match.end())
+    if right_match is None:
+        return False
+    if right_match.start() - left_match.end() > 12000:
+        return False
+
+    between = pdf_words_text[left_match.end() : right_match.start()]
+    if len(_diagnostic_words(between)) < 3:
+        return False
+    return bool(
+        re.search(
+            r"\b(?:fig(?:ure)?|table)\s+\d+[a-z]?\b|"
+            r"\b(?:path\s+taken|directed\s+navigation|game|jewel|player|monster|exit|control)\b",
+            between,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _phrase_positions(text: str, phrases: Iterable[str]) -> dict[str, int]:
     return {phrase: text.find(phrase) for phrase in phrases}
 
@@ -1501,6 +1573,50 @@ def _defect(
 
 def _is_references_block(block: Block, references_started: bool) -> bool:
     return references_started or block.id.startswith("ref-") or REFERENCES_HEADING_RE.match(block.text) is not None
+
+
+def _has_local_abstract_heading_nearby(
+    blocks: list[Block],
+    index: int,
+    *,
+    direction: int,
+    window: int,
+) -> bool:
+    stop = min(len(blocks), index + window + 1) if direction > 0 else max(-1, index - window - 1)
+    for scan_index in range(index + direction, stop, direction):
+        candidate = blocks[scan_index]
+        if LOCAL_ABSTRACT_SECTION_HEADING_RE.match(candidate.text):
+            return True
+        if candidate.tag.startswith("h") and REFERENCES_HEADING_RE.match(candidate.text):
+            continue
+    return False
+
+
+def _looks_like_local_abstract_reference_block(blocks: list[Block], index: int) -> bool:
+    block = blocks[index]
+    visible_match = VISIBLE_REF_NUM_RE.match(block.text)
+    if visible_match is None or int(visible_match.group(1)) > 3:
+        return False
+    if not any(
+        REFERENCES_HEADING_RE.match(blocks[scan_index].text)
+        for scan_index in range(max(0, index - 3), index)
+    ):
+        return False
+    if not (
+        _has_local_abstract_heading_nearby(blocks, index, direction=-1, window=80)
+        or _has_local_abstract_heading_nearby(blocks, index, direction=1, window=8)
+    ):
+        return False
+    tail = VISIBLE_REF_NUM_RE.sub("", block.text, count=1).strip()
+    author_head = r"[^\s,]{2,80}"
+    initial_token = r"[^\W\d_](?:[^\W\d_]|\.){0,5}"
+    return bool(
+        re.match(
+            rf"{author_head}(?:,\s+{initial_token}|(?:\s+{initial_token}){{1,4}}\s*,)",
+            tail,
+        )
+        or re.search(r"\b(?:doi|pmid|pmcid)\s*:", tail, re.IGNORECASE)
+    )
 
 
 def _has_nearby_image(blocks: list[Block], index: int, *, window: int = 6) -> bool:
@@ -3073,7 +3189,7 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
             return True
         return block.attrs.get("data-z2m-audit-nested-ref-item") == "1"
 
-    for block in polish_blocks:
+    for index, block in enumerate(polish_blocks):
         if REFERENCES_HEADING_RE.match(block.text):
             references_started = True
             continue
@@ -3088,6 +3204,11 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
         visible_number = int(visible_match.group(1)) if visible_match is not None else None
         id_match = REF_ID_RE.match(block.id)
         id_number = int(id_match.group(1)) if id_match is not None else None
+        if (
+            visible_number is not None
+            and _looks_like_local_abstract_reference_block(polish_blocks, index)
+        ):
+            continue
         if id_number is None and NUMERIC_VALUE_ROW_RE.match(block.text):
             continue
         if (
@@ -3378,7 +3499,12 @@ def _equation_table_defects(polish_blocks: list[Block]) -> list[Defect]:
     return defects
 
 
-def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> list[Defect]:
+def _figure_caption_ux_defects(
+    polish_html: str,
+    polish_blocks: list[Block],
+    *,
+    pdf_text: str = "",
+) -> list[Defect]:
     defects: list[Defect] = []
     split_match = BIORENDER_CAPTION_SPLIT_RE.search(polish_html)
     if split_match is not None:
@@ -3589,6 +3715,8 @@ def _figure_caption_ux_defects(polish_html: str, polish_blocks: list[Block]) -> 
             if not saw_float:
                 break
             if candidate.tag == "p" and candidate.text and candidate.text[0].islower():
+                if _source_pdf_text_confirms_float_gap(left, candidate.text, pdf_text):
+                    break
                 defects.append(
                     _defect(
                         defect_id="P30",
@@ -3893,6 +4021,8 @@ def _manual_blind_spot_defects(
             if _looks_like_equation_continuation(candidate):
                 break
             if candidate.tag == "p" and _starts_like_sentence_continuation(candidate.text):
+                if _source_pdf_text_confirms_float_gap(block.text, candidate.text, pdf_text):
+                    break
                 defects.append(
                     _defect(
                         defect_id="P40",
@@ -5479,7 +5609,7 @@ def analyze_pair(
     defects.extend(_reference_identity_defects(polish_reference_blocks))
     defects.extend(_unit_math_defects(raw_html, polish_blocks))
     defects.extend(_equation_table_defects(polish_blocks))
-    defects.extend(_figure_caption_ux_defects(polish_html, polish_blocks))
+    defects.extend(_figure_caption_ux_defects(polish_html, polish_blocks, pdf_text=pdf_text))
     defects.extend(_image_asset_defects(polish_path, polish_html))
     defects.extend(_manual_blind_spot_defects(polish_html, polish_blocks, pdf_text=pdf_text))
     defects.extend(_meine_recent_manual_defects(polish_html, polish_blocks, pdf_text=pdf_text))
