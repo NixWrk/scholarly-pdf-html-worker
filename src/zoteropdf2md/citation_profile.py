@@ -22,6 +22,10 @@ PLAIN_SUPERSCRIPT_NUMERIC_CITATION_RE = re.compile(
     r"(?=\s+[A-Z])"
 )
 PDF_REF_START_RE = re.compile(r"^(?P<num>[1-9]\d{0,2})(?=[A-Z])")
+PDF_REFERENCE_HEADING_RE = re.compile(r"^\s*(?:References|Bibliography|Notes and references)\s*$", re.IGNORECASE)
+PDF_REFERENCE_ENTRY_START_RE = re.compile(
+    r"^\s*(?:\[(?P<bracket>[1-9]\d{0,3})\]|(?P<plain>[1-9]\d{0,3})[.)])\s+(?P<body>\S.*)$"
+)
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,13 @@ class PdfReferenceStart:
 
 
 @dataclass(frozen=True)
+class PdfReferenceEntry:
+    page: int
+    number: int
+    text: str
+
+
+@dataclass(frozen=True)
 class ZoteroOverlayCitation:
     page: int
     text: str
@@ -82,6 +93,7 @@ class CitationProfile:
     samples: list[PdfLinkSample] = field(default_factory=list)
     annotations: list[PdfLinkAnnotation] = field(default_factory=list)
     reference_starts: list[PdfReferenceStart] = field(default_factory=list)
+    reference_entries: list[PdfReferenceEntry] = field(default_factory=list)
     zotero_citation_count: int = 0
     zotero_citations: list[ZoteroOverlayCitation] = field(default_factory=list)
     zotero_overlay_status: str = "not_attempted"
@@ -410,6 +422,83 @@ def _reference_starts_from_doc(doc: Any) -> list[PdfReferenceStart]:
     return sorted(starts, key=lambda item: (item.page, item.x, item.y, item.number))
 
 
+def _is_pdf_reference_page_furniture(line: str, page_number: int) -> bool:
+    text = line.strip()
+    if not text:
+        return True
+    if text == str(page_number):
+        return True
+    if len(text) <= 80 and not re.search(r"[,.;:]", text) and re.search(r"\b(?:journal|surgery)\b", text, re.IGNORECASE):
+        return True
+    return False
+
+
+def _reference_entries_from_page_texts(page_texts: list[tuple[int, str]]) -> list[PdfReferenceEntry]:
+    entries: list[PdfReferenceEntry] = []
+    current: dict[str, Any] | None = None
+    in_references = False
+
+    for page_number, page_text in page_texts:
+        for line in page_text.splitlines():
+            stripped = line.strip()
+            if not in_references:
+                if PDF_REFERENCE_HEADING_RE.match(stripped):
+                    in_references = True
+                continue
+            if _is_pdf_reference_page_furniture(stripped, page_number):
+                continue
+            start_match = PDF_REFERENCE_ENTRY_START_RE.match(stripped)
+            if start_match is not None:
+                if current is not None:
+                    entries.append(
+                        PdfReferenceEntry(
+                            page=int(current["page"]),
+                            number=int(current["number"]),
+                            text=str(current["text"]).strip(),
+                        )
+                    )
+                current = {
+                    "page": page_number,
+                    "number": int(start_match.group("bracket") or start_match.group("plain")),
+                    "text": start_match.group("body").strip(),
+                }
+                continue
+            if current is not None:
+                current["text"] = f"{current['text']} {stripped}".strip()
+
+    if current is not None:
+        entries.append(
+            PdfReferenceEntry(
+                page=int(current["page"]),
+                number=int(current["number"]),
+                text=str(current["text"]).strip(),
+            )
+        )
+    return entries
+
+
+def extract_reference_entries_from_pdf(pdf_path: str | Path) -> list[PdfReferenceEntry]:
+    path = Path(pdf_path).expanduser().resolve(strict=False)
+    if not path.is_file():
+        return []
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    try:
+        doc = fitz.open(str(path))
+    except Exception:
+        return []
+    try:
+        page_texts = [
+            (page_index + 1, page.get_text("text") or "")
+            for page_index, page in enumerate(doc)
+        ]
+    finally:
+        doc.close()
+    return _reference_entries_from_page_texts(page_texts)
+
+
 def _filter_reference_start_sequences(candidates: list[PdfReferenceStart]) -> list[PdfReferenceStart]:
     if len(candidates) < 4 and not any(candidate.number >= 20 for candidate in candidates):
         return []
@@ -527,12 +616,16 @@ def build_citation_profile_from_pdf(
     raw_annotations: list[tuple[int, str, str, str, float, float, str, list[float]]] = []
     link_count = 0
     text_parts: list[str] = []
+    page_texts: list[tuple[int, str]] = []
     reference_starts: list[PdfReferenceStart] = []
+    reference_entries: list[PdfReferenceEntry] = []
     try:
         reference_starts = _reference_starts_from_doc(doc)
         for page_index, page in enumerate(doc):
             try:
-                text_parts.append(page.get_text("text") or "")
+                page_text = page.get_text("text") or ""
+                text_parts.append(page_text)
+                page_texts.append((page_index + 1, page_text))
             except Exception as exc:
                 errors.append(f"page {page_index + 1} text failed: {exc}")
 
@@ -574,6 +667,7 @@ def build_citation_profile_from_pdf(
                 raw_annotations.append(
                     (page_index + 1, dest, uri, page_target, target_x, target_y, sample_text, rect_values)
                 )
+        reference_entries = _reference_entries_from_page_texts(page_texts)
     finally:
         page_count = doc.page_count
         doc.close()
@@ -687,6 +781,7 @@ def build_citation_profile_from_pdf(
         samples=samples,
         annotations=annotations,
         reference_starts=reference_starts,
+        reference_entries=reference_entries,
         zotero_overlay_status=zotero_overlay_status,
         zotero_overlay_error=zotero_overlay_error,
         errors=errors,

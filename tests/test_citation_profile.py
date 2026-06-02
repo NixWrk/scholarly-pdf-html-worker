@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from zoteropdf2md.citation_profile import (
+    _reference_entries_from_page_texts,
     infer_citation_style_from_text,
     load_zotero_overlay_citations,
     merge_citation_profile_with_zotero_overlays,
@@ -51,6 +52,28 @@ def test_infer_citation_style_detects_flattened_superscript_numeric_pdf_text() -
     assert confidence == "high"
     assert paren_count == 0
     assert bracket_count == 0
+
+
+def test_reference_entries_from_page_texts_extracts_spotnitz_style_bracket_refs() -> None:
+    entries = _reference_entries_from_page_texts(
+        [
+            (
+                24,
+                "References\n"
+                "[157] C. Schug-Pass, D. A. Jacob et al., “Biomechanical properties,” Hernia, 2013.\n"
+                "[158] R. H. Fortelny, A. H. Petter-Puchner, C. May et al., “The impact\n"
+                "of atraumatic fibrin sealant vs. staple mesh fixation in TAPP\n"
+                "hernia repair on chronic pain and quality of life,” Surgical Endoscopy, 2012.\n"
+                "[159] M. Cambal, P. Zonca, and B. Hrbaty, “Comparison of self-\n"
+                "gripping mesh,” Bratislavske Lekarske Listy, 2012.\n",
+            )
+        ]
+    )
+
+    assert [entry.number for entry in entries] == [157, 158, 159]
+    assert entries[1].page == 24
+    assert "Fortelny" in entries[1].text
+    assert "atraumatic fibrin sealant" in entries[1].text
 
 
 def test_load_zotero_overlay_citations_reads_probe_summary() -> None:
