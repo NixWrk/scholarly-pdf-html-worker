@@ -215,6 +215,64 @@ If `source_pdf_present=false` in the pack, inspect `source_pdf_candidates` from
 Zotero/source_exports first and record the unavailable PDF as an analysis
 limitation only when no candidate can be rendered.
 
+## Future Observed/Non-Quality Resolver Plan
+
+Observed/non-quality counters are not gate failures when every instance carries
+`extra.quality_counted=false`, but they should still drive a low-cost backlog.
+The next automation layer should run after the full audit and before the next
+LLM pack. It should read `audit_full_checks.json`, group observed-only `P*`
+classes, and produce one action per manifestation:
+
+- `fixed`: a safe deterministic or PDF-backed edit was applied;
+- `accepted_telemetry`: the manifestation is expected source/layout telemetry;
+- `needs_manual_or_llm`: the evidence is ambiguous and should enter a focused
+  review queue.
+
+Every resolver decision must carry an evidence pack: polish HTML snippet, raw
+HTML snippet, source PDF text-layer page window, and rendered PDF page image. A
+resolver must not classify a location as fixed, source-noise, or telemetry from
+HTML alone.
+
+Suggested resolver order:
+
+1. Move benign telemetry out of the operational backlog first.
+   `P04T`, `P04M`, `P45S`, and `P45M` are usually table/float numerics,
+   math/measurement notation, superscript affiliation markers, or rendered math
+   variables. Keep sample evidence in reports, but report them under
+   `telemetry_counts` rather than as remaining repair work.
+2. Recover missing figure images for `P62`.
+   For caption-only figure targets, find the caption in the PDF text layer,
+   render the page, locate the figure region above or near the caption using
+   PDF image/vector/text block geometry, crop a nonblank local asset, and replace
+   the warning with an `<img>` while preserving the existing caption and target.
+   If geometry is ambiguous, queue the page crop for manual or local-LLM review
+   instead of inserting a guessed image.
+3. Repair semantic figure targets for `P61`.
+   Build an inventory of visible `Figure N` references, existing `fig-N`
+   targets, captions, and `P62` caption-only targets. When a visible caption or
+   image block exists but lacks `id="fig-N"`, wrap or anchor the nearest figure
+   unit without changing visible text. If the caption is absent from HTML but
+   present in the PDF, defer to the `P62` recovery path.
+4. Recover bibliography targets for `P04N`.
+   For citation-like ranges such as `[6, 7]`, verify whether `ref-6` and
+   `ref-7` exist. If the reference list is present but unnumbered, merged, or
+   skipped, restore only the missing numbered targets with evidence from HTML
+   and the PDF text layer, then link the citation. If no target is recoverable,
+   keep the hit unresolved rather than creating a synthetic reference.
+5. Clean source-layer OCR residue for `P71` and the ambiguous subset of `P35`.
+   Start with a conservative deterministic allowlist for obvious OCR spellings.
+   For anything else, render a small page region and let a local LLM or OCR
+   model propose a correction only when the edit distance is small, the token is
+   not a name/formula/reference, and the corrected word fits the visual render
+   and surrounding context. Leave old-scan replacement characters as accepted
+   source noise when the PDF text layer and render do not support a safe repair.
+
+Local LLM usage should stay narrow and evidence-bound. It is useful for
+segmenting merged bibliography lines, choosing among visually plausible OCR
+corrections, and confirming a figure crop when geometry is weak. It should not
+decide broad linkification, create missing references without PDF evidence, or
+rewrite article prose from context alone.
+
 ## Gate Only
 
 ```powershell
