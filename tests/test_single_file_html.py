@@ -10722,7 +10722,7 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "upprojection KeunWhangbo first-inhumans Descriptionsfor realworld "
         "Refreshabletactile OFTACTILE residualnormal processingbased handassembled "
         "staffmember selfcontrolled Qmaxurgency d)2.5D prostatectomy\u0394VV "
-        "groundtruth backilluminated displaycan EVERYDAYACTIVITIES voicecommands singlefinger "
+        "groundtruth backilluminated displaycan EVERYDAYACTIVITIES VoiceCommands singlefinger "
         "Computeraided MRsafe MRcompatible inIndian Nineteenthcentury airpolluted watersoluble "
         "nonneoadjuvant lightbeam SUFestimated SUFdetermined UFrecorded ofdepression "
         "numbergestures 99Tcmcolloids.</p>"
@@ -10810,7 +10810,7 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Refreshable tactile OF TACTILE residual-normal processing-based hand-assembled" in polished
     assert "staff member self-controlled Qmax-urgency d) 2.5D" in polished
     assert "prostatectomy \u0394VV ground-truth back-illuminated display can EVERYDAY ACTIVITIES" in polished
-    assert "voice commands single-finger Computer-aided MR-safe MR-compatible in Indian" in polished
+    assert "VoiceCommands single-finger Computer-aided MR-safe MR-compatible in Indian" in polished
     assert "Nineteenth-century air-polluted water-soluble non-neoadjuvant light-beam" in polished
     assert "SUF-estimated SUF-determined UF-recorded" in polished
     assert "of depression number gestures 99Tcm colloids" in polished
@@ -10982,6 +10982,67 @@ def test_polish_html_document_repairs_ocr_tokens_from_global_p71_audit() -> None
         "https://upload.wikimedia.org/a/SVM_margins.png</a>"
     ) in polished
     assert "IRIT-ELIPSE" in polished
+
+
+def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
+    html = (
+        "<html><body>"
+        "<p>For large amplitude oscillations with aspect ratios Dmax=Dminw1:5, "
+        "Wherev 2 denotes v T v, 0.999 0995 stayed nearby, and r=0.9 840.</p>"
+        "<p>Theexperiment had injuryassociated findings and lower urinary tractfunction symptoms.</p>"
+        "<p>The experiment tookplaceinasquare area, delimited bywooden panels. "
+        "Thisarearepresented afictitious roomthat hadtobeencoded byparticipants. "
+        "Theflooroftheareawasmarked byacolored gridtomonitor movement.</p>"
+        "<p>References include benignprostatic hypertrophy, Trends andChallenges in Robot "
+        "Manipulation, NeururolUrodyn2021 Mar, and Theeffect in healthyyoung men.</p>"
+        "<p>The SoftBankbacked startup used itemspecific spiking, a match-tosample task, "
+        "controlrelated activity, intraobject depth values, imageto-image translation, "
+        "and realdomain images.</p>"
+        "<p>The bladder over distentionon voiding function and suggestiveof abnormal "
+        "uroflow references stayed readable.</p>"
+        "<p>The AcceptableBladder Capacity reference stayed readable.</p>"
+        "<p>The cuetrials result used a trialaverage measure and a textdetection module "
+        "for speechballoon areas.</p>"
+        "<p>The patient had inflammationat the moment and the sequence held inWM during the task.</p>"
+        "<p>The DCM imagedepth pairs used a customdesigned model and a cognitive iter.</p>"
+        "<p>sys- tem, telsa, TQma x, PdetQma x, Appel's Sir i, F igures, "
+        "appro ximately, PRAVALENCE, Mulitmodal, international continent society, "
+        "grade 1\u00bc0-4.9 mm, grade 2\u00bc5-10 mm, grade 3\u00bcmore than 10 mm, "
+        "eBDetheque, milivolt, nanomicells, DirectX- R, BOO i, symphisis, "
+        "14 C-beled, and Computer Based Method ?.</p>"
+        "<p>Algorithm uses VoiceCommands and AIType.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "aspect ratios Dmax/Dmin > 1.5, Where v^2 denotes v T v" in polished
+    assert "0.999 0.995 stayed nearby, and r=0.9840" in polished
+    assert "The experiment had injury-associated findings and lower urinary tract function symptoms" in polished
+    assert "took place in a square area, delimited by wooden panels" in polished
+    assert "This area represented a fictitious room that had to be encoded by participants" in polished
+    assert "The floor of the area was marked by a colored grid to monitor movement" in polished
+    assert "benign prostatic hypertrophy, Trends and Challenges in Robot Manipulation" in polished
+    assert "Neurourol Urodyn 2021 Mar, and The effect in healthy young men" in polished
+    assert "SoftBank-backed startup used item-specific spiking, a match-to-sample task" in polished
+    assert "control-related activity, intra-object depth values, image-to-image translation" in polished
+    assert "and real domain images" in polished
+    assert "bladder over distention on voiding function" in polished
+    assert "suggestive of abnormal uroflow" in polished
+    assert "Acceptable Bladder Capacity reference" in polished
+    assert "cue trials result used a trial average measure" in polished
+    assert "text-detection module for speech-balloon areas" in polished
+    assert "inflammation at the moment and the sequence held in WM" in polished
+    assert "image-depth pairs used a custom-designed model and a cognitive filter" in polished
+    assert "system, tesla, TQmax, PdetQmax, Apple's Siri, Figures" in polished
+    assert "approximately, PREVALENCE, Multimodal, International Continence Society" in polished
+    assert "grade 1 = 0-4.9 mm, grade 2 = 5-10 mm, grade 3 = more than 10 mm" in polished
+    assert "eBDtheque, millivolt, nanomicelles, DirectX-R, BOOI, symphysis" in polished
+    assert "14C-labeled, and Computer Based Method?" in polished
+    assert "Algorithm uses VoiceCommands and AIType" in polished
+    assert "Dmax=Dminw1:5" not in polished
+    assert "theexperiment" not in polished.lower()
+    assert "voice commands" not in polished.lower()
 
 
 def test_polish_html_document_repairs_mojibake_detached_latin_accents_in_text_nodes() -> None:

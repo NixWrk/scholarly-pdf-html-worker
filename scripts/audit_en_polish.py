@@ -239,7 +239,7 @@ KNOWN_JOINED_WORD_RE = re.compile(
     r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
     r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
     r"Theexperiment|tookplace|Thisarearepresented|hadtobeencoded|"
-    r"off-theshelf|state-ofthe-art|numbergestures|voicecommands|twodimensional|"
+    r"off-theshelf|state-ofthe-art|numbergestures|twodimensional|"
     r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
     r"UFrecorded|SUFestimated|SUFdetermined|MRsafe|MRcompatible|"
     r"lung-tohead|feed-andsleep|readyreckoners|injuryassociated|"
