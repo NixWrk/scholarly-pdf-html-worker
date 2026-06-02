@@ -4869,6 +4869,18 @@ def _meine_recent_manual_defects(
 
     author_marker_glue_match = AUTHOR_MARKER_GLUE_RE.search(plain)
     if author_marker_glue_match is not None:
+        author_marker_context = plain[
+            max(0, author_marker_glue_match.start() - 220) : author_marker_glue_match.end() + 220
+        ]
+        if re.match(r"Between\s+100\s+and\b", author_marker_glue_match.group(0), re.IGNORECASE) and re.search(
+            r"\bBetween\s+0\s+and\s+100\b[\s\S]{0,240}\bBetween\s+100\s+and\s+200\b[\s\S]{0,240}"
+            r"\bBetween\s+200\s+and\s+255\b[\s\S]{0,240}\bperceptual\s+threshold\b",
+            author_marker_context,
+            re.IGNORECASE,
+        ):
+            author_marker_glue_match = None
+
+    if author_marker_glue_match is not None:
         defects.append(
             _defect(
                 defect_id="P73",

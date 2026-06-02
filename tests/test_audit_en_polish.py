@@ -2810,6 +2810,36 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_pdf_verified_numeric_threshold_range_for_p73() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Between 0 and 100, the minimum perceptual threshold is 12. "
+                    "Between 100 and 200, the minimum perceptual threshold is 24. "
+                    "Between 200 and 255, the minimum perceptual threshold is 36.</p>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P73" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_does_not_report_p68_for_repaired_systemic_circulation_tail() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

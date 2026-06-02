@@ -374,6 +374,155 @@ def test_polish_html_document_moves_table_doi_body_tail_out_of_table_unit() -> N
     assert "</p></div> <p>switch, the first stimulation started" in compact
 
 
+def test_polish_html_document_marks_electronic_supplementary_material_as_front_matter() -> None:
+    html = (
+        "<html><body>"
+        "<p>Electronic supplementary material is available at "
+        '<a href="http://dx.doi.org/10.1098/rspb.2013.3011">'
+        "http://dx.doi.org/10.1098/rspb.2013.3011</a> "
+        "or via http://rspb.royalsocietypublishing.org .</p>"
+        "<h1>Visual navigation in starfish</h1>"
+        "<p>Abstract starts here.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert re.search(
+        r'<p class="z2m-front-matter">Electronic supplementary material is available at .*'
+        r"or via .*rspb\.royalsocietypublishing\.org.*\.</p>",
+        compact,
+    )
+    assert "2013.3011</a></p> <p>or via" not in compact
+
+
+def test_polish_html_document_moves_plos_figure_doi_out_of_body_sentence() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Text">'
+        "Before starting, participants were educated on phosphene characteristics to ensure "
+        "accurate reporting. During the preassessment, participants were instructed to state "
+        '"yes" if they perceived a phosphene after stimulation. If unsure, they were required '
+        'to reply "maybe," and a subsequent pulse was administered. If they remained quiet '
+        "after a stimulation was given, "
+        '<a href="https://doi.org/10.1371/journal.pone.0249996.g001">'
+        "https://doi.org/10.1371/journal.pone.0249996.g001</a> "
+        'this indicated "no," and the coil was repositioned onto the next stimulation site.</p>'
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig 1. Experiment set-up.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert 'given, this indicated "no,"' in compact
+    assert "0249996.g001</a> this indicated" not in compact
+    assert '<p class="z2m-front-matter">DOI: <a href="https://doi.org/10.1371/journal.pone.0249996.g001"' in polished
+
+
+def test_polish_html_document_splits_long_plos_table_doi_note_from_body_tail() -> None:
+    note = (
+        "Numeric details of the experimental parameter of phosphene count. Electrode spacing "
+        "refers to the distance between electrode tips implanted in LGN tissue in a 3D regular "
+        "grid pattern that will produce a center-weighted phosphene pattern in visual space. "
+        "Total electrode count includes electrodes that will generate phosphenes anywhere in "
+        "the entire visual field, most of which would not be active in the Primary experiment, "
+        "whereas the count within 10 degrees is for those electrodes generating phosphenes that "
+        "lie within the central part of visual space corresponding to the approximate location "
+        "of the letterform stimuli in this report. "
+    )
+    html = (
+        "<html><body>"
+        f'<p block-type="Text">{note}doi:'
+        '<a href="https://doi.org/10.1371/journal.pone.0073592.t002">'
+        "10.1371/journal.pone.0073592.t002</a> "
+        "The nine letters used from the Snellen set are shown paired with their three distractors.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert "0073592.t002</a> The nine letters" not in compact
+    assert "</a></p> <p>The nine letters used from the Snellen set" in compact
+
+
+def test_polish_html_document_repairs_doi_anchor_that_swallowed_prose_tail() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Text">Figure supplement 2. Additional experimental functions.</p>'
+        '<p block-type="Text">DOI: <a href="https://doi.org/10.7554/eLife.37841.009</p>'
+        '<p>the">https://doi.org/10.7554/eLife.37841.009 the</a> path, the guide stops.</p>'
+        '<p block-type="Text">DOI: '
+        '<a href="https://doi.org/10.7554/eLife.37841.012 building">'
+        "https://doi.org/10.7554/eLife.37841.012 building</a> "
+        "that had been pre-scanned by the HoloLens.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert '<a href="https://doi.org/10.7554/eLife.37841.009">https://doi.org/10.7554/eLife.37841.009</a>' in compact
+    assert "<p>the path, the guide stops.</p>" in compact
+    assert '<a href="https://doi.org/10.7554/eLife.37841.012">https://doi.org/10.7554/eLife.37841.012</a>' in compact
+    assert "<p>building that had been pre-scanned by the HoloLens.</p>" in compact
+
+
+def test_polish_html_document_drops_confirmed_page_furniture_blocks() -> None:
+    html = (
+        "<html><body>"
+        "<p>Keywords: assistive technology; urban mobility</p>"
+        "<h1>check for</h1><p>updates</p>"
+        "<p>Citation: Tachiquin, R.; Wearable Urban Mobility Assistive Device. Sensors 2021, 21, 5274. "
+        "https://doi.org/10.3390/s21165274</p>"
+        "<p>Academic Editor: Thurmon Lockhart</p>"
+        '<p class="z2m-front-matter">Received: 4 May 2021 Accepted: 31 July 2021 Published: 4 August 2021</p>'
+        "<p>Publisher's Note: MDPI stays neutral with regard to jurisdictional claims.</p>"
+        "<p class=\"z2m-front-matter\">Copyright: 2021 by the authors. Licensee MDPI, Basel, Switzerland.</p>"
+        "<h2>1. Introduction</h2><p>Body starts.</p>"
+        "<p>15206777, 2021, S3, Downloaded from https://onlinelibrary.wiley.com/doi/10.1002/nau.24751 "
+        "by Egyptian National Sti. Network (Enstinet), Wiley Online Library on [06/11/2022]. "
+        "See the Terms and Conditions (https://onlinelibrary.wiley.com/terms-and-conditions) "
+        "on Wiley Online Library for rules of use; OA articles are governed by the applicable Creative Commons License</p>"
+        "<p>After footer body continues.</p>"
+        "<h4><b>REFERENCES</b></h4><p block-type=\"ListGroup\"><ul>"
+        '<li block-type="ListItem" id="ref-1">1. Reference.</li></ul></p>'
+        "<h1><b>Resonance-Compatible Incubator With a Built-in Coil Ultrafast Magnetic Resonance Imaging "
+        "of the Neonate in a Magnetic</b></h1>"
+        "<p><i>Pediatrics</i> 2004;113;e150 Daniel J.A. Connolly.</p>"
+        "<p>Updated Information & including high resolution figures, can be found at:</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "check for" not in polished
+    assert "Citation: Tachiquin" not in polished
+    assert "Wiley Online Library" not in polished
+    assert "Resonance-Compatible Incubator With a Built-in Coil Ultrafast" not in polished
+    assert "Body starts." in polished
+    assert "After footer body continues." in polished
+
+
+def test_polish_html_document_unwraps_section_title_page_anchor_in_prose() -> None:
+    html = (
+        "<html><body>"
+        '<p block-type="Text">Using concept 1 as a reference, the following changes are made '
+        'as described in <a href="#page-23-2">3.3.2 Evaluation criteria for concepts.</a></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'href="#page-23-2"' not in polished
+    assert "3.3.2 Evaluation criteria for concepts." in polished
+
+
 def test_polish_html_document_splits_distinct_nested_figure_units() -> None:
     html = (
         "<html><body>"
@@ -5160,6 +5309,105 @@ def test_polish_html_document_repairs_front_matter_marker_ocr() -> None:
     assert 'href="#page-' not in frontmatter
     assert 'href="#ref-1"' in polished[frontmatter_end:]
     assert 'href="#ref-2"' in polished[frontmatter_end:]
+
+
+def test_polish_html_document_repairs_confirmed_front_matter_email_artifacts() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Confirmed front matter repairs</h1>"
+        "<p>Department of Industrial Engineering, University of Florence, Italy. "
+        "Contacts: lapo.governi@unfi.it, monica.carfagni@unfi.it. "
+        "For correspondence Me-mail: michael.deistler@uni-tuebingen.de</p>"
+        "<p>The body text begins here.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    frontmatter = polished[: polished.index("The body text begins")]
+
+    assert "Me-mail:" not in frontmatter
+    assert "e-mail: michael.deistler@uni-tuebingen.de" in frontmatter
+    assert "@unfi.it" not in frontmatter
+    assert "lapo.governi@unifi.it" in frontmatter
+    assert "monica.carfagni@unifi.it" in frontmatter
+
+
+def test_polish_html_document_repairs_confirmed_author_marker_runs() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Author marker repairs</h1>"
+        '<p>Mehmet <a href="https://pubmed.ncbi.nlm.nih.gov/?term=Keskin">Zeynel Keskin,</a> '
+        'Erkin <a href="https://pubmed.ncbi.nlm.nih.gov/?term=Karaca">Karaca</a> , '
+        'Murat U\u00e7ar, <a href="https://pubmed.ncbi.nlm.nih.gov/?term=Ate\u015f">Erhan Ate\u015f,</a> '
+        'Cem <a href="https://pubmed.ncbi.nlm.nih.gov/?term=Y\u00fccel">Y\u00fccel</a> , and '
+        'Yusuf <a href="https://pubmed.ncbi.nlm.nih.gov/?term=\u00d6zlem">\u00d6zlem</a> '
+        "\u0130lbey 1 1 2 3 1 1</p>"
+        "<h2>Abstract</h2>"
+        "<p>The first body sentence follows.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Mehmet Zeynel Keskin<sup>1</sup>" in polished
+    assert "Murat U\u00e7ar<sup>2</sup>" in polished
+    assert "Erhan Ate\u015f<sup>3</sup>" in polished
+    assert "Yusuf \u00d6zlem \u0130lbey<sup>1</sup>" in polished
+
+
+def test_polish_html_document_repairs_xue_author_markers_without_losing_abstract_tail() -> None:
+    html = (
+        "<html><body>"
+        "<h1>A green approach for ultrasensitive fluorescence detection</h1>"
+        "<p>Mingyue Xue, ab Mengbing Zou, Jingjin Zhao, Zhihua Zhan Ab and Shulin Zhao "
+        "Zhao A green approach was developed for detection.</p>"
+        "<p>The next body sentence follows.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Mingyue Xue<sup>ab</sup>, Mengbing Zou<sup>a</sup>" in polished
+    assert "Jingjin Zhao<sup>*a</sup>" in polished
+    assert "Zhao Zhao A green approach" not in polished
+    assert "A green approach was developed for detection." in polished
+
+
+def test_polish_html_document_repairs_medical_physics_author_marker_split() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Effects of multispectral fluorescence imaging</h1>"
+        "<p>Banghe Zhu, John C. Rasmussen, and Eva M. Sevick-Murac aa) "
+        "Center for Molecular Imaging, The Brown Foundation Institute of Molecular Medicine.</p>"
+        "<h2>Abstract</h2>"
+        "<p>The article body begins.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Eva M. Sevick-Muraca<sup>a)</sup>" in polished
+    assert "Eva M. Sevick-Murac aa)" not in polished
+    assert "z2m-affiliations" in polished
+    assert "<p>The article body begins.</p>" in polished
+
+
+def test_polish_html_document_repairs_medical_physics_author_marker_line_break() -> None:
+    html = (
+        "<html><body>"
+        "<h1>Intraoperative fluorescence molecular imaging</h1>"
+        "<p>Banghe Zhu, John C. Rasmussen, and Eva M. Sevick-Murac \n"
+        "    aa)\n"
+        "(Received 17 October 2013; revised 5 December 2013.)</p>"
+        "<p><b>Purpose:</b> The body starts here.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Eva M. Sevick-Muraca<sup>a)</sup>" in polished
+    assert "Sevick-Murac" not in re.sub(r"Sevick-Muraca<sup>a\)</sup>", "", polished)
+    assert "(Received 17 October 2013; revised 5 December 2013.)" in polished
 
 
 def test_polish_html_document_repairs_front_matter_department_affiliation_glue() -> None:

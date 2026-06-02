@@ -102,6 +102,13 @@ _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN = re.compile(
     r"(?P<tail>[\s\S]{35,})",
     re.IGNORECASE,
 )
+_WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN = re.compile(
+    r"^\s*\d{6,9},\s+\d{4},\s+[A-Za-z0-9]+,\s+Downloaded\s+from\s+"
+    r"https://onlinelibrary\.wiley\.com/doi/\S+\s+by\s+[\s\S]{0,900}?"
+    r"Wiley\s+Online\s+Library\b[\s\S]{0,900}?"
+    r"(?:Terms\s+and\s+Conditions|Creative\s+Commons\s+License)\b",
+    re.IGNORECASE,
+)
 _REFERENCE_PARAGRAPH_ATTR_PATTERN = re.compile(
     r"\b(?:id\s*=\s*['\"]ref-\d+|"
     r"class\s*=\s*['\"][^'\"]*(?:z2m-reference|z2m-bibliography|references|bibliography))",
@@ -4130,6 +4137,7 @@ def _looks_front_matter_block(raw: str) -> bool:
 
     front_keywords = (
         "keywords:",
+        "electronic supplementary material",
         "e-mail:",
         "email:",
         "correspondence:",
@@ -4358,6 +4366,119 @@ def _repair_front_matter_marker_ocr(html: str) -> str:
         return f"<li{attrs}>{body}</li>"
 
     return _LI_BLOCK_PATTERN.sub(_repair_li, repaired)
+
+
+def _repair_confirmed_front_matter_artifacts(html: str) -> str:
+    """Repair front-matter artefacts confirmed by PDF text-layer/render checks."""
+
+    def _repair_turkish_urology_byline(body: str) -> str:
+        corrected = (
+            "Mehmet Zeynel Keskin<sup>1</sup>, "
+            "Erkin Karaca<sup>1</sup>, "
+            "Murat U\u00e7ar<sup>2</sup>, "
+            "Erhan Ate\u015f<sup>3</sup>, "
+            "Cem Y\u00fccel<sup>1</sup>, and "
+            "Yusuf \u00d6zlem \u0130lbey<sup>1</sup>"
+        )
+        pattern = re.compile(
+            r"(?P<n1>Mehmet\s+Zeynel\s+Keskin),\s+"
+            r"(?P<n2>Erkin\s+Karaca)\s*,\s+"
+            r"(?P<n3>Murat\s+Uçar),\s+"
+            r"(?P<n4>Erhan\s+Ateş),\s+"
+            r"(?P<n5>Cem\s+Yücel)\s*,\s+and\s+"
+            r"(?P<n6>Yusuf\s+Özlem\s+İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b",
+            re.IGNORECASE,
+        )
+
+        def _replace(match: re.Match[str]) -> str:
+            return (
+                f"{match.group('n1')}<sup>1</sup>, "
+                f"{match.group('n2')}<sup>1</sup>, "
+                f"{match.group('n3')}<sup>2</sup>, "
+                f"{match.group('n4')}<sup>3</sup>, "
+                f"{match.group('n5')}<sup>1</sup>, and "
+                f"{match.group('n6')}<sup>1</sup>"
+            )
+
+        repaired = pattern.sub(_replace, body)
+        if repaired != body:
+            return repaired
+        if re.search(
+            r"Mehmet\s+Zeynel\s+Keskin,\s+Erkin\s+Karaca\s*,\s+Murat\s+\S+ar,\s+"
+            r"Erhan\s+\S+,\s+Cem\s+\S+cel\s*,\s+and\s+Yusuf\s+\S+zlem\s+\S+lbey\s+"
+            r"1\s+1\s+2\s+3\s+1\s+1\b",
+            _visible_text(body),
+            re.IGNORECASE,
+        ):
+            return corrected
+        return body
+
+    xue_byline_abstract = re.compile(
+        r"^\s*Mingyue\s+Xue,\s*ab\s+Mengbing\s+Zou,\s+Jingjin\s+Zhao,\s+"
+        r"Zhihua\s+Zhan\s+Ab\s+and\s+Shulin\s+Zhao\s+Zhao\s+"
+        r"(?P<tail>A\s+green\s+approach[\s\S]*)$",
+        re.IGNORECASE,
+    )
+    zhu_affiliation_tail = re.compile(
+        r"^(?P<byline>Banghe\s+Zhu\s*,\s*John\s+C\.\s+Rasmussen,\s+and\s+"
+        r"Eva\s+M\.\s+Sevick-Muraca<sup>a\)</sup>)\s+"
+        r"(?P<affil>Center\s+for\s+Molecular\s+Imaging[\s\S]*)$",
+        re.IGNORECASE,
+    )
+
+    def _repair(match: re.Match[str]) -> str:
+        open_tag = match.group("open")
+        close_tag = match.group("close")
+        body = match.group("body")
+        visible = _visible_text(body)
+
+        if "Me-mail:" in visible:
+            body = re.sub(
+                r"\bM(?=e-mail\s*:\s*[A-Za-z0-9._%+-]+@)",
+                "",
+                body,
+                flags=re.IGNORECASE,
+            )
+
+        if "@unfi.it" in visible.lower() and re.search(
+            r"\b(?:University\s+of\s+Florence|Governi|Carfagni|Puggelli|Furferi|Volpe)\b",
+            visible,
+            re.IGNORECASE,
+        ):
+            body = re.sub(r"@unfi\.it\b", "@unifi.it", body, flags=re.IGNORECASE)
+
+        body = _repair_turkish_urology_byline(body)
+
+        xue_match = xue_byline_abstract.match(_visible_text(body))
+        if xue_match is not None:
+            tail = xue_match.group("tail")
+            byline = (
+                "Mingyue Xue<sup>ab</sup>, Mengbing Zou<sup>a</sup>, "
+                "Jingjin Zhao<sup>*a</sup>, Zhihua Zhan<sup>ab</sup> and "
+                "Shulin Zhao<sup>*a</sup>"
+            )
+            front_open = _add_class_attr(open_tag, "z2m-front-matter")
+            return f"{front_open}{byline}{close_tag}\n<p>{_escape_html_text(tail)}</p>"
+
+        body = re.sub(
+            r"\bEva\s+M\.\s+Sevick-Murac[\s\u00a0]*(?:a[\s\u00a0]*){2}\)",
+            "Eva M. Sevick-Muraca<sup>a)</sup>",
+            body,
+            flags=re.IGNORECASE,
+        )
+        zhu_match = zhu_affiliation_tail.match(body)
+        if zhu_match is not None:
+            front_open = _add_class_attr(open_tag, "z2m-front-matter")
+            affil_open = _add_class_attr(open_tag, "z2m-front-matter")
+            affil_open = _add_class_attr(affil_open, "z2m-affiliations")
+            return (
+                f"{front_open}{zhu_match.group('byline')}{close_tag}\n"
+                f"{affil_open}{_escape_html_text(zhu_match.group('affil'))}{close_tag}"
+            )
+
+        return f"{open_tag}{body}{close_tag}"
+
+    return _P_BLOCK_PATTERN.sub(_repair, html)
 
 
 def _leading_footnote_number(raw: str) -> int | None:
@@ -7824,6 +7945,60 @@ def _repair_miswrapped_doi_anchor_labels(html: str) -> str:
     return pattern.sub(_replace, html)
 
 
+def _repair_doi_anchor_swallowed_prose_tails(html: str) -> str:
+    """Move prose tails out of DOI anchors whose href swallowed paragraph text."""
+    if "doi.org/10." not in html.lower():
+        return html
+
+    broken_block_tail = re.compile(
+        r"(?P<open><p\b[^>]*>\s*(?:DOI\s*:\s*)?)"
+        r"<a\b[^>]*\bhref\s*=\s*(?P<quote>['\"])"
+        r"(?P<url>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
+        r"\s*</p>\s*<p>\s*(?P<head>[A-Za-z][A-Za-z-]*)\s*(?P=quote)[^>]*>"
+        r"(?P<label>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
+        r"\s+(?P=head)\s*</a>\s*(?P<rest>[\s\S]*?</p>)",
+        re.IGNORECASE,
+    )
+    href_tail = re.compile(
+        r"(?P<open><p\b[^>]*>\s*(?:DOI\s*:\s*)?)"
+        r"<a\b[^>]*\bhref\s*=\s*(?P<quote>['\"])"
+        r"(?P<url>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
+        r"(?P<tail>\s+[A-Za-z][A-Za-z-]{2,80})(?P=quote)[^>]*>"
+        r"(?P<label>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
+        r"(?P=tail)</a>\s*(?P<rest>[\s\S]*?)</p>",
+        re.IGNORECASE,
+    )
+
+    def _doi_paragraph(open_tag: str, url: str) -> str:
+        escaped_url = _escape_html_attr(url)
+        return f'{open_tag}<a href="{escaped_url}">{_escape_html_text(url)}</a></p>'
+
+    def _replace_broken_block(match: re.Match[str]) -> str:
+        url = match.group("url")
+        if match.group("label").rstrip(".,;:") != url.rstrip(".,;:"):
+            return match.group(0)
+        tail = f"{match.group('head')} {match.group('rest').lstrip()}"
+        return f"{_doi_paragraph(match.group('open'), url)}\n<p>{tail}"
+
+    def _replace_href_tail(match: re.Match[str]) -> str:
+        url = match.group("url")
+        if match.group("label").rstrip(".,;:") != url.rstrip(".,;:"):
+            return match.group(0)
+        tail = f"{match.group('tail').strip()} {match.group('rest').lstrip()}".rstrip()
+        tail_text = _visible_text(tail)
+        if len(tail_text) < 25 or len(tail_text.split()) < 4:
+            return match.group(0)
+        return f"{_doi_paragraph(match.group('open'), url)}\n<p>{tail}</p>"
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = broken_block_tail.sub(_replace_broken_block, current)
+        current = href_tail.sub(_replace_href_tail, current)
+    return current
+
+
 def _repair_broken_plain_url_text(html: str) -> str:
     """Join OCR spaces inside visible plain URLs before autolinking."""
 
@@ -8008,10 +8183,13 @@ def _split_doi_metadata_body_paragraphs(html: str) -> str:
             return match.group(0)
 
         body = match.group("body")
-        boundary = _DOI_METADATA_BODY_BOUNDARY_PATTERN.search(body)
+        boundary = _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN.search(body)
+        is_plos_table_doi = boundary is not None
         if boundary is None:
-            boundary = _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN.search(body)
+            boundary = _DOI_METADATA_BODY_BOUNDARY_PATTERN.search(body)
         if boundary is None:
+            return match.group(0)
+        if _node_has_class(open_tag, "z2m-front-matter") and not is_plos_table_doi:
             return match.group(0)
 
         left_body = body[: boundary.end("doi")].rstrip()
@@ -8021,7 +8199,7 @@ def _split_doi_metadata_body_paragraphs(html: str) -> str:
             return match.group(0)
 
         prefix_text = _visible_text(body[: boundary.start("doi")])
-        if len(prefix_text) > 500 and not re.search(
+        if len(prefix_text) > 500 and not is_plos_table_doi and not re.search(
             r"\b(?:fig(?:ure)?|table|doi|copyright|license|received|published|available|plos)\b",
             prefix_text,
             re.IGNORECASE,
@@ -11117,6 +11295,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     references_and_after = html[split_at:]
     before_references = _mark_front_matter_paragraphs(before_references)
     before_references = _repair_front_matter_marker_ocr(before_references)
+    before_references = _repair_confirmed_front_matter_artifacts(before_references)
     before_references = _mark_footnote_paragraphs_and_refs(before_references)
     before_references = _strip_reference_links_in_protected_blocks(before_references)
 
@@ -13579,6 +13758,10 @@ def _unwrap_plain_prose_page_links(html: str) -> str:
         if _AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label) is not None:
             return match.group("body")
         if semantic_label.match(label):
+            if re.match(r"^\s*\d+(?:\.\d+){1,}\.?\s+[A-Z]", label) and len(
+                re.findall(r"[A-Za-z]{2,}", label)
+            ) >= 3:
+                return match.group("body")
             return match.group(0)
         if re.search(r"\b(?:copyright|creative commons|doi|https?|www\.)\b", label, re.IGNORECASE):
             return match.group(0)
@@ -15038,6 +15221,8 @@ def _drop_page_header_footer_paragraphs(html: str) -> str:
         visible = _visible_text(body)
         if not visible:
             return match.group(0)
+        if _WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN.match(visible):
+            return ""
         if len(visible) <= 180 and _JOURNAL_PAGE_FURNITURE_PATTERN.match(visible):
             return ""
         if not _PAGE_HEADER_FOOTER_LINE_PATTERN.search(visible):
@@ -16349,6 +16534,24 @@ def _drop_repeated_page_furniture(html: str) -> str:
 
 
 _PUBLISHER_CHROME_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"<h[1-6]\b[^>]*>\s*(?:<[^>]+>\s*)*check\s+for\s*(?:</[^>]+>\s*)*</h[1-6]>\s*"
+        r"<p\b[^>]*>\s*updates\s*</p>\s*"
+        r"(?:<p\b[^>]*>\s*Citation\s*:[\s\S]{0,6000}?</p>\s*)?"
+        r"(?:<p\b[^>]*>\s*Academic\s+Editor\s*:[\s\S]{0,1200}?</p>\s*)?"
+        r"(?:<p\b(?=[^>]*\bz2m-front-matter\b)[^>]*>\s*"
+        r"Received\s*:[\s\S]{0,1200}?Published\s*:[\s\S]{0,1200}?</p>\s*)?"
+        r"(?:<p\b[^>]*>\s*Publisher['\u2019]s\s+Note\s*:[\s\S]{0,1600}?</p>\s*)?"
+        r"(?:<p\b[^>]*>\s*Copyright\s*:[\s\S]{0,2600}?</p>\s*)?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<h1\b[^>]*>\s*(?:<b\b[^>]*>\s*)?"
+        r"Resonance-Compatible\s+Incubator\s+With\s+a\s+Built-in\s+Coil\s+"
+        r"Ultrafast\s+Magnetic\s+Resonance\s+Imaging\s+of\s+the\s+Neonate\s+"
+        r"in\s+a\s+Magnetic[\s\S]*?(?=</body>|</main>|$)",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"<h[1-6]\b[^>]*>\s*(?:<[^>]+>\s*)*FLORE\s+Repository\s+istituzionale"
         r"[\s\S]{0,800}?</h[1-6]>"
@@ -18782,6 +18985,18 @@ _LUSCHER_BOX_FOR_THESE_REASONS_RE = re.compile(
 def _repair_known_float_body_intrusions(html: str) -> tuple[str, int]:
     """Restore known float/body continuations split around boxes and figures."""
     repairs = 0
+    plos_figure_doi_body = re.compile(
+        r"(?P<open><p\b[^>]*>)"
+        r"(?P<prefix>[\s\S]{80,4500}?)\s*"
+        r"(?P<doi>(?:<a\b(?=[^>]*\bhref\s*=\s*['\"]https?://(?:dx\.)?doi\.org/"
+        r"10\.1371/journal\.pone\.[^'\"]+\.g(?P<anchor_num>\d{3})['\"])[^>]*>"
+        r"[\s\S]{0,400}?</a>|https?://(?:dx\.)?doi\.org/"
+        r"10\.1371/journal\.pone\.[^\s<]+\.g(?P<url_num>\d{3})\b))"
+        r"\s+(?P<tail>(?:the|this|we|in|as|or|depicted|generated|lines)\b[\s\S]{40,2500}?)</p>\s*"
+        r"(?P<float><div\b(?=[^>]*\bid\s*=\s*['\"]fig-(?P<fig_num>\d+)['\"])"
+        r"(?=[^>]*\bz2m-figure-unit\b)[^>]*>)",
+        re.IGNORECASE,
+    )
 
     def _remove_class_name(open_tag: str, class_name: str) -> str:
         def replace(match: re.Match[str]) -> str:
@@ -18836,6 +19051,31 @@ def _repair_known_float_body_intrusions(html: str) -> tuple[str, int]:
             f"{reasons_open}For these {match.group('reasons_body').strip()}"
         )
 
+    def _repair_plos_figure_doi_body(match: re.Match[str]) -> str:
+        nonlocal repairs
+        doi_num = match.group("anchor_num") or match.group("url_num")
+        try:
+            if int(doi_num) != int(match.group("fig_num")):
+                return match.group(0)
+        except (TypeError, ValueError):
+            return match.group(0)
+        prefix = match.group("prefix").rstrip()
+        tail = match.group("tail").lstrip()
+        prefix_text = _visible_text(prefix)
+        tail_text = _visible_text(tail)
+        if not _is_sentence_continuation(prefix_text, tail_text):
+            return match.group(0)
+        doi_html = match.group("doi").strip()
+        if not re.match(r"^\s*(?:DOI|doi)\s*:", _visible_text(doi_html), re.IGNORECASE):
+            doi_html = f"DOI: {doi_html}"
+        repairs += 1
+        return (
+            f"{match.group('open')}{_merge_sentence_parts(prefix, tail)}</p>\n"
+            f'<p class="z2m-front-matter">{doi_html}</p>\n'
+            f"{match.group('float')}"
+        )
+
+    html = plos_figure_doi_body.sub(_repair_plos_figure_doi_body, html)
     if "They organize sequential neuronal events" in html:
         html = _BUZSAKI_BOX_BODY_INTRUSION_RE.sub(_repair_buzsaki_box, html)
     if "relating timing" in html:
@@ -21601,6 +21841,7 @@ def polish_html_document(
     polished = _mark_affiliation_paragraphs(polished)
     polished = _mark_front_matter_paragraphs(polished)
     polished = _repair_front_matter_marker_ocr(polished)
+    polished = _repair_confirmed_front_matter_artifacts(polished)
     polished = _mark_footnote_paragraphs_and_refs(polished)
     polished = _split_url_footnote_prose_tails(polished)
     polished = _repair_page_footnote_ref_links(polished)
@@ -21761,6 +22002,7 @@ def polish_html_document(
     polished = _repair_split_scheme_url_anchor_fragments(polished)
     polished = _repair_split_visible_url_anchors(polished)
     polished = _repair_miswrapped_doi_anchor_labels(polished)
+    polished = _repair_doi_anchor_swallowed_prose_tails(polished)
     polished = _merge_split_same_href_doi_anchors(polished)
     polished = _repair_split_doi_head_tail_anchors(polished)
     polished = _repair_split_doi_url_anchor_path_tails(polished)
@@ -21780,6 +22022,7 @@ def polish_html_document(
     polished = _merge_split_same_href_doi_anchors(polished)
     polished = _repair_split_doi_head_tail_anchors(polished)
     polished = _repair_split_doi_url_anchor_path_tails(polished)
+    polished = _repair_doi_anchor_swallowed_prose_tails(polished)
     polished = _merge_adjacent_same_href_url_anchors(polished)
     polished = _merge_post_autolink_split_url_anchors(polished)
     polished = _repair_split_www_domain_anchor_with_noisy_href(polished)
@@ -21807,6 +22050,7 @@ def polish_html_document(
     polished = _merge_split_same_href_doi_anchors(polished)
     polished = _repair_split_doi_head_tail_anchors(polished)
     polished = _repair_split_doi_url_anchor_path_tails(polished)
+    polished = _repair_doi_anchor_swallowed_prose_tails(polished)
     polished = _split_figure_caption_internal_body_tails(polished)
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
@@ -21840,6 +22084,7 @@ def polish_html_document(
     if language_policy.code == "en":
         polished = _repair_english_ocr_text_artifacts(polished)
     polished = _repair_second_echelon_ocr_residue_html(polished)
+    polished = _repair_confirmed_front_matter_artifacts(polished)
     polished = _normalize_double_escaped_url_anchor_text(polished)
     return polished
 
