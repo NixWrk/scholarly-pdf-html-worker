@@ -252,9 +252,12 @@ Suggested resolver order:
 2. Recover missing figure images for `P62`.
    For caption-only figure targets, find the caption in the PDF text layer,
    require the matched page to contain the same `Fig/Figure N` label, then run
-   `marker_single` on that page with zero-based `--page_range`. Accept the
-   marker result only when the output contains the expected label and at least
-   one image asset. If marker returns caption text only, render the page, locate
+   `marker_single` on that page with zero-based `--page_range`. The image
+   recovery stage keeps marker as the primary mechanism and enforces
+   `p62_image_recovery_marker_timeout_seconds` per marker attempt, defaulting
+   to 600 seconds in the shared gate config. Accept the marker result only when
+   the output contains the expected label and at least one image asset. If
+   marker returns caption text only, render the page, locate
    the figure region above or near the caption using PDF image/vector/text block
    geometry, crop a nonblank local asset, and replace the warning with an
    `<img>` while preserving the existing caption and target. If geometry is

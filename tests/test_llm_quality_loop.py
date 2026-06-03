@@ -989,6 +989,85 @@ def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
     assert (run_dir / "assessment.json").is_file()
 
 
+def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 7 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 7. Marker-recovered visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    marker_output_dir = run_dir / "p62_marker_recovery" / "article_a" / "fig_7"
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "7",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 8,
+                    "figure_label_pdf_page_candidates": [8],
+                    "polish_stage_path": str(polish_path),
+                    "marker_page_range": "7",
+                    "marker_command": ["marker_single", str(source_pdf), "--page_range", "7"],
+                    "marker_output_dir": str(marker_output_dir),
+                    "existing_marker_output_validation": {"status": "not_run"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    calls: list[int] = []
+
+    def fake_execute(record: dict[str, object], *, timeout_seconds: int) -> dict[str, object]:
+        calls.append(timeout_seconds)
+        output = Path(str(record["marker_output_dir"])) / "paper"
+        output.mkdir(parents=True)
+        (output / "paper.html").write_text("<p>Figure 7. Marker-recovered visual.</p>", encoding="utf-8")
+        (output / "_page_7_Figure_0.png").write_bytes(_valid_tiny_png_bytes())
+        return {"status": "completed", "elapsed_seconds": 1.25, "timeout_seconds": timeout_seconds}
+
+    def fail_render(*args, **kwargs):
+        raise AssertionError("marker-recovered P62 records must not render PDF fallback")
+
+    monkeypatch.setattr(llm_quality_loop, "_execute_p62_marker_command", fake_execute)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={
+            "p62_image_recovery_execute_marker": True,
+            "p62_image_recovery_marker_timeout_seconds": 600,
+            "p62_image_recovery_render_zoom": 1.0,
+        },
+    )
+
+    assert calls == [600]
+    assert report["status"] == "ready"
+    assert report["marker_timeout_seconds"] == 600
+    assert report["recovery_source_counts"] == {"marker_image": 1}
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert 'data-z2m-recovery-source="marker_image"' in patched_html
+    assert "z2m-missing-figure-warning" not in patched_html
+
+
 def test_p62_image_recovery_stage_does_not_render_unmatched_page_fallback(
     tmp_path: Path,
     monkeypatch,

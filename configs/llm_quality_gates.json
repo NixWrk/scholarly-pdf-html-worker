@@ -19,11 +19,11 @@
   "p62_marker_recovery_retry_full_pdf_on_label_miss": true,
   "run_p62_image_recovery_stage": true,
   "p62_image_recovery_max_articles": 0,
-  "p62_image_recovery_execute_marker": false,
+  "p62_image_recovery_execute_marker": true,
   "p62_image_recovery_apply_patches": true,
   "p62_image_recovery_rerun_audit": true,
   "p62_image_recovery_render_zoom": 1.5,
-  "p62_image_recovery_marker_timeout_seconds": 300,
+  "p62_image_recovery_marker_timeout_seconds": 600,
   "ignored_defect_ids_for_analysis": ["P13", "P16", "P20", "P61", "P62"],
   "max_regressions": 0,
   "max_total_deltas": {

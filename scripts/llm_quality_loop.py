@@ -16,6 +16,7 @@ from html import escape, unescape
 import json
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -1722,8 +1723,11 @@ def _execute_p62_marker_command(
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     started = _now()
+    started_monotonic = time.monotonic()
+    stdout = ""
     try:
-        result = subprocess.run(
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        process = subprocess.Popen(
             command,
             cwd=ROOT,
             text=True,
@@ -1732,16 +1736,41 @@ def _execute_p62_marker_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=env,
-            timeout=timeout_seconds if timeout_seconds > 0 else None,
-            check=False,
+            creationflags=creationflags,
+            start_new_session=os.name != "nt",
         )
-        stdout = result.stdout or ""
+        try:
+            stdout, _ = process.communicate(timeout=timeout_seconds if timeout_seconds > 0 else None)
+        except subprocess.TimeoutExpired:
+            _terminate_process_tree(process)
+            try:
+                more_stdout, _ = process.communicate(timeout=5)
+                stdout = (stdout or "") + (more_stdout or "")
+            except Exception:
+                pass
+            report = {
+                "status": "timeout",
+                "command": command,
+                "started_at": started,
+                "finished_at": _now(),
+                "elapsed_seconds": round(time.monotonic() - started_monotonic, 2),
+                "returncode": None,
+                "timeout_seconds": timeout_seconds,
+                "stdout_tail": (stdout or "")[-4000:],
+            }
+            if marker_output_dir:
+                _write_json(marker_output_dir / "marker_execution_report.json", report)
+            return report
+
+        stdout = stdout or ""
         report = {
-            "status": "completed" if result.returncode == 0 else "failed",
+            "status": "completed" if process.returncode == 0 else "failed",
             "command": command,
             "started_at": started,
             "finished_at": _now(),
-            "returncode": result.returncode,
+            "elapsed_seconds": round(time.monotonic() - started_monotonic, 2),
+            "returncode": process.returncode,
+            "timeout_seconds": timeout_seconds,
             "stdout_tail": stdout[-4000:],
         }
     except FileNotFoundError as exc:
@@ -1750,23 +1779,41 @@ def _execute_p62_marker_command(
             "command": command,
             "started_at": started,
             "finished_at": _now(),
-            "returncode": None,
-            "error": str(exc),
-        }
-    except subprocess.TimeoutExpired as exc:
-        report = {
-            "status": "timeout",
-            "command": command,
-            "started_at": started,
-            "finished_at": _now(),
+            "elapsed_seconds": round(time.monotonic() - started_monotonic, 2),
             "returncode": None,
             "timeout_seconds": timeout_seconds,
-            "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+            "error": str(exc),
         }
 
     if marker_output_dir:
         _write_json(marker_output_dir / "marker_execution_report.json", report)
     return report
+
+
+def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5)
+    except Exception:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except Exception:
+            process.kill()
 
 
 def _p62_render_fallback_page_number(
@@ -2082,9 +2129,22 @@ def write_p62_image_recovery_stage(
 
         marker_validation = dict(record.get("existing_marker_output_validation") or {})
         if execute_marker and marker_validation.get("status") != "recovered_image":
+            print(
+                "P62 marker attempt: "
+                f"{index}/{len(records)} article={article_id} fig={figure_label or '?'} "
+                f"page_range={record.get('marker_page_range') or '?'} timeout={marker_timeout}s",
+                flush=True,
+            )
             item["marker_execution"] = _execute_p62_marker_command(record, timeout_seconds=marker_timeout)
             marker_output_dir = Path(str(record.get("marker_output_dir") or ""))
             marker_validation = _validate_p62_marker_output(marker_output_dir, figure_label)
+            print(
+                "P62 marker result: "
+                f"{index}/{len(records)} status={item['marker_execution'].get('status')} "
+                f"validation={marker_validation.get('status')} "
+                f"elapsed={item['marker_execution'].get('elapsed_seconds')}s",
+                flush=True,
+            )
         item["marker_output_validation"] = marker_validation
 
         data_url = ""
