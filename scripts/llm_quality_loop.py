@@ -1328,6 +1328,9 @@ def write_p62_marker_recovery_plan(
     context_chars = int(gate_config.get("p62_marker_recovery_context_chars") or 5000)
     min_match_score = float(gate_config.get("p62_marker_recovery_min_match_score") or 0.05)
     require_label_match = bool(gate_config.get("p62_marker_recovery_require_label_match", True))
+    retry_full_pdf_on_label_miss = bool(
+        gate_config.get("p62_marker_recovery_retry_full_pdf_on_label_miss", True)
+    )
 
     audit = _load_json(run_dir / "audit_full_checks.json", default={"articles": []})
     manifest = _load_json(run_dir / "manifest.json", default={})
@@ -1414,6 +1417,7 @@ def write_p62_marker_recovery_plan(
             "text_layer_page_count": 0,
             "text_layer_page_limit": max_pdf_pages,
             "text_layer_truncated_to_limit": False,
+            "text_layer_full_retry": False,
             "source_pdf_page_number": 0,
             "figure_label_pdf_page_candidates": [],
             "require_label_match": require_label_match,
@@ -1440,6 +1444,32 @@ def write_p62_marker_recovery_plan(
             pdf_text_cache[cache_key] = _pdf_text_pages(pdf_path, max_pages=max_pdf_pages)
         text_status, pages, text_error = pdf_text_cache[cache_key]
         page_number, match_score, label_pages = _best_pdf_text_page_for_figure(snippets, pages, figure_label)
+        text_layer_full_retry = False
+        if (
+            retry_full_pdf_on_label_miss
+            and require_label_match
+            and figure_label
+            and not label_pages
+            and max_pdf_pages > 0
+            and len(pages) >= max_pdf_pages
+        ):
+            full_cache_key = f"{pdf_path}|full"
+            if full_cache_key not in pdf_text_cache:
+                pdf_text_cache[full_cache_key] = _pdf_text_pages(pdf_path, max_pages=None)
+            full_text_status, full_pages, full_text_error = pdf_text_cache[full_cache_key]
+            full_page_number, full_match_score, full_label_pages = _best_pdf_text_page_for_figure(
+                snippets,
+                full_pages,
+                figure_label,
+            )
+            if full_label_pages:
+                text_status = full_text_status
+                pages = full_pages
+                text_error = full_text_error
+                page_number = full_page_number
+                match_score = full_match_score
+                label_pages = full_label_pages
+                text_layer_full_retry = True
         text_chars = sum(len(page_text) for page_text in pages)
         record.update(
             {
@@ -1447,7 +1477,10 @@ def write_p62_marker_recovery_plan(
                 "text_layer_error": text_error or "",
                 "text_layer_page_count": len(pages),
                 "text_layer_chars": text_chars,
-                "text_layer_truncated_to_limit": len(pages) >= max_pdf_pages,
+                "text_layer_truncated_to_limit": bool(
+                    max_pdf_pages > 0 and len(pages) >= max_pdf_pages and not text_layer_full_retry
+                ),
+                "text_layer_full_retry": text_layer_full_retry,
                 "source_pdf_page_number": page_number,
                 "figure_label_pdf_page_candidates": label_pages[:20],
                 "match_score": round(float(match_score), 4),
@@ -1769,6 +1802,13 @@ def _p62_render_fallback_page_number(
         return page_number, "primary_matched_page"
 
 
+def _p62_record_allows_page_render_fallback(record: dict[str, Any]) -> bool:
+    if str(record.get("status") or "") == "ready":
+        return True
+    label_pages = record.get("figure_label_pdf_page_candidates")
+    return bool(label_pages)
+
+
 def _p62_patch_targets_for_record(
     run_dir: Path,
     record: dict[str, Any],
@@ -2061,6 +2101,18 @@ def write_p62_image_recovery_stage(
             recovery_detail = str(marker_image)
 
         if not data_url:
+            if not _p62_record_allows_page_render_fallback(record):
+                item["unresolved_reason"] = "page_render_fallback_requires_figure_label_page"
+                recovered_records.append(item)
+                if index % 10 == 0 or index == len(records):
+                    ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
+                    patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+                    print(
+                        "P62 image recovery progress: "
+                        f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                        flush=True,
+                    )
+                continue
             render_page, selection_reason = _p62_render_fallback_page_number(
                 pdf_path,
                 source_page_number,

@@ -785,6 +785,81 @@ def test_p62_marker_recovery_plan_builds_single_page_marker_command(
     assert "P62 Marker Recovery Plan" in prompt
 
 
+def test_p62_marker_recovery_plan_retries_full_pdf_when_label_missed_by_page_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "book.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    warning = "Figure 25 image was not extracted into this HTML."
+    caption = "Figure 25. Complexity and customization versus learning rate."
+    polish_path.write_text(
+        '<div id="fig-25" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note">{warning}</p>'
+        f'<p class="z2m-figure-caption">{caption}</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "polish_stage_path": str(polish_path),
+                    "summary": {"source_pdf_present": True, "source_pdf_path": str(source_pdf)},
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "snippet": warning,
+                            "extra": {"warning_index": 1, "figure_label": "25"},
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+
+    calls: list[int | None] = []
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        calls.append(max_pages)
+        if max_pages == 80:
+            pages = ["ordinary production-process text"] * 80
+            pages[71] = "customization and learning rate appear here, but not the figure label"
+            return "fake_limited", pages, None
+        pages = ["ordinary production-process text"] * 502
+        pages[298] = caption
+        return "fake_full", pages, None
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+
+    report = write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+            "p62_marker_recovery_require_label_match": True,
+            "p62_marker_recovery_retry_full_pdf_on_label_miss": True,
+        },
+    )
+
+    article = report["articles"][0]
+    assert calls == [80, None]
+    assert article["status"] == "ready"
+    assert article["source_pdf_page_number"] == 299
+    assert article["marker_page_range"] == "298"
+    assert article["text_layer_full_retry"] is True
+    assert article["text_layer_truncated_to_limit"] is False
+
+
 def test_p62_recovery_replaces_missing_warning_with_image() -> None:
     html = (
         '<div id="fig-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
@@ -912,6 +987,67 @@ def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
     assert "z2m-missing-figure-warning" not in patched_html
     assert "z2m-p62-recovered-target" in patched_html
     assert (run_dir / "assessment.json").is_file()
+
+
+def test_p62_image_recovery_stage_does_not_render_unmatched_page_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    warning = "Figure 25 image was not extracted into this HTML."
+    polish_path.write_text(
+        '<div id="fig-25" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note">{warning}</p>'
+        '<p class="z2m-figure-caption">Figure 25. Complexity and customization versus learning rate.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "25",
+                    "warning_index": 1,
+                    "status": "figure_label_page_unavailable",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 72,
+                    "figure_label_pdf_page_candidates": [],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "not_run"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fail_render(*args, **kwargs):
+        raise AssertionError("unmatched P62 records must not render arbitrary PDF pages")
+
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "unresolved"
+    assert report["asset_ready_count"] == 0
+    assert report["unresolved_count"] == 1
+    assert report["articles"][0]["unresolved_reason"] == "page_render_fallback_requires_figure_label_page"
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert "z2m-missing-figure-warning" in patched_html
+    assert "z2m-p62-recovered-target" not in patched_html
 
 
 def test_observe_runs_configured_tests_by_default() -> None:

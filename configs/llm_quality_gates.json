@@ -16,6 +16,7 @@
   "p62_marker_recovery_context_chars": 5000,
   "p62_marker_recovery_min_match_score": 0.05,
   "p62_marker_recovery_require_label_match": true,
+  "p62_marker_recovery_retry_full_pdf_on_label_miss": true,
   "run_p62_image_recovery_stage": true,
   "p62_image_recovery_max_articles": 0,
   "p62_image_recovery_execute_marker": false,
