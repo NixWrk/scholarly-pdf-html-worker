@@ -9814,6 +9814,7 @@ def _profile_item_value(item: Any, key: str, default: Any = "") -> Any:
 
 
 _MAX_PROFILE_REFERENCE_GAP_RECOVERY = 24
+_MAX_PROFILE_REFERENCE_SECTION_RECOVERY = 80
 
 
 def _citation_profile_reference_entries_by_number(citation_profile: Any | None) -> dict[int, str]:
@@ -9828,6 +9829,72 @@ def _citation_profile_reference_entries_by_number(citation_profile: Any | None) 
             continue
         entries.setdefault(number, text)
     return entries
+
+
+def _citation_profile_reference_recovery_numbers(citation_profile: Any | None) -> list[int]:
+    raw_values = _profile_item_value(citation_profile, "reference_entries_recovery_numbers", [])
+    if not isinstance(raw_values, list):
+        return []
+    numbers: list[int] = []
+    for value in raw_values:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0 and number not in numbers:
+            numbers.append(number)
+    return sorted(numbers)
+
+
+def _contiguous_profile_reference_recovery_numbers(
+    citation_profile: Any | None,
+    entries_by_number: dict[int, str],
+) -> list[int]:
+    requested = _citation_profile_reference_recovery_numbers(citation_profile)
+    if not requested:
+        return []
+    max_number = max(requested)
+    if min(requested) != 1 or max_number > _MAX_PROFILE_REFERENCE_SECTION_RECOVERY:
+        return []
+    numbers = list(range(1, max_number + 1))
+    if any(number not in entries_by_number for number in numbers):
+        return []
+    return numbers
+
+
+def _pdf_recovered_reference_section_from_profile(citation_profile: Any | None) -> tuple[str, int]:
+    entries_by_number = _citation_profile_reference_entries_by_number(citation_profile)
+    if not entries_by_number:
+        return "", 0
+    numbers = _contiguous_profile_reference_recovery_numbers(citation_profile, entries_by_number)
+    if not numbers:
+        return "", 0
+    items = []
+    for number in numbers:
+        escaped = html_lib.escape(entries_by_number[number], quote=False)
+        items.append(
+            f'<li block-type="ListItem" id="ref-{number}" data-z2m-pdf-recovered-ref="1">{escaped}</li>'
+        )
+    section = (
+        '<h2 data-z2m-pdf-recovered-references="1">References</h2>'
+        '<ul class="z2m-pdf-recovered-references" data-z2m-pdf-recovered-references="1">'
+        + " ".join(items)
+        + "</ul>"
+    )
+    return section, numbers[-1]
+
+
+def _append_pdf_recovered_reference_section_if_safe(
+    html: str,
+    citation_profile: Any | None,
+) -> tuple[str, int]:
+    section, max_number = _pdf_recovered_reference_section_from_profile(citation_profile)
+    if not section:
+        return html, 0
+    body_match = _BODY_PATTERN.search(html)
+    if body_match is None:
+        return f"{html}{section}", max_number
+    return f"{html[:body_match.start(3)]}{section}{html[body_match.start(3):]}", max_number
 
 
 def _recover_missing_reference_entries_from_profile(
@@ -11294,7 +11361,19 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     else:
         split_at = _unheaded_reference_list_start(html)
         if split_at is None:
-            return html
+            html, recovered_ref_index = _append_pdf_recovered_reference_section_if_safe(html, citation_profile)
+            if recovered_ref_index == 0:
+                return html
+            heading_match = _references_heading_search(
+                html,
+                allow_notes_heading=_citation_profile_has_zotero_reference_evidence(citation_profile),
+            )
+            if heading_match is not None:
+                split_at = heading_match.end()
+            else:
+                split_at = _unheaded_reference_list_start(html)
+                if split_at is None:
+                    return html
     before_references = html[:split_at]
     references_and_after = html[split_at:]
     before_references = _mark_front_matter_paragraphs(before_references)

@@ -52,6 +52,7 @@ DEFAULT_PATTERN_HISTORY_NAME = "pattern_observation_history.jsonl"
 DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME = "manual_observation_ledger.jsonl"
 DEFAULT_SOURCE_PDF_MAP_NAME = "source_pdf_map.json"
 DEFAULT_PDF_PROBLEM_EVIDENCE_NAME = "pdf_problem_evidence_report.json"
+DEFAULT_RESOLVER_DECISIONS_NAME = "resolver_decisions.json"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -75,6 +76,21 @@ REFERENCE_NUMBER_BRACKET_RE = re.compile(
 )
 DATA_AVAILABILITY_CONTEXT_RE = re.compile(
     r"\b(?:data\s+availability|openly\s+available|available\s+in\s+the|repository|datasets?)\b",
+    re.IGNORECASE,
+)
+P_BLOCK_RE = re.compile(r"<p\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</p>", re.IGNORECASE)
+BRACKETED_BODY_REFERENCE_CANDIDATE_RE = re.compile(
+    r"\[\s*(?P<body>\d{1,3}(?:\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}){1,12})\s*\]",
+    re.IGNORECASE,
+)
+PLAIN_BODY_REFERENCE_CANDIDATE_RE = re.compile(
+    r"(?<![\w.])(?P<body>\d{1,3}\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}"
+    r"(?:\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}){0,12})(?!\s*(?:%|\u2030|cm|mm|m\b|kg|g\b|mg|"
+    r"hz|khz|mhz|ghz|s\b|min\b|h\b|years?\b|months?\b|days?\b))",
+    re.IGNORECASE,
+)
+REFERENCE_RECOVERY_PROTECTED_CLASS_RE = re.compile(
+    r"\b(?:z2m-front-matter|z2m-missing|z2m-figure|z2m-table|z2m-equation|katex|math)\b",
     re.IGNORECASE,
 )
 
@@ -1074,13 +1090,17 @@ def _apply_data_image_cache(html: str, image_cache: dict[str, str]) -> tuple[str
     return IMG_SRC_RE.sub(replace_src, html), replacements
 
 
-def _reference_id_gap_numbers(html: str) -> list[int]:
-    ids = sorted(
+def _reference_id_numbers(html: str) -> list[int]:
+    return sorted(
         {
             int(match.group(1))
             for match in re.finditer(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)
         }
     )
+
+
+def _reference_id_gap_numbers(html: str) -> list[int]:
+    ids = _reference_id_numbers(html)
     if len(ids) < 2:
         return []
     gaps: list[int] = []
@@ -1088,6 +1108,117 @@ def _reference_id_gap_numbers(html: str) -> list[int]:
         if 0 < right - left <= 25:
             gaps.extend(range(left + 1, right))
     return gaps
+
+
+def _expand_reference_candidate_numbers(value: str) -> list[int]:
+    tokens = re.findall(r"\d{1,3}|[,;]|\u2013|\u2014|-", value)
+    numbers: list[int] = []
+    pending_range_from: int | None = None
+    previous_number: int | None = None
+    for token in tokens:
+        if token.isdigit():
+            number = int(token)
+            if not 1 <= number <= 250:
+                pending_range_from = None
+                previous_number = None
+                continue
+            if pending_range_from is not None:
+                if pending_range_from < number and number - pending_range_from <= 25:
+                    numbers.extend(range(pending_range_from + 1, number + 1))
+                else:
+                    numbers.append(number)
+                pending_range_from = None
+            else:
+                numbers.append(number)
+            previous_number = number
+        elif token in {"-", "\u2013", "\u2014"} and previous_number is not None:
+            pending_range_from = previous_number
+        else:
+            pending_range_from = None
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for number in numbers:
+        if number not in seen:
+            seen.add(number)
+            deduped.append(number)
+    return deduped
+
+
+def _plain_reference_candidate_is_safe(text: str, match: re.Match[str]) -> bool:
+    start, end = match.span("body")
+    prefix = text[max(0, start - 80) : start].lower()
+    suffix = text[end : min(len(text), end + 18)].lower()
+    if re.match(r"\s*(?:%|\u2030|percent|cm|mm|m\b|kg|g\b|mg|hz|khz|mhz|ghz|s\b|min\b|h\b)", suffix):
+        return False
+    if re.search(
+        r"(?:fig(?:ure)?|table|section|sec|eq(?:uation)?|page|pages|pp|volume|vol|issue|"
+        r"range|distance|frequency|values?|sample|n\s*=|aged?|years?|months?|days?|"
+        r"cm|mm|kg|mg|hz|mhz|mpa|\u00b0|\u00b1|\u00d7|x)\s*$",
+        prefix,
+    ):
+        return False
+    if not re.search(r"[a-z][a-z),.;:'\"\s-]{0,60}$", prefix, re.IGNORECASE):
+        return False
+    return True
+
+
+def _reference_recovery_block_is_protected(attrs: str, body: str) -> bool:
+    lower = f"{attrs} {body}".lower()
+    if REFERENCE_RECOVERY_PROTECTED_CLASS_RE.search(lower):
+        return True
+    if re.search(r"</?(?:table|thead|tbody|tfoot|tr|td|th|math|script|style|code|pre|figure|figcaption)\b", lower):
+        return True
+    if REF_HREF_RE.search(body):
+        return True
+    visible = _visible_html_text(body)
+    if len(visible) < 12:
+        return True
+    if re.match(r"^(?:fig(?:ure)?|table|eq(?:uation)?|appendix|supplement|formula)\b", visible, re.IGNORECASE):
+        return True
+    return False
+
+
+def _unlinked_body_reference_candidate_numbers(html: str) -> list[int]:
+    numbers: list[int] = []
+    blocks = list(P_BLOCK_RE.finditer(html))
+    if not blocks:
+        fallback_match = re.match(r"(?P<attrs>)(?P<body>[\s\S]*)", html)
+        blocks = [fallback_match] if fallback_match is not None else []
+    for block in blocks:
+        if block is None:
+            continue
+        attrs = block.group("attrs") or ""
+        body = block.group("body") or ""
+        if _reference_recovery_block_is_protected(attrs, body):
+            continue
+        text = _visible_html_text(body)
+        for match in BRACKETED_BODY_REFERENCE_CANDIDATE_RE.finditer(text):
+            numbers.extend(_expand_reference_candidate_numbers(match.group("body")))
+        for match in PLAIN_BODY_REFERENCE_CANDIDATE_RE.finditer(text):
+            if not _plain_reference_candidate_is_safe(text, match):
+                continue
+            numbers.extend(_expand_reference_candidate_numbers(match.group("body")))
+
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for number in numbers:
+        if number not in seen:
+            seen.add(number)
+            deduped.append(number)
+    return sorted(deduped)
+
+
+def _pdf_reference_recovery_numbers(polished_html: str) -> tuple[list[int], str]:
+    ref_ids = _reference_id_numbers(polished_html)
+    gap_numbers = _reference_id_gap_numbers(polished_html)
+    if gap_numbers:
+        return gap_numbers, "gap"
+    if ref_ids:
+        return [], ""
+    body_numbers = _unlinked_body_reference_candidate_numbers(polished_html)
+    if body_numbers:
+        return body_numbers, "body_citation"
+    return [], ""
 
 
 def _profile_has_reference_entries(profile: dict[str, Any]) -> bool:
@@ -1112,10 +1243,10 @@ def _enrich_profile_with_pdf_reference_entries_if_needed(
 ) -> tuple[dict[str, Any], int, str]:
     if _profile_has_reference_entries(profile):
         return profile, 0, ""
-    gap_numbers = _reference_id_gap_numbers(polished_html)
-    if not gap_numbers:
+    recovery_numbers, recovery_trigger = _pdf_reference_recovery_numbers(polished_html)
+    if not recovery_numbers:
         return profile, 0, ""
-    gap_set = set(gap_numbers)
+    recovery_set = set(recovery_numbers)
     candidates = _article_source_pdf_candidates(source_run_dir, article, {}, manifest_article)
     for candidate in candidates:
         if not candidate.get("exists"):
@@ -1131,15 +1262,24 @@ def _enrich_profile_with_pdf_reference_entries_if_needed(
                 if getattr(entry, "number", 0) and getattr(entry, "text", "")
             ]
         entries = pdf_reference_cache[cache_key]
-        matched = [entry for entry in entries if int(entry.get("number", 0) or 0) in gap_set]
+        matched = [entry for entry in entries if int(entry.get("number", 0) or 0) in recovery_set]
         if not matched:
             continue
         updated = dict(profile)
         updated["reference_entries"] = entries
-        updated["reference_entries_status"] = "loaded_from_source_pdf_gap_recovery"
+        updated["reference_entries_status"] = (
+            "loaded_from_source_pdf_gap_recovery"
+            if recovery_trigger == "gap"
+            else "loaded_from_source_pdf_citation_recovery"
+        )
         updated["reference_entries_count"] = len(entries)
         updated["reference_entries_source_pdf"] = cache_key
-        updated["reference_entries_missing_ids"] = sorted(gap_set)
+        updated["reference_entries_missing_ids"] = sorted(recovery_set)
+        updated["reference_entries_recovery_numbers"] = sorted(recovery_set)
+        updated["reference_entries_recovery_matched_numbers"] = sorted(
+            {int(entry.get("number", 0) or 0) for entry in matched}
+        )
+        updated["reference_entries_recovery_trigger"] = recovery_trigger
         return updated, len(matched), cache_key
     return profile, 0, ""
 
@@ -2655,6 +2795,254 @@ def write_pattern_observations(
     return summary
 
 
+BENIGN_TELEMETRY_DEFECT_IDS = {"P04T", "P04M", "P45S", "P45M"}
+PDF_REFERENCE_RECOVERY_DEFECT_IDS = {"P04N"}
+PDF_FIGURE_RECOVERY_DEFECT_IDS = {"P62"}
+SEMANTIC_FIGURE_TARGET_DEFECT_IDS = {"P61"}
+SOURCE_LAYER_TELEMETRY_DEFECT_IDS = {"P35", "P71"}
+
+
+def _defect_extra(defect: dict[str, Any]) -> dict[str, Any]:
+    extra = defect.get("extra")
+    return extra if isinstance(extra, dict) else {}
+
+
+def _defect_quality_counted(defect: dict[str, Any]) -> bool:
+    extra = _defect_extra(defect)
+    return bool(extra.get("quality_counted", True))
+
+
+def _has_source_pdf_text_layer_evidence(defect: dict[str, Any], article_summary: dict[str, Any]) -> bool:
+    extra = _defect_extra(defect)
+    if any("source_pdf_text_layer" in str(key) and value for key, value in extra.items()):
+        return True
+    return (
+        str(article_summary.get("pdf_text_status") or "").lower() not in {"", "missing", "unavailable", "error"}
+        and bool(article_summary.get("source_pdf_present"))
+    )
+
+
+def _resolver_decision_for_defect(
+    defect: dict[str, Any],
+    article_summary: dict[str, Any],
+) -> tuple[str, str, str, list[str]]:
+    defect_id = str(defect.get("id") or "unknown")
+    extra = _defect_extra(defect)
+    if _defect_quality_counted(defect):
+        return (
+            "needs_repair",
+            "quality_counted_defect",
+            str(defect.get("proposed_fix_layer") or "audit_or_polish_repair"),
+            ["quality_counted=true", "focused regression test", "fresh full observe comparison"],
+        )
+    if defect_id in BENIGN_TELEMETRY_DEFECT_IDS:
+        return (
+            "accepted_telemetry",
+            "benign_classifier_telemetry",
+            "audit_telemetry_split",
+            ["quality_counted=false", "audit extra subtype", "negative guard test"],
+        )
+    if defect_id in SOURCE_LAYER_TELEMETRY_DEFECT_IDS and _has_source_pdf_text_layer_evidence(defect, article_summary):
+        return (
+            "accepted_telemetry",
+            "source_pdf_text_layer_evidence",
+            "source_layer_ocr_telemetry",
+            ["quality_counted=false", "source PDF text-layer evidence", "stage snippet"],
+        )
+    if defect_id in PDF_FIGURE_RECOVERY_DEFECT_IDS:
+        origin = str(extra.get("warning_origin") or extra.get("p62_subtype") or "missing_figure_warning")
+        return (
+            "needs_pdf_recovery",
+            origin,
+            "pdf_backed_figure_image_recovery",
+            ["source PDF page render", "nearby caption/label evidence", "image extraction fallback test"],
+        )
+    if defect_id in SEMANTIC_FIGURE_TARGET_DEFECT_IDS:
+        return (
+            "needs_semantic_recovery",
+            "figure_reference_without_semantic_target",
+            "semantic_figure_target_inventory_after_pdf_recovery",
+            ["visible label", "figure/table target inventory", "source PDF page render"],
+        )
+    if defect_id in PDF_REFERENCE_RECOVERY_DEFECT_IDS:
+        return (
+            "needs_pdf_reference_recovery",
+            "citation_like_body_numbers_without_bibliography_targets",
+            "pdf_backed_bibliography_target_recovery",
+            ["citation-like number group", "source PDF reference entries", "reference-link regression test"],
+        )
+    return (
+        "needs_manual_or_llm",
+        "unclassified_observed_signal",
+        "manual_or_evidence_bound_llm_triage",
+        ["stage snippet", "source PDF render/text evidence", "manual observation ledger entry if new"],
+    )
+
+
+def _resolver_sample_decision(defect: dict[str, Any], article: dict[str, Any]) -> dict[str, Any]:
+    article_id = str(article.get("article") or "")
+    article_summary = article.get("summary") if isinstance(article.get("summary"), dict) else {}
+    decision, reason, fix_layer, evidence_required = _resolver_decision_for_defect(defect, article_summary)
+    extra = _defect_extra(defect)
+    return {
+        "article": article_id,
+        "source_article": article.get("source_article") or article_id,
+        "defect_id": str(defect.get("id") or "unknown"),
+        "check": defect.get("check"),
+        "severity": defect.get("severity"),
+        "quality_counted": _defect_quality_counted(defect),
+        "decision": decision,
+        "reason": reason,
+        "fix_layer": fix_layer,
+        "evidence_required": evidence_required,
+        "snippet": _compact_observation_text(defect.get("snippet"), max_len=260),
+        "raw_stage_path": article.get("raw_stage_path"),
+        "polish_stage_path": article.get("polish_stage_path"),
+        "source_pdf_present": article_summary.get("source_pdf_present"),
+        "source_pdf_path": article_summary.get("source_pdf_path"),
+        "source_pdf_origin": article_summary.get("source_pdf_origin"),
+        "pdf_text_status": article_summary.get("pdf_text_status"),
+        "extra": {
+            key: value
+            for key, value in extra.items()
+            if key
+            in {
+                "quality_counted",
+                "warning_origin",
+                "p62_subtype",
+                "figure_label",
+                "figure_key",
+                "visible_label",
+                "source_pdf_text_layer_evidence",
+            }
+        },
+    }
+
+
+def _group_resolver_decisions(decisions: Iterable[dict[str, Any]], decision_names: set[str]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in decisions:
+        if item.get("decision") not in decision_names:
+            continue
+        key = (
+            str(item.get("defect_id") or "unknown"),
+            str(item.get("decision") or "unknown"),
+            str(item.get("fix_layer") or "unknown"),
+        )
+        group = groups.setdefault(
+            key,
+            {
+                "defect_id": key[0],
+                "decision": key[1],
+                "fix_layer": key[2],
+                "count": 0,
+                "article_count": 0,
+                "_articles": set(),
+                "sample_decisions": [],
+            },
+        )
+        group["count"] += 1
+        group["_articles"].add(item.get("article"))
+        if len(group["sample_decisions"]) < 5:
+            group["sample_decisions"].append(item)
+    result: list[dict[str, Any]] = []
+    for group in groups.values():
+        articles = sorted(str(article) for article in group.pop("_articles") if article)
+        group["articles"] = articles[:50]
+        group["article_count"] = len(articles)
+        result.append(group)
+    result.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("defect_id") or "")))
+    return result
+
+
+def write_resolver_decisions(run_dir: Path) -> dict[str, Any]:
+    """Classify observed audit signals into telemetry, repair, and triage buckets."""
+
+    run_dir = run_dir.resolve(strict=False)
+    audit = _load_json(run_dir / "audit_full_checks.json", default={"articles": []})
+    manifest = _load_json(run_dir / "manifest.json", default={})
+    entry = _load_json(run_dir / "quality_history_entry.json", default={})
+    run_id = str(entry.get("run_id") or run_dir.name)
+    decisions: list[dict[str, Any]] = []
+    for article in audit.get("articles") or []:
+        if not isinstance(article, dict):
+            continue
+        for defect in article.get("defects_found") or []:
+            if isinstance(defect, dict):
+                decisions.append(_resolver_sample_decision(defect, article))
+
+    decision_counts = Counter(str(item.get("decision") or "unknown") for item in decisions)
+    defect_id_counts = Counter(str(item.get("defect_id") or "unknown") for item in decisions)
+    accepted_telemetry_counts = Counter(
+        str(item.get("defect_id") or "unknown")
+        for item in decisions
+        if item.get("decision") == "accepted_telemetry"
+    )
+    repair_decision_names = {"needs_pdf_recovery", "needs_semantic_recovery", "needs_pdf_reference_recovery"}
+    repair_candidate_counts = Counter(
+        str(item.get("defect_id") or "unknown")
+        for item in decisions
+        if item.get("decision") in repair_decision_names
+    )
+    manual_or_llm_count = int(decision_counts.get("needs_manual_or_llm", 0))
+    report = {
+        "generated_at": _now(),
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "path": str(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME),
+        "source_kind": manifest.get("source_kind"),
+        "code_commit": manifest.get("code_commit"),
+        "working_tree_dirty": manifest.get("working_tree_dirty"),
+        "decision_count": len(decisions),
+        "article_count": len({item.get("article") for item in decisions if item.get("article")}),
+        "observed_non_quality_count": sum(1 for item in decisions if not item.get("quality_counted")),
+        "quality_counted_count": sum(1 for item in decisions if item.get("quality_counted")),
+        "decision_counts": dict(sorted(decision_counts.items())),
+        "defect_id_counts": dict(sorted(defect_id_counts.items())),
+        "accepted_telemetry_counts": dict(sorted(accepted_telemetry_counts.items())),
+        "repair_candidate_counts": dict(sorted(repair_candidate_counts.items())),
+        "manual_or_llm_count": manual_or_llm_count,
+        "repair_candidate_groups": _group_resolver_decisions(decisions, repair_decision_names),
+        "accepted_telemetry_groups": _group_resolver_decisions(decisions, {"accepted_telemetry"}),
+        "manual_or_llm_groups": _group_resolver_decisions(decisions, {"needs_manual_or_llm"}),
+        "automation_plan": [
+            {
+                "order": 1,
+                "scope": "P04T/P04M/P45S/P45M",
+                "action": "Keep benign table/math/superscript classifiers as accepted telemetry with negative guard tests.",
+                "status": "implemented_in_resolver",
+            },
+            {
+                "order": 2,
+                "scope": "P62",
+                "action": "Use PDF-render evidence for missing figure/image recovery before semantic target repair.",
+                "status": "repair_candidate",
+            },
+            {
+                "order": 3,
+                "scope": "P61",
+                "action": "Rebuild semantic figure target inventory after PDF-backed figure recovery.",
+                "status": "repair_candidate",
+            },
+            {
+                "order": 4,
+                "scope": "P04N",
+                "action": "Recover source-backed bibliography targets from citation-like body ranges/lists and PDF reference entries.",
+                "status": "active_repair_layer",
+            },
+            {
+                "order": 5,
+                "scope": "P71/P35",
+                "action": "Accept source-layer OCR/mojibake residues only when source PDF text-layer evidence is present.",
+                "status": "implemented_in_resolver",
+            },
+        ],
+        "decisions": decisions,
+    }
+    _write_json(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME, report)
+    return report
+
+
 def build_analysis_pack(
     run_dir: Path,
     *,
@@ -2679,8 +3067,14 @@ def build_analysis_pack(
     manual_observations = _load_json(run_dir / "manual_observation_summary.json", default={})
     article_review_report = _load_json(run_dir / "article_review_report.json", default={})
     pdf_problem_evidence_report = _load_json(run_dir / DEFAULT_PDF_PROBLEM_EVIDENCE_NAME, default={})
+    resolver_decisions_report = _load_json(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME, default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
+    resolver_by_article: dict[str, list[dict[str, Any]]] = {}
+    for decision in resolver_decisions_report.get("decisions") or []:
+        if not isinstance(decision, dict) or not decision.get("article"):
+            continue
+        resolver_by_article.setdefault(str(decision["article"]), []).append(decision)
     assessment_by_article = {
         str(article.get("article")): article
         for article in assessment.get("articles", [])
@@ -2781,6 +3175,7 @@ def build_analysis_pack(
                 "raw_stage_path": item["raw_stage_path"],
                 "polish_stage_path": item["polish_stage_path"],
                 "defects": [_defect_summary(defect, defect_patterns) for defect in item["defects"][:12]],
+                "resolver_decisions": (resolver_by_article.get(str(item["article"])) or [])[:12],
             }
         )
 
@@ -2818,6 +3213,23 @@ def build_analysis_pack(
             "selected_count": article_review_report.get("selected_count", 0),
         },
         "audit_defect_counts": audit.get("corpus_summary", {}).get("defect_counts", {}),
+        "resolver_decisions": {
+            "path": resolver_decisions_report.get("path")
+            or str(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME),
+            "decision_count": resolver_decisions_report.get("decision_count", 0),
+            "article_count": resolver_decisions_report.get("article_count", 0),
+            "observed_non_quality_count": resolver_decisions_report.get("observed_non_quality_count", 0),
+            "quality_counted_count": resolver_decisions_report.get("quality_counted_count", 0),
+            "decision_counts": resolver_decisions_report.get("decision_counts", {}),
+            "defect_id_counts": resolver_decisions_report.get("defect_id_counts", {}),
+            "accepted_telemetry_counts": resolver_decisions_report.get("accepted_telemetry_counts", {}),
+            "repair_candidate_counts": resolver_decisions_report.get("repair_candidate_counts", {}),
+            "manual_or_llm_count": resolver_decisions_report.get("manual_or_llm_count", 0),
+            "repair_candidate_groups": (resolver_decisions_report.get("repair_candidate_groups") or [])[:12],
+            "accepted_telemetry_groups": (resolver_decisions_report.get("accepted_telemetry_groups") or [])[:12],
+            "manual_or_llm_groups": (resolver_decisions_report.get("manual_or_llm_groups") or [])[:12],
+            "automation_plan": resolver_decisions_report.get("automation_plan") or [],
+        },
         "pattern_observations": {
             "history_path": pattern_observations.get("history_path"),
             "article_count_reviewed": pattern_observations.get("article_count_reviewed"),
@@ -2892,6 +3304,10 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- pdf_problem_evidence_status: `{(pack.get('pdf_problem_evidence_stage') or {}).get('status')}`",
         f"- pdf_problem_evidence_dir: `{(pack.get('pdf_problem_evidence_stage') or {}).get('evidence_dir')}`",
         f"- pdf_problem_evidence_blocking_issues: `{(pack.get('pdf_problem_evidence_stage') or {}).get('blocking_issue_count')}`",
+        f"- resolver_decisions_path: `{(pack.get('resolver_decisions') or {}).get('path')}`",
+        f"- resolver_decision_counts: `{json.dumps((pack.get('resolver_decisions') or {}).get('decision_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- resolver_repair_candidate_counts: `{json.dumps((pack.get('resolver_decisions') or {}).get('repair_candidate_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- resolver_accepted_telemetry_counts: `{json.dumps((pack.get('resolver_decisions') or {}).get('accepted_telemetry_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_comparable_totals_delta: `{json.dumps(pack.get('comparison_comparable_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- new_article_count: `{pack.get('new_article_count')}`",
@@ -2947,6 +3363,43 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"- {pattern.get('pattern_key')}: articles={pattern.get('article_count')} | "
                 f"occurrences={pattern.get('occurrence_count')} | defects={json.dumps(pattern.get('defect_ids', {}), ensure_ascii=False, sort_keys=True)}"
             )
+    resolver_decisions = pack.get("resolver_decisions") or {}
+    repair_groups = resolver_decisions.get("repair_candidate_groups") or []
+    telemetry_groups = resolver_decisions.get("accepted_telemetry_groups") or []
+    manual_groups = resolver_decisions.get("manual_or_llm_groups") or []
+    if repair_groups or telemetry_groups or manual_groups:
+        lines.extend(
+            [
+                "",
+                "## Observed Resolver Decisions",
+                "",
+                "Use these decisions before proposing repairs: accepted telemetry needs guard coverage, repair candidates need source-backed automation, and manual/LLM items need evidence packs.",
+            ]
+        )
+        if repair_groups:
+            lines.append("")
+            lines.append("### Repair Candidates")
+            for group in repair_groups[:8]:
+                lines.append(
+                    f"- {group.get('defect_id')} {group.get('decision')}: count={group.get('count')} | "
+                    f"articles={group.get('article_count')} | fix_layer={group.get('fix_layer')}"
+                )
+        if telemetry_groups:
+            lines.append("")
+            lines.append("### Accepted Telemetry")
+            for group in telemetry_groups[:8]:
+                lines.append(
+                    f"- {group.get('defect_id')}: count={group.get('count')} | "
+                    f"articles={group.get('article_count')} | fix_layer={group.get('fix_layer')}"
+                )
+        if manual_groups:
+            lines.append("")
+            lines.append("### Manual Or Evidence-Bound LLM")
+            for group in manual_groups[:8]:
+                lines.append(
+                    f"- {group.get('defect_id')}: count={group.get('count')} | "
+                    f"articles={group.get('article_count')} | fix_layer={group.get('fix_layer')}"
+                )
     manual_observations = pack.get("manual_observations") or {}
     lines.extend(
         [
@@ -2999,6 +3452,7 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"- source_pdf_origin: `{(article.get('audit_summary') or {}).get('source_pdf_origin')}`",
                 f"- source_pdf_candidates: `{json.dumps(article.get('source_pdf_candidates') or [], ensure_ascii=False)}`",
                 f"- pdf_problem_evidence: `{json.dumps(article.get('pdf_problem_evidence') or {}, ensure_ascii=False, sort_keys=True)}`",
+                f"- resolver_decisions: `{json.dumps(article.get('resolver_decisions') or [], ensure_ascii=False, sort_keys=True)}`",
                 "- defect snippets:",
             ]
         )
@@ -3026,6 +3480,7 @@ def write_analysis_pack(
     gate_config = load_gate_config(gate_config_path)
     defect_patterns = _load_json(defect_patterns_path, default={})
     write_manual_observation_summary(run_dir, ledger_path=manual_observation_ledger)
+    write_resolver_decisions(run_dir)
     pack = build_analysis_pack(
         run_dir,
         max_articles=max_articles,
@@ -3327,6 +3782,7 @@ def observe(args: argparse.Namespace) -> int:
         f"problem_candidates={len(pattern_observations['problem_candidates'])} "
         f"manual_observations={manual_observations['observation_count']} "
         f"manual_problem_candidates={len(manual_observations['problem_candidates'])} "
+        f"resolver_repairs={sum((pack.get('resolver_decisions') or {}).get('repair_candidate_counts', {}).values())} "
         f"articles_in_pack={len(pack['articles'])} run_dir={run_dir}"
     )
     return 1 if gate_report["status"] == "fail" and args.fail_on_gate else 0

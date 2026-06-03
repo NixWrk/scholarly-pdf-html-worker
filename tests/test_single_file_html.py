@@ -1346,6 +1346,32 @@ def test_polish_html_document_recovers_missing_reference_entry_from_pdf_profile(
     assert 'href="#ref-158"' in polished[: polished.index("References")]
 
 
+def test_polish_html_document_appends_pdf_recovered_reference_section_without_existing_references() -> None:
+    html = "<html><body><p>Prior work 1,2.</p></body></html>"
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries_recovery_numbers": [1, 2],
+            "reference_entries": [
+                {"page": 3, "number": 1, "text": "Alpha A. First source. Journal, 2020."},
+                {"page": 3, "number": 2, "text": "Beta B. Second source. Journal, 2021."},
+            ],
+        },
+    )
+    ref_section = polished[polished.index("References") :]
+    body = polished[: polished.index("References")]
+
+    assert 'data-z2m-pdf-recovered-references="1"' in ref_section
+    assert 'id="ref-1"' in ref_section
+    assert 'id="ref-2"' in ref_section
+    assert "Alpha A. First source." in ref_section
+    assert '<span class="z2m-ref-num">1.</span>' in ref_section
+    assert '<a href="#ref-1" class="z2m-ref-link">1</a>' in body
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
+
+
 def test_polish_html_document_links_remaining_plain_superscript_ranges_in_superscript_docs() -> None:
     refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 20))
     html = (

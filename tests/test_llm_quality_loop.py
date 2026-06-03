@@ -25,6 +25,7 @@ from scripts.llm_quality_loop import (
     write_manual_review_queue,
     write_manual_observation_summary,
     write_pattern_observations,
+    write_resolver_decisions,
 )
 
 
@@ -337,6 +338,63 @@ def test_analysis_pack_filters_ignored_defects_and_adds_pattern_metadata(tmp_pat
     assert "article_a" in prompt
     assert "text-cleanup" in prompt
     assert "focused artifact regression" in prompt
+
+
+def test_write_resolver_decisions_splits_observed_signals_and_pack_summary(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "corpus_summary": {"defect_counts": {"P04T": 1, "P62": 1, "P04N": 1, "P71": 1, "P67": 1}},
+            "articles": [
+                {
+                    "article": "article_a",
+                    "raw_stage_path": "raw.html",
+                    "polish_stage_path": "polish.html",
+                    "summary": {
+                        "source_pdf_present": True,
+                        "source_pdf_path": "paper.pdf",
+                        "pdf_text_status": "pymupdf",
+                    },
+                    "defects_found": [
+                        {"id": "P04T", "severity": "warning", "check": "table numeric range", "extra": {"quality_counted": False}},
+                        {
+                            "id": "P62",
+                            "severity": "warning",
+                            "check": "missing figure warning",
+                            "extra": {"quality_counted": False, "warning_origin": "caption-only-target"},
+                        },
+                        {"id": "P04N", "severity": "warning", "check": "citation-like range", "extra": {"quality_counted": False}},
+                        {
+                            "id": "P71",
+                            "severity": "warning",
+                            "check": "source OCR residue",
+                            "extra": {"quality_counted": False, "source_pdf_text_layer_evidence": True},
+                        },
+                        {"id": "P67", "severity": "error", "check": "quality counted text defect"},
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+    _write_json(run_dir / "quality_history_entry.json", {"run_id": "run_a", "totals": {}, "articles": {"article_a": {"score": 1}}})
+    _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
+    _write_json(run_dir / "manifest.json", {"article_count": 1, "source_kind": "test"})
+
+    report = write_resolver_decisions(run_dir)
+
+    assert report["decision_counts"]["accepted_telemetry"] == 2
+    assert report["decision_counts"]["needs_pdf_recovery"] == 1
+    assert report["decision_counts"]["needs_pdf_reference_recovery"] == 1
+    assert report["decision_counts"]["needs_repair"] == 1
+    assert report["accepted_telemetry_counts"] == {"P04T": 1, "P71": 1}
+    assert report["repair_candidate_counts"] == {"P04N": 1, "P62": 1}
+
+    pack = build_analysis_pack(run_dir, gate_config={"ignored_defect_ids_for_analysis": []})
+    assert pack["resolver_decisions"]["repair_candidate_counts"] == {"P04N": 1, "P62": 1}
+    assert pack["articles"][0]["resolver_decisions"][0]["article"] == "article_a"
+    assert "Observed Resolver Decisions" in render_llm_prompt(pack)
 
 
 def test_analysis_pack_lists_changed_articles_without_quality_delta(tmp_path: Path) -> None:
@@ -1333,6 +1391,74 @@ def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Pa
     assert 'id="ref-158"' in polished
     assert "Fortelny" in polished
     assert profile["reference_entries_status"] == "loaded_from_source_pdf_gap_recovery"
+
+
+def test_repolish_cached_run_recovers_pdf_references_from_body_citation_candidates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source"
+    raw_cache = source / "raw_cache"
+    profiles = source / "profiles"
+    raw_cache.mkdir(parents=True)
+    profiles.mkdir(parents=True)
+    pdf_path = tmp_path / "zotero" / "storage" / "BODYCITE" / "paper.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    raw_html = "<html><body><p>Prior work 1,2.</p></body></html>"
+    (raw_cache / "bodycite.01.en.raw.html").write_text(raw_html, encoding="utf-8")
+    _write_json(profiles / "bodycite.citation_profile.json", {"status": "ok", "style": "unknown", "confidence": "low"})
+    _write_json(
+        source / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article": "bodycite",
+                    "article_id": "bodycite",
+                    "source_pdf_path": str(pdf_path),
+                }
+            ]
+        },
+    )
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "extract_reference_entries_from_pdf",
+        lambda _path: [
+            SimpleNamespace(page=10, number=1, text="Alpha A. First source. Journal, 2020."),
+            SimpleNamespace(page=10, number=2, text="Beta B. Second source. Journal, 2021."),
+        ],
+    )
+
+    manifest = repolish_cached_run(source, tmp_path / "run", polish_language="en")
+    polished = (tmp_path / "run" / "polish" / "bodycite.02.en.polish.html").read_text(encoding="utf-8")
+    profile = json.loads(
+        (tmp_path / "run" / "profiles" / "bodycite.citation_profile.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["pdf_reference_recovery_count"] == 2
+    assert manifest["articles"][0]["pdf_reference_recovered"] == 2
+    assert profile["reference_entries_status"] == "loaded_from_source_pdf_citation_recovery"
+    assert profile["reference_entries_recovery_trigger"] == "body_citation"
+    assert profile["reference_entries_recovery_numbers"] == [1, 2]
+    assert 'data-z2m-pdf-recovered-references="1"' in polished
+    assert 'id="ref-1"' in polished
+    assert 'id="ref-2"' in polished
+    assert 'href="#ref-1"' in polished
+    assert 'href="#ref-2"' in polished
+
+
+def test_pdf_reference_body_recovery_is_skipped_when_reference_ids_exist() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work 1,2.</p>"
+        "<h2>References</h2><ul>"
+        '<li id="ref-1">Alpha A. First source.</li>'
+        '<li id="ref-2">Beta B. Second source.</li>'
+        "</ul></body></html>"
+    )
+
+    assert llm_quality_loop._pdf_reference_recovery_numbers(html) == ([], "")
 
 
 def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) -> None:
