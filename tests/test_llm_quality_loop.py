@@ -20,6 +20,7 @@ from scripts.llm_quality_loop import (
     run_audit,
     run_test_command,
     write_pdf_problem_evidence_stage,
+    write_p62_marker_recovery_plan,
     write_source_pdf_map_for_run,
     write_article_review_stage,
     write_manual_review_queue,
@@ -636,6 +637,140 @@ def test_pdf_problem_evidence_stage_requires_render_and_text_layer(tmp_path: Pat
     assert Path(article["page_render_path"]).is_file()
 
 
+def test_p62_marker_recovery_plan_builds_single_page_marker_command(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    warning = (
+        "Figure 6 image was not extracted into this HTML. "
+        "Please check the original PDF for the missing visual content."
+    )
+    caption = (
+        "Fig. 6. A heat map showing the relative time difference spent at each point "
+        "in the T-maze, U-maze and Z-maze in sessions 13-14 compared to sessions 1-2."
+    )
+    polish_path.write_text(
+        '<div id="fig-5" class="z2m-figure-unit">'
+        '<p><img src="data:image/jpeg;base64,'
+        + ("A" * 800)
+        + '"/></p><p>Figure 5 | Properties of autonomous discovery.</p></div>'
+        f'<div id="fig-6" class="z2m-missing-figure-unit">'
+        f'<p class="z2m-missing-figure-warning">{warning}</p>'
+        f'<p class="z2m-figure-caption">{caption}</p></div>',
+        encoding="utf-8",
+    )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "polish_stage_path": str(polish_path),
+                    "summary": {
+                        "source_pdf_present": True,
+                        "source_pdf_path": str(source_pdf),
+                    },
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "severity": "warning",
+                            "check": "missing figure warning",
+                            "snippet": warning,
+                            "extra": {
+                                "quality_counted": False,
+                                "warning_index": 1,
+                                "figure_label": "6",
+                                "warning_origin": "caption-only-target",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+    _write_json(run_dir / "quality_history_entry.json", {"run_id": "run_a", "totals": {}, "articles": {}})
+    _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        assert max_pages == 80
+        return (
+            "fake",
+            [
+                "Figure 5 | Properties of autonomous discovery with autonomous research agents.",
+                "The study reports Fig. 6 as a heat map showing the relative time difference "
+                "spent at each point in the T-maze U-maze and Z-maze.",
+            ],
+            None,
+        )
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+
+    report = write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+        },
+    )
+
+    article = report["articles"][0]
+    assert report["status"] == "ready"
+    assert report["candidate_count"] == 1
+    assert article["status"] == "ready"
+    assert article["source_pdf_page_number"] == 2
+    assert article["marker_page_number_zero_based"] == 1
+    assert article["marker_page_range"] == "1"
+    assert article["marker_command"][article["marker_command"].index("--page_range") + 1] == "1"
+    assert "--disable_multiprocessing" in article["marker_command"]
+    assert article["existing_marker_output_validation"]["status"] == "not_run"
+    assert report["marker_output_status_counts"] == {"not_run": 1}
+    assert Path(article["polish_context_path"]).is_file()
+    assert Path(article["source_pdf_page_excerpt_path"]).is_file()
+
+    marker_output = Path(article["marker_output_dir"]) / "paper"
+    marker_output.mkdir(parents=True)
+    (marker_output / "paper.html").write_text("<p>Figure 6 | recovered caption only</p>", encoding="utf-8")
+    caption_only_report = write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+        },
+    )
+    assert caption_only_report["articles"][0]["existing_marker_output_validation"]["status"] == "caption_only"
+
+    (marker_output / "_page_1_Figure_1.jpeg").write_bytes(b"jpg")
+    recovered_report = write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+        },
+    )
+    assert recovered_report["marker_output_status_counts"] == {"recovered_image": 1}
+
+    pack = build_analysis_pack(run_dir, gate_config={"ignored_defect_ids_for_analysis": ["P62"]})
+    assert pack["articles"] == []
+    assert pack["p62_marker_recovery_plan"]["ready_count"] == 1
+    prompt = render_llm_prompt(pack)
+    assert "p62_marker_recovery_status" in prompt
+    assert "P62 Marker Recovery Plan" in prompt
+
+
 def test_observe_runs_configured_tests_by_default() -> None:
     args = parse_args(
         [
@@ -707,6 +842,7 @@ def test_render_llm_prompt_requires_artifact_regression_tests() -> None:
     assert "pdf_problem_evidence_status" in prompt
     assert "source_pdf_candidates" in prompt
     assert "search the Zotero/source_exports PDF candidates" in prompt
+    assert "p62_marker_recovery_status" in prompt
 
 
 def test_manual_observation_summary_accumulates_raw_manifestations(tmp_path: Path) -> None:

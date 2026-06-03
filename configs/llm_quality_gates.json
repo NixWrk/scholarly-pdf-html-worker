@@ -10,6 +10,12 @@
   "pdf_problem_evidence_max_pdf_pages": 80,
   "pdf_problem_evidence_render_zoom": 1.5,
   "pdf_problem_evidence_allow_missing_source_pdf": true,
+  "require_p62_marker_recovery_plan": true,
+  "p62_marker_recovery_max_articles": 0,
+  "p62_marker_recovery_max_pdf_pages": 80,
+  "p62_marker_recovery_context_chars": 5000,
+  "p62_marker_recovery_min_match_score": 0.05,
+  "p62_marker_recovery_require_label_match": true,
   "ignored_defect_ids_for_analysis": ["P13", "P16", "P20", "P61", "P62"],
   "max_regressions": 0,
   "max_total_deltas": {

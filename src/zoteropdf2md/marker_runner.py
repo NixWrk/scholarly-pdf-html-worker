@@ -37,6 +37,38 @@ class ProgressContext:
     artifact_extension: str
 
 
+def build_marker_single_command(
+    pdf_path: Path,
+    output_dir: Path,
+    output_format: str,
+    *,
+    marker_single_cmd: str = "marker_single",
+    page_range: str | None = None,
+    disable_multiprocessing: bool = False,
+) -> list[str]:
+    cmd = [
+        marker_single_cmd,
+        str(pdf_path),
+        "--output_dir",
+        str(output_dir),
+        "--output_format",
+        output_format,
+        "--drop_repeated_text",
+        "--drop_repeated_table_text",
+        "--lowres_image_dpi",
+        "300",
+        "--highres_image_dpi",
+        "300",
+        "--PdfProvider_pdftext_workers",
+        "1",
+    ]
+    if disable_multiprocessing:
+        cmd.append("--disable_multiprocessing")
+    if page_range:
+        cmd.extend(["--page_range", str(page_range)])
+    return cmd
+
+
 class MarkerRunner:
     def __init__(
         self,
@@ -337,30 +369,51 @@ class MarkerRunner:
         output_format: str,
         env: dict[str, str],
         log: callable,
+        page_range: str | None = None,
+        disable_multiprocessing: bool = False,
     ) -> RunResult:
-        cmd = [
-            self._marker_single_cmd,
-            str(pdf_path),
-            "--output_dir",
-            str(output_dir),
-            "--output_format",
+        cmd = build_marker_single_command(
+            pdf_path,
+            output_dir,
             output_format,
-            "--drop_repeated_text",
-            "--drop_repeated_table_text",
-            "--lowres_image_dpi",
-            "300",
-            "--highres_image_dpi",
-            "300",
-            "--PdfProvider_pdftext_workers",
-            "1",
-        ]
+            marker_single_cmd=self._marker_single_cmd,
+            page_range=page_range,
+            disable_multiprocessing=disable_multiprocessing,
+        )
         progress = ProgressContext(
             input_files=1,
-            pages_total=_count_total_pdf_pages([pdf_path]),
+            pages_total=_count_page_range_pages(page_range) or _count_total_pdf_pages([pdf_path]),
             output_dir=output_dir,
             artifact_extension=_artifact_extension_for_output_format(output_format),
         )
         return self._run(cmd, env, log, progress=progress)
+
+    def run_single_page(
+        self,
+        pdf_path: Path,
+        output_dir: Path,
+        output_format: str,
+        page_number: int,
+        env: dict[str, str],
+        log: callable,
+    ) -> RunResult:
+        """Run marker on one 1-based PDF page.
+
+        Marker's CLI expects zero-based page ranges, so this helper keeps the
+        public call aligned with PDF render/evidence page numbering.
+        """
+
+        if page_number < 1:
+            raise ValueError("page_number must be 1-based and positive.")
+        return self.run_single(
+            pdf_path,
+            output_dir,
+            output_format,
+            env,
+            log,
+            page_range=str(page_number - 1),
+            disable_multiprocessing=True,
+        )
 
 
 def _artifact_extension_for_output_format(output_format: str) -> str:
@@ -389,6 +442,30 @@ def _count_total_pdf_pages(paths: object) -> int | None:
         seen = True
         total += page_count
     return total if seen else None
+
+
+def _count_page_range_pages(page_range: str | None) -> int | None:
+    if not page_range:
+        return None
+    total = 0
+    for raw_part in str(page_range).split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            left, right = (item.strip() for item in part.split("-", 1))
+            if not left.isdigit() or not right.isdigit():
+                return None
+            start = int(left)
+            end = int(right)
+            if end < start:
+                return None
+            total += end - start + 1
+            continue
+        if not part.isdigit():
+            return None
+        total += 1
+    return total or None
 
 
 def _count_pdf_pages(path: Path) -> int | None:

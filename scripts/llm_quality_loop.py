@@ -41,6 +41,7 @@ from zoteropdf2md.citation_profile import (  # noqa: E402
     extract_reference_entries_from_pdf,
     infer_citation_style_from_text,
 )
+from zoteropdf2md.marker_runner import build_marker_single_command  # noqa: E402
 from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
@@ -53,6 +54,7 @@ DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME = "manual_observation_ledger.jsonl"
 DEFAULT_SOURCE_PDF_MAP_NAME = "source_pdf_map.json"
 DEFAULT_PDF_PROBLEM_EVIDENCE_NAME = "pdf_problem_evidence_report.json"
 DEFAULT_RESOLVER_DECISIONS_NAME = "resolver_decisions.json"
+DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -91,6 +93,10 @@ PLAIN_BODY_REFERENCE_CANDIDATE_RE = re.compile(
 )
 REFERENCE_RECOVERY_PROTECTED_CLASS_RE = re.compile(
     r"\b(?:z2m-front-matter|z2m-missing|z2m-figure|z2m-table|z2m-equation|katex|math)\b",
+    re.IGNORECASE,
+)
+P62_MISSING_WARNING_TEXT_RE = re.compile(
+    r"\bFigure\s+(?P<label>[\w.-]+)\s+image\s+was\s+not\s+extracted\b",
     re.IGNORECASE,
 )
 
@@ -780,9 +786,7 @@ def _tokenize_evidence_text(value: str) -> list[str]:
 def _best_pdf_text_page(snippets: list[str], pages: list[str]) -> tuple[int, float]:
     if not pages:
         return 0, 0.0
-    snippet_tokens: set[str] = set()
-    for snippet in snippets:
-        snippet_tokens.update(_tokenize_evidence_text(snippet)[:80])
+    snippet_tokens = _evidence_snippet_tokens(snippets)
     if not snippet_tokens:
         return 1, 0.0
 
@@ -798,6 +802,60 @@ def _best_pdf_text_page(snippets: list[str], pages: list[str]) -> tuple[int, flo
             best_page = index
             best_score = score
     return best_page, max(0.0, best_score)
+
+
+def _evidence_snippet_tokens(snippets: list[str]) -> set[str]:
+    snippet_tokens: set[str] = set()
+    for snippet in snippets:
+        snippet_tokens.update(_tokenize_evidence_text(snippet)[:80])
+    return snippet_tokens
+
+
+def _pdf_page_match_score(snippet_tokens: set[str], page_text: str) -> float:
+    if not snippet_tokens:
+        return 0.0
+    page_tokens = set(_tokenize_evidence_text(page_text))
+    if not page_tokens:
+        return 0.0
+    return len(snippet_tokens & page_tokens) / max(1, len(snippet_tokens))
+
+
+def _figure_label_present_in_text(text: str, figure_label: str) -> bool:
+    label = str(figure_label or "").strip()
+    if not label:
+        return False
+    return bool(
+        re.search(
+            rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?=\b|[^\w])",
+            str(text or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _best_pdf_text_page_for_figure(
+    snippets: list[str],
+    pages: list[str],
+    figure_label: str,
+) -> tuple[int, float, list[int]]:
+    label_pages = [
+        index
+        for index, page_text in enumerate(pages, start=1)
+        if _figure_label_present_in_text(page_text, figure_label)
+    ]
+    if not label_pages:
+        page_number, score = _best_pdf_text_page(snippets, pages)
+        return page_number, score, []
+
+    snippet_tokens = _evidence_snippet_tokens(snippets)
+    best_page = label_pages[0]
+    best_score = -1.0
+    for page_number in label_pages:
+        score = _pdf_page_match_score(snippet_tokens, pages[page_number - 1])
+        if score > best_score:
+            best_page = page_number
+            best_score = score
+    return best_page, max(0.0, best_score), label_pages
 
 
 def _render_pdf_evidence_page(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float) -> dict[str, Any]:
@@ -990,6 +1048,490 @@ def write_pdf_problem_evidence_stage(
         "source_pdf_unavailable_count": unavailable_count,
         "blocking_issue_count": blocking_issue_count,
         "articles": evidence_articles,
+    }
+    _write_json(out_path, report)
+    return report
+
+
+def _path_text_variants(value: Any) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    variants = [raw]
+    try:
+        repaired = raw.encode("cp1251").decode("utf-8")
+    except UnicodeError:
+        repaired = ""
+    if repaired and repaired not in variants:
+        variants.append(repaired)
+    return variants
+
+
+def _existing_path_candidates(value: Any) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for variant in _path_text_variants(value):
+        for candidate in _host_path_candidates(variant):
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            if candidate.is_file():
+                candidates.append(candidate)
+    return candidates
+
+
+def _index_polish_stage_files(run_dir: Path) -> list[Path]:
+    roots = [run_dir / "polish", run_dir / "audit_tree"]
+    files: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in (POLISH_STAGE, f"*.{POLISH_STAGE}"):
+            try:
+                matches = root.rglob(pattern)
+                for path in matches:
+                    if not path.is_file():
+                        continue
+                    key = str(path.resolve(strict=False))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    files.append(path.resolve(strict=False))
+            except OSError:
+                continue
+    return files
+
+
+def _find_polish_stage_path_for_article(
+    run_dir: Path,
+    article_id: str,
+    article: dict[str, Any],
+    manifest_article: dict[str, Any],
+    polish_index: list[Path],
+) -> tuple[Path | None, str]:
+    for item in (article, manifest_article):
+        for key in ("polish_stage_path", "polish_path", "source_polish_path"):
+            for candidate in _existing_path_candidates(item.get(key)):
+                return candidate, f"{key}.declared"
+
+    tokens = _attachment_keys_from_article(article_id, manifest_article)
+    source_article = str(article.get("source_article") or manifest_article.get("article") or "")
+    tokens.extend(_attachment_keys_from_article(source_article, manifest_article))
+    tokens = [token for token in dict.fromkeys(tokens) if token]
+    for token in tokens:
+        for path in polish_index:
+            path_text = str(path)
+            if token in path.name or token in path_text:
+                return path, f"indexed_attachment_key.{token}"
+
+    return None, "missing"
+
+
+def _clean_p62_context_fragment(fragment: str, *, max_len: int = 1400) -> str:
+    fragment = re.sub(r"(?is)<script\b[^>]*>.*?</script>", " ", fragment)
+    fragment = re.sub(r"(?is)<style\b[^>]*>.*?</style>", " ", fragment)
+    fragment = re.sub(r"(?is)<img\b[^>]*>", " [image] ", fragment)
+    text = _visible_html_text(fragment)
+    text = re.sub(r"[A-Za-z0-9+/]{120,}={0,2}", " ", text)
+    text = re.sub(
+        r"\bFigure\s+[\w.-]+\s+image\s+was\s+not\s+extracted\s+into\s+this\s+HTML\.\s+"
+        r"Please\s+check\s+the\s+original\s+PDF\s+for\s+the\s+missing\s+visual\s+content\.?",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = P62_MISSING_WARNING_TEXT_RE.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return _compact_observation_text(text, max_len=max_len)
+
+
+def _p62_context_fragment(html: str, position: int, *, radius: int) -> str:
+    div_start = html.rfind("<div", 0, position)
+    div_end = html.find("</div>", position)
+    if div_start >= 0 and div_end >= 0 and div_end - position <= max(radius * 2, 20000):
+        candidate = html[div_start : div_end + len("</div>")]
+        if "z2m-missing" in candidate[: min(len(candidate), position - div_start + 2000)].casefold():
+            return candidate
+
+    before = min(600, max(200, radius // 5))
+    return html[max(0, position - before) : min(len(html), position + radius)]
+
+
+def _p62_warning_context_from_html(
+    html: str,
+    defect: dict[str, Any],
+    *,
+    radius: int,
+) -> tuple[str, str]:
+    if not html:
+        return "", "html_unavailable"
+    extra = _defect_extra(defect)
+    figure_label = str(extra.get("figure_label") or "").strip()
+    warning_index = int(extra.get("warning_index") or 0)
+    label_key = figure_label.casefold()
+
+    regex_matches: list[tuple[int, str]] = []
+    for match in P62_MISSING_WARNING_TEXT_RE.finditer(html):
+        match_label = str(match.group("label") or "").casefold()
+        if label_key and match_label != label_key:
+            continue
+        regex_matches.append((match.start(), "warning_text_regex"))
+    if regex_matches:
+        if warning_index > 0 and warning_index <= len(regex_matches):
+            position, source = regex_matches[warning_index - 1]
+        else:
+            position, source = regex_matches[0]
+        fragment = _p62_context_fragment(html, position, radius=radius)
+        return _clean_p62_context_fragment(fragment), source
+
+    snippet = str(defect.get("snippet") or "").strip()
+    needles = [snippet]
+    if figure_label:
+        needles.append(f"Figure {figure_label} image was not extracted")
+    html_lower = html.casefold()
+    for needle in needles:
+        if not needle:
+            continue
+        position = html.find(needle)
+        if position < 0:
+            position = html_lower.find(needle.casefold())
+        if position >= 0:
+            fragment = _p62_context_fragment(html, position, radius=radius)
+            return _clean_p62_context_fragment(fragment), "snippet_match"
+
+    missing_blocks = re.finditer(
+        r"(?is)<(?P<tag>[a-z0-9]+)\b[^>]*\bz2m-missing[^>]*>.*?</(?P=tag)>",
+        html,
+    )
+    for match in missing_blocks:
+        visible = _visible_html_text(match.group(0))
+        if figure_label and f"figure {figure_label}" not in visible.casefold():
+            continue
+        position = match.start()
+        fragment = _p62_context_fragment(html, position, radius=radius)
+        return _clean_p62_context_fragment(fragment), "missing_block_match"
+
+    return "", "warning_not_found"
+
+
+def _p62_recovery_snippets(
+    html: str,
+    defect: dict[str, Any],
+    *,
+    context_chars: int,
+) -> tuple[list[str], str, str]:
+    context, context_source = _p62_warning_context_from_html(
+        html,
+        defect,
+        radius=max(800, context_chars),
+    )
+    snippets: list[str] = []
+    if context:
+        snippets.append(context)
+    snippet = _compact_observation_text(defect.get("snippet"), max_len=400)
+    if snippet and not context:
+        snippets.append(snippet)
+    extra = _defect_extra(defect)
+    figure_label = str(extra.get("figure_label") or "").strip()
+    if figure_label and context:
+        snippets.append(f"Fig. {figure_label}")
+    return snippets, context, context_source
+
+
+def _selected_pdf_candidate(
+    run_dir: Path,
+    article_id: str,
+    article: dict[str, Any],
+    manifest_article: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    summary = article.get("summary") if isinstance(article.get("summary"), dict) else {}
+    candidates = _article_source_pdf_candidates(run_dir, article_id, summary, manifest_article)
+    selected = next((candidate for candidate in candidates if candidate.get("exists")), None)
+    return selected, candidates
+
+
+def _validate_p62_marker_output(marker_output_dir: Path, figure_label: str) -> dict[str, Any]:
+    if not marker_output_dir.exists():
+        return {
+            "status": "not_run",
+            "html_count": 0,
+            "image_count": 0,
+            "label_present": False,
+            "html_paths": [],
+            "image_paths": [],
+        }
+
+    html_paths = sorted(path for path in marker_output_dir.rglob("*.html") if path.is_file())
+    image_paths = sorted(
+        path
+        for path in marker_output_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    )
+    label_present = False
+    for html_path in html_paths:
+        try:
+            text = _visible_html_text(html_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if _figure_label_present_in_text(text, figure_label):
+            label_present = True
+            break
+
+    if label_present and image_paths:
+        status = "recovered_image"
+    elif label_present:
+        status = "caption_only"
+    elif image_paths:
+        status = "image_without_label"
+    else:
+        status = "empty_or_unmatched"
+    return {
+        "status": status,
+        "html_count": len(html_paths),
+        "image_count": len(image_paths),
+        "label_present": label_present,
+        "html_paths": [str(path) for path in html_paths[:8]],
+        "image_paths": [str(path) for path in image_paths[:8]],
+    }
+
+
+def write_p62_marker_recovery_plan(
+    run_dir: Path,
+    *,
+    gate_config: dict[str, Any] | None = None,
+    out_path: Path | None = None,
+) -> dict[str, Any]:
+    """Build reproducible marker_single commands for source-backed P62 recovery."""
+
+    gate_config = gate_config or load_gate_config()
+    run_dir = run_dir.resolve(strict=False)
+    out_path = out_path or (run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME)
+    output_root = run_dir / "p62_marker_recovery"
+    max_items = int(gate_config.get("p62_marker_recovery_max_articles") or 0)
+    max_pdf_pages = int(
+        gate_config.get("p62_marker_recovery_max_pdf_pages")
+        or gate_config.get("pdf_problem_evidence_max_pdf_pages")
+        or 80
+    )
+    context_chars = int(gate_config.get("p62_marker_recovery_context_chars") or 5000)
+    min_match_score = float(gate_config.get("p62_marker_recovery_min_match_score") or 0.05)
+    require_label_match = bool(gate_config.get("p62_marker_recovery_require_label_match", True))
+
+    audit = _load_json(run_dir / "audit_full_checks.json", default={"articles": []})
+    manifest = _load_json(run_dir / "manifest.json", default={})
+    manifest_by_article = _manifest_article_by_id(manifest)
+    polish_index = _index_polish_stage_files(run_dir)
+
+    p62_items: list[tuple[dict[str, Any], dict[str, Any], int]] = []
+    for article in audit.get("articles") or []:
+        if not isinstance(article, dict):
+            continue
+        for defect_index, defect in enumerate(article.get("defects_found") or [], start=1):
+            if isinstance(defect, dict) and str(defect.get("id") or "") == "P62":
+                p62_items.append((article, defect, defect_index))
+
+    selected_items = p62_items[:max_items] if max_items > 0 else p62_items
+    pdf_text_cache: dict[str, tuple[str, list[str], str | None]] = {}
+    records: list[dict[str, Any]] = []
+
+    for index, (article, defect, defect_index) in enumerate(selected_items, start=1):
+        article_id = str(article.get("article") or f"article_{index}")
+        manifest_article = manifest_by_article.get(article_id, {})
+        extra = _defect_extra(defect)
+        figure_label = str(extra.get("figure_label") or "").strip()
+        article_dir = output_root / f"{index:03d}_{_slug(article_id, max_len=72)}"
+        if figure_label:
+            article_dir = article_dir / f"fig_{_slug(figure_label, max_len=20)}"
+
+        selected_pdf, source_pdf_candidates = _selected_pdf_candidate(
+            run_dir,
+            article_id,
+            article,
+            manifest_article,
+        )
+        polish_path, polish_path_source = _find_polish_stage_path_for_article(
+            run_dir,
+            article_id,
+            article,
+            manifest_article,
+            polish_index,
+        )
+        polish_html = ""
+        polish_read_error = ""
+        if polish_path is not None:
+            try:
+                polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                polish_read_error = str(exc)
+
+        snippets, polish_context, polish_context_source = _p62_recovery_snippets(
+            polish_html,
+            defect,
+            context_chars=context_chars,
+        )
+        context_path = ""
+        if polish_context:
+            context_path = str(article_dir / "polish_context.txt")
+            Path(context_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(context_path).write_text(polish_context + "\n", encoding="utf-8")
+
+        record: dict[str, Any] = {
+            "article": article_id,
+            "source_article": article.get("source_article") or article_id,
+            "defect_index": defect_index,
+            "figure_label": figure_label,
+            "warning_origin": extra.get("warning_origin") or extra.get("p62_subtype"),
+            "status": "source_pdf_unavailable",
+            "snippet": _compact_observation_text(defect.get("snippet"), max_len=300),
+            "source_pdf_available": bool(selected_pdf),
+            "source_pdf_path": selected_pdf.get("path") if selected_pdf else "",
+            "source_pdf_source": selected_pdf.get("source") if selected_pdf else "",
+            "source_pdf_candidate_count": len(source_pdf_candidates),
+            "source_pdf_candidates": source_pdf_candidates[:8],
+            "polish_stage_path": str(polish_path) if polish_path is not None else "",
+            "polish_stage_path_source": polish_path_source,
+            "polish_read_error": polish_read_error,
+            "polish_context_source": polish_context_source,
+            "polish_context_path": context_path,
+            "polish_context_excerpt": polish_context,
+            "problem_snippet_count": len(snippets),
+            "problem_snippets": snippets[:4],
+            "text_layer_status": "not_run",
+            "text_layer_error": "",
+            "text_layer_page_count": 0,
+            "text_layer_page_limit": max_pdf_pages,
+            "text_layer_truncated_to_limit": False,
+            "source_pdf_page_number": 0,
+            "figure_label_pdf_page_candidates": [],
+            "require_label_match": require_label_match,
+            "marker_page_number_zero_based": None,
+            "marker_page_range": "",
+            "match_score": 0.0,
+            "min_match_score": min_match_score,
+            "source_pdf_page_excerpt_path": "",
+            "marker_output_dir": "",
+            "marker_command": [],
+            "existing_marker_output_validation": {"status": "not_run"},
+        }
+        if not selected_pdf:
+            records.append(record)
+            continue
+        if not snippets:
+            record["status"] = "warning_context_unavailable"
+            records.append(record)
+            continue
+
+        pdf_path = Path(str(selected_pdf.get("path") or "")).expanduser()
+        cache_key = f"{pdf_path}|{max_pdf_pages}"
+        if cache_key not in pdf_text_cache:
+            pdf_text_cache[cache_key] = _pdf_text_pages(pdf_path, max_pages=max_pdf_pages)
+        text_status, pages, text_error = pdf_text_cache[cache_key]
+        page_number, match_score, label_pages = _best_pdf_text_page_for_figure(snippets, pages, figure_label)
+        text_chars = sum(len(page_text) for page_text in pages)
+        record.update(
+            {
+                "text_layer_status": text_status,
+                "text_layer_error": text_error or "",
+                "text_layer_page_count": len(pages),
+                "text_layer_chars": text_chars,
+                "text_layer_truncated_to_limit": len(pages) >= max_pdf_pages,
+                "source_pdf_page_number": page_number,
+                "figure_label_pdf_page_candidates": label_pages[:20],
+                "match_score": round(float(match_score), 4),
+            }
+        )
+        if not pages or text_chars <= 0:
+            record["status"] = "text_layer_unavailable"
+            records.append(record)
+            continue
+        if page_number <= 0 or match_score <= 0:
+            record["status"] = "page_match_unavailable"
+            records.append(record)
+            continue
+        if require_label_match and figure_label and not label_pages:
+            record["status"] = "figure_label_page_unavailable"
+            records.append(record)
+            continue
+
+        excerpt_path = article_dir / f"source_pdf_page_{page_number:04d}.txt"
+        excerpt_path.parent.mkdir(parents=True, exist_ok=True)
+        excerpt_path.write_text(pages[page_number - 1], encoding="utf-8", errors="replace")
+        marker_page_index = page_number - 1
+        marker_output_dir = article_dir / f"marker_page_{page_number:04d}"
+        marker_page_range = str(marker_page_index)
+        record.update(
+            {
+                "source_pdf_page_excerpt_path": str(excerpt_path),
+                "marker_page_number_zero_based": marker_page_index,
+                "marker_page_range": marker_page_range,
+                "marker_output_dir": str(marker_output_dir),
+                "marker_command": build_marker_single_command(
+                    pdf_path,
+                    marker_output_dir,
+                    "html",
+                    page_range=marker_page_range,
+                    disable_multiprocessing=True,
+                ),
+                "existing_marker_output_validation": _validate_p62_marker_output(
+                    marker_output_dir,
+                    figure_label,
+                ),
+            }
+        )
+        record["status"] = "ready" if match_score >= min_match_score else "page_match_low_confidence"
+        records.append(record)
+
+    status_counts = Counter(str(item.get("status") or "unknown") for item in records)
+    marker_output_status_counts = Counter(
+        str((item.get("existing_marker_output_validation") or {}).get("status") or "not_run")
+        for item in records
+    )
+    ready_count = int(status_counts.get("ready", 0))
+    unresolved_count = len(records) - ready_count
+    if not p62_items:
+        status = "not_required"
+    elif unresolved_count:
+        status = "partial"
+    else:
+        status = "ready"
+    ready_samples = [
+        {
+            "article": item.get("article"),
+            "figure_label": item.get("figure_label"),
+            "source_pdf_page_number": item.get("source_pdf_page_number"),
+            "marker_page_range": item.get("marker_page_range"),
+            "match_score": item.get("match_score"),
+            "marker_command": item.get("marker_command"),
+        }
+        for item in records
+        if item.get("status") == "ready"
+    ][:8]
+    report = {
+        "generated_at": _now(),
+        "run_dir": str(run_dir),
+        "path": str(out_path),
+        "output_root": str(output_root),
+        "status": status,
+        "required_checks": [
+            "polish_missing_warning_context",
+            "source_pdf_text_page_match",
+            "marker_single_page_command",
+        ],
+        "candidate_count": len(p62_items),
+        "selected_count": len(records),
+        "truncated_by_max_articles": bool(max_items > 0 and len(p62_items) > max_items),
+        "max_articles": max_items,
+        "ready_count": ready_count,
+        "unresolved_count": unresolved_count,
+        "status_counts": dict(sorted(status_counts.items())),
+        "marker_output_status_counts": dict(sorted(marker_output_status_counts.items())),
+        "min_match_score": min_match_score,
+        "require_label_match": require_label_match,
+        "marker_page_range_indexing": "zero_based_marker_cli",
+        "ready_samples": ready_samples,
+        "articles": records,
     }
     _write_json(out_path, report)
     return report
@@ -3068,6 +3610,7 @@ def build_analysis_pack(
     article_review_report = _load_json(run_dir / "article_review_report.json", default={})
     pdf_problem_evidence_report = _load_json(run_dir / DEFAULT_PDF_PROBLEM_EVIDENCE_NAME, default={})
     resolver_decisions_report = _load_json(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME, default={})
+    p62_marker_recovery_report = _load_json(run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME, default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
     resolver_by_article: dict[str, list[dict[str, Any]]] = {}
@@ -3230,6 +3773,21 @@ def build_analysis_pack(
             "manual_or_llm_groups": (resolver_decisions_report.get("manual_or_llm_groups") or [])[:12],
             "automation_plan": resolver_decisions_report.get("automation_plan") or [],
         },
+        "p62_marker_recovery_plan": {
+            "path": p62_marker_recovery_report.get("path")
+            or str(run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME),
+            "status": p62_marker_recovery_report.get("status"),
+            "output_root": p62_marker_recovery_report.get("output_root"),
+            "candidate_count": p62_marker_recovery_report.get("candidate_count", 0),
+            "selected_count": p62_marker_recovery_report.get("selected_count", 0),
+            "ready_count": p62_marker_recovery_report.get("ready_count", 0),
+            "unresolved_count": p62_marker_recovery_report.get("unresolved_count", 0),
+            "status_counts": p62_marker_recovery_report.get("status_counts", {}),
+            "marker_output_status_counts": p62_marker_recovery_report.get("marker_output_status_counts", {}),
+            "marker_page_range_indexing": p62_marker_recovery_report.get("marker_page_range_indexing"),
+            "require_label_match": p62_marker_recovery_report.get("require_label_match"),
+            "ready_samples": (p62_marker_recovery_report.get("ready_samples") or [])[:8],
+        },
         "pattern_observations": {
             "history_path": pattern_observations.get("history_path"),
             "article_count_reviewed": pattern_observations.get("article_count_reviewed"),
@@ -3308,6 +3866,11 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- resolver_decision_counts: `{json.dumps((pack.get('resolver_decisions') or {}).get('decision_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- resolver_repair_candidate_counts: `{json.dumps((pack.get('resolver_decisions') or {}).get('repair_candidate_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- resolver_accepted_telemetry_counts: `{json.dumps((pack.get('resolver_decisions') or {}).get('accepted_telemetry_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- p62_marker_recovery_status: `{(pack.get('p62_marker_recovery_plan') or {}).get('status')}`",
+        f"- p62_marker_recovery_ready_count: `{(pack.get('p62_marker_recovery_plan') or {}).get('ready_count')}`",
+        f"- p62_marker_recovery_unresolved_count: `{(pack.get('p62_marker_recovery_plan') or {}).get('unresolved_count')}`",
+        f"- p62_marker_recovery_status_counts: `{json.dumps((pack.get('p62_marker_recovery_plan') or {}).get('status_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- p62_marker_output_status_counts: `{json.dumps((pack.get('p62_marker_recovery_plan') or {}).get('marker_output_status_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_comparable_totals_delta: `{json.dumps(pack.get('comparison_comparable_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- new_article_count: `{pack.get('new_article_count')}`",
@@ -3400,6 +3963,31 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                     f"- {group.get('defect_id')}: count={group.get('count')} | "
                     f"articles={group.get('article_count')} | fix_layer={group.get('fix_layer')}"
                 )
+    p62_plan = pack.get("p62_marker_recovery_plan") or {}
+    p62_samples = p62_plan.get("ready_samples") or []
+    if p62_plan.get("candidate_count") or p62_samples:
+        lines.extend(
+            [
+                "",
+                "## P62 Marker Recovery Plan",
+                "",
+                "These are dry-run marker_single commands for page-scoped figure recovery. Marker page_range values are zero-based; source_pdf_page_number is one-based.",
+                f"- status: `{p62_plan.get('status')}`",
+                f"- path: `{p62_plan.get('path')}`",
+                f"- output_root: `{p62_plan.get('output_root')}`",
+                f"- candidate_count: `{p62_plan.get('candidate_count')}`",
+                f"- ready_count: `{p62_plan.get('ready_count')}`",
+                f"- unresolved_count: `{p62_plan.get('unresolved_count')}`",
+                f"- marker_output_status_counts: `{json.dumps(p62_plan.get('marker_output_status_counts') or {}, ensure_ascii=False, sort_keys=True)}`",
+            ]
+        )
+        for sample in p62_samples[:5]:
+            lines.append(
+                f"- {sample.get('article')} fig={sample.get('figure_label')} "
+                f"pdf_page={sample.get('source_pdf_page_number')} "
+                f"marker_page_range={sample.get('marker_page_range')} "
+                f"score={sample.get('match_score')} | command={json.dumps(sample.get('marker_command') or [], ensure_ascii=False)}"
+            )
     manual_observations = pack.get("manual_observations") or {}
     lines.extend(
         [
@@ -3481,6 +4069,8 @@ def write_analysis_pack(
     defect_patterns = _load_json(defect_patterns_path, default={})
     write_manual_observation_summary(run_dir, ledger_path=manual_observation_ledger)
     write_resolver_decisions(run_dir)
+    if gate_config.get("require_p62_marker_recovery_plan", True):
+        write_p62_marker_recovery_plan(run_dir, gate_config=gate_config)
     pack = build_analysis_pack(
         run_dir,
         max_articles=max_articles,

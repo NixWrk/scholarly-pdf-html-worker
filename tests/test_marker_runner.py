@@ -6,8 +6,10 @@ from zoteropdf2md.marker_runner import (
     ProgressContext,
     RunResult,
     _append_progress_jsonl,
+    _count_page_range_pages,
     _marker_status,
     _output_dir_snapshot,
+    build_marker_single_command,
 )
 
 
@@ -45,6 +47,37 @@ def test_marker_runner_uses_300dpi_for_batch_and_single() -> None:
     for command in runner.commands:
         assert command[command.index("--lowres_image_dpi") + 1] == "300"
         assert command[command.index("--highres_image_dpi") + 1] == "300"
+
+
+def test_marker_runner_supports_single_page_range() -> None:
+    runner = _CapturingMarkerRunner()
+
+    result = runner.run_single_page(
+        pdf_path=Path("in") / "paper.pdf",
+        output_dir=Path("out"),
+        output_format="html",
+        page_number=7,
+        env={},
+        log=lambda _line: None,
+    )
+
+    assert result.command[result.command.index("--page_range") + 1] == "6"
+    assert runner.commands[0][runner.commands[0].index("--PdfProvider_pdftext_workers") + 1] == "1"
+    assert "--disable_multiprocessing" in result.command
+    assert _count_page_range_pages("0,5-10,20") == 8
+
+
+def test_build_marker_single_command_matches_runner_defaults() -> None:
+    command = build_marker_single_command(
+        Path("paper.pdf"),
+        Path("out"),
+        "html",
+        page_range="2",
+    )
+
+    assert command[:2] == ["marker_single", "paper.pdf"]
+    assert command[command.index("--page_range") + 1] == "2"
+    assert command[command.index("--lowres_image_dpi") + 1] == "300"
 
 
 def test_marker_progress_writes_jsonl_and_current_status(tmp_path: Path) -> None:

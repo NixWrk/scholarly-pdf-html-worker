@@ -53,6 +53,7 @@ The command writes a new run directory with `polish/`, `audit_tree/`,
 `audit_full_checks.json`, `quality_history_entry.json`, `quality_compare.json`,
 `quality_gate_report.json`, `pattern_observations.json`,
 `source_pdf_map.json`, `pdf_problem_evidence_report.json`,
+`p62_marker_recovery_plan.json`,
 `llm_analysis_pack.json`, and `llm_analysis_prompt.md`.
 
 This is the mandatory loop shape for code patches. By default `observe` now
@@ -78,6 +79,14 @@ available source PDF must produce a same-page text-layer excerpt and a rendered
 page image before the problem classification is considered complete. Missing
 source PDFs are allowed only when the report records the unavailable candidate
 state.
+
+For all `P62` missing-figure warnings, `observe` writes
+`p62_marker_recovery_plan.json` plus `p62_marker_recovery/` context artifacts.
+The plan extracts the caption-side polish context, requires an explicit
+`Fig/Figure N` match in the source PDF text layer, records the 1-based PDF page
+and the zero-based `marker_single --page_range`, and validates any existing
+marker output as `recovered_image`, `caption_only`, `image_without_label`, or
+`not_run`.
 
 After every audit, `observe` must write `pattern_observations.json` and append
 the current all-article pattern summary to an accumulated JSONL history. The
@@ -242,11 +251,15 @@ Suggested resolver order:
    `telemetry_counts` rather than as remaining repair work.
 2. Recover missing figure images for `P62`.
    For caption-only figure targets, find the caption in the PDF text layer,
-   render the page, locate the figure region above or near the caption using
-   PDF image/vector/text block geometry, crop a nonblank local asset, and replace
-   the warning with an `<img>` while preserving the existing caption and target.
-   If geometry is ambiguous, queue the page crop for manual or local-LLM review
-   instead of inserting a guessed image.
+   require the matched page to contain the same `Fig/Figure N` label, then run
+   `marker_single` on that page with zero-based `--page_range`. Accept the
+   marker result only when the output contains the expected label and at least
+   one image asset. If marker returns caption text only, render the page, locate
+   the figure region above or near the caption using PDF image/vector/text block
+   geometry, crop a nonblank local asset, and replace the warning with an
+   `<img>` while preserving the existing caption and target. If geometry is
+   ambiguous, queue the page crop for manual or local-LLM review instead of
+   inserting a guessed image.
 3. Repair semantic figure targets for `P61`.
    Build an inventory of visible `Figure N` references, existing `fig-N`
    targets, captions, and `P62` caption-only targets. When a visible caption or
