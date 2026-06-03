@@ -20,6 +20,7 @@ from scripts.llm_quality_loop import (
     run_audit,
     run_test_command,
     write_pdf_problem_evidence_stage,
+    write_p62_image_recovery_stage,
     write_p62_marker_recovery_plan,
     write_source_pdf_map_for_run,
     write_article_review_stage,
@@ -28,6 +29,19 @@ from scripts.llm_quality_loop import (
     write_pattern_observations,
     write_resolver_decisions,
 )
+
+
+_VALID_TINY_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+
+
+def _valid_tiny_png_bytes() -> bytes:
+    return base64.b64decode(_VALID_TINY_PNG_B64)
+
+
+def _valid_tiny_png_data_url() -> str:
+    return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -771,6 +785,135 @@ def test_p62_marker_recovery_plan_builds_single_page_marker_command(
     assert "P62 Marker Recovery Plan" in prompt
 
 
+def test_p62_recovery_replaces_missing_warning_with_image() -> None:
+    html = (
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 6 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 6. Caption survived.</p>'
+        "</div>"
+    )
+
+    patched, replacements = llm_quality_loop._replace_p62_missing_warning_with_image(
+        html,
+        figure_label="6",
+        warning_index=1,
+        data_url=_valid_tiny_png_data_url(),
+        source="pdf_page_render",
+        source_detail="page_0006.png",
+    )
+
+    assert replacements == 1
+    assert "z2m-missing-figure-warning" not in patched
+    assert "z2m-missing-figure-unit" not in patched
+    assert "z2m-p62-recovered-target" in patched
+    assert 'data-z2m-recovery-source="pdf_page_render"' in patched
+    assert "Figure 6. Caption survived." in patched
+
+
+def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    warning = (
+        "Figure 6 image was not extracted into this HTML. "
+        "Please check the original PDF for the missing visual content."
+    )
+    polish_path.write_text(
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note">{warning}</p>'
+        '<p class="z2m-figure-caption">Fig. 6. A heat map of the maze sessions.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "polish_stage_path": str(polish_path),
+                    "summary": {
+                        "source_pdf_present": True,
+                        "source_pdf_path": str(source_pdf),
+                    },
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "severity": "warning",
+                            "check": "missing figure warning",
+                            "snippet": warning,
+                            "extra": {
+                                "quality_counted": False,
+                                "warning_index": 1,
+                                "figure_label": "6",
+                                "warning_origin": "caption-only-target",
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        return (
+            "fake",
+            [
+                "Figure 5 | Previous figure.",
+                "Fig. 6. A heat map of the maze sessions.",
+            ],
+            None,
+        )
+
+    def fake_render(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        assert page_number == 2
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(_valid_tiny_png_bytes())
+        return {"status": "rendered", "path": str(out_path), "error": ""}
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fake_render)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_p62_render_fallback_page_number",
+        lambda pdf_path, source_page_number, figure_label: (source_page_number, "test_primary_page"),
+    )
+
+    write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+        },
+    )
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["asset_ready_count"] == 1
+    assert report["patched_warning_count"] == 1
+    assert report["recovery_source_counts"] == {"pdf_page_render": 1}
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert "z2m-missing-figure-warning" not in patched_html
+    assert "z2m-p62-recovered-target" in patched_html
+    assert (run_dir / "assessment.json").is_file()
+
+
 def test_observe_runs_configured_tests_by_default() -> None:
     args = parse_args(
         [
@@ -817,6 +960,16 @@ def test_observe_accepts_converted_raw_repolish_mode() -> None:
     assert args.repolish_converted_raw is True
     assert args.skip_non_target_language is True
     assert args.polish_language == "auto"
+
+
+def test_recover_p62_command_uses_configured_marker_mode_by_default() -> None:
+    default_args = parse_args(["recover-p62", "--run-dir", "run"])
+    run_marker_args = parse_args(["recover-p62", "--run-dir", "run", "--run-marker"])
+    skip_marker_args = parse_args(["recover-p62", "--run-dir", "run", "--skip-marker"])
+
+    assert default_args.execute_marker is None
+    assert run_marker_args.execute_marker is True
+    assert skip_marker_args.execute_marker is False
 
 
 def test_render_llm_prompt_requires_artifact_regression_tests() -> None:

@@ -55,6 +55,7 @@ DEFAULT_SOURCE_PDF_MAP_NAME = "source_pdf_map.json"
 DEFAULT_PDF_PROBLEM_EVIDENCE_NAME = "pdf_problem_evidence_report.json"
 DEFAULT_RESOLVER_DECISIONS_NAME = "resolver_decisions.json"
 DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
+DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME = "p62_image_recovery_report.json"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -97,6 +98,15 @@ REFERENCE_RECOVERY_PROTECTED_CLASS_RE = re.compile(
 )
 P62_MISSING_WARNING_TEXT_RE = re.compile(
     r"\bFigure\s+(?P<label>[\w.-]+)\s+image\s+was\s+not\s+extracted\b",
+    re.IGNORECASE,
+)
+P62_MISSING_WARNING_ELEMENT_RE = re.compile(
+    r"<(?P<tag>p|div|span)\b(?P<attrs>[^>]*\bz2m-missing-figure-warning\b[^>]*)>"
+    r"[\s\S]*?</(?P=tag)>",
+    re.IGNORECASE,
+)
+P62_MISSING_FIGURE_UNIT_RE = re.compile(
+    r"<div\b(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>",
     re.IGNORECASE,
 )
 
@@ -1382,6 +1392,7 @@ def write_p62_marker_recovery_plan(
             "source_article": article.get("source_article") or article_id,
             "defect_index": defect_index,
             "figure_label": figure_label,
+            "warning_index": extra.get("warning_index"),
             "warning_origin": extra.get("warning_origin") or extra.get("p62_subtype"),
             "status": "source_pdf_unavailable",
             "snippet": _compact_observation_text(defect.get("snippet"), max_len=300),
@@ -1532,6 +1543,638 @@ def write_p62_marker_recovery_plan(
         "marker_page_range_indexing": "zero_based_marker_cli",
         "ready_samples": ready_samples,
         "articles": records,
+    }
+    _write_json(out_path, report)
+    return report
+
+
+def _path_is_inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _remove_class_from_open_tag(open_tag: str, class_name: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        quote = match.group(1)
+        classes = [
+            item
+            for item in re.split(r"\s+", match.group(2).strip())
+            if item and item != class_name
+        ]
+        if not classes:
+            return ""
+        return f"class={quote}{' '.join(classes)}{quote}"
+
+    return re.sub(
+        r"\bclass\s*=\s*(['\"])(.*?)\1",
+        replace,
+        open_tag,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _clean_resolved_p62_missing_unit_classes(html: str) -> str:
+    def replace_unit(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if "z2m-missing-figure-warning" in raw:
+            return raw
+        open_end = raw.find(">")
+        if open_end < 0:
+            return raw
+        open_tag = _remove_class_from_open_tag(raw[: open_end + 1], "z2m-missing-figure-unit")
+        return open_tag + raw[open_end + 1 :]
+
+    return P62_MISSING_FIGURE_UNIT_RE.sub(replace_unit, html)
+
+
+def _p62_recovery_target_html(
+    data_url: str,
+    *,
+    figure_label: str,
+    source: str,
+    source_detail: str,
+) -> str:
+    label = str(figure_label or "").strip()
+    alt = f"Recovered Figure {label} visual from source PDF" if label else "Recovered figure visual from source PDF"
+    return (
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img '
+        f'data-z2m-src="{_escape_html_attr(source_detail)}" '
+        f'data-z2m-recovery-source="{_escape_html_attr(source)}" '
+        f'alt="{_escape_html_attr(alt)}" '
+        f'src="{_escape_html_attr(data_url)}"/>'
+        "</p>"
+    )
+
+
+def _replace_p62_missing_warning_with_image(
+    html: str,
+    *,
+    figure_label: str,
+    warning_index: int | None,
+    data_url: str,
+    source: str,
+    source_detail: str,
+) -> tuple[str, int]:
+    matches = list(P62_MISSING_WARNING_ELEMENT_RE.finditer(html))
+    if not matches:
+        return html, 0
+
+    label_matches = [
+        match
+        for match in matches
+        if not figure_label or _figure_label_present_in_text(_visible_html_text(match.group(0)), figure_label)
+    ]
+    usable_matches = label_matches or matches
+    if warning_index and warning_index > 0 and warning_index <= len(usable_matches):
+        target = usable_matches[warning_index - 1]
+    else:
+        target = usable_matches[0]
+
+    replacement = _p62_recovery_target_html(
+        data_url,
+        figure_label=figure_label,
+        source=source,
+        source_detail=source_detail,
+    )
+    patched = html[: target.start()] + replacement + html[target.end() :]
+    return _clean_resolved_p62_missing_unit_classes(patched), 1
+
+
+def _html_has_p62_missing_warning_for_label(html: str, figure_label: str) -> bool:
+    matches = list(P62_MISSING_WARNING_ELEMENT_RE.finditer(html))
+    if not matches:
+        return False
+    if not figure_label:
+        return True
+    return any(
+        _figure_label_present_in_text(_visible_html_text(match.group(0)), figure_label)
+        for match in matches
+    )
+
+
+def _data_url_from_image_file(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    data_url = _to_data_url(path, detect_by_signature=True, log_func=None)
+    if data_url is None or not _validate_data_url(data_url, path):
+        return None
+    return data_url
+
+
+def _first_valid_image_path(validation: dict[str, Any]) -> Path | None:
+    for raw_path in validation.get("image_paths") or []:
+        path = Path(str(raw_path))
+        if _data_url_from_image_file(path) is not None:
+            return path
+    return None
+
+
+def _execute_p62_marker_command(
+    record: dict[str, Any],
+    *,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    command = list(record.get("marker_command") or [])
+    if not command:
+        return {"status": "skipped", "reason": "marker_command_unavailable", "returncode": None}
+
+    marker_output_dir = Path(str(record.get("marker_output_dir") or ""))
+    if marker_output_dir:
+        marker_output_dir.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    started = _now()
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=timeout_seconds if timeout_seconds > 0 else None,
+            check=False,
+        )
+        stdout = result.stdout or ""
+        report = {
+            "status": "completed" if result.returncode == 0 else "failed",
+            "command": command,
+            "started_at": started,
+            "finished_at": _now(),
+            "returncode": result.returncode,
+            "stdout_tail": stdout[-4000:],
+        }
+    except FileNotFoundError as exc:
+        report = {
+            "status": "failed",
+            "command": command,
+            "started_at": started,
+            "finished_at": _now(),
+            "returncode": None,
+            "error": str(exc),
+        }
+    except subprocess.TimeoutExpired as exc:
+        report = {
+            "status": "timeout",
+            "command": command,
+            "started_at": started,
+            "finished_at": _now(),
+            "returncode": None,
+            "timeout_seconds": timeout_seconds,
+            "stdout_tail": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+        }
+
+    if marker_output_dir:
+        _write_json(marker_output_dir / "marker_execution_report.json", report)
+    return report
+
+
+def _p62_render_fallback_page_number(
+    pdf_path: Path,
+    source_page_number: int,
+    figure_label: str,
+) -> tuple[int, str]:
+    page_number = max(1, int(source_page_number or 1))
+    label = str(figure_label or "").strip()
+    if not label or page_number <= 1:
+        return page_number, "primary_matched_page"
+
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            if page_number > len(doc):
+                return page_number, "primary_page_out_of_text_limit"
+            page = doc.load_page(page_number - 1)
+            rects = []
+            for needle in (f"Figure {label}", f"Fig. {label}", f"Fig {label}"):
+                rects.extend(page.search_for(needle))
+            if not rects:
+                return page_number, "primary_matched_page"
+            top_ratio = min(float(rect.y0) for rect in rects) / max(1.0, float(page.rect.height))
+            if top_ratio <= 0.22:
+                return page_number - 1, "caption_near_page_top_previous_page"
+            return page_number, "caption_on_primary_page"
+        finally:
+            doc.close()
+    except Exception:
+        return page_number, "primary_matched_page"
+
+
+def _p62_patch_targets_for_record(
+    run_dir: Path,
+    record: dict[str, Any],
+    manifest_article: dict[str, Any],
+    *,
+    allow_external_paths: bool,
+) -> list[Path]:
+    article_id = str(record.get("article") or manifest_article.get("article_id") or "")
+    values: list[Any] = [
+        record.get("polish_stage_path"),
+        manifest_article.get("polish_path"),
+        manifest_article.get("polish_stage_path"),
+        manifest_article.get("source_polish_path"),
+    ]
+    if article_id:
+        values.extend(
+            [
+                run_dir / "polish" / f"{article_id}.{POLISH_STAGE}",
+                run_dir / "audit_tree" / article_id / POLISH_STAGE,
+            ]
+        )
+
+    candidates: list[Path] = []
+    for value in values:
+        for candidate in _existing_path_candidates(value):
+            if not candidate.is_file():
+                continue
+            if not allow_external_paths and not _path_is_inside(candidate, run_dir):
+                continue
+            candidates.append(candidate)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate.resolve(strict=False)).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _profile_for_assessment(manifest_article: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    for candidate in _existing_path_candidates(manifest_article.get("profile_path")):
+        if candidate.is_file():
+            try:
+                return _load_json(candidate)
+            except Exception:
+                break
+    return {
+        "status": existing.get("profile_status") or manifest_article.get("profile_status") or "unknown",
+        "style": existing.get("profile_style") or manifest_article.get("citation_style") or "unknown",
+        "confidence": existing.get("profile_confidence")
+        or manifest_article.get("citation_confidence")
+        or "low",
+    }
+
+
+def _refresh_assessment_for_articles(run_dir: Path, article_ids: Iterable[str]) -> dict[str, Any]:
+    requested = {str(article_id) for article_id in article_ids if article_id}
+    if not requested:
+        return _load_json(run_dir / "assessment.json", default={})
+
+    assessment = _load_json(run_dir / "assessment.json", default={"articles": []})
+    manifest = _load_json(run_dir / "manifest.json", default={})
+    manifest_by_article = _manifest_article_by_id(manifest)
+    existing_articles = [
+        article for article in assessment.get("articles") or [] if isinstance(article, dict)
+    ]
+
+    updated_articles: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for existing in existing_articles:
+        article_id = str(existing.get("article") or "")
+        if article_id not in requested:
+            updated_articles.append(existing)
+            seen.add(article_id)
+            continue
+        manifest_article = manifest_by_article.get(article_id, {})
+        targets = _p62_patch_targets_for_record(
+            run_dir,
+            {"article": article_id, "polish_stage_path": existing.get("polish_stage_path")},
+            manifest_article,
+            allow_external_paths=False,
+        )
+        html_path = targets[0] if targets else None
+        if html_path is None:
+            updated_articles.append(existing)
+            seen.add(article_id)
+            continue
+        html = html_path.read_text(encoding="utf-8", errors="replace")
+        refreshed = assess_polish_html(
+            article_id,
+            html,
+            _profile_for_assessment(manifest_article, existing),
+        )
+        for key in (
+            "source_article",
+            "raw_stage_path",
+            "polish_stage_path",
+            "artifact_hint",
+            "language_detection",
+            "polish_language",
+            "target_language",
+            "skip_non_target_language",
+            "skip_unknown_language",
+        ):
+            if existing.get(key) is not None:
+                refreshed[key] = existing.get(key)
+            elif manifest_article.get(key) is not None:
+                refreshed[key] = manifest_article.get(key)
+        updated_articles.append(refreshed)
+        seen.add(article_id)
+
+    for article_id in sorted(requested - seen):
+        manifest_article = manifest_by_article.get(article_id, {})
+        targets = _p62_patch_targets_for_record(
+            run_dir,
+            {"article": article_id, "polish_stage_path": ""},
+            manifest_article,
+            allow_external_paths=False,
+        )
+        if not targets:
+            continue
+        html = targets[0].read_text(encoding="utf-8", errors="replace")
+        refreshed = assess_polish_html(article_id, html, _profile_for_assessment(manifest_article, {}))
+        for key in ("source_article", "raw_stage_path", "polish_stage_path", "artifact_hint"):
+            if manifest_article.get(key) is not None:
+                refreshed[key] = manifest_article.get(key)
+        updated_articles.append(refreshed)
+
+    totals, problematic = _assessment_totals(updated_articles)
+    refreshed_assessment = {
+        **assessment,
+        "generated_at": _now(),
+        "article_count": len(updated_articles),
+        "totals": totals,
+        "problematic_articles": problematic,
+        "articles": updated_articles,
+    }
+    _write_json(run_dir / "assessment.json", refreshed_assessment)
+    return refreshed_assessment
+
+
+def write_p62_image_recovery_stage(
+    run_dir: Path,
+    *,
+    gate_config: dict[str, Any] | None = None,
+    plan_path: Path | None = None,
+    out_path: Path | None = None,
+    execute_marker: bool | None = None,
+    apply_patches: bool | None = None,
+    allow_external_paths: bool = False,
+    max_items: int | None = None,
+) -> dict[str, Any]:
+    """Recover P62 missing-figure visuals through marker, then PDF page render fallback."""
+
+    gate_config = gate_config or load_gate_config()
+    run_dir = run_dir.resolve(strict=False)
+    plan_path = plan_path or (run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME)
+    out_path = out_path or (run_dir / DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME)
+    if not plan_path.is_file():
+        write_p62_marker_recovery_plan(run_dir, gate_config=gate_config, out_path=plan_path)
+    plan = _load_json(plan_path, default={"articles": []})
+    records = [item for item in plan.get("articles") or [] if isinstance(item, dict)]
+    if max_items is None:
+        max_items = int(gate_config.get("p62_image_recovery_max_articles") or 0)
+    if max_items and max_items > 0:
+        records = records[:max_items]
+
+    if execute_marker is None:
+        execute_marker = bool(gate_config.get("p62_image_recovery_execute_marker", True))
+    if apply_patches is None:
+        apply_patches = bool(gate_config.get("p62_image_recovery_apply_patches", True))
+    render_zoom = float(
+        gate_config.get("p62_image_recovery_render_zoom")
+        or gate_config.get("pdf_problem_evidence_render_zoom")
+        or 1.5
+    )
+    marker_timeout = int(gate_config.get("p62_image_recovery_marker_timeout_seconds") or 300)
+
+    manifest = _load_json(run_dir / "manifest.json", default={})
+    manifest_by_article = _manifest_article_by_id(manifest)
+    recovery_root = run_dir / "p62_image_recovery"
+    recovered_records: list[dict[str, Any]] = []
+    patched_article_ids: set[str] = set()
+    print(
+        "P62 image recovery started: "
+        f"records={len(records)} execute_marker={execute_marker} apply_patches={apply_patches}",
+        flush=True,
+    )
+
+    for index, record in enumerate(records, start=1):
+        article_id = str(record.get("article") or f"article_{index}")
+        figure_label = str(record.get("figure_label") or "").strip()
+        artifact_dir = recovery_root / f"{index:03d}_{_slug(article_id, max_len=72)}"
+        if figure_label:
+            artifact_dir = artifact_dir / f"fig_{_slug(figure_label, max_len=20)}"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        pdf_path = Path(str(record.get("source_pdf_path") or "")).expanduser()
+        source_page_number = int(record.get("source_pdf_page_number") or 0)
+        manifest_article = manifest_by_article.get(article_id, {})
+        targets = _p62_patch_targets_for_record(
+            run_dir,
+            record,
+            manifest_article,
+            allow_external_paths=allow_external_paths,
+        )
+        item: dict[str, Any] = {
+            "article": article_id,
+            "source_article": record.get("source_article") or article_id,
+            "figure_label": figure_label,
+            "warning_index": record.get("warning_index"),
+            "plan_status": record.get("status"),
+            "source_pdf_path": str(pdf_path) if record.get("source_pdf_path") else "",
+            "source_pdf_page_number": source_page_number,
+            "patch_target_paths": [str(path) for path in targets],
+            "execute_marker": execute_marker,
+            "apply_patches": apply_patches,
+            "asset_status": "not_ready",
+            "recovery_source": "",
+            "recovery_detail": "",
+            "marker_execution": {"status": "not_run"},
+            "marker_output_validation": record.get("existing_marker_output_validation") or {"status": "not_run"},
+            "page_render_status": "not_run",
+            "page_render_path": "",
+            "page_render_page_number": 0,
+            "page_render_selection_reason": "",
+            "patch_replacement_count": 0,
+            "patched_paths": [],
+            "status": "unresolved",
+            "unresolved_reason": "",
+        }
+
+        if apply_patches and targets:
+            warning_still_present = False
+            for target_path in targets:
+                try:
+                    target_html = target_path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
+                    continue
+                if _html_has_p62_missing_warning_for_label(target_html, figure_label):
+                    warning_still_present = True
+                    break
+            if not warning_still_present:
+                item["asset_status"] = "ready"
+                item["recovery_source"] = "existing_patched_html"
+                item["recovery_detail"] = "; ".join(str(path) for path in targets)
+                item["status"] = "already_patched"
+                recovered_records.append(item)
+                if index % 10 == 0 or index == len(records):
+                    ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
+                    patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+                    print(
+                        "P62 image recovery progress: "
+                        f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                        flush=True,
+                    )
+                continue
+
+        if not pdf_path.is_file():
+            item["unresolved_reason"] = "source_pdf_unavailable"
+            recovered_records.append(item)
+            continue
+        if source_page_number <= 0:
+            item["unresolved_reason"] = "source_pdf_page_unavailable"
+            recovered_records.append(item)
+            continue
+
+        marker_validation = dict(record.get("existing_marker_output_validation") or {})
+        if execute_marker and marker_validation.get("status") != "recovered_image":
+            item["marker_execution"] = _execute_p62_marker_command(record, timeout_seconds=marker_timeout)
+            marker_output_dir = Path(str(record.get("marker_output_dir") or ""))
+            marker_validation = _validate_p62_marker_output(marker_output_dir, figure_label)
+        item["marker_output_validation"] = marker_validation
+
+        data_url = ""
+        recovery_source = ""
+        recovery_detail = ""
+        marker_image = (
+            _first_valid_image_path(marker_validation)
+            if marker_validation.get("status") == "recovered_image"
+            else None
+        )
+        if marker_image is not None:
+            data_url = _data_url_from_image_file(marker_image) or ""
+            recovery_source = "marker_image"
+            recovery_detail = str(marker_image)
+
+        if not data_url:
+            render_page, selection_reason = _p62_render_fallback_page_number(
+                pdf_path,
+                source_page_number,
+                figure_label,
+            )
+            render_path = artifact_dir / f"fig_{_slug(figure_label or 'unknown', max_len=20)}_pdf_page_{render_page:04d}.png"
+            render = _render_pdf_evidence_page(pdf_path, render_page, render_path, zoom=render_zoom)
+            item.update(
+                {
+                    "page_render_status": render.get("status"),
+                    "page_render_path": render.get("path") or "",
+                    "page_render_page_number": render_page,
+                    "page_render_selection_reason": selection_reason,
+                    "page_render_error": render.get("error") or "",
+                }
+            )
+            if render.get("status") == "rendered" and render.get("path"):
+                rendered_path = Path(str(render.get("path")))
+                data_url = _data_url_from_image_file(rendered_path) or ""
+                recovery_source = "pdf_page_render"
+                recovery_detail = str(rendered_path)
+
+        if not data_url:
+            item["unresolved_reason"] = item.get("page_render_error") or "no_recoverable_image_asset"
+            recovered_records.append(item)
+            continue
+
+        item["asset_status"] = "ready"
+        item["recovery_source"] = recovery_source
+        item["recovery_detail"] = recovery_detail
+        if apply_patches:
+            warning_index = int(record.get("warning_index") or 0) or None
+            patched_paths: list[str] = []
+            replacement_count = 0
+            for target_path in targets:
+                try:
+                    html = target_path.read_text(encoding="utf-8", errors="replace")
+                    patched, replacements = _replace_p62_missing_warning_with_image(
+                        html,
+                        figure_label=figure_label,
+                        warning_index=warning_index,
+                        data_url=data_url,
+                        source=recovery_source,
+                        source_detail=recovery_detail,
+                    )
+                    if replacements:
+                        target_path.write_text(patched, encoding="utf-8")
+                        patched_paths.append(str(target_path))
+                        replacement_count += replacements
+                except OSError as exc:
+                    item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
+            item["patch_replacement_count"] = replacement_count
+            item["patched_paths"] = patched_paths
+            if replacement_count:
+                item["status"] = "patched"
+                patched_article_ids.add(article_id)
+            else:
+                item["status"] = "asset_ready_patch_missed"
+                item["unresolved_reason"] = "missing_warning_element_not_found_in_patch_targets"
+        else:
+            item["status"] = "asset_ready"
+        recovered_records.append(item)
+        if index % 10 == 0 or index == len(records):
+            ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
+            patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+            print(
+                "P62 image recovery progress: "
+                f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                flush=True,
+            )
+
+    if patched_article_ids:
+        _refresh_assessment_for_articles(run_dir, patched_article_ids)
+
+    status_counts = Counter(str(item.get("status") or "unknown") for item in recovered_records)
+    source_counts = Counter(str(item.get("recovery_source") or "unresolved") for item in recovered_records)
+    asset_ready_count = sum(1 for item in recovered_records if item.get("asset_status") == "ready")
+    patched_warning_count = sum(int(item.get("patch_replacement_count") or 0) for item in recovered_records)
+    patch_missed_count = int(status_counts.get("asset_ready_patch_missed", 0))
+    unresolved_count = len(recovered_records) - asset_ready_count
+    if not records and int(plan.get("candidate_count") or 0) == 0:
+        status = "not_required"
+    elif unresolved_count == 0 and patch_missed_count == 0:
+        status = "ready"
+    elif asset_ready_count:
+        status = "partial"
+    else:
+        status = "unresolved"
+    report = {
+        "generated_at": _now(),
+        "run_dir": str(run_dir),
+        "path": str(out_path),
+        "plan_path": str(plan_path),
+        "output_root": str(recovery_root),
+        "status": status,
+        "required_checks": [
+            "marker_single_page_image",
+            "pdf_page_render_fallback",
+            "html_missing_warning_patch",
+        ],
+        "candidate_count": int(plan.get("candidate_count") or len(records)),
+        "selected_count": len(records),
+        "asset_ready_count": asset_ready_count,
+        "patched_warning_count": patched_warning_count,
+        "patch_missed_count": patch_missed_count,
+        "unresolved_count": unresolved_count,
+        "execute_marker": execute_marker,
+        "apply_patches": apply_patches,
+        "allow_external_paths": allow_external_paths,
+        "render_zoom": render_zoom,
+        "marker_timeout_seconds": marker_timeout,
+        "status_counts": dict(sorted(status_counts.items())),
+        "recovery_source_counts": dict(sorted(source_counts.items())),
+        "articles": recovered_records,
     }
     _write_json(out_path, report)
     return report
@@ -3611,6 +4254,7 @@ def build_analysis_pack(
     pdf_problem_evidence_report = _load_json(run_dir / DEFAULT_PDF_PROBLEM_EVIDENCE_NAME, default={})
     resolver_decisions_report = _load_json(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME, default={})
     p62_marker_recovery_report = _load_json(run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME, default={})
+    p62_image_recovery_report = _load_json(run_dir / DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME, default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
     resolver_by_article: dict[str, list[dict[str, Any]]] = {}
@@ -3788,6 +4432,22 @@ def build_analysis_pack(
             "require_label_match": p62_marker_recovery_report.get("require_label_match"),
             "ready_samples": (p62_marker_recovery_report.get("ready_samples") or [])[:8],
         },
+        "p62_image_recovery_stage": {
+            "path": p62_image_recovery_report.get("path")
+            or str(run_dir / DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME),
+            "status": p62_image_recovery_report.get("status"),
+            "output_root": p62_image_recovery_report.get("output_root"),
+            "candidate_count": p62_image_recovery_report.get("candidate_count", 0),
+            "selected_count": p62_image_recovery_report.get("selected_count", 0),
+            "asset_ready_count": p62_image_recovery_report.get("asset_ready_count", 0),
+            "patched_warning_count": p62_image_recovery_report.get("patched_warning_count", 0),
+            "patch_missed_count": p62_image_recovery_report.get("patch_missed_count", 0),
+            "unresolved_count": p62_image_recovery_report.get("unresolved_count", 0),
+            "status_counts": p62_image_recovery_report.get("status_counts", {}),
+            "recovery_source_counts": p62_image_recovery_report.get("recovery_source_counts", {}),
+            "execute_marker": p62_image_recovery_report.get("execute_marker"),
+            "apply_patches": p62_image_recovery_report.get("apply_patches"),
+        },
         "pattern_observations": {
             "history_path": pattern_observations.get("history_path"),
             "article_count_reviewed": pattern_observations.get("article_count_reviewed"),
@@ -3871,6 +4531,11 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- p62_marker_recovery_unresolved_count: `{(pack.get('p62_marker_recovery_plan') or {}).get('unresolved_count')}`",
         f"- p62_marker_recovery_status_counts: `{json.dumps((pack.get('p62_marker_recovery_plan') or {}).get('status_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- p62_marker_output_status_counts: `{json.dumps((pack.get('p62_marker_recovery_plan') or {}).get('marker_output_status_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- p62_image_recovery_status: `{(pack.get('p62_image_recovery_stage') or {}).get('status')}`",
+        f"- p62_image_recovery_asset_ready_count: `{(pack.get('p62_image_recovery_stage') or {}).get('asset_ready_count')}`",
+        f"- p62_image_recovery_patched_warning_count: `{(pack.get('p62_image_recovery_stage') or {}).get('patched_warning_count')}`",
+        f"- p62_image_recovery_unresolved_count: `{(pack.get('p62_image_recovery_stage') or {}).get('unresolved_count')}`",
+        f"- p62_image_recovery_source_counts: `{json.dumps((pack.get('p62_image_recovery_stage') or {}).get('recovery_source_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_comparable_totals_delta: `{json.dumps(pack.get('comparison_comparable_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- new_article_count: `{pack.get('new_article_count')}`",
@@ -3988,6 +4653,25 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"marker_page_range={sample.get('marker_page_range')} "
                 f"score={sample.get('match_score')} | command={json.dumps(sample.get('marker_command') or [], ensure_ascii=False)}"
             )
+    p62_recovery = pack.get("p62_image_recovery_stage") or {}
+    if p62_recovery.get("candidate_count") or p62_recovery.get("asset_ready_count"):
+        lines.extend(
+            [
+                "",
+                "## P62 Image Recovery Stage",
+                "",
+                "This stage executes marker when configured, then falls back to a source-PDF page render so P62 visuals remain automatically recoverable.",
+                f"- status: `{p62_recovery.get('status')}`",
+                f"- path: `{p62_recovery.get('path')}`",
+                f"- output_root: `{p62_recovery.get('output_root')}`",
+                f"- candidate_count: `{p62_recovery.get('candidate_count')}`",
+                f"- asset_ready_count: `{p62_recovery.get('asset_ready_count')}`",
+                f"- patched_warning_count: `{p62_recovery.get('patched_warning_count')}`",
+                f"- patch_missed_count: `{p62_recovery.get('patch_missed_count')}`",
+                f"- unresolved_count: `{p62_recovery.get('unresolved_count')}`",
+                f"- recovery_source_counts: `{json.dumps(p62_recovery.get('recovery_source_counts') or {}, ensure_ascii=False, sort_keys=True)}`",
+            ]
+        )
     manual_observations = pack.get("manual_observations") or {}
     lines.extend(
         [
@@ -4323,6 +5007,28 @@ def observe(args: argparse.Namespace) -> int:
         )
         if audit_existing_converted:
             normalize_converted_audit_article_ids(run_dir)
+        run_p62_recovery = (
+            bool(gate_config.get("run_p62_image_recovery_stage", False))
+            and not args.skip_p62_recovery
+            and not audit_existing_converted
+        )
+        if run_p62_recovery:
+            write_p62_marker_recovery_plan(run_dir, gate_config=gate_config)
+            recovery_report = write_p62_image_recovery_stage(
+                run_dir,
+                gate_config=gate_config,
+                execute_marker=bool(gate_config.get("p62_image_recovery_execute_marker", True)),
+                apply_patches=bool(gate_config.get("p62_image_recovery_apply_patches", True)),
+                max_items=args.p62_recovery_max_items,
+            )
+            if int(recovery_report.get("patched_warning_count") or 0) > 0 and bool(
+                gate_config.get("p62_image_recovery_rerun_audit", True)
+            ):
+                run_audit(
+                    run_dir,
+                    enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
+                    pdf_map_path=pdf_map_path,
+                )
     if not args.skip_history:
         run_quality_history(
             run_dir,
@@ -4484,6 +5190,16 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     observe_parser.set_defaults(run_tests=True)
     observe_parser.add_argument("--test-command")
     observe_parser.add_argument("--skip-audit", action="store_true")
+    observe_parser.add_argument(
+        "--skip-p62-recovery",
+        action="store_true",
+        help="Skip the configured P62 marker/render recovery stage after audit.",
+    )
+    observe_parser.add_argument(
+        "--p62-recovery-max-items",
+        type=int,
+        help="Limit P62 image recovery records for this observe run; omitted or zero means all.",
+    )
     observe_parser.add_argument("--skip-history", action="store_true")
     observe_parser.add_argument("--no-append-history", action="store_true")
     observe_parser.add_argument("--fail-on-gate", action="store_true")
@@ -4503,6 +5219,42 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     pack_parser.add_argument("--manual-observation-ledger", type=Path)
     pack_parser.add_argument("--ignore-defect-id", action="append")
     pack_parser.add_argument("--max-articles", type=int, default=12)
+
+    recover_parser = subparsers.add_parser(
+        "recover-p62",
+        help="Execute marker/render recovery for P62 missing-figure warnings in an existing run dir.",
+    )
+    recover_parser.add_argument("--run-dir", type=Path, required=True)
+    recover_parser.add_argument("--gate-config", type=Path, default=DEFAULT_GATE_CONFIG)
+    recover_parser.add_argument("--plan", type=Path)
+    recover_parser.add_argument("--out", type=Path)
+    recover_parser.add_argument("--max-items", type=int)
+    marker_mode = recover_parser.add_mutually_exclusive_group()
+    marker_mode.add_argument(
+        "--run-marker",
+        dest="execute_marker",
+        action="store_true",
+        help="Execute marker before source-PDF page render fallback.",
+    )
+    marker_mode.add_argument(
+        "--skip-marker",
+        dest="execute_marker",
+        action="store_false",
+        help="Do not execute marker; go straight to source-PDF page render fallback.",
+    )
+    recover_parser.set_defaults(execute_marker=None)
+    recover_parser.add_argument(
+        "--no-apply",
+        dest="apply_patches",
+        action="store_false",
+        help="Create recovery assets and report without patching HTML.",
+    )
+    recover_parser.set_defaults(apply_patches=True)
+    recover_parser.add_argument(
+        "--rerun-audit",
+        action="store_true",
+        help="Rerun audit after HTML patches so audit_full_checks reflects the recovery.",
+    )
 
     record_parser = subparsers.add_parser(
         "record-observation",
@@ -4568,6 +5320,35 @@ def main(argv: Iterable[str] | None = None) -> int:
             manual_observation_ledger=args.manual_observation_ledger,
         )
         print(f"LLM analysis pack: articles={len(pack['articles'])} run_dir={args.run_dir}")
+        return 0
+    if args.command == "recover-p62":
+        gate_config = load_gate_config(args.gate_config)
+        if args.plan is None or not args.plan.is_file():
+            write_p62_marker_recovery_plan(args.run_dir, gate_config=gate_config, out_path=args.plan)
+        report = write_p62_image_recovery_stage(
+            args.run_dir,
+            gate_config=gate_config,
+            plan_path=args.plan,
+            out_path=args.out,
+            execute_marker=args.execute_marker,
+            apply_patches=args.apply_patches,
+            max_items=args.max_items,
+        )
+        if args.rerun_audit and int(report.get("patched_warning_count") or 0) > 0:
+            pdf_map_path = args.run_dir / DEFAULT_SOURCE_PDF_MAP_NAME
+            run_audit(
+                args.run_dir,
+                enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
+                pdf_map_path=pdf_map_path if pdf_map_path.is_file() else None,
+            )
+        print(
+            "P62 image recovery: "
+            f"status={report['status']} "
+            f"asset_ready={report['asset_ready_count']} "
+            f"patched={report['patched_warning_count']} "
+            f"unresolved={report['unresolved_count']} "
+            f"run_dir={args.run_dir}"
+        )
         return 0
     if args.command == "record-observation":
         run_id = args.run_id
