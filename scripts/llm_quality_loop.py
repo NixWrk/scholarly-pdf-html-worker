@@ -6534,6 +6534,16 @@ PDF_REFERENCE_RECOVERY_DEFECT_IDS = {"P04N"}
 PDF_FIGURE_RECOVERY_DEFECT_IDS = {"P62"}
 SEMANTIC_FIGURE_TARGET_DEFECT_IDS = {"P61"}
 SOURCE_LAYER_TELEMETRY_DEFECT_IDS = {"P35", "P71"}
+REPAIR_RESOLVER_DECISION_NAMES = {
+    "needs_pdf_recovery",
+    "needs_semantic_recovery",
+    "needs_pdf_reference_recovery",
+}
+ARTICLE_SLOT_REPAIR_DECISION_NAMES = {
+    "needs_semantic_recovery",
+    "needs_pdf_reference_recovery",
+    "needs_manual_or_llm",
+}
 
 
 def _defect_extra(defect: dict[str, Any]) -> dict[str, Any]:
@@ -6712,11 +6722,10 @@ def write_resolver_decisions(run_dir: Path) -> dict[str, Any]:
         for item in decisions
         if item.get("decision") == "accepted_telemetry"
     )
-    repair_decision_names = {"needs_pdf_recovery", "needs_semantic_recovery", "needs_pdf_reference_recovery"}
     repair_candidate_counts = Counter(
         str(item.get("defect_id") or "unknown")
         for item in decisions
-        if item.get("decision") in repair_decision_names
+        if item.get("decision") in REPAIR_RESOLVER_DECISION_NAMES
     )
     manual_or_llm_count = int(decision_counts.get("needs_manual_or_llm", 0))
     report = {
@@ -6736,7 +6745,7 @@ def write_resolver_decisions(run_dir: Path) -> dict[str, Any]:
         "accepted_telemetry_counts": dict(sorted(accepted_telemetry_counts.items())),
         "repair_candidate_counts": dict(sorted(repair_candidate_counts.items())),
         "manual_or_llm_count": manual_or_llm_count,
-        "repair_candidate_groups": _group_resolver_decisions(decisions, repair_decision_names),
+        "repair_candidate_groups": _group_resolver_decisions(decisions, REPAIR_RESOLVER_DECISION_NAMES),
         "accepted_telemetry_groups": _group_resolver_decisions(decisions, {"accepted_telemetry"}),
         "manual_or_llm_groups": _group_resolver_decisions(decisions, {"needs_manual_or_llm"}),
         "automation_plan": [
@@ -6829,16 +6838,46 @@ def build_analysis_pack(
         article_id = str(article.get("article") or "")
         if not article_id:
             continue
+        article_resolver_decisions = resolver_by_article.get(article_id) or []
+        accepted_telemetry_ids = {
+            str(decision.get("defect_id") or "")
+            for decision in article_resolver_decisions
+            if decision.get("decision") == "accepted_telemetry"
+        }
+        article_slot_repair_ids = {
+            str(decision.get("defect_id") or "")
+            for decision in article_resolver_decisions
+            if decision.get("decision") in ARTICLE_SLOT_REPAIR_DECISION_NAMES
+        }
         defects = [
             defect
             for defect in article.get("defects_found", [])
-            if str(defect.get("id") or "") not in ignored
+            if str(defect.get("id") or "") not in accepted_telemetry_ids
+            and (
+                str(defect.get("id") or "") not in ignored
+                or str(defect.get("id") or "") in article_slot_repair_ids
+            )
         ]
         record = entry_articles.get(article_id, {}) if isinstance(entry_articles, dict) else {}
         assessment_article = assessment_by_article.get(article_id, {})
         manifest_article = manifest_by_article.get(article_id, {})
         score = float(record.get("score", 0) or 0)
-        if not defects and article_id not in deltas:
+        article_slot_repair_count = sum(
+            1
+            for decision in article_resolver_decisions
+            if decision.get("decision") in ARTICLE_SLOT_REPAIR_DECISION_NAMES
+        )
+        accepted_telemetry_count = sum(
+            1 for decision in article_resolver_decisions if decision.get("decision") == "accepted_telemetry"
+        )
+        selection_reasons: list[str] = []
+        if defects:
+            selection_reasons.append("non_telemetry_defects")
+        if article_slot_repair_count:
+            selection_reasons.append("resolver_repair_candidate")
+        if article_id in deltas:
+            selection_reasons.append("history_delta")
+        if not selection_reasons:
             continue
         candidates.append(
             {
@@ -6856,6 +6895,9 @@ def build_analysis_pack(
                 ),
                 "score": score,
                 "non_ignored_defect_count": len(defects),
+                "resolver_repair_candidate_count": article_slot_repair_count,
+                "accepted_telemetry_count": accepted_telemetry_count,
+                "selection_reasons": selection_reasons,
                 "defects": defects,
                 "audit_summary": article.get("summary", {}),
                 "source_pdf_candidates": _article_source_pdf_candidates(
@@ -6882,6 +6924,7 @@ def build_analysis_pack(
 
     candidates.sort(
         key=lambda item: (
+            -int(item["resolver_repair_candidate_count"]),
             -float(item["comparison"].get("score_delta", 0) or 0),
             -int(item["non_ignored_defect_count"]),
             -float(item["score"]),
@@ -6902,6 +6945,9 @@ def build_analysis_pack(
                 "artifact_hint": item["artifact_hint"],
                 "score": item["score"],
                 "non_ignored_defect_count": item["non_ignored_defect_count"],
+                "resolver_repair_candidate_count": item["resolver_repair_candidate_count"],
+                "accepted_telemetry_count": item["accepted_telemetry_count"],
+                "selection_reasons": item["selection_reasons"],
                 "defect_ids": dict(sorted(defect_ids.items())),
                 "comparison": item["comparison"],
                 "labels": item["history_record"].get("labels", {}),
@@ -7283,6 +7329,9 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"### {title}",
                 f"- score: `{article.get('score')}`",
                 f"- non_ignored_defect_count: `{article.get('non_ignored_defect_count')}`",
+                f"- resolver_repair_candidate_count: `{article.get('resolver_repair_candidate_count')}`",
+                f"- accepted_telemetry_count: `{article.get('accepted_telemetry_count')}`",
+                f"- selection_reasons: `{', '.join(article.get('selection_reasons') or [])}`",
                 f"- defect_ids: `{json.dumps(article.get('defect_ids', {}), ensure_ascii=False, sort_keys=True)}`",
                 f"- comparison: `{json.dumps(article.get('comparison', {}), ensure_ascii=False, sort_keys=True)}`",
                 f"- metrics: `{json.dumps(article.get('metrics', {}), ensure_ascii=False, sort_keys=True)}`",

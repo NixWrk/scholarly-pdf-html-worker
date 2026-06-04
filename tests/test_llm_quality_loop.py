@@ -432,6 +432,147 @@ def test_write_resolver_decisions_splits_observed_signals_and_pack_summary(tmp_p
     assert "Observed Resolver Decisions" in render_llm_prompt(pack)
 
 
+def test_analysis_pack_prioritizes_resolver_repair_candidates_over_accepted_telemetry(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    common_summary = {
+        "source_pdf_present": True,
+        "source_pdf_path": "paper.pdf",
+        "pdf_text_status": "pymupdf",
+    }
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "corpus_summary": {
+                "defect_counts": {
+                    "P04M": 1,
+                    "P04N": 1,
+                    "P35": 1,
+                    "P45S": 1,
+                    "P61": 1,
+                    "P62": 1,
+                }
+            },
+            "articles": [
+                {
+                    "article": "article_p61",
+                    "raw_stage_path": "raw_p61.html",
+                    "polish_stage_path": "polish_p61.html",
+                    "summary": common_summary,
+                    "defects_found": [
+                        {
+                            "id": "P61",
+                            "severity": "warning",
+                            "check": "missing semantic figure target",
+                            "snippet": "Figure 3",
+                            "extra": {"quality_counted": False, "figure_key": "3"},
+                        }
+                    ],
+                },
+                {
+                    "article": "article_p04n",
+                    "raw_stage_path": "raw_p04n.html",
+                    "polish_stage_path": "polish_p04n.html",
+                    "summary": common_summary,
+                    "defects_found": [
+                        {
+                            "id": "P04N",
+                            "severity": "warning",
+                            "check": "citation-like range has no bibliography targets",
+                            "snippet": "[1-3]",
+                            "extra": {"quality_counted": False, "candidate_numbers": [1, 3]},
+                        }
+                    ],
+                },
+                {
+                    "article": "article_telemetry",
+                    "raw_stage_path": "raw_telemetry.html",
+                    "polish_stage_path": "polish_telemetry.html",
+                    "summary": common_summary,
+                    "defects_found": [
+                        {
+                            "id": "P04M",
+                            "severity": "warning",
+                            "check": "math-like numeric range",
+                            "extra": {"quality_counted": False},
+                        },
+                        {
+                            "id": "P45S",
+                            "severity": "warning",
+                            "check": "roman suffix superscript marker",
+                            "extra": {"quality_counted": False},
+                        },
+                        {
+                            "id": "P35",
+                            "severity": "warning",
+                            "check": "source-layer replacement char",
+                            "extra": {
+                                "quality_counted": False,
+                                "source_pdf_text_layer_evidence": True,
+                            },
+                        },
+                    ],
+                },
+                {
+                    "article": "article_p62",
+                    "raw_stage_path": "raw_p62.html",
+                    "polish_stage_path": "polish_p62.html",
+                    "summary": common_summary,
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "severity": "warning",
+                            "check": "missing figure image",
+                            "extra": {"quality_counted": False},
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 4, "totals": {}, "articles": []})
+    _write_json(
+        run_dir / "quality_history_entry.json",
+        {
+            "run_id": "run_a",
+            "totals": {},
+            "articles": {
+                "article_p04n": {"score": 1},
+                "article_p61": {"score": 1},
+                "article_p62": {"score": 1},
+                "article_telemetry": {"score": 1},
+            },
+        },
+    )
+    _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
+    _write_json(run_dir / "manifest.json", {"article_count": 4, "source_kind": "test"})
+
+    report = write_resolver_decisions(run_dir)
+    assert report["repair_candidate_counts"] == {"P04N": 1, "P61": 1, "P62": 1}
+    assert report["accepted_telemetry_counts"] == {"P04M": 1, "P35": 1, "P45S": 1}
+
+    pack = build_analysis_pack(
+        run_dir,
+        gate_config={"ignored_defect_ids_for_analysis": ["P61", "P62"]},
+    )
+
+    article_ids = [article["article"] for article in pack["articles"]]
+    assert article_ids == ["article_p04n", "article_p61"]
+    assert pack["articles"][0]["selection_reasons"] == [
+        "non_telemetry_defects",
+        "resolver_repair_candidate",
+    ]
+    assert pack["articles"][1]["defect_ids"] == {"P61": 1}
+    assert pack["articles"][1]["resolver_repair_candidate_count"] == 1
+    assert "article_telemetry" not in article_ids
+    assert "article_p62" not in article_ids
+    prompt = render_llm_prompt(pack)
+    assert "selection_reasons" in prompt
+    assert "article_p61" in prompt
+    assert "article_telemetry" not in prompt
+
+
 def test_analysis_pack_lists_changed_articles_without_quality_delta(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _write_json(

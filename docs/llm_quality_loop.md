@@ -246,6 +246,15 @@ HTML snippet, source PDF text-layer page window, and rendered PDF page image. A
 resolver must not classify a location as fixed, source-noise, or telemetry from
 HTML alone.
 
+The analysis pack should reserve article-level slots for actionable evidence,
+not raw counter volume. Accepted telemetry such as `P04M`, `P04T`, `P35`,
+`P45S`, and `P45M` stays visible in resolver summary groups, but it should not
+crowd the article list. Source-backed repair candidates such as `P61` and
+`P04N` must be sampled in the article list even when the underlying P-code is
+ignored for ordinary defect ranking. Dedicated recovery stages, such as `P62`
+image recovery, remain summarized by their own reports instead of competing for
+those slots.
+
 Suggested resolver order:
 
 1. Move benign telemetry out of the operational backlog first.
