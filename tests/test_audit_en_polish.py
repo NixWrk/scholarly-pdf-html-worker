@@ -2093,6 +2093,35 @@ def test_analyze_pair_reports_reference_target_missing_visible_number() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_accepts_bracketed_visible_reference_number() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<ol><li id="ref-1">[1] Smith J. Example.</li>',
+                    '<li id="ref-2">[2] Jones J. Bracket-numbered entry.</li></ol>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P97" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_numeric_ref_link_in_author_year_article() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

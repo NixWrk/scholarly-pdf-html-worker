@@ -14350,6 +14350,21 @@ def _looks_author_year_citation_document(html: str) -> bool:
     return author_year_count >= 4 and bracket_count < 4
 
 
+def _should_suppress_numeric_ref_links_for_author_year(
+    html: str,
+    citation_profile: Any | None = None,
+) -> bool:
+    if _citation_profile_is_author_year(citation_profile):
+        return True
+    if (
+        _citation_profile_is_high_confidence_paren_numeric(citation_profile)
+        or _citation_profile_is_high_confidence_superscript_numeric(citation_profile)
+        or _citation_profile_is_bracket_numeric(citation_profile)
+    ):
+        return False
+    return False
+
+
 def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | None = None) -> str:
     """In author-year papers, source/web footnote markers are not numeric refs."""
     if _citation_profile_is_high_confidence_paren_numeric(citation_profile):
@@ -22219,7 +22234,7 @@ def polish_html_document(
         polished = _repair_roman_suffix_author_year_ref_link_splits(polished)
         polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_acronym_footnote_ref_citations(polished)
-        if not _citation_profile_is_author_year(citation_profile):
+        if not _should_suppress_numeric_ref_links_for_author_year(polished, citation_profile):
             polished = _recover_trailing_citation_after_author_year_ref(polished)
         else:
             polished = _unwrap_numeric_ref_links_for_author_year_profile(polished)
@@ -22401,7 +22416,7 @@ def polish_html_document(
     polished = _split_figure_caption_internal_body_tails(polished)
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
-    if not _citation_profile_is_author_year(citation_profile):
+    if not _should_suppress_numeric_ref_links_for_author_year(polished, citation_profile):
         polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
         polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
     else:
@@ -22424,7 +22439,7 @@ def polish_html_document(
     # earlier DOM-cleanup passes would otherwise corrupt.
     polished = _render_katex_html(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
-    if not _citation_profile_is_author_year(citation_profile):
+    if not _should_suppress_numeric_ref_links_for_author_year(polished, citation_profile):
         polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
         polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
     else:

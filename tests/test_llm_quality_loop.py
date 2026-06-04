@@ -32,6 +32,7 @@ from scripts.llm_quality_loop import (
     write_manual_review_queue,
     write_manual_observation_summary,
     write_pattern_observations,
+    write_polish_auto_repair_stage,
     write_resolver_decisions,
 )
 
@@ -2159,6 +2160,139 @@ def test_p62_image_recovery_stage_repairs_duplicate_marker_recovered_figures(
         for match in re.finditer(r"<img\b[^>]*>", patched_html, re.IGNORECASE | re.DOTALL)
     }
     assert len(hashes) == 2
+
+
+def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_numeric_links(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><body>"
+            '<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 '
+            'mark author-year style, while <sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> '
+            "is not a bibliography citation.</p>"
+            "<h4>References</h4><ol>"
+            '<li id="ref-1">[1] Already visibly numbered.</li>'
+            '<li id="ref-2">Missing visible number.</li>'
+            "</ol></body></html>",
+            encoding="utf-8",
+        )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {},
+                    "defects_found": [
+                        {"id": "P97", "extra": {"missing_visible_ref_ids": [2]}},
+                        {"id": "P98", "extra": {"ref_target": "2"}},
+                    ],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["patched_article_count"] == 1
+    assert report["repair_counts"] == {"P97": 2, "P98": 2}
+    for path in (polish_path, audit_tree_path):
+        html = path.read_text(encoding="utf-8")
+        assert 'href="#ref-2"' not in html[: html.index("References")]
+        assert '<span class="z2m-ref-num">2.</span> Missing visible number.' in html
+        assert "[1] Already visibly numbered." in html
+
+
+def test_polish_auto_repair_stage_repairs_plain_duplicate_figure_visuals(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    duplicated_payload = base64.b64encode(b"plain-duplicate-visual").decode("ascii")
+    duplicated_data_url = f"data:image/png;base64,{duplicated_payload}"
+    polish_path.write_text(
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target">'
+        f'<img alt="Figure 1" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 1. First source visual.</p>'
+        "</div>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target">'
+        f'<img alt="Figure 2" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 2. Second source visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    fig1_asset = run_dir / "fig1.png"
+    fig2_asset = run_dir / "fig2.png"
+    fig1_asset.write_bytes(_tiny_rgba_png_bytes(255, 0, 0))
+    fig2_asset.write_bytes(_tiny_rgba_png_bytes(0, 255, 0))
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {"source_pdf_path": str(source_pdf)},
+                    "defects_found": [{"id": "P96", "extra": {"figure_ids": ["fig-1", "fig-2"]}}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_text_pages(pdf_path: Path, *, max_pages=None):
+        assert pdf_path == source_pdf
+        return ("fixture", ["Figure 1. First source visual.", "Figure 2. Second source visual."], None)
+
+    def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        asset_path = fig1_asset if figure_label == "1" else fig2_asset
+        return {
+            "status": "region_rendered",
+            "path": str(asset_path),
+            "source": "pdf_figure_region_render",
+            "error": "",
+            "page_number": page_number,
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_text_pages)
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_false_match_hint", lambda *args, **kwargs: "")
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_recover_p62_detached_pdf_figure_plate_asset",
+        lambda *args, **kwargs: {"status": "not_found"},
+    )
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fake_recover)
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={"polish_auto_repair_render_zoom": 1.0})
+
+    assert report["status"] == "patched"
+    assert report["repair_counts"] == {"P96": 2}
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert duplicated_data_url not in patched_html
+    assert patched_html.count('data-z2m-recovery-source="pdf_figure_region_render"') == 2
+    repairs = report["articles"][0]["repairs"][0]["repairs"]
+    assert {repair["repair_mode"] for repair in repairs if repair["status"] == "patched"} == {
+        "plain_duplicate_group"
+    }
 
 
 def test_p62_image_recovery_stage_uses_detached_plate_before_region_crop(

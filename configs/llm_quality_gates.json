@@ -30,6 +30,10 @@
   "p62_image_recovery_replace_page_render": true,
   "p62_image_recovery_remove_false_match_recovery": true,
   "p62_image_recovery_repair_duplicate_figure_images": true,
+  "run_polish_auto_repair_stage": true,
+  "polish_auto_repair_apply_patches": true,
+  "polish_auto_repair_rerun_audit": true,
+  "polish_auto_repair_render_zoom": 1.5,
   "ignored_defect_ids_for_analysis": ["P13", "P16", "P20", "P61", "P62"],
   "max_regressions": 0,
   "max_total_deltas": {

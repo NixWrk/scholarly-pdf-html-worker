@@ -80,7 +80,7 @@ TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.I
 REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
 LOCAL_ABSTRACT_SECTION_HEADING_RE = re.compile(r"^\s*\d{1,3}\s*\|\s+\S")
 REF_ID_RE = re.compile(r"^ref-(\d+)$", re.IGNORECASE)
-VISIBLE_REF_NUM_RE = re.compile(r"^\s*(\d{1,4})\.")
+VISIBLE_REF_NUM_RE = re.compile(r"^\s*(?:\[\s*(\d{1,4})\s*\]|(\d{1,4})[.)])")
 EMBEDDED_REF_BOUNDARY_RE = re.compile(r"\s(?P<num>\d{1,4})\.\s+(?=[A-Z\u00c0-\u00de])")
 CITATION_RANGE_LIST_RE = re.compile(
     r"\[\s*\d+\s*(?:[-\u2013]\s*\d+|,\s*\d+)"
@@ -1067,6 +1067,13 @@ def _strip_tags(fragment: str) -> str:
     return _normalize_ws(unescape(TAG_RE.sub(" ", fragment)))
 
 
+def _visible_ref_number_from_match(match: re.Match[str] | None) -> int | None:
+    if match is None:
+        return None
+    value = match.group(1) or match.group(2)
+    return int(value) if value is not None else None
+
+
 class _UnitDiagnosticTextParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -1679,7 +1686,8 @@ def _has_local_abstract_heading_nearby(
 def _looks_like_local_abstract_reference_block(blocks: list[Block], index: int) -> bool:
     block = blocks[index]
     visible_match = VISIBLE_REF_NUM_RE.match(block.text)
-    if visible_match is None or int(visible_match.group(1)) > 3:
+    visible_number = _visible_ref_number_from_match(visible_match)
+    if visible_number is None or visible_number > 3:
         return False
     if not any(
         REFERENCES_HEADING_RE.match(blocks[scan_index].text)
@@ -3286,7 +3294,7 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
             continue
 
         visible_match = VISIBLE_REF_NUM_RE.match(block.text)
-        visible_number = int(visible_match.group(1)) if visible_match is not None else None
+        visible_number = _visible_ref_number_from_match(visible_match)
         id_match = REF_ID_RE.match(block.id)
         id_number = int(id_match.group(1)) if id_match is not None else None
         if (

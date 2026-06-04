@@ -58,6 +58,7 @@ DEFAULT_PDF_PROBLEM_EVIDENCE_NAME = "pdf_problem_evidence_report.json"
 DEFAULT_RESOLVER_DECISIONS_NAME = "resolver_decisions.json"
 DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
 DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME = "p62_image_recovery_report.json"
+DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME = "polish_auto_repair_report.json"
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -135,6 +136,18 @@ P62_UNRECOVERABLE_FALSE_MATCH_HINTS = {
     "backmatter_or_reference_text",
     "prose_parenthetical_reference",
 }
+REF_TARGET_BLOCK_RE = re.compile(
+    r"<(?P<tag>li|p|div)\b(?P<attrs>[^>]*\bid\s*=\s*([\"'])ref-(?P<num>\d{1,4})\3[^>]*)>"
+    r"(?P<body>[\s\S]*?)</(?P=tag)>",
+    re.IGNORECASE,
+)
+VISIBLE_REF_PREFIX_RE = re.compile(r"^\s*(?:\[\s*(?P<bracket>\d{1,4})\s*\]|(?P<plain>\d{1,4})[.)])")
+AUTHOR_YEAR_NUMERIC_REF_ANCHOR_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*([\"'])#ref-(?P<num>\d{1,4})\2[^>]*)>"
+    r"(?P<body>[\s\S]{0,120}?)</a>",
+    re.IGNORECASE,
+)
+REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
 
 
 def _slug(value: str, *, max_len: int = 80) -> str:
@@ -2281,6 +2294,7 @@ def _repair_p62_duplicate_figure_images(
     pdf_path: Path,
     artifact_dir: Path,
     zoom: float,
+    repair_plain_duplicates: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     if not pdf_path.is_file():
         return html, []
@@ -2307,11 +2321,14 @@ def _repair_p62_duplicate_figure_images(
     repaired_labels: set[str] = set()
     for group in duplicate_groups:
         labels = [str(unit.get("label") or "") for unit in group if unit.get("label")]
-        if not any(unit.get("recovery_sources") for unit in group):
+        if not any(unit.get("recovery_sources") for unit in group) and not repair_plain_duplicates:
             continue
         plain_candidates = [unit for unit in group if not unit.get("recovery_sources")]
         repair_mode = "plain_duplicate_target"
-        if plain_candidates:
+        if not any(unit.get("recovery_sources") for unit in group):
+            repair_mode = "plain_duplicate_group"
+            candidates = list(group)
+        elif plain_candidates:
             candidates = plain_candidates
         else:
             repair_mode = "recovered_duplicate_target"
@@ -2431,6 +2448,7 @@ def _apply_p62_duplicate_figure_image_repairs(
     pdf_path: Path,
     artifact_dir: Path,
     zoom: float,
+    repair_plain_duplicates: bool = False,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "repair_count": 0,
@@ -2448,6 +2466,7 @@ def _apply_p62_duplicate_figure_image_repairs(
                 pdf_path=pdf_path,
                 artifact_dir=artifact_dir / _slug(target_path.stem, max_len=48),
                 zoom=zoom,
+                repair_plain_duplicates=repair_plain_duplicates,
             )
             patched_repairs = [repair for repair in repairs if repair.get("status") == "patched"]
             if patched_repairs and patched != html:
@@ -3268,7 +3287,7 @@ def _p62_page_caption_label_rects(page: Any, figure_label: str) -> list[Any]:
     if not label:
         return []
     caption_pattern = re.compile(
-        rf"^\s*(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])\s*[.:|]",
+        rf"^\s*(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])(?:\s*[.:|]\s*|\s+)",
         re.IGNORECASE,
     )
     rects: list[Any] = []
@@ -3635,6 +3654,247 @@ def _refresh_assessment_for_articles(run_dir: Path, article_ids: Iterable[str]) 
     }
     _write_json(run_dir / "assessment.json", refreshed_assessment)
     return refreshed_assessment
+
+
+def _audit_defect_ids(article: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for key in ("defects_found", "defects"):
+        for defect in article.get(key) or []:
+            if isinstance(defect, dict) and defect.get("id"):
+                ids.add(str(defect.get("id")))
+    return ids
+
+
+def _audit_articles_by_auto_repair_need(audit_report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    articles: dict[str, dict[str, Any]] = {}
+    for article in audit_report.get("articles") or []:
+        if not isinstance(article, dict):
+            continue
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        defect_ids = _audit_defect_ids(article)
+        selected = defect_ids & {"P96", "P97", "P98"}
+        if not selected:
+            continue
+        articles[article_id] = {"article": article, "defect_ids": sorted(selected)}
+    return articles
+
+
+def _visible_ref_prefix_number(text: str) -> int | None:
+    match = VISIBLE_REF_PREFIX_RE.match(text)
+    if match is None:
+        return None
+    value = match.group("bracket") or match.group("plain")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _repair_visible_reference_numbers(html: str) -> tuple[str, int]:
+    repairs = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal repairs
+        try:
+            number = int(match.group("num"))
+        except ValueError:
+            return match.group(0)
+        body = match.group("body")
+        visible_number = _visible_ref_prefix_number(_visible_html_text(body))
+        if visible_number == number:
+            return match.group(0)
+        if visible_number is not None:
+            return match.group(0)
+        repairs += 1
+        prefix = f'<span class="z2m-ref-num">{number}.</span> '
+        return f"<{match.group('tag')}{match.group('attrs')}>{prefix}{body}</{match.group('tag')}>"
+
+    repaired = REF_TARGET_BLOCK_RE.sub(replace, html)
+    return repaired, repairs
+
+
+def _split_before_references_for_repair(html: str) -> tuple[str, str]:
+    positions: list[int] = []
+    heading = REFERENCES_HEADING_RE.search(html)
+    if heading is not None:
+        positions.append(heading.start())
+    first_ref = REF_TARGET_BLOCK_RE.search(html)
+    if first_ref is not None:
+        positions.append(first_ref.start())
+    if not positions:
+        return html, ""
+    split_at = min(positions)
+    return html[:split_at], html[split_at:]
+
+
+def _numeric_ref_anchor_label_numbers(label: str) -> list[int]:
+    if re.fullmatch(r"[\s\(\)\[\],.;:\-\u2010-\u2014\d]+", label) is None:
+        return []
+    values = re.findall(r"\d{1,4}", label)
+    if any(value.startswith("0") for value in re.findall(r"\d{2,4}", label)):
+        return []
+    numbers = [int(value) for value in values]
+    return [number for number in numbers if not (1800 <= number <= 2099)]
+
+
+def _unwrap_author_year_numeric_ref_links(html: str) -> tuple[str, int]:
+    before_references, references_and_after = _split_before_references_for_repair(html)
+    repairs = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal repairs
+        label = _visible_html_text(match.group("body"))
+        if not _numeric_ref_anchor_label_numbers(label):
+            return match.group(0)
+        repairs += 1
+        return match.group("body")
+
+    repaired_before = AUTHOR_YEAR_NUMERIC_REF_ANCHOR_RE.sub(replace, before_references)
+    return repaired_before + references_and_after, repairs
+
+
+def write_polish_auto_repair_stage(
+    run_dir: Path,
+    *,
+    gate_config: dict[str, Any] | None = None,
+    out_path: Path | None = None,
+) -> dict[str, Any]:
+    """Apply source-backed local repairs promoted from post-audit defect checks."""
+
+    gate_config = gate_config or load_gate_config()
+    run_dir = run_dir.resolve(strict=False)
+    out_path = out_path or (run_dir / DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME)
+    repair_root = run_dir / "polish_auto_repair"
+    audit_report = _load_json(run_dir / "audit_full_checks.json", default={})
+    manifest = _load_json(run_dir / "manifest.json", default={})
+    manifest_by_article = _manifest_article_by_id(manifest)
+    repair_articles = _audit_articles_by_auto_repair_need(audit_report)
+    zoom = float(gate_config.get("polish_auto_repair_render_zoom") or gate_config.get("p62_image_recovery_render_zoom") or 1.5)
+    apply_patches = bool(gate_config.get("polish_auto_repair_apply_patches", True))
+
+    report_articles: list[dict[str, Any]] = []
+    patched_article_ids: set[str] = set()
+    repair_counts: Counter[str] = Counter()
+    target_patch_counts: Counter[str] = Counter()
+
+    print(
+        "Polish auto repair started: "
+        f"articles={len(repair_articles)} apply_patches={apply_patches}",
+        flush=True,
+    )
+    for index, (article_id, item) in enumerate(sorted(repair_articles.items()), start=1):
+        audit_article = item["article"]
+        defect_ids = set(item["defect_ids"])
+        manifest_article = manifest_by_article.get(article_id, {})
+        targets = _p62_patch_targets_for_record(
+            run_dir,
+            {"article": article_id, "polish_stage_path": ""},
+            manifest_article,
+            allow_external_paths=False,
+        )
+        article_report: dict[str, Any] = {
+            "index": index,
+            "article": article_id,
+            "defect_ids": sorted(defect_ids),
+            "targets": [str(path) for path in targets],
+            "repairs": [],
+            "patched": False,
+            "errors": [],
+        }
+
+        if "P96" in defect_ids:
+            pdf_path = Path(str((audit_article.get("summary") or {}).get("source_pdf_path") or ""))
+            if pdf_path.is_file() and apply_patches:
+                duplicate_report = _apply_p62_duplicate_figure_image_repairs(
+                    targets,
+                    pdf_path=pdf_path,
+                    artifact_dir=repair_root / _slug(article_id, max_len=72) / "p96_duplicate_visual",
+                    zoom=zoom,
+                    repair_plain_duplicates=True,
+                )
+                patched_count = int(duplicate_report.get("repair_count") or 0)
+                repair_counts["P96"] += patched_count
+                article_report["repairs"].append({"id": "P96", **duplicate_report})
+                if patched_count:
+                    patched_article_ids.add(article_id)
+                    article_report["patched"] = True
+                    for path in duplicate_report.get("patched_paths") or []:
+                        target_patch_counts[str(path)] += 1
+            else:
+                article_report["repairs"].append(
+                    {
+                        "id": "P96",
+                        "repair_count": 0,
+                        "status": "skipped_missing_pdf" if not pdf_path.is_file() else "dry_run",
+                        "source_pdf_path": str(pdf_path),
+                    }
+                )
+
+        if {"P97", "P98"} & defect_ids and apply_patches:
+            for target_path in targets:
+                try:
+                    html = target_path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                patched = html
+                p97_repairs = 0
+                p98_repairs = 0
+                if "P97" in defect_ids:
+                    patched, p97_repairs = _repair_visible_reference_numbers(patched)
+                if "P98" in defect_ids:
+                    patched, p98_repairs = _unwrap_author_year_numeric_ref_links(patched)
+                if patched != html:
+                    try:
+                        target_path.write_text(patched, encoding="utf-8")
+                    except OSError as exc:
+                        article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                        continue
+                    patched_article_ids.add(article_id)
+                    article_report["patched"] = True
+                    target_patch_counts[str(target_path)] += 1
+                if p97_repairs:
+                    repair_counts["P97"] += p97_repairs
+                if p98_repairs:
+                    repair_counts["P98"] += p98_repairs
+                if p97_repairs or p98_repairs:
+                    article_report["repairs"].append(
+                        {
+                            "id": "P97/P98",
+                            "path": str(target_path),
+                            "p97_visible_number_repairs": p97_repairs,
+                            "p98_numeric_link_unwraps": p98_repairs,
+                        }
+                    )
+
+        report_articles.append(article_report)
+
+    if patched_article_ids:
+        _refresh_assessment_for_articles(run_dir, patched_article_ids)
+
+    report = {
+        "generated_at": _now(),
+        "run_dir": str(run_dir),
+        "path": str(out_path),
+        "status": "patched" if patched_article_ids else "no_changes",
+        "candidate_count": len(repair_articles),
+        "patched_article_count": len(patched_article_ids),
+        "repair_counts": dict(sorted(repair_counts.items())),
+        "patched_targets": dict(sorted(target_patch_counts.items())),
+        "apply_patches": apply_patches,
+        "render_zoom": zoom,
+        "articles": report_articles,
+    }
+    _write_json(out_path, report)
+    print(
+        "Polish auto repair complete: "
+        f"status={report['status']} patched_articles={len(patched_article_ids)} "
+        f"repairs={dict(sorted(repair_counts.items()))}",
+        flush=True,
+    )
+    return report
 
 
 def write_p62_image_recovery_stage(
@@ -6498,6 +6758,7 @@ def build_analysis_pack(
     resolver_decisions_report = _load_json(run_dir / DEFAULT_RESOLVER_DECISIONS_NAME, default={})
     p62_marker_recovery_report = _load_json(run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME, default={})
     p62_image_recovery_report = _load_json(run_dir / DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME, default={})
+    polish_auto_repair_report = _load_json(run_dir / DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME, default={})
     deltas = _comparison_by_article(comparison)
     manifest_by_article = _manifest_article_by_id(manifest)
     resolver_by_article: dict[str, list[dict[str, Any]]] = {}
@@ -6696,6 +6957,15 @@ def build_analysis_pack(
             "probe_marker_for_unavailable": p62_image_recovery_report.get("probe_marker_for_unavailable"),
             "execute_marker": p62_image_recovery_report.get("execute_marker"),
             "apply_patches": p62_image_recovery_report.get("apply_patches"),
+        },
+        "polish_auto_repair_stage": {
+            "path": polish_auto_repair_report.get("path")
+            or str(run_dir / DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME),
+            "status": polish_auto_repair_report.get("status"),
+            "candidate_count": polish_auto_repair_report.get("candidate_count", 0),
+            "patched_article_count": polish_auto_repair_report.get("patched_article_count", 0),
+            "repair_counts": polish_auto_repair_report.get("repair_counts", {}),
+            "apply_patches": polish_auto_repair_report.get("apply_patches"),
         },
         "pattern_observations": {
             "history_path": pattern_observations.get("history_path"),
@@ -7277,6 +7547,20 @@ def observe(args: argparse.Namespace) -> int:
             )
             if int(recovery_report.get("patched_warning_count") or 0) > 0 and bool(
                 gate_config.get("p62_image_recovery_rerun_audit", True)
+            ):
+                run_audit(
+                    run_dir,
+                    enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
+                    pdf_map_path=pdf_map_path,
+                )
+        run_polish_auto_repair = (
+            bool(gate_config.get("run_polish_auto_repair_stage", True))
+            and not audit_existing_converted
+        )
+        if run_polish_auto_repair:
+            auto_repair_report = write_polish_auto_repair_stage(run_dir, gate_config=gate_config)
+            if int(auto_repair_report.get("patched_article_count") or 0) > 0 and bool(
+                gate_config.get("polish_auto_repair_rerun_audit", True)
             ):
                 run_audit(
                     run_dir,
