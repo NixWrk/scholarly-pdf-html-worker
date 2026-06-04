@@ -1,8 +1,13 @@
 import base64
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
+import struct
 import sys
+import zlib
+
+import pytest
 
 import scripts.llm_quality_loop as llm_quality_loop
 from scripts.llm_quality_loop import (
@@ -42,6 +47,20 @@ def _valid_tiny_png_bytes() -> bytes:
 
 def _valid_tiny_png_data_url() -> str:
     return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
+
+
+def _tiny_rgba_png_bytes(red: int, green: int, blue: int, alpha: int = 255) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    raw_scanline = b"\x00" + bytes([red, green, blue, alpha])
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw_scanline))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -860,6 +879,399 @@ def test_p62_marker_recovery_plan_retries_full_pdf_when_label_missed_by_page_lim
     assert article["text_layer_truncated_to_limit"] is False
 
 
+def test_p62_marker_recovery_plan_rejects_toc_and_selects_visual_label_page(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "standard.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    warning = "Figure 2 image was not extracted into this HTML."
+    polish_path.write_text(
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note">{warning}</p>'
+        '<p class="z2m-figure-caption">Figure 2. Na test cycle.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "polish_stage_path": str(polish_path),
+                    "summary": {"source_pdf_present": True, "source_pdf_path": str(source_pdf)},
+                    "defects_found": [
+                        {"id": "P62", "snippet": warning, "extra": {"warning_index": 1, "figure_label": "2"}}
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        pages = ["ordinary text"] * 20
+        pages[3] = "CONTENTS ................................ Figure 2 Determination of test duration time ........ 18"
+        pages[13] = "Figure 2. Na test cycle. The first cycle comprises cold and hot temperatures."
+        return "fake", pages, None
+
+    def fake_visuals(pdf_path: Path, page_numbers):
+        assert pdf_path == source_pdf
+        return {
+            4: {"image_xrefs": 1, "image_blocks": 1, "drawings": 7, "text_blocks": 10},
+            14: {"image_xrefs": 2, "image_blocks": 2, "drawings": 60, "text_blocks": 38},
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_visual_summaries", fake_visuals)
+
+    report = write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+        },
+    )
+
+    article = report["articles"][0]
+    assert article["status"] == "ready"
+    assert article["source_pdf_page_number"] == 14
+    assert article["marker_page_range"] == "13"
+    assert article["selected_false_match_hint"] == ""
+    assert any(
+        candidate["page_number"] == 4 and candidate["false_match_hint"] == "toc_or_contents"
+        for candidate in article["page_resolver_candidates"]
+    )
+
+
+def test_p62_marker_recovery_plan_uses_full_hierarchical_figure_label(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "thesis.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    warning = "Figure 3 image was not extracted into this HTML."
+    polish_path.write_text(
+        '<div id="fig-3-1" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note">{warning}</p>'
+        '<p class="z2m-figure-caption">Figure 3-1. Circuit diagram for the sinusoidal generator.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "polish_stage_path": str(polish_path),
+                    "summary": {"source_pdf_present": True, "source_pdf_path": str(source_pdf)},
+                    "defects_found": [
+                        {"id": "P62", "snippet": warning, "extra": {"warning_index": 1, "figure_label": "3"}}
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        pages = ["ordinary text"] * 60
+        pages[8] = "LIST OF FIGURES ........ FIGURE 3-3 CIRCUIT DIAGRAM ........ 53"
+        pages[52] = "Figure 3-1. Circuit diagram for the sinusoidal generator with current converter."
+        return "fake", pages, None
+
+    def fake_visuals(pdf_path: Path, page_numbers):
+        assert pdf_path == source_pdf
+        return {
+            9: {"image_xrefs": 0, "image_blocks": 0, "drawings": 0, "text_blocks": 28},
+            53: {"image_xrefs": 11, "image_blocks": 11, "drawings": 24, "text_blocks": 33},
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_visual_summaries", fake_visuals)
+
+    report = write_p62_marker_recovery_plan(
+        run_dir,
+        gate_config={
+            "p62_marker_recovery_max_articles": 0,
+            "p62_marker_recovery_max_pdf_pages": 80,
+            "p62_marker_recovery_context_chars": 1200,
+            "p62_marker_recovery_min_match_score": 0.05,
+        },
+    )
+
+    article = report["articles"][0]
+    assert article["status"] == "ready"
+    assert article["figure_label"] == "3"
+    assert article["resolved_figure_label"] == "3-1"
+    assert article["source_pdf_page_number"] == 53
+    assert article["marker_page_range"] == "52"
+
+
+def test_p62_page_resolver_keeps_true_caption_despite_parenthetical_reference(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    pages = ["ordinary text"] * 14
+    pages[1] = (
+        "The paradigm was introduced in prose (Fig. 1)11 before the full caption. "
+        "Figure 1. Behavioral task. After engagement Start phase and an initial "
+        "fixation period animals are presented a gaze-contingent display."
+    )
+    pages[11] = (
+        "Then came the Choice phase where animals select between two alternatives "
+        "presented in the clear (Fig. 1, Supplementary Movie 1). The task used "
+        "engagement fixation animals cue letters matching distractor alternatives."
+    )
+
+    def fake_visuals(pdf_path: Path, page_numbers):
+        assert pdf_path == source_pdf
+        return {
+            2: {"image_xrefs": 2, "image_blocks": 2, "drawings": 420, "text_blocks": 14},
+            12: {"image_xrefs": 0, "image_blocks": 0, "drawings": 87, "text_blocks": 14},
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_visual_summaries", fake_visuals)
+
+    resolver = llm_quality_loop._resolve_p62_pdf_page_for_figure(
+        [
+            "Figure 1. Behavioral task. After engagement (Start phase) and an initial "
+            "fixation period, animals are presented a gaze-contingent display."
+        ],
+        pages,
+        "1",
+        pdf_path=source_pdf,
+    )
+
+    assert resolver["page_number"] == 2
+    assert resolver["selected_false_match_hint"] == ""
+    assert (resolver["candidates"] or [])[0]["caption_head_near_label"] is True
+
+
+def test_p62_page_resolver_uses_visual_strength_to_break_caption_ties(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_pdf = tmp_path / "standard.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    pages = ["ordinary text"] * 16
+    pages[4] = "Figure 2. Na test cycle. First cycle A time t1 second cycle t1."
+    pages[13] = "Figure 2. Na test cycle. First cycle A time t1 second cycle t1."
+
+    def fake_visuals(pdf_path: Path, page_numbers):
+        assert pdf_path == source_pdf
+        return {
+            5: {"image_xrefs": 1, "image_blocks": 1, "drawings": 7, "text_blocks": 10},
+            14: {"image_xrefs": 2, "image_blocks": 2, "drawings": 60, "text_blocks": 38},
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_visual_summaries", fake_visuals)
+
+    resolver = llm_quality_loop._resolve_p62_pdf_page_for_figure(
+        ["Figure 2. Na test cycle. First cycle A time t1 second cycle t1."],
+        pages,
+        "2",
+        pdf_path=source_pdf,
+    )
+
+    assert resolver["page_number"] == 14
+    assert (resolver["candidates"] or [])[0]["visual_score"] > (resolver["candidates"] or [])[1]["visual_score"]
+
+
+def test_p62_page_resolver_does_not_treat_accepted_article_header_as_backmatter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_pdf = tmp_path / "accepted.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    pages = ["ordinary text"] * 12
+    pages[3] = (
+        "Accepted Article This article is protected by copyright. "
+        "FIG. 2. Schematic of the connected relationship between the left ventricle "
+        "and the blood vessels in the thorax."
+    )
+    pages[11] = (
+        "Accepted Article This article is protected by copyright. "
+        "FIG. 2. Schematic of the connected relationship between the left ventricle "
+        "and the blood vessels in the thorax. FIG. 3. Differential graph list."
+    )
+
+    def fake_visuals(pdf_path: Path, page_numbers):
+        assert pdf_path == source_pdf
+        return {
+            4: {"image_xrefs": 0, "image_blocks": 0, "drawings": 5, "text_blocks": 50},
+            12: {"image_xrefs": 0, "image_blocks": 0, "drawings": 0, "text_blocks": 44},
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_visual_summaries", fake_visuals)
+
+    resolver = llm_quality_loop._resolve_p62_pdf_page_for_figure(
+        [
+            "FIG. 2. Schematic of the connected relationship between the left "
+            "ventricle and the blood vessels in the thorax."
+        ],
+        pages,
+        "2",
+        pdf_path=source_pdf,
+    )
+
+    assert resolver["page_number"] == 4
+    assert resolver["source_visual_unavailable"] is False
+    assert all(candidate["false_match_hint"] != "backmatter_or_reference_text" for candidate in resolver["candidates"])
+
+
+def test_p62_detached_plate_asset_maps_numeric_label_to_plate_order(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "accepted_plates.pdf"
+    doc = fitz.open()
+    anchor = doc.new_page(width=612, height=792)
+    anchor.insert_text(
+        (96, 96),
+        "Accepted Article\nFIG. 2 is the model schematic described in the manuscript.",
+    )
+    page_2 = doc.new_page(width=612, height=792)
+    page_2.insert_text((96, 740), "This article is protected by copyright.")
+    page_2.insert_image(fitz.Rect(96, 96, 300, 260), stream=_valid_tiny_png_bytes())
+    page_3 = doc.new_page(width=612, height=792)
+    page_3.insert_text((96, 740), "This article is protected by copyright.")
+    page_3.insert_image(fitz.Rect(96, 72, 360, 220), stream=_valid_tiny_png_bytes())
+    page_3.insert_image(fitz.Rect(96, 300, 420, 520), stream=_valid_tiny_png_bytes())
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_detached_pdf_figure_plate_asset(
+        pdf_path,
+        1,
+        "2",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "detached_plate_rendered"
+    assert asset["source"] == "pdf_detached_plate_region_render"
+    assert asset["page_number"] == 3
+    assert asset["plate_index"] == 2
+    assert Path(asset["path"]).is_file()
+
+
+def test_p62_caption_rect_prefers_caption_line_over_prose_reference(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "caption_rect.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((96, 160), "The participants walked farther in compass mode (Figure 8).")
+    page.insert_text((96, 520), "Figure 8. The mean walking distance on the first experiment day.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    doc = fitz.open(str(pdf_path))
+    try:
+        page = doc.load_page(0)
+        caption_rects = llm_quality_loop._p62_page_caption_label_rects(page, "8")
+        all_rects = llm_quality_loop._p62_page_label_rects(page, "8")
+    finally:
+        doc.close()
+
+    assert caption_rects
+    assert all_rects
+    assert min(rect.y0 for rect in caption_rects) > 500
+    assert min(rect.y0 for rect in all_rects) < 200
+
+
+def test_p62_pdf_figure_asset_renders_text_only_figure_region(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "text_figure.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_textbox(
+        fitz.Rect(72, 80, 540, 250),
+        (
+            "Briefly name activities and their locations during which you experience difficulties.\n"
+            "Which activity do you consider difficult?        Where?\n"
+            "1. To walk to the post office                  In the city centre\n"
+            "2. To visit my sister using public transport   In town\n"
+            "3. To play cards with friends                  In the community centre"
+        ),
+        fontsize=11,
+    )
+    page.insert_text((72, 280), "Figure 1. Worksheet for prioritizing client's needs.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "1",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "text_region_rendered"
+    assert asset["source"] == "pdf_figure_region_render"
+    assert Path(asset["path"]).is_file()
+
+
+def test_p62_pdf_figure_asset_rejects_manuscript_placeholder_page(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "placeholder.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 120), "Insert Figure 5 about here.")
+    page.insert_text((72, 180), "The experiment is described in the surrounding prose.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "5",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "false_label_match_manuscript_placeholder"
+    assert asset["source"] == ""
+    assert asset["path"] == ""
+
+
+def test_p62_pdf_figure_asset_allows_prose_reference_when_caption_exists(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "caption_and_reference.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 80), "Another example is presented in Figure 10.")
+    page.insert_image(fitz.Rect(120, 180, 360, 300), stream=_valid_tiny_png_bytes())
+    page.insert_text((72, 330), "Figure 10. Example visual with a real caption.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "10",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] in {"native_image_extracted", "region_rendered"}
+    assert asset["source"] in {"pdf_native_image", "pdf_figure_region_render"}
+    assert Path(asset["path"]).is_file()
+
+
 def test_p62_recovery_replaces_missing_warning_with_image() -> None:
     html = (
         '<div id="fig-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
@@ -884,6 +1296,59 @@ def test_p62_recovery_replaces_missing_warning_with_image() -> None:
     assert "z2m-p62-recovered-target" in patched
     assert 'data-z2m-recovery-source="pdf_page_render"' in patched
     assert "Figure 6. Caption survived." in patched
+
+
+def test_p62_recovery_cleanup_matches_nearest_figure_unit_label() -> None:
+    html = (
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="one.png" data-z2m-recovery-source="pdf_page_render" '
+        f'alt="Recovered Figure 1 visual from source PDF" src="{_valid_tiny_png_data_url()}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 1. One.</p>'
+        "</div>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="two.png" data-z2m-recovery-source="pdf_page_render" '
+        f'alt="Recovered Figure 2 visual from source PDF" src="{_valid_tiny_png_data_url()}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 2. Two.</p>'
+        "</div>"
+    )
+
+    patched, replacements = llm_quality_loop._replace_p62_recovery_with_missing_warning(
+        html,
+        figure_label="2",
+        reason="source_visual_unavailable",
+        replace_sources={"pdf_page_render"},
+    )
+
+    assert replacements == 1
+    assert "Figure 1 image was not extracted" not in patched
+    assert "one.png" in patched
+    assert "Figure 2 image was not extracted" in patched
+    assert "two.png" not in patched
+
+
+def test_p62_missing_warning_detection_uses_figure_unit_id_for_mismatched_text() -> None:
+    html = (
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 2 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 4. The complex environment.</p>'
+        "</div>"
+    )
+
+    assert llm_quality_loop._html_has_p62_missing_warning_for_figure_unit(html, "4") is True
+    patched, replacements = llm_quality_loop._replace_p62_figure_unit_target_with_missing_warning(
+        html,
+        figure_label="4",
+        reason="source_visual_unavailable",
+    )
+
+    assert replacements == 1
+    assert "Figure 4 image was not extracted" in patched
+    assert "Figure 2 image was not extracted" not in patched
 
 
 def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
@@ -1068,6 +1533,720 @@ def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
     assert "z2m-missing-figure-warning" not in patched_html
 
 
+def test_p62_image_recovery_stage_uses_pdf_figure_asset_before_page_render(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 5 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 5. Screenshot visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    asset_path = run_dir / "asset.png"
+    asset_path.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "5",
+                    "resolved_figure_label": "5",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 8,
+                    "figure_label_pdf_page_candidates": [8],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_asset(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        assert page_number == 8
+        assert figure_label == "5"
+        return {
+            "status": "region_rendered",
+            "path": str(asset_path),
+            "source": "pdf_figure_region_render",
+            "error": "",
+            "selected_rect": (10.0, 20.0, 200.0, 160.0),
+            "caption_found": True,
+        }
+
+    def fail_page_render(*args, **kwargs):
+        raise AssertionError("PDF figure asset should be used before full-page render fallback")
+
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fake_asset)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_page_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["recovery_source_counts"] == {"pdf_figure_region_render": 1}
+    article = report["articles"][0]
+    assert article["figure_asset_status"] == "region_rendered"
+    assert article["page_render_status"] == "not_run"
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' in patched_html
+    assert "z2m-missing-figure-warning" not in patched_html
+
+
+def test_p62_image_recovery_stage_upgrades_existing_page_render_recovery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="old_page.png" data-z2m-recovery-source="pdf_page_render" '
+        f'alt="Recovered Figure 5 visual from source PDF" src="{_valid_tiny_png_data_url()}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 5. Screenshot visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    asset_path = run_dir / "asset.png"
+    asset_path.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "5",
+                    "resolved_figure_label": "5",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 8,
+                    "figure_label_pdf_page_candidates": [8],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_asset(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        assert page_number == 8
+        assert figure_label == "5"
+        return {
+            "status": "region_rendered",
+            "path": str(asset_path),
+            "source": "pdf_figure_region_render",
+            "error": "",
+            "selected_rect": (10.0, 20.0, 200.0, 160.0),
+            "caption_found": True,
+        }
+
+    def fail_page_render(*args, **kwargs):
+        raise AssertionError("existing page-render recovery should be upgraded before full-page render fallback")
+
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fake_asset)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_page_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["asset_ready_count"] == 1
+    assert report["page_render_upgrade_count"] == 1
+    assert report["recovery_source_counts"] == {"pdf_figure_region_render": 1}
+    article = report["articles"][0]
+    assert article["existing_page_render_recovery"] is True
+    assert article["existing_page_render_upgrade"] is True
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' in patched_html
+    assert 'data-z2m-recovery-source="pdf_page_render"' not in patched_html
+    assert "z2m-missing-figure-warning" not in patched_html
+
+
+def test_p62_image_recovery_stage_does_not_upgrade_page_render_with_page_render(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-8" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="old_page.png" data-z2m-recovery-source="pdf_page_render" '
+        f'alt="Recovered Figure 8 visual from source PDF" src="{_valid_tiny_png_data_url()}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 8. Placeholder-only caption.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "8",
+                    "resolved_figure_label": "8",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 12,
+                    "figure_label_pdf_page_candidates": [12],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def no_asset(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
+        return {
+            "status": "no_figure_region",
+            "path": "",
+            "source": "",
+            "error": "No graphic/image region could be associated with the target caption.",
+        }
+
+    def fail_page_render(*args, **kwargs):
+        raise AssertionError("stale page-render recovery must not be replaced by another page render")
+
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", no_asset)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_page_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "unresolved"
+    assert report["asset_ready_count"] == 0
+    assert report["page_render_upgrade_count"] == 0
+    assert report["page_render_recovery_removed_count"] == 1
+    article = report["articles"][0]
+    assert article["existing_page_render_recovery"] is True
+    assert article["existing_page_render_upgrade"] is False
+    assert article["unresolved_reason"] == "existing_pdf_page_render_no_higher_fidelity_asset"
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert "z2m-missing-figure-warning" in patched_html
+    assert 'data-z2m-recovery-source="pdf_page_render"' not in patched_html
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' not in patched_html
+
+
+def test_p62_image_recovery_stage_removes_false_match_recovery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fitz = pytest.importorskip("fitz")
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 120), "Insert Figure 9 about here.")
+    doc.save(str(source_pdf))
+    doc.close()
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-9" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="bad_region.png" data-z2m-recovery-source="pdf_figure_region_render" '
+        f'alt="Recovered Figure 9 visual from source PDF" src="{_valid_tiny_png_data_url()}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 9. Placeholder-only caption.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "9",
+                    "resolved_figure_label": "9",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 1,
+                    "figure_label_pdf_page_candidates": [1],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fail_asset(*args, **kwargs):
+        raise AssertionError("false-match recovery should be removed before PDF asset extraction")
+
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fail_asset)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "unresolved"
+    assert report["asset_ready_count"] == 0
+    assert report["false_match_recovery_removed_count"] == 1
+    article = report["articles"][0]
+    assert article["existing_false_match_recovery"] is True
+    assert article["false_match_recovery_removed"] is True
+    assert article["source_page_false_match_hint"] == "manuscript_placeholder"
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert "z2m-missing-figure-warning" in patched_html
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' not in patched_html
+
+
+def test_p62_image_recovery_stage_replaces_false_match_recovery_with_probe_asset(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fitz = pytest.importorskip("fitz")
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 120), "Insert Figure 10 about here.")
+    doc.save(str(source_pdf))
+    doc.close()
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-10" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="bad_region.png" data-z2m-recovery-source="pdf_figure_region_render" '
+        f'alt="Recovered Figure 10 visual from source PDF" src="{_valid_tiny_png_data_url()}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 10. Recovered elsewhere.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    asset_path = run_dir / "probe.png"
+    asset_path.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "10",
+                    "resolved_figure_label": "10",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 1,
+                    "figure_label_pdf_page_candidates": [1],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_probe(*args, **kwargs):
+        return {
+            "status": "found_asset",
+            "asset": {
+                "status": "native_image_extracted",
+                "path": str(asset_path),
+                "source": "pdf_native_image",
+                "error": "",
+                "page_number": 5,
+            },
+            "attempts": [{"method": "pdf_label_page_asset", "status": "native_image_extracted"}],
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_probe_p62_source_visual_unavailable", fake_probe)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["asset_ready_count"] == 1
+    assert report["source_visual_probe_status_counts"] == {"found_asset": 1}
+    assert report["recovery_source_counts"] == {"pdf_native_image": 1}
+    article = report["articles"][0]
+    assert article["existing_false_match_recovery"] is True
+    assert article["false_match_recovery_removed"] is False
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert 'data-z2m-recovery-source="pdf_native_image"' in patched_html
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' not in patched_html
+    assert "z2m-missing-figure-warning" not in patched_html
+
+
+def test_p62_image_recovery_stage_repairs_duplicate_existing_figure_after_recovery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    duplicated_payload = base64.b64encode(b"figure-six-image-was-attached-twice").decode("ascii")
+    duplicated_data_url = f"data:image/png;base64,{duplicated_payload}"
+    polish_path.write_text(
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target">'
+        f'<img data-z2m-src="_page_6_Figure_1.jpeg" alt="Figure 5" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Fig. 5. The proportion of mazes successfully navigated.</p>'
+        "</div>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="marker/_page_6_Figure_1.jpeg" data-z2m-recovery-source="marker_image" '
+        f'alt="Recovered Figure 6" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Fig. 6. A heat map showing the relative time difference.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    asset_path = run_dir / "fig5.png"
+    asset_path.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "6",
+                    "resolved_figure_label": "6",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 7,
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "recovered_image"},
+                }
+            ],
+        },
+    )
+
+    def fake_text_pages(pdf_path: Path, *, max_pages=None):
+        assert pdf_path == source_pdf
+        return (
+            "fixture",
+            [
+                "",
+                "",
+                "",
+                "",
+                "Fig. 5. The proportion of mazes successfully navigated.",
+                "Fig. 6. A heat map showing the relative time difference.",
+            ],
+            None,
+        )
+
+    def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        assert page_number == 5
+        assert figure_label == "5"
+        return {
+            "status": "native_image_extracted",
+            "path": str(asset_path),
+            "source": "pdf_native_image",
+            "error": "",
+            "page_number": page_number,
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_text_pages)
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_false_match_hint", lambda *args, **kwargs: "")
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_caption_label_found", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_recover_p62_detached_pdf_figure_plate_asset",
+        lambda *args, **kwargs: {"status": "not_found"},
+    )
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fake_recover)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["duplicate_visual_repair_count"] == 1
+    assert report["articles"][0]["status"] == "patched_duplicate_visuals"
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert patched_html.count(duplicated_data_url) == 1
+    assert 'data-z2m-recovery-source="pdf_native_image"' in patched_html
+    assert 'data-z2m-recovery-source="marker_image"' in patched_html
+    assert "Recovered Figure 5 visual from source PDF" in patched_html
+    assert "_page_6_Figure_1.jpeg" in patched_html
+
+
+def test_p62_image_recovery_stage_repairs_duplicate_marker_recovered_figures(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    duplicated_payload = base64.b64encode(b"marker-page-image-reused-for-two-labels").decode("ascii")
+    duplicated_data_url = f"data:image/png;base64,{duplicated_payload}"
+    polish_path.write_text(
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="marker/_page_4_Figure_0.png" data-z2m-recovery-source="marker_image" '
+        f'alt="Recovered Figure 1" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 1. First recovered marker visual.</p>'
+        "</div>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        '<img data-z2m-src="marker/_page_4_Figure_0.png" data-z2m-recovery-source="marker_image" '
+        f'alt="Recovered Figure 2" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 2. Second recovered marker visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    fig1_asset = run_dir / "fig1.png"
+    fig2_asset = run_dir / "fig2.png"
+    fig1_asset.write_bytes(_tiny_rgba_png_bytes(255, 0, 0))
+    fig2_asset.write_bytes(_tiny_rgba_png_bytes(0, 255, 0))
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 2,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "1",
+                    "resolved_figure_label": "1",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 5,
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "recovered_image"},
+                },
+                {
+                    "article": "article_a",
+                    "figure_label": "2",
+                    "resolved_figure_label": "2",
+                    "warning_index": 2,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 5,
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "recovered_image"},
+                },
+            ],
+        },
+    )
+
+    def fake_text_pages(pdf_path: Path, *, max_pages=None):
+        assert pdf_path == source_pdf
+        return (
+            "fixture",
+            [
+                "",
+                "",
+                "",
+                "",
+                "Figure 1. First recovered marker visual. Figure 2. Second recovered marker visual.",
+            ],
+            None,
+        )
+
+    def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        assert page_number == 5
+        asset_path = fig1_asset if figure_label == "1" else fig2_asset
+        return {
+            "status": "region_rendered",
+            "path": str(asset_path),
+            "source": "pdf_figure_region_render",
+            "error": "",
+            "page_number": page_number,
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_text_pages)
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_false_match_hint", lambda *args, **kwargs: "")
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_caption_label_found", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_recover_p62_detached_pdf_figure_plate_asset",
+        lambda *args, **kwargs: {"status": "not_found"},
+    )
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fake_recover)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["duplicate_visual_repair_count"] == 2
+    assert report["status_counts"] == {"already_patched": 1, "patched_duplicate_visuals": 1}
+    repairs = report["articles"][0]["duplicate_visual_repairs"]
+    assert [repair["figure_label"] for repair in repairs if repair["status"] == "patched"] == ["1", "2"]
+    assert {repair["repair_mode"] for repair in repairs if repair["status"] == "patched"} == {
+        "recovered_duplicate_target"
+    }
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert duplicated_data_url not in patched_html
+    assert patched_html.count('data-z2m-recovery-source="pdf_figure_region_render"') == 2
+    hashes = {
+        llm_quality_loop._p62_data_url_image_hash(match.group(0))
+        for match in re.finditer(r"<img\b[^>]*>", patched_html, re.IGNORECASE | re.DOTALL)
+    }
+    assert len(hashes) == 2
+
+
+def test_p62_image_recovery_stage_uses_detached_plate_before_region_crop(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "accepted.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 2 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">FIG. 2. Detached plate visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    asset_path = run_dir / "plate.png"
+    asset_path.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "2",
+                    "resolved_figure_label": "2",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 4,
+                    "figure_label_pdf_page_candidates": [4, 12],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_detached(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        assert page_number == 4
+        assert figure_label == "2"
+        return {
+            "status": "detached_plate_rendered",
+            "path": str(asset_path),
+            "source": "pdf_detached_plate_region_render",
+            "error": "",
+            "page_number": 16,
+            "selected_rect": (96.0, 72.0, 360.0, 220.0),
+            "plate_index": 2,
+            "plate_count": 3,
+        }
+
+    def fail_region_crop(*args, **kwargs):
+        raise AssertionError("Detached plate should be used before ordinary region crop")
+
+    def fail_page_render(*args, **kwargs):
+        raise AssertionError("Detached plate should be used before full-page render fallback")
+
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_detached_pdf_figure_plate_asset", fake_detached)
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fail_region_crop)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_page_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["recovery_source_counts"] == {"pdf_detached_plate_region_render": 1}
+    article = report["articles"][0]
+    assert article["figure_asset_status"] == "detached_plate_rendered"
+    assert article["figure_asset_page_number"] == 16
+    assert article["figure_asset_plate_index"] == 2
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert 'data-z2m-recovery-source="pdf_detached_plate_region_render"' in patched_html
+    assert "z2m-missing-figure-warning" not in patched_html
+
+
 def test_p62_image_recovery_stage_does_not_render_unmatched_page_fallback(
     tmp_path: Path,
     monkeypatch,
@@ -1127,6 +2306,258 @@ def test_p62_image_recovery_stage_does_not_render_unmatched_page_fallback(
     patched_html = polish_path.read_text(encoding="utf-8")
     assert "z2m-missing-figure-warning" in patched_html
     assert "z2m-p62-recovered-target" not in patched_html
+
+
+def test_p62_image_recovery_stage_probes_source_visual_unavailable_before_skipping(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 3 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 3. A recovered source visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    asset_path = run_dir / "probe.png"
+    asset_path.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "3",
+                    "resolved_figure_label": "3",
+                    "warning_index": 1,
+                    "status": "source_visual_unavailable",
+                    "source_visual_unavailable_reason": "all_label_matches_are_false_or_without_visual_objects",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 10,
+                    "figure_label_pdf_page_candidates": [10],
+                    "problem_snippets": ["Figure 3. A recovered source visual."],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "caption_only"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_probe(
+        pdf_path: Path,
+        figure_label: str,
+        artifact_dir: Path,
+        *,
+        snippets: list[str] | None,
+        zoom: float,
+        run_marker: bool,
+        marker_timeout_seconds: int,
+        marker_output_dir: Path | None,
+    ):
+        assert pdf_path == source_pdf
+        assert figure_label == "3"
+        assert snippets == ["Figure 3. A recovered source visual."]
+        assert zoom == 1.0
+        assert run_marker is True
+        assert marker_timeout_seconds == 77
+        assert artifact_dir.name == "source_visual_probe"
+        assert marker_output_dir is not None
+        assert marker_output_dir.parent.name == "_source_visual_probe_marker"
+        return {
+            "status": "found_asset",
+            "asset": {
+                "status": "region_rendered",
+                "path": str(asset_path),
+                "source": "pdf_figure_region_render",
+                "error": "",
+                "page_number": 12,
+                "selected_rect": (10.0, 20.0, 200.0, 120.0),
+                "caption_found": True,
+            },
+            "attempts": [{"method": "pdf_label_page_asset", "status": "region_rendered"}],
+        }
+
+    def fail_page_render(*args, **kwargs):
+        raise AssertionError("probe-recovered records must not render a full PDF page")
+
+    monkeypatch.setattr(llm_quality_loop, "_probe_p62_source_visual_unavailable", fake_probe)
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_page_render)
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={
+            "p62_image_recovery_render_zoom": 1.0,
+            "p62_image_recovery_probe_marker_for_unavailable": True,
+            "p62_image_recovery_source_visual_probe_marker_timeout_seconds": 77,
+        },
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["asset_ready_count"] == 1
+    assert report["source_visual_probe_status_counts"] == {"found_asset": 1}
+    assert report["recovery_source_counts"] == {"pdf_figure_region_render": 1}
+    article = report["articles"][0]
+    assert article["source_visual_probe_status"] == "found_asset"
+    assert article["figure_asset_page_number"] == 12
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' in patched_html
+    assert "z2m-missing-figure-warning" not in patched_html
+
+
+def test_p62_image_recovery_stage_records_unavailable_probe_when_not_found(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 4 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 4. Missing source visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "4",
+                    "resolved_figure_label": "4",
+                    "warning_index": 1,
+                    "status": "source_visual_unavailable",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 14,
+                    "figure_label_pdf_page_candidates": [14],
+                    "polish_stage_path": str(polish_path),
+                    "existing_marker_output_validation": {"status": "empty_or_unmatched"},
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_probe_p62_source_visual_unavailable",
+        lambda *args, **kwargs: {
+            "status": "not_found",
+            "label_pages": [14],
+            "attempts": [{"status": "skipped_false_label_match"}],
+            "visual_inventory": {"status": "ready", "native_image_count": 0},
+            "asset": {},
+        },
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_validate_p62_marker_output",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("empty marker_output_dir must not be scanned")
+        ),
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_render_pdf_evidence_page",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("source_visual_unavailable must not fall through to full-page render")
+        ),
+    )
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={"p62_image_recovery_render_zoom": 1.0},
+        execute_marker=True,
+    )
+
+    assert report["status"] == "unresolved"
+    assert report["source_visual_probe_status_counts"] == {"not_found": 1}
+    article = report["articles"][0]
+    assert article["unresolved_reason"] == "source_visual_unavailable"
+    assert article["source_visual_probe_status"] == "not_found"
+    assert article["source_visual_probe"]["label_pages"] == [14]
+    assert "z2m-missing-figure-warning" in polish_path.read_text(encoding="utf-8")
+
+
+def test_p62_source_visual_probe_skips_false_label_pages(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+
+    def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
+        assert pdf_path == source_pdf
+        assert max_pages is None
+        return (
+            "fake",
+            [
+                "Contents\nFigure 5 Virtual walking trial results ........ 22",
+                "Participants used look-around mode (Figure 5) during the experiment.",
+                "Insert Figure 5 about here",
+            ],
+            None,
+        )
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_pages)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_p62_pdf_page_visual_summaries",
+        lambda pdf_path, pages: {page: {"image_xrefs": 0, "image_blocks": 0, "drawings": 0} for page in pages},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_p62_pdf_visual_inventory",
+        lambda pdf_path: {
+            "status": "ready",
+            "page_count": 3,
+            "native_image_count": 0,
+            "large_image_count": 0,
+            "pages_with_native_images": [],
+            "pages_with_large_images": [],
+            "error": "",
+        },
+    )
+
+    def fail_recover(*args, **kwargs):
+        raise AssertionError("false label matches should not be cropped as figures")
+
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_detached_pdf_figure_plate_asset", fail_recover)
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fail_recover)
+
+    probe = llm_quality_loop._probe_p62_source_visual_unavailable(
+        source_pdf,
+        "5",
+        tmp_path / "probe",
+        snippets=["Figure 5. Virtual walking trial results."],
+        zoom=1.0,
+        run_marker=False,
+    )
+
+    assert probe["status"] == "not_found"
+    assert probe["label_pages"] == [1, 2, 3]
+    assert {attempt["status"] for attempt in probe["attempts"]} == {"skipped_false_label_match"}
+    assert probe["visual_inventory"]["native_image_count"] == 0
 
 
 def test_observe_runs_configured_tests_by_default() -> None:

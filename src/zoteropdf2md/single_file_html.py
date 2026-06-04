@@ -9779,6 +9779,13 @@ def _citation_profile_is_bracket_numeric(citation_profile: Any | None) -> bool:
     )
 
 
+def _citation_profile_is_author_year(citation_profile: Any | None) -> bool:
+    return (
+        _citation_profile_style(citation_profile) == "author_year"
+        and _citation_profile_confidence(citation_profile) in {"medium", "high"}
+    )
+
+
 def _citation_profile_items(citation_profile: Any | None, key: str) -> list[Any]:
     if citation_profile is None:
         return []
@@ -11117,6 +11124,34 @@ def _link_unlinked_numeric_superscripts_to_existing_refs(html: str) -> str:
     return before_references + references_and_after
 
 
+def _unwrap_numeric_ref_links_for_author_year_profile(html: str) -> str:
+    if "#ref-" not in html:
+        return html
+
+    heading_match = _references_heading_search(html, allow_notes_heading=True)
+    if heading_match is not None:
+        before_references = html[: heading_match.start()]
+        references_and_after = html[heading_match.start():]
+    else:
+        first_ref_match = re.search(r'<li\b[^>]*\bid\s*=\s*["\']ref-\d+', html, re.IGNORECASE)
+        if first_ref_match is None:
+            before_references = html
+            references_and_after = ""
+        else:
+            before_references = html[: first_ref_match.start()]
+            references_and_after = html[first_ref_match.start():]
+
+    def unwrap_numeric_anchor(match: re.Match[str]) -> str:
+        visible = _visible_text(match.group("body")).strip()
+        if not re.search(r"\d", visible):
+            return match.group(0)
+        if re.fullmatch(r"[\s\(\[\]\),.;:\-\u2010\u2011\u2012\u2013\u2014\d]+", visible) is None:
+            return match.group(0)
+        return match.group("body")
+
+    return _REF_ANCHOR_PATTERN.sub(unwrap_numeric_anchor, before_references) + references_and_after
+
+
 def _unlink_sup_ref_links(html: str) -> str:
     def replace_sup(match: re.Match[str]) -> str:
         raw = match.group(0)
@@ -11402,17 +11437,20 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     if ref_index == 0:
         return html
 
+    profile_is_author_year = _citation_profile_is_author_year(citation_profile)
     profile_is_paren_numeric = _citation_profile_is_high_confidence_paren_numeric(citation_profile)
     profile_has_reference_annotations = bool(
         _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
     )
     profile_is_flattened_superscript_numeric = (
-        not profile_is_paren_numeric
+        not profile_is_author_year
+        and not profile_is_paren_numeric
         and not profile_has_reference_annotations
         and _looks_like_flattened_superscript_numeric_document(before_references, ref_index)
     )
     profile_has_zotero_overlay_citations = (
-        not profile_is_paren_numeric
+        not profile_is_author_year
+        and not profile_is_paren_numeric
         and _has_zotero_overlay_numeric_citations(citation_profile, ref_index)
     )
     profile_is_superscript_numeric = (
@@ -11421,7 +11459,8 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
         or profile_has_zotero_overlay_citations
     )
     profile_is_bracket_numeric = (
-        not profile_is_paren_numeric
+        not profile_is_author_year
+        and not profile_is_paren_numeric
         and not profile_is_superscript_numeric
         and (
             _citation_profile_is_bracket_numeric(citation_profile)
@@ -11584,7 +11623,12 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
 
         return pair_pattern.sub(repl, text)
 
-    if not profile_is_paren_numeric and not profile_is_superscript_numeric and not profile_is_bracket_numeric:
+    if (
+        not profile_is_author_year
+        and not profile_is_paren_numeric
+        and not profile_is_superscript_numeric
+        and not profile_is_bracket_numeric
+    ):
         # Recover citation superscripts that leaked into TeX unit exponents:
         # "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}^{24}}\)" -> "\(112-278~\mathrm{MPa}\sqrt{\mathrm{m}}\)<sup>24</sup>"
         before_references = _recover_citations_leaked_into_tex_units(before_references, ref_index)
@@ -11607,7 +11651,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     else:
         before_with_citation_links = _link_sup_citations_in_safe_blocks(before_references, link_sup)
         before_with_citation_links = _link_bracket_citations(before_with_citation_links, ref_index)
-    if not profile_is_paren_numeric:
+    if not profile_is_author_year and not profile_is_paren_numeric:
         before_with_citation_links = _recover_flattened_superscript_numeric_citations(
             before_with_citation_links,
             ref_index,
@@ -11618,12 +11662,12 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             ref_index,
             allow_lowercase_after=True,
         )
-    if not profile_is_paren_numeric:
+    if not profile_is_author_year and not profile_is_paren_numeric:
         before_with_citation_links = _link_flattened_et_al_numeric_citations_in_text_blocks(
             before_with_citation_links,
             ref_index,
         )
-    if not profile_is_bracket_numeric:
+    if not profile_is_author_year and not profile_is_bracket_numeric:
         before_with_citation_links = _link_paren_ref_citations(before_with_citation_links, ref_index)
     before_with_citation_links = normalize_linked_ocr_pairs(before_with_citation_links)
     before_with_citation_links = _repair_ocr_letter_glued_ref_links(before_with_citation_links, ref_index)
@@ -13644,6 +13688,60 @@ def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None
         match = re.search(r"\d{4}[a-z]?", label, re.IGNORECASE)
         return match.group(0).casefold() if match else ""
 
+    def _right_hand_year_label(right_text: str) -> str:
+        right_text = html_lib.unescape(right_text)
+        name_token = (
+            r"(?:[A-Z]\.\s*)?"
+            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+        )
+        match = re.match(
+            rf"^\s*(?:(?:\(|,|;|\band\b|\bet\s+al\.?)\s*)?"
+            rf"(?:(?:&|\band\b)\s*{name_token}\s*)?"
+            r"\(?\s*(\d{4}[a-z]?)\)?",
+            right_text,
+            re.IGNORECASE,
+        )
+        return match.group(1).casefold() if match else ""
+
+    def _looks_like_author_year_author_fragment(label: str, left_text: str, right_text: str) -> bool:
+        if not _right_hand_year_label(right_text):
+            return False
+        cleaned = label.strip()
+        if re.search(r"\d{4}", cleaned):
+            return False
+        name_token = (
+            r"(?:[A-Z]\.\s*)?"
+            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+        )
+        name_fragment = re.sub(r"\s+", " ", html_lib.unescape(cleaned.strip("([;, "))).strip()
+        if re.fullmatch(
+            rf"{name_token}(?:\s+(?:et\s+al\.?|&\s*{name_token}|and\s+{name_token}))?",
+            name_fragment,
+            re.IGNORECASE,
+        ):
+            return True
+        if re.fullmatch(rf"(?:&|and)\s*{name_token}", name_fragment, re.IGNORECASE):
+            return author_tail_pattern.search(html_lib.unescape(left_text)[-140:]) is not None
+        if re.fullmatch(r"et\s+al\.?", name_fragment, re.IGNORECASE):
+            return author_tail_pattern.search(left_text[-140:]) is not None
+        return False
+
+    def _author_year_name_tokens(label: str) -> list[str]:
+        cleaned = html_lib.unescape(label)
+        cleaned = re.sub(r"\b\d{4}[a-z]?\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bet\s+al\.?", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"[\(\)\[\],.;:]+", " ", cleaned)
+        tokens = [
+            token.casefold()
+            for token in re.findall(
+                r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+",
+                cleaned,
+            )
+            if token.casefold().strip(".") not in {"and", "et", "al"}
+            and len(token.strip(". ")) > 1
+        ]
+        return list(dict.fromkeys(tokens))
+
     reference_text_by_num: dict[int, str] = {}
     for li_match in _LI_BLOCK_PATTERN.finditer(html):
         attrs = li_match.group(1) or ""
@@ -13666,19 +13764,33 @@ def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None
         target for target, years in year_labels_by_target.items() if len(years) > 1
     }
 
-    def _target_ref_matches_author_year(target: int, label: str, left_text: str) -> bool:
+    def _target_ref_matches_author_year(
+        target: int,
+        label: str,
+        left_text: str,
+        right_text: str = "",
+        *,
+        require_reference_year: bool = False,
+    ) -> bool:
         ref_text = reference_text_by_num.get(target, "")
         if not ref_text:
+            if require_reference_year:
+                return False
             return target not in repeated_year_targets
         ref_lower = ref_text.casefold()
         ref_years = {year.casefold() for year in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)}
-        label_year = _normalized_year_label(label)
+        label_year = _normalized_year_label(label) or _right_hand_year_label(right_text)
         if not ref_years:
+            if require_reference_year:
+                return False
             return target not in repeated_year_targets
         if label_year and label_year not in ref_years:
             return False
-        author_match = author_tail_pattern.search(left_text[-160:])
+        author_source = html_lib.unescape(f"{left_text[-160:]} {label}")
+        author_match = author_tail_pattern.search(author_source[-220:])
         if author_match is None:
+            if require_reference_year:
+                return False
             return target not in repeated_year_targets
         author_tail = author_match.group(0)
         surnames = [
@@ -13687,11 +13799,42 @@ def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None
                 r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+",
                 author_tail,
             )
-            if surname.casefold() not in {"et", "al", "and"}
+            if surname.casefold() not in {"et", "al", "and"} and len(surname.strip(". ")) > 1
         ]
         if not surnames:
             return target not in repeated_year_targets
         return any(surname in ref_lower for surname in surnames)
+
+    def _reference_text_matches_author_year(ref_text: str, name_tokens: list[str], year: str) -> bool:
+        if not name_tokens or not year:
+            return False
+        ref_lower = html_lib.unescape(ref_text).casefold()
+        ref_years = {
+            found.casefold()
+            for found in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)
+        }
+        if year.casefold() not in ref_years:
+            return False
+        for token in name_tokens:
+            if re.search(
+                rf"(?<![a-z\u00c0-\u00ff]){re.escape(token)}(?![a-z\u00c0-\u00ff])",
+                ref_lower,
+                re.IGNORECASE,
+            ) is None:
+                return False
+        return True
+
+    def _author_year_matching_ref_target(label: str, right_text: str) -> int | None:
+        year = _normalized_year_label(label) or _right_hand_year_label(right_text)
+        tokens = _author_year_name_tokens(label)
+        if not year or not tokens:
+            return None
+        matches = [
+            target
+            for target, ref_text in reference_text_by_num.items()
+            if _reference_text_matches_author_year(ref_text, tokens, year)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _replace(match: re.Match[str]) -> str:
         label = _visible_text(match.group("body"))
@@ -13704,12 +13847,30 @@ def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None
             int(match.group("num")),
             label,
             left_text,
+            right_text,
         ):
             return match.group(0)
         surname_fragment = (
             re.fullmatch(r"[A-Z][A-Za-z'’.-]{3,}", label) is not None
             and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE) is not None
-        )
+        ) or _looks_like_author_year_author_fragment(label, left_text, right_text)
+        if surname_fragment:
+            matching_target = _author_year_matching_ref_target(label, right_text)
+            if matching_target is not None and matching_target != int(match.group("num")):
+                attrs = _replace_href_and_link_class(
+                    match.group("attrs"),
+                    f"#ref-{matching_target}",
+                    "z2m-ref-link",
+                )
+                return f'<a{attrs}>{match.group("body")}</a>'
+        if surname_fragment and _target_ref_matches_author_year(
+            int(match.group("num")),
+            label,
+            left_text,
+            right_text,
+            require_reference_year=True,
+        ):
+            return match.group(0)
         if (
             _AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label) is None
             and not surname_fragment
@@ -22058,7 +22219,10 @@ def polish_html_document(
         polished = _repair_roman_suffix_author_year_ref_link_splits(polished)
         polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_acronym_footnote_ref_citations(polished)
-        polished = _recover_trailing_citation_after_author_year_ref(polished)
+        if not _citation_profile_is_author_year(citation_profile):
+            polished = _recover_trailing_citation_after_author_year_ref(polished)
+        else:
+            polished = _unwrap_numeric_ref_links_for_author_year_profile(polished)
         polished, _ = _repair_citation_prefix_paragraph_continuations(polished)
         polished = _link_section_refs(polished, found_sections)
         polished = _link_equation_refs(polished)
@@ -22237,8 +22401,11 @@ def polish_html_document(
     polished = _split_figure_caption_internal_body_tails(polished)
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
-    polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
-    polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
+    if not _citation_profile_is_author_year(citation_profile):
+        polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
+        polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
+    else:
+        polished = _unwrap_numeric_ref_links_for_author_year_profile(polished)
     polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
     polished = _unwrap_malformed_ref_anchor_openings(polished)
     polished = _repair_nested_reference_links(polished)
@@ -22257,8 +22424,11 @@ def polish_html_document(
     # earlier DOM-cleanup passes would otherwise corrupt.
     polished = _render_katex_html(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
-    polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
-    polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
+    if not _citation_profile_is_author_year(citation_profile):
+        polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
+        polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
+    else:
+        polished = _unwrap_numeric_ref_links_for_author_year_profile(polished)
     polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
     polished = _unwrap_malformed_ref_anchor_openings(polished)
     polished = _repair_nested_reference_links(polished)

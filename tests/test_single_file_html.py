@@ -10955,6 +10955,121 @@ def test_polish_html_document_unwraps_year_only_author_year_ref_links() -> None:
     assert "Kellogg 1962; Milne et al. 2014a; Rice and Feinstein 1965; Teng and Whitney 2011; Thaler et al. 2014)" in body
 
 
+def test_polish_html_document_unwraps_mismatched_author_year_surname_ref_links() -> None:
+    refs = []
+    for idx in range(1, 133):
+        if idx == 2:
+            refs.append('<li id="ref-2">2. Numeric citation target.</li>')
+        elif idx == 15:
+            refs.append(
+                '<li id="ref-15">15. Alireza Ghafarollahi and Markus J Buehler. '
+                "Protagents: protein discovery. Digital Discovery, 2025.</li>"
+            )
+        elif idx == 43:
+            refs.append("<li id=\"ref-43\">43. Di Jin et al. Medical exams. Applied Sciences, 2021.</li>")
+        elif idx == 117:
+            refs.append("<li id=\"ref-117\">117. Tao Tu et al. Towards conversational diagnostic ai. 2024.</li>")
+        elif idx == 132:
+            refs.append("<li id=\"ref-132\">132. Shunyu Yao et al. React: Synergizing reasoning and acting. 2023b.</li>")
+        else:
+            refs.append(f'<li id="ref-{idx}">{idx}. Placeholder reference.</li>')
+    html = (
+        "<html><body>"
+        '<p>Transformers (<a href="#ref-117" class="z2m-ref-link">Vaswani</a> (2017)) '
+        'and recurrent baselines (<a href="#ref-43" class="z2m-ref-link">Jordan</a> (1997)) '
+        'differ from agents <a href="#ref-132" class="z2m-ref-link">Yao et al.</a> (2023b). '
+        'Prior audits (<a href="#ref-15" class="z2m-ref-link">Gupta</a> '
+        '<a href="#ref-15" class="z2m-ref-link">&amp; Pruthi</a> (2025)) '
+        'and review links (<a href="#ref-15" class="z2m-ref-link">(Gupta &amp; Pruthi</a> (2025)) '
+        'must not point to unrelated references. '
+        '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup></p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(refs)
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-117"' not in body
+    assert 'href="#ref-43"' not in body
+    assert 'href="#ref-15"' not in body
+    assert "Transformers (Vaswani (2017))" in body
+    assert "recurrent baselines (Jordan (1997))" in body
+    assert "Prior audits (Gupta &amp; Pruthi (2025))" in body
+    assert "review links ((Gupta &amp; Pruthi (2025))" in body
+    assert '<a href="#ref-132" class="z2m-ref-link">Yao et al.</a> (2023b)' in body
+    assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>' in body
+
+
+def test_polish_html_document_retargets_author_year_fragments_to_matching_references() -> None:
+    refs = []
+    for idx in range(1, 135):
+        if idx == 15:
+            refs.append(
+                '<li id="ref-15">15. Alireza Ghafarollahi and Markus J Buehler. '
+                'Protagents. Digital Discovery, 2024a.</li>'
+            )
+        elif idx == 23:
+            refs.append(
+                '<li id="ref-23">23. Tarun Gupta and Danish Pruthi. '
+                'All that glitters is not novel. arXiv preprint, 2025.</li>'
+            )
+        elif idx == 54:
+            refs.append(
+                '<li id="ref-54">54. Joel Lehman and Kenneth O Stanley. '
+                'Novelty search and the problem with objectives. 2011.</li>'
+            )
+        elif idx == 59:
+            refs.append('<li id="ref-59">59. Sihang Li et al. Scilitllm. 2024c.</li>')
+        elif idx == 69:
+            refs.append(
+                '<li id="ref-69">69. Brady D. Lund and K. T. Naheem. '
+                'Can chatgpt be an author? Learned Publishing, 2023.</li>'
+            )
+        elif idx == 132:
+            refs.append(
+                '<li id="ref-132">132. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, '
+                'Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: '
+                'Synergizing reasoning and acting in language models. 2023b.</li>'
+            )
+        elif idx == 134:
+            refs.append(
+                '<li id="ref-134">134. N. Yeo-The and B. L. Tang. '
+                'Nlp systems such as chatgpt cannot be listed as an author. 2023.</li>'
+            )
+        else:
+            refs.append(f'<li id="ref-{idx}">{idx}. Placeholder reference.</li>')
+    html = (
+        "<html><body>"
+        '<p>Related work cites <a href="#ref-15" class="z2m-ref-link">(Gupta &amp; Pruthi</a> '
+        '(2025), <a href="#ref-59" class="z2m-ref-link">(Lund &amp; Naheem</a> (2023), '
+        'and <a href="#ref-132" class="z2m-ref-link">Yeo-The &amp; Tang</a> (2023). '
+        'Exploration follows <a href="#ref-43" class="z2m-ref-link">(Lehman &amp; Stanley</a> '
+        '(2011), while <a href="#ref-132" class="z2m-ref-link">Yao et al.</a> '
+        '(2023b) remains correctly linked.</p>'
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(refs)
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-23" class="z2m-ref-link">(Gupta &amp; Pruthi</a>' in body
+    assert '<a href="#ref-69" class="z2m-ref-link">(Lund &amp; Naheem</a>' in body
+    assert '<a href="#ref-134" class="z2m-ref-link">Yeo-The &amp; Tang</a>' in body
+    assert '<a href="#ref-54" class="z2m-ref-link">(Lehman &amp; Stanley</a>' in body
+    assert '<a href="#ref-132" class="z2m-ref-link">Yao et al.</a>' in body
+    assert 'href="#ref-15" class="z2m-ref-link">(Gupta' not in body
+    assert 'href="#ref-59" class="z2m-ref-link">(Lund' not in body
+    assert 'href="#ref-43" class="z2m-ref-link">(Lehman' not in body
+
+
 def test_polish_html_document_repairs_linked_unit_exponent_false_ref() -> None:
     html = (
         "<html><body>"

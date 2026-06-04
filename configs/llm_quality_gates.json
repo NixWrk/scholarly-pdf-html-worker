@@ -24,6 +24,12 @@
   "p62_image_recovery_rerun_audit": true,
   "p62_image_recovery_render_zoom": 1.5,
   "p62_image_recovery_marker_timeout_seconds": 600,
+  "p62_image_recovery_probe_source_visual_unavailable": true,
+  "p62_image_recovery_probe_marker_for_unavailable": true,
+  "p62_image_recovery_source_visual_probe_marker_timeout_seconds": 600,
+  "p62_image_recovery_replace_page_render": true,
+  "p62_image_recovery_remove_false_match_recovery": true,
+  "p62_image_recovery_repair_duplicate_figure_images": true,
   "ignored_defect_ids_for_analysis": ["P13", "P16", "P20", "P61", "P62"],
   "max_regressions": 0,
   "max_total_deltas": {

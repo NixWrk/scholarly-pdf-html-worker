@@ -98,5 +98,20 @@
     "pattern": "table-footnote-word-letter-split",
     "criticality": "medium",
     "fix_layer": "EN polish table footnote/word-boundary cleanup"
+  },
+  "P96": {
+    "pattern": "duplicate-figure-visual",
+    "criticality": "high",
+    "fix_layer": "P62 image recovery duplicate visual audit"
+  },
+  "P97": {
+    "pattern": "reference-list-visible-number-missing",
+    "criticality": "high",
+    "fix_layer": "bibliography numbering and identity normalization"
+  },
+  "P98": {
+    "pattern": "author-year-article-numeric-ref-link",
+    "criticality": "high",
+    "fix_layer": "PDF citation-profile driven style lock"
   }
 }

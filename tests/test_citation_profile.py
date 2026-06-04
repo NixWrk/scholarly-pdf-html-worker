@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 
 from zoteropdf2md.citation_profile import (
+    PdfLinkAnnotation,
+    _author_year_reference_hint_count,
+    _is_reference_citation_dest,
     _reference_entries_from_page_texts,
     infer_citation_style_from_text,
     load_zotero_overlay_citations,
@@ -52,6 +55,51 @@ def test_infer_citation_style_detects_flattened_superscript_numeric_pdf_text() -
     assert confidence == "high"
     assert paren_count == 0
     assert bracket_count == 0
+
+
+def test_infer_citation_style_detects_author_year_pdf_reference_links() -> None:
+    text = (
+        "Smith et al., 2020 introduced the baseline. "
+        "Jones and Brown 2021 extended it. "
+        "Gupta & Pruthi 2025 audited novelty. "
+        "Lund and Naheem 2023 discussed authorship. "
+        "Yeo-The & Tang 2023 reviewed attribution. "
+        "Lehman and Stanley 2011 studied novelty search. "
+    )
+
+    style, confidence, paren_count, bracket_count = infer_citation_style_from_text(
+        text,
+        ref_link_count=6,
+        author_year_hint_count=6,
+    )
+
+    assert style == "author_year"
+    assert confidence == "high"
+    assert paren_count == 0
+    assert bracket_count == 0
+
+
+def test_latex_cite_destinations_count_as_author_year_reference_evidence() -> None:
+    annotations = [
+        PdfLinkAnnotation(
+            page=1,
+            kind="reference" if _is_reference_citation_dest("cite.smith2020baseline") else "internal",
+            dest="cite.smith2020baseline",
+            target="cite.smith2020baseline",
+            text="Smith et al. (2020)",
+        ),
+        PdfLinkAnnotation(
+            page=1,
+            kind="reference" if _is_reference_citation_dest("cite.jones2021extension") else "internal",
+            dest="cite.jones2021extension",
+            target="cite.jones2021extension",
+            text="Jones and Brown (2021)",
+        ),
+    ]
+
+    assert _is_reference_citation_dest("cite.smith2020baseline")
+    assert not _is_reference_citation_dest("figure.1")
+    assert _author_year_reference_hint_count(annotations) == 2
 
 
 def test_reference_entries_from_page_texts_extracts_spotnitz_style_bracket_refs() -> None:
@@ -281,6 +329,44 @@ def test_pdf_annotation_profile_retargets_author_year_page_anchor_once_per_annot
     assert '<a href="#ref-7" class="z2m-ref-link">Smith et al., 2020</a> reported this' in polished
     assert polished.count('href="#ref-7"') == 1
     assert "mentioned again as plain prose" in polished
+
+
+def test_author_year_profile_locks_out_numeric_citation_recovery() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work (Smith et al., 2020) found the same pattern. "
+        "This local footnote-like marker<sup>2</sup> and stale link "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> are not bibliography citations. '
+        'A page artifact <a href="#ref-4" class="z2m-ref-link">(4)</a> should stay text.</p>'
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "style": "author_year",
+            "confidence": "high",
+            "annotations": [
+                {
+                    "page": 2,
+                    "kind": "reference",
+                    "target": "7",
+                    "text": "Smith et al., 2020",
+                }
+            ],
+        },
+    )
+    body = polished[: polished.index("REFERENCES")]
+
+    assert 'href="#ref-7" class="z2m-ref-link">Smith et al., 2020</a>' in body
+    assert 'href="#ref-2"' not in body
+    assert 'href="#ref-3"' not in body
+    assert 'href="#ref-4"' not in body
+    assert "marker<sup>2</sup>" in body
+    assert "stale link <sup>3</sup>" in body
+    assert "page artifact (4) should stay text" in body
 
 
 def test_superscript_numeric_profile_wraps_annotation_backed_ref_runs_only() -> None:

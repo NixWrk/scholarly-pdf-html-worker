@@ -1994,6 +1994,43 @@ def test_analyze_pair_resolves_stage_images_from_article_folder() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_reports_duplicate_visual_across_distinct_figures() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<div id="fig-5" class="z2m-figure-unit">',
+                    f'<p class="z2m-figure-target"><img src="{data_url}"></p>',
+                    '<p class="z2m-figure-caption">Figure 5. Correct caption.</p>',
+                    "</div>",
+                    '<div id="fig-6" class="z2m-figure-unit">',
+                    f'<p class="z2m-figure-target"><img src="{data_url}"></p>',
+                    '<p class="z2m-figure-caption">Figure 6. Different caption.</p>',
+                    "</div>",
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P96" in defects_by_id
+        assert defects_by_id["P96"]["extra"]["figure_ids"] == ["fig-5", "fig-6"]
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_reports_reference_identity_mismatch_and_duplicates() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -2023,6 +2060,110 @@ def test_analyze_pair_reports_reference_identity_mismatch_and_duplicates() -> No
         assert "P22" in defect_ids
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_reference_target_missing_visible_number() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<h4>References</h4>",
+                    '<ol><li id="ref-1"><span class="z2m-ref-num">1.</span> Smith J. Example.</li>',
+                    '<li id="ref-2">Jones J. Unnumbered visible entry.</li></ol>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P97" in defects_by_id
+        assert defects_by_id["P97"]["extra"]["missing_visible_ref_ids"] == [2]
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_reports_numeric_ref_link_in_author_year_article() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
+                    "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
+                    'define the author-year style, but this marker <sup><a href="#ref-12" '
+                    'class="z2m-ref-link">12</a></sup> should not be a bibliography link.</p>',
+                    "<h4>References</h4><ol>",
+                    *[
+                        f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> Reference {idx}.</li>'
+                        for idx in range(1, 13)
+                    ],
+                    "</ol></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P98" in defects_by_id
+        assert defects_by_id["P98"]["extra"]["ref_target"] == "12"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_citation_style_audit_ignores_reference_years_for_pdf_cite_numeric_article() -> None:
+    audit = _load_audit_module()
+    html = "\n".join(
+        [
+            "<html><body>",
+            '<p>Numeric citation style keeps this link <sup><a href="#ref-3" '
+            'class="z2m-ref-link">3</a></sup> and this one <sup><a href="#ref-4" '
+            'class="z2m-ref-link">4</a></sup>.</p>',
+            "<h4>References</h4><ol>",
+            *[
+                f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> '
+                f"Smith J. Example numeric reference. {2010 + idx}.</li>"
+                for idx in range(1, 8)
+            ],
+            "</ol></body></html>",
+        ]
+    )
+    pdf_text = (
+        "References. Smith et al. (2020). Jones and Brown (2021). "
+        "Gupta & Pruthi (2022). Lund and Naheem (2023). "
+        "Yeo-The and Tang (2024). Lehman and Stanley (2025)."
+    )
+
+    defects = audit._citation_style_consistency_defects(
+        html,
+        audit._parse_blocks(html),
+        pdf_text=pdf_text,
+        pdf_link_summary={
+            "pdf_citation_dest_links": 20,
+            "pdf_author_year_link_labels": 0,
+        },
+    )
+
+    assert [defect.id for defect in defects] == []
 
 
 def test_analyze_pair_does_not_report_p22_for_numeric_value_rows() -> None:

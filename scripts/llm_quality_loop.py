@@ -10,6 +10,7 @@ external LLM command is explicitly supplied.
 from __future__ import annotations
 
 import argparse
+import base64
 from collections import Counter
 import hashlib
 from html import escape, unescape
@@ -110,6 +111,30 @@ P62_MISSING_FIGURE_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>",
     re.IGNORECASE,
 )
+P62_RECOVERED_TARGET_ELEMENT_RE = re.compile(
+    r"<(?P<tag>p|div|span)\b(?P<attrs>[^>]*\bz2m-p62-recovered-target\b[^>]*)>"
+    r"[\s\S]*?</(?P=tag)>",
+    re.IGNORECASE,
+)
+P62_RECOVERY_SOURCE_RE = re.compile(
+    r"\bdata-z2m-recovery-source\s*=\s*([\"'])(?P<source>.*?)\1",
+    re.IGNORECASE | re.DOTALL,
+)
+P62_LOW_FIDELITY_RECOVERY_SOURCES = {"pdf_page_render"}
+P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES = {"marker_image"} | P62_LOW_FIDELITY_RECOVERY_SOURCES
+P62_PDF_DERIVED_RECOVERY_SOURCES = {
+    "pdf_page_render",
+    "pdf_figure_region_render",
+    "pdf_native_image",
+    "pdf_detached_plate_region_render",
+}
+P62_UNRECOVERABLE_FALSE_MATCH_HINTS = {
+    "toc_or_contents",
+    "figure_caption_list",
+    "manuscript_placeholder",
+    "backmatter_or_reference_text",
+    "prose_parenthetical_reference",
+}
 
 
 def _slug(value: str, *, max_len: int = 80) -> str:
@@ -133,6 +158,12 @@ def _write_json(path: Path, data: Any) -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _console_text(value: Any) -> str:
+    text = str(value)
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
 def _git_short_head() -> str:
@@ -844,6 +875,279 @@ def _figure_label_present_in_text(text: str, figure_label: str) -> bool:
     )
 
 
+def _figure_label_present_in_text_strict(text: str, figure_label: str) -> bool:
+    label = str(figure_label or "").strip()
+    if not label:
+        return False
+    return bool(
+        re.search(
+            rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
+            str(text or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _p62_full_figure_label_from_context(context: str, fallback_label: str) -> str:
+    fallback = str(fallback_label or "").strip()
+    candidates: list[str] = []
+    for match in re.finditer(
+        r"\b(?:fig(?:ure)?\.?)\s*([A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)*[A-Za-z]?)\b",
+        str(context or ""),
+        re.IGNORECASE,
+    ):
+        label = match.group(1).strip().rstrip(".")
+        if not label:
+            continue
+        if fallback:
+            lower = label.casefold()
+            base = fallback.casefold()
+            if lower == base or lower.startswith(base + "-") or lower.startswith(base + "."):
+                candidates.append(label)
+        else:
+            candidates.append(label)
+    if candidates:
+        return max(candidates, key=lambda item: (len(item), item))
+    return fallback
+
+
+def _p62_false_page_match_hint(page_text: str, figure_label: str) -> str:
+    text = str(page_text or "")
+    compact = re.sub(r"\s+", " ", text).strip()
+    lower = compact.casefold()
+    label = re.escape(str(figure_label or "").strip())
+    if not label:
+        return ""
+    label_ref = rf"(?:fig(?:ure)?\.?)\s*{label}(?![\w-]|\.[A-Za-z0-9])"
+    label_pos = re.search(label_ref, compact, re.IGNORECASE)
+    window = lower
+    if label_pos:
+        start = max(0, label_pos.start() - 500)
+        end = min(len(compact), label_pos.end() + 500)
+        window = compact[start:end].casefold()
+    if "table of contents" in window or re.search(r"\bcontents\b", window) and "....." in window:
+        return "toc_or_contents"
+    if "figure captions" in window or "list of figures" in window:
+        return "figure_caption_list"
+    if re.search(rf"\binsert\s+(?:fig(?:ure)?\.?)\s*{label}\b", window, re.IGNORECASE):
+        return "manuscript_placeholder"
+    if re.search(rf"\({label_ref}\)", window, re.IGNORECASE):
+        return "prose_parenthetical_reference"
+    if re.search(r"\breferences\b", window[:160], re.IGNORECASE):
+        return "backmatter_or_reference_text"
+    return ""
+
+
+def _p62_label_looks_caption_like(page_text: str, figure_label: str) -> bool:
+    label = str(figure_label or "").strip()
+    if not label:
+        return False
+    pattern = re.compile(
+        rf"^\s*(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])[\s:.\-–|]+.{8,}",
+        re.IGNORECASE,
+    )
+    return any(pattern.search(line) for line in str(page_text or "").splitlines())
+
+
+def _p62_caption_head_tokens(snippets: list[str], figure_label: str) -> list[str]:
+    label = str(figure_label or "").strip()
+    if not label:
+        return []
+    label_pattern = re.compile(
+        rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
+        re.IGNORECASE,
+    )
+    for snippet in snippets:
+        text = str(snippet or "")
+        match = label_pattern.search(text)
+        if not match:
+            continue
+        tokens = _tokenize_evidence_text(text[match.end() : match.end() + 360])
+        if tokens:
+            return tokens[:16]
+    return []
+
+
+def _p62_caption_head_present_near_label(
+    page_text: str,
+    figure_label: str,
+    snippets: list[str],
+) -> bool:
+    expected_tokens = _p62_caption_head_tokens(snippets, figure_label)
+    if not expected_tokens:
+        return False
+    label = str(figure_label or "").strip()
+    label_pattern = re.compile(
+        rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
+        re.IGNORECASE,
+    )
+    threshold = min(6, max(3, len(expected_tokens) // 2))
+    required_head = expected_tokens[: min(3, len(expected_tokens))]
+    for match in label_pattern.finditer(str(page_text or "")):
+        window_tokens = _tokenize_evidence_text(page_text[match.end() : match.end() + 700])
+        window_set = set(window_tokens)
+        if not window_set:
+            continue
+        head_hits = sum(1 for token in required_head if token in window_set)
+        total_hits = sum(1 for token in expected_tokens if token in window_set)
+        if head_hits >= max(1, len(required_head) - 1) and total_hits >= threshold:
+            return True
+    return False
+
+
+def _p62_pdf_page_visual_summaries(
+    pdf_path: Path,
+    page_numbers: Iterable[int],
+) -> dict[int, dict[str, Any]]:
+    wanted = {int(page_number) for page_number in page_numbers if int(page_number) > 0}
+    if not wanted or not pdf_path.is_file():
+        return {}
+    summaries: dict[int, dict[str, Any]] = {}
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            for page_number in sorted(wanted):
+                if page_number < 1 or page_number > len(doc):
+                    continue
+                page = doc.load_page(page_number - 1)
+                text_dict = page.get_text("dict") or {}
+                blocks = text_dict.get("blocks") or []
+                image_blocks = [block for block in blocks if block.get("type") == 1]
+                text_blocks = [block for block in blocks if block.get("type") == 0]
+                try:
+                    drawings = page.get_drawings()
+                except Exception:
+                    drawings = []
+                summaries[page_number] = {
+                    "page_number": page_number,
+                    "image_xrefs": len(page.get_images(full=True)),
+                    "image_blocks": len(image_blocks),
+                    "drawings": len(drawings),
+                    "text_blocks": len(text_blocks),
+                    "width": float(page.rect.width),
+                    "height": float(page.rect.height),
+                }
+        finally:
+            doc.close()
+    except Exception:
+        return summaries
+    return summaries
+
+
+def _resolve_p62_pdf_page_for_figure(
+    snippets: list[str],
+    pages: list[str],
+    figure_label: str,
+    *,
+    pdf_path: Path | None = None,
+) -> dict[str, Any]:
+    context = " ".join(snippets)
+    resolved_label = _p62_full_figure_label_from_context(context, figure_label)
+    candidate_labels = [label for label in dict.fromkeys([resolved_label, figure_label]) if label]
+    snippet_tokens = _evidence_snippet_tokens(snippets)
+
+    candidate_page_numbers: list[int] = []
+    candidate_label_by_page: dict[int, str] = {}
+    for label in candidate_labels:
+        for page_number, page_text in enumerate(pages, start=1):
+            if _figure_label_present_in_text_strict(page_text, label):
+                if page_number not in candidate_label_by_page:
+                    candidate_page_numbers.append(page_number)
+                    candidate_label_by_page[page_number] = label
+    if not candidate_page_numbers and figure_label:
+        for page_number, page_text in enumerate(pages, start=1):
+            if _figure_label_present_in_text(page_text, figure_label):
+                candidate_page_numbers.append(page_number)
+                candidate_label_by_page[page_number] = figure_label
+
+    if not candidate_page_numbers:
+        page_number, score = _best_pdf_text_page(snippets, pages)
+        return {
+            "page_number": page_number,
+            "match_score": score,
+            "label_pages": [],
+            "resolved_figure_label": resolved_label,
+            "candidates": [],
+            "selected_false_match_hint": "",
+            "source_visual_unavailable": False,
+        }
+
+    visual_summaries = (
+        _p62_pdf_page_visual_summaries(pdf_path, candidate_page_numbers)
+        if pdf_path is not None
+        else {}
+    )
+    candidates: list[dict[str, Any]] = []
+    for page_number in candidate_page_numbers:
+        label = candidate_label_by_page.get(page_number) or resolved_label or figure_label
+        page_text = pages[page_number - 1]
+        text_score = _pdf_page_match_score(snippet_tokens, page_text)
+        hint = _p62_false_page_match_hint(page_text, label)
+        visual = visual_summaries.get(page_number, {})
+        visual_count = int(visual.get("image_xrefs") or 0) + int(visual.get("image_blocks") or 0) + int(visual.get("drawings") or 0)
+        caption_head_near_label = _p62_caption_head_present_near_label(page_text, label, snippets)
+        caption_like = _p62_label_looks_caption_like(page_text, label) or caption_head_near_label
+        effective_hint = "" if caption_like and hint == "prose_parenthetical_reference" else hint
+        visual_score = min(0.45, 0.14 + float(visual_count) / 260.0) if visual_count else 0.0
+        score = text_score
+        if label == resolved_label and resolved_label != figure_label:
+            score += 0.35
+        if caption_like:
+            score += 0.55
+        score += visual_score
+        if effective_hint in {"toc_or_contents", "figure_caption_list", "manuscript_placeholder"}:
+            score -= 1.2
+        elif effective_hint in {"prose_parenthetical_reference", "backmatter_or_reference_text"}:
+            score -= 0.55
+        if not visual_count:
+            score -= 0.2
+        candidates.append(
+            {
+                "page_number": page_number,
+                "label": label,
+                "match_score": round(float(text_score), 4),
+                "rank_score": round(float(score), 4),
+                "caption_like": caption_like,
+                "caption_head_near_label": caption_head_near_label,
+                "visual_score": round(float(visual_score), 4),
+                "false_match_hint": effective_hint,
+                "visual_summary": visual,
+            }
+        )
+    candidates.sort(key=lambda item: (float(item.get("rank_score") or 0.0), -int(item.get("page_number") or 0)), reverse=True)
+    visual_candidates = [
+        item
+        for item in candidates
+        if not item.get("false_match_hint")
+        and (
+            int((item.get("visual_summary") or {}).get("image_xrefs") or 0)
+            + int((item.get("visual_summary") or {}).get("image_blocks") or 0)
+            + int((item.get("visual_summary") or {}).get("drawings") or 0)
+        )
+    ]
+    selected = visual_candidates[0] if visual_candidates else candidates[0]
+    visual_evidence_available = bool(visual_summaries)
+    source_visual_unavailable = visual_evidence_available and bool(candidates) and not visual_candidates and all(
+        item.get("false_match_hint") or not (
+            int((item.get("visual_summary") or {}).get("image_xrefs") or 0)
+            + int((item.get("visual_summary") or {}).get("image_blocks") or 0)
+            + int((item.get("visual_summary") or {}).get("drawings") or 0)
+        )
+        for item in candidates
+    )
+    return {
+        "page_number": int(selected.get("page_number") or 0),
+        "match_score": float(selected.get("match_score") or 0.0),
+        "label_pages": candidate_page_numbers[:20],
+        "resolved_figure_label": selected.get("label") or resolved_label,
+        "candidates": candidates[:12],
+        "selected_false_match_hint": selected.get("false_match_hint") or "",
+        "source_visual_unavailable": source_visual_unavailable,
+    }
+
+
 def _best_pdf_text_page_for_figure(
     snippets: list[str],
     pages: list[str],
@@ -1385,6 +1689,7 @@ def write_p62_marker_recovery_plan(
             defect,
             context_chars=context_chars,
         )
+        resolved_figure_label = _p62_full_figure_label_from_context(polish_context, figure_label)
         context_path = ""
         if polish_context:
             context_path = str(article_dir / "polish_context.txt")
@@ -1396,6 +1701,7 @@ def write_p62_marker_recovery_plan(
             "source_article": article.get("source_article") or article_id,
             "defect_index": defect_index,
             "figure_label": figure_label,
+            "resolved_figure_label": resolved_figure_label,
             "warning_index": extra.get("warning_index"),
             "warning_origin": extra.get("warning_origin") or extra.get("p62_subtype"),
             "status": "source_pdf_unavailable",
@@ -1421,6 +1727,9 @@ def write_p62_marker_recovery_plan(
             "text_layer_full_retry": False,
             "source_pdf_page_number": 0,
             "figure_label_pdf_page_candidates": [],
+            "page_resolver_candidates": [],
+            "selected_false_match_hint": "",
+            "source_visual_unavailable_reason": "",
             "require_label_match": require_label_match,
             "marker_page_number_zero_based": None,
             "marker_page_range": "",
@@ -1444,13 +1753,25 @@ def write_p62_marker_recovery_plan(
         if cache_key not in pdf_text_cache:
             pdf_text_cache[cache_key] = _pdf_text_pages(pdf_path, max_pages=max_pdf_pages)
         text_status, pages, text_error = pdf_text_cache[cache_key]
-        page_number, match_score, label_pages = _best_pdf_text_page_for_figure(snippets, pages, figure_label)
+        resolver = _resolve_p62_pdf_page_for_figure(
+            snippets,
+            pages,
+            resolved_figure_label or figure_label,
+            pdf_path=pdf_path,
+        )
+        page_number = int(resolver.get("page_number") or 0)
+        match_score = float(resolver.get("match_score") or 0.0)
+        label_pages = list(resolver.get("label_pages") or [])
         text_layer_full_retry = False
         if (
             retry_full_pdf_on_label_miss
             and require_label_match
-            and figure_label
-            and not label_pages
+            and (resolved_figure_label or figure_label)
+            and (
+                not label_pages
+                or resolver.get("source_visual_unavailable")
+                or resolver.get("selected_false_match_hint")
+            )
             and max_pdf_pages > 0
             and len(pages) >= max_pdf_pages
         ):
@@ -1458,22 +1779,29 @@ def write_p62_marker_recovery_plan(
             if full_cache_key not in pdf_text_cache:
                 pdf_text_cache[full_cache_key] = _pdf_text_pages(pdf_path, max_pages=None)
             full_text_status, full_pages, full_text_error = pdf_text_cache[full_cache_key]
-            full_page_number, full_match_score, full_label_pages = _best_pdf_text_page_for_figure(
+            full_resolver = _resolve_p62_pdf_page_for_figure(
                 snippets,
                 full_pages,
-                figure_label,
+                resolved_figure_label or figure_label,
+                pdf_path=pdf_path,
             )
+            full_page_number = int(full_resolver.get("page_number") or 0)
+            full_match_score = float(full_resolver.get("match_score") or 0.0)
+            full_label_pages = list(full_resolver.get("label_pages") or [])
             if full_label_pages:
                 text_status = full_text_status
                 pages = full_pages
                 text_error = full_text_error
+                resolver = full_resolver
                 page_number = full_page_number
                 match_score = full_match_score
                 label_pages = full_label_pages
                 text_layer_full_retry = True
+        resolved_figure_label = str(resolver.get("resolved_figure_label") or resolved_figure_label or figure_label)
         text_chars = sum(len(page_text) for page_text in pages)
         record.update(
             {
+                "resolved_figure_label": resolved_figure_label,
                 "text_layer_status": text_status,
                 "text_layer_error": text_error or "",
                 "text_layer_page_count": len(pages),
@@ -1484,6 +1812,8 @@ def write_p62_marker_recovery_plan(
                 "text_layer_full_retry": text_layer_full_retry,
                 "source_pdf_page_number": page_number,
                 "figure_label_pdf_page_candidates": label_pages[:20],
+                "page_resolver_candidates": resolver.get("candidates") or [],
+                "selected_false_match_hint": resolver.get("selected_false_match_hint") or "",
                 "match_score": round(float(match_score), 4),
             }
         )
@@ -1497,6 +1827,11 @@ def write_p62_marker_recovery_plan(
             continue
         if require_label_match and figure_label and not label_pages:
             record["status"] = "figure_label_page_unavailable"
+            records.append(record)
+            continue
+        if resolver.get("source_visual_unavailable"):
+            record["status"] = "source_visual_unavailable"
+            record["source_visual_unavailable_reason"] = "all_label_matches_are_false_or_without_visual_objects"
             records.append(record)
             continue
 
@@ -1521,7 +1856,7 @@ def write_p62_marker_recovery_plan(
                 ),
                 "existing_marker_output_validation": _validate_p62_marker_output(
                     marker_output_dir,
-                    figure_label,
+                    resolved_figure_label or figure_label,
                 ),
             }
         )
@@ -1677,6 +2012,453 @@ def _replace_p62_missing_warning_with_image(
     )
     patched = html[: target.start()] + replacement + html[target.end() :]
     return _clean_resolved_p62_missing_unit_classes(patched), 1
+
+
+def _p62_recovered_target_source(raw: str) -> str:
+    match = P62_RECOVERY_SOURCE_RE.search(raw)
+    if not match:
+        return ""
+    return unescape(str(match.group("source") or "")).strip()
+
+
+def _p62_id_matches_figure_label(raw_id: str, figure_label: str) -> bool:
+    normalized_id = re.sub(r"[^a-z0-9]+", "-", str(raw_id or "").casefold()).strip("-")
+    normalized_label = re.sub(r"[^a-z0-9]+", "-", str(figure_label or "").casefold()).strip("-")
+    return bool(normalized_label) and normalized_id in {
+        f"fig-{normalized_label}",
+        f"figure-{normalized_label}",
+    }
+
+
+def _p62_recovered_target_matches_label(
+    html: str,
+    match: re.Match[str],
+    figure_label: str,
+) -> bool:
+    label = str(figure_label or "").strip()
+    if not label:
+        return True
+    before = html[max(0, match.start() - 800) : match.start()]
+    div_tags = list(re.finditer(r"<div\b[^>]*>", before, flags=re.IGNORECASE | re.DOTALL))
+    if div_tags:
+        nearest_div = div_tags[-1].group(0)
+        id_match = ID_RE.search(nearest_div)
+        if id_match:
+            raw_id = unescape(str(id_match.group("id") or ""))
+            return _p62_id_matches_figure_label(raw_id, label)
+
+    after = html[match.end() : min(len(html), match.end() + 1800)]
+    return _figure_label_present_in_text(_visible_html_text(after), label)
+
+
+def _html_has_p62_stale_page_render_for_label(html: str, figure_label: str) -> bool:
+    return _html_has_p62_recovery_for_label(
+        html,
+        figure_label,
+        sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
+    )
+
+
+def _html_has_p62_recovery_for_label(
+    html: str,
+    figure_label: str,
+    *,
+    sources: set[str] | None = None,
+) -> bool:
+    for match in P62_RECOVERED_TARGET_ELEMENT_RE.finditer(html):
+        source = _p62_recovered_target_source(match.group(0))
+        if sources is not None and source not in sources:
+            continue
+        if _p62_recovered_target_matches_label(html, match, figure_label):
+            return True
+    return False
+
+
+def _p62_missing_warning_target_html(figure_label: str, *, reason: str = "") -> str:
+    label = str(figure_label or "").strip()
+    figure_text = f"Figure {label}" if label else "Figure"
+    reason_attr = f' data-z2m-recovery-status="{_escape_html_attr(reason)}"' if reason else ""
+    return (
+        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note"{reason_attr}>'
+        f"{escape(figure_text, quote=False)} image was not extracted into this HTML. "
+        "Please check the original PDF for the missing visual content."
+        "</p>"
+    )
+
+
+def _replace_p62_figure_unit_target_with_missing_warning(
+    html: str,
+    *,
+    figure_label: str,
+    reason: str,
+) -> tuple[str, int]:
+    label = str(figure_label or "").strip()
+    if not label:
+        return html, 0
+    div_re = re.compile(r"<div\b[^>]*>", re.IGNORECASE | re.DOTALL)
+    for div_match in div_re.finditer(html):
+        id_match = ID_RE.search(div_match.group(0))
+        if not id_match or not _p62_id_matches_figure_label(unescape(id_match.group("id")), label):
+            continue
+        close_index = html.find("</div>", div_match.end())
+        if close_index < 0:
+            continue
+        body = html[div_match.end() : close_index]
+        target = P62_MISSING_WARNING_ELEMENT_RE.search(body) or P62_RECOVERED_TARGET_ELEMENT_RE.search(body)
+        if not target:
+            continue
+        replacement = _p62_missing_warning_target_html(label, reason=reason)
+        if target.group(0) == replacement:
+            return html, 0
+        start = div_match.end() + target.start()
+        end = div_match.end() + target.end()
+        return html[:start] + replacement + html[end:], 1
+    return html, 0
+
+
+def _html_has_p62_missing_warning_for_figure_unit(html: str, figure_label: str) -> bool:
+    label = str(figure_label or "").strip()
+    if not label:
+        return False
+    div_re = re.compile(r"<div\b[^>]*>", re.IGNORECASE | re.DOTALL)
+    for div_match in div_re.finditer(html):
+        id_match = ID_RE.search(div_match.group(0))
+        if not id_match or not _p62_id_matches_figure_label(unescape(id_match.group("id")), label):
+            continue
+        close_index = html.find("</div>", div_match.end())
+        if close_index < 0:
+            continue
+        body = html[div_match.end() : close_index]
+        return bool(P62_MISSING_WARNING_ELEMENT_RE.search(body))
+    return False
+
+
+def _replace_p62_recovery_with_missing_warning(
+    html: str,
+    *,
+    figure_label: str,
+    reason: str,
+    replace_sources: set[str] | None = None,
+) -> tuple[str, int]:
+    sources = replace_sources or P62_PDF_DERIVED_RECOVERY_SOURCES
+    for match in P62_RECOVERED_TARGET_ELEMENT_RE.finditer(html):
+        existing_source = _p62_recovered_target_source(match.group(0))
+        if existing_source not in sources:
+            continue
+        if not _p62_recovered_target_matches_label(html, match, figure_label):
+            continue
+        replacement = _p62_missing_warning_target_html(figure_label, reason=reason)
+        return html[: match.start()] + replacement + html[match.end() :], 1
+    return html, 0
+
+
+def _replace_p62_stale_recovery_with_image(
+    html: str,
+    *,
+    figure_label: str,
+    data_url: str,
+    source: str,
+    source_detail: str,
+    replace_sources: set[str] | None = None,
+) -> tuple[str, int]:
+    sources = replace_sources or P62_LOW_FIDELITY_RECOVERY_SOURCES
+    for match in P62_RECOVERED_TARGET_ELEMENT_RE.finditer(html):
+        existing_source = _p62_recovered_target_source(match.group(0))
+        if existing_source not in sources:
+            continue
+        if not _p62_recovered_target_matches_label(html, match, figure_label):
+            continue
+        replacement = _p62_recovery_target_html(
+            data_url,
+            figure_label=figure_label,
+            source=source,
+            source_detail=source_detail,
+        )
+        return html[: match.start()] + replacement + html[match.end() :], 1
+    return html, 0
+
+
+def _p62_data_url_image_hash(raw: str) -> str:
+    match = re.search(r"\bsrc\s*=\s*([\"'])data:image/[^;]+;base64,(?P<data>.*?)\1", raw, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return ""
+    raw_data = str(match.group("data") or "")
+    try:
+        data = base64.b64decode(raw_data, validate=False)
+    except Exception:
+        return hashlib.sha256(raw_data.encode("utf-8", errors="replace")).hexdigest()
+    return hashlib.sha256(data).hexdigest()
+
+
+def _p62_figure_label_from_unit_id(raw_id: str) -> str:
+    value = str(raw_id or "").strip()
+    if not value.casefold().startswith("fig-"):
+        return ""
+    return re.sub(r"[^0-9A-Za-z]+", "-", value[4:]).strip("-")
+
+
+def _p62_extract_html_figure_units(html: str) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    div_re = re.compile(r"<div\b[^>]*>", re.IGNORECASE | re.DOTALL)
+    target_re = re.compile(r"<p\b[^>]*\bz2m-figure-target\b[^>]*>[\s\S]*?</p>", re.IGNORECASE)
+    fallback_img_target_re = re.compile(r"<p\b[^>]*>\s*<img\b[\s\S]*?</p>", re.IGNORECASE)
+    caption_re = re.compile(
+        r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>(?P<body>[\s\S]*?)</p>",
+        re.IGNORECASE,
+    )
+    for div_match in div_re.finditer(html):
+        div_tag = div_match.group(0)
+        id_match = ID_RE.search(div_tag)
+        if not id_match:
+            continue
+        raw_id = unescape(str(id_match.group("id") or ""))
+        label = _p62_figure_label_from_unit_id(raw_id)
+        if not label:
+            continue
+        if "z2m-figure-unit" not in div_tag and "z2m-float-unit" not in div_tag:
+            continue
+        close_index = html.find("</div>", div_match.end())
+        if close_index < 0:
+            continue
+        body = html[div_match.end() : close_index]
+        target_match = target_re.search(body) or fallback_img_target_re.search(body)
+        caption_match = caption_re.search(body)
+        img_hashes: list[str] = []
+        recovery_sources: list[str] = []
+        for img_match in re.finditer(r"<img\b[^>]*>", body, re.IGNORECASE | re.DOTALL):
+            image_hash = _p62_data_url_image_hash(img_match.group(0))
+            if image_hash:
+                img_hashes.append(image_hash)
+            source = _p62_recovered_target_source(img_match.group(0))
+            if source:
+                recovery_sources.append(source)
+        units.append(
+            {
+                "id": raw_id,
+                "label": label,
+                "start": div_match.start(),
+                "end": close_index + len("</div>"),
+                "body_start": div_match.end(),
+                "body_end": close_index,
+                "target_start": div_match.end() + target_match.start() if target_match else 0,
+                "target_end": div_match.end() + target_match.end() if target_match else 0,
+                "caption": _visible_html_text(caption_match.group("body")) if caption_match else "",
+                "image_hashes": img_hashes,
+                "recovery_sources": recovery_sources,
+            }
+        )
+    return units
+
+
+def _replace_p62_figure_unit_target_with_image(
+    html: str,
+    *,
+    figure_label: str,
+    data_url: str,
+    source: str,
+    source_detail: str,
+) -> tuple[str, int]:
+    for unit in _p62_extract_html_figure_units(html):
+        if str(unit.get("label") or "") != str(figure_label or ""):
+            continue
+        start = int(unit.get("target_start") or 0)
+        end = int(unit.get("target_end") or 0)
+        if not start or not end or end <= start:
+            continue
+        replacement = _p62_recovery_target_html(
+            data_url,
+            figure_label=figure_label,
+            source=source,
+            source_detail=source_detail,
+        )
+        return html[:start] + replacement + html[end:], 1
+    return html, 0
+
+
+def _repair_p62_duplicate_figure_images(
+    html: str,
+    *,
+    pdf_path: Path,
+    artifact_dir: Path,
+    zoom: float,
+) -> tuple[str, list[dict[str, Any]]]:
+    if not pdf_path.is_file():
+        return html, []
+    units = _p62_extract_html_figure_units(html)
+    by_hash: dict[str, list[dict[str, Any]]] = {}
+    for unit in units:
+        for image_hash in unit.get("image_hashes") or []:
+            by_hash.setdefault(str(image_hash), []).append(unit)
+
+    duplicate_groups = [
+        group
+        for group in by_hash.values()
+        if len({str(unit.get("label") or "") for unit in group}) > 1
+    ]
+    if not duplicate_groups:
+        return html, []
+
+    text_status, pages, text_error = _pdf_text_pages(pdf_path, max_pages=None)
+    if text_status == "missing" or not pages:
+        return html, []
+
+    patched = html
+    repairs: list[dict[str, Any]] = []
+    repaired_labels: set[str] = set()
+    for group in duplicate_groups:
+        labels = [str(unit.get("label") or "") for unit in group if unit.get("label")]
+        if not any(unit.get("recovery_sources") for unit in group):
+            continue
+        plain_candidates = [unit for unit in group if not unit.get("recovery_sources")]
+        repair_mode = "plain_duplicate_target"
+        if plain_candidates:
+            candidates = plain_candidates
+        else:
+            repair_mode = "recovered_duplicate_target"
+            candidates = [
+                unit
+                for unit in group
+                if set(str(source) for source in (unit.get("recovery_sources") or []))
+                & P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES
+            ]
+        for unit in candidates:
+            label = str(unit.get("label") or "")
+            if not label or label in repaired_labels:
+                continue
+            candidate_recovery_sources = [
+                str(source) for source in (unit.get("recovery_sources") or []) if str(source)
+            ]
+            caption = str(unit.get("caption") or "")
+            snippets = [caption] if caption else [f"Figure {label}"]
+            resolver = _resolve_p62_pdf_page_for_figure(snippets, pages, label, pdf_path=pdf_path)
+            page_number = int(resolver.get("page_number") or 0)
+            duplicate_hash = str((unit.get("image_hashes") or [""])[0])
+            if page_number <= 0 or bool(resolver.get("source_visual_unavailable")):
+                repairs.append(
+                    {
+                        "figure_label": label,
+                        "status": "unresolved",
+                        "reason": "pdf_page_unavailable_or_source_visual_unavailable",
+                        "duplicate_labels": labels,
+                        "duplicate_hash": duplicate_hash,
+                        "repair_mode": repair_mode,
+                        "candidate_recovery_sources": candidate_recovery_sources,
+                        "text_layer_status": text_status,
+                        "text_layer_error": text_error or "",
+                    }
+                )
+                continue
+            repair_dir = artifact_dir / "duplicate_visual_repair" / f"fig_{_slug(label, max_len=20)}"
+            asset = _recover_p62_detached_pdf_figure_plate_asset(
+                pdf_path,
+                page_number,
+                label,
+                repair_dir,
+                zoom=zoom,
+            )
+            if not (asset.get("path") and asset.get("source")):
+                asset = _recover_p62_pdf_figure_asset(
+                    pdf_path,
+                    page_number,
+                    label,
+                    repair_dir,
+                    zoom=zoom,
+                )
+            asset_path = Path(str(asset.get("path") or ""))
+            data_url = _data_url_from_image_file(asset_path) if asset_path else None
+            if not data_url or not asset.get("source"):
+                repairs.append(
+                    {
+                        "figure_label": label,
+                        "status": asset.get("status") or "unresolved",
+                        "reason": asset.get("error") or "no_recoverable_duplicate_asset",
+                        "source_pdf_page_number": page_number,
+                        "duplicate_labels": labels,
+                        "duplicate_hash": duplicate_hash,
+                        "repair_mode": repair_mode,
+                        "candidate_recovery_sources": candidate_recovery_sources,
+                        "resolver": resolver,
+                    }
+                )
+                continue
+            next_html, replacements = _replace_p62_figure_unit_target_with_image(
+                patched,
+                figure_label=label,
+                data_url=data_url,
+                source=str(asset.get("source") or ""),
+                source_detail=str(asset_path),
+            )
+            if not replacements:
+                repairs.append(
+                    {
+                        "figure_label": label,
+                        "status": "patch_missed",
+                        "reason": "figure_unit_target_not_found",
+                        "source_pdf_page_number": page_number,
+                        "duplicate_labels": labels,
+                        "duplicate_hash": duplicate_hash,
+                        "repair_mode": repair_mode,
+                        "candidate_recovery_sources": candidate_recovery_sources,
+                        "asset_path": str(asset_path),
+                        "asset_source": asset.get("source") or "",
+                    }
+                )
+                continue
+            patched = next_html
+            repaired_labels.add(label)
+            repairs.append(
+                {
+                    "figure_label": label,
+                    "status": "patched",
+                    "source_pdf_page_number": page_number,
+                    "duplicate_labels": labels,
+                    "duplicate_hash": duplicate_hash,
+                    "repair_mode": repair_mode,
+                    "candidate_recovery_sources": candidate_recovery_sources,
+                    "asset_path": str(asset_path),
+                    "asset_source": asset.get("source") or "",
+                    "asset_status": asset.get("status") or "",
+                    "resolver": resolver,
+                    "replacement_count": replacements,
+                }
+            )
+    return patched, repairs
+
+
+def _apply_p62_duplicate_figure_image_repairs(
+    targets: list[Path],
+    *,
+    pdf_path: Path,
+    artifact_dir: Path,
+    zoom: float,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "repair_count": 0,
+        "patched_paths": [],
+        "repairs": [],
+        "errors": [],
+    }
+    if not targets or not pdf_path.is_file():
+        return report
+    for target_path in targets:
+        try:
+            html = target_path.read_text(encoding="utf-8", errors="replace")
+            patched, repairs = _repair_p62_duplicate_figure_images(
+                html,
+                pdf_path=pdf_path,
+                artifact_dir=artifact_dir / _slug(target_path.stem, max_len=48),
+                zoom=zoom,
+            )
+            patched_repairs = [repair for repair in repairs if repair.get("status") == "patched"]
+            if patched_repairs and patched != html:
+                target_path.write_text(patched, encoding="utf-8")
+                report["patched_paths"].append(str(target_path))
+                report["repair_count"] += sum(int(repair.get("replacement_count") or 0) for repair in patched_repairs)
+            for repair in repairs:
+                report["repairs"].append({"path": str(target_path), **repair})
+        except OSError as exc:
+            report["errors"].append({"path": str(target_path), "error": str(exc)})
+    return report
 
 
 def _html_has_p62_missing_warning_for_label(html: str, figure_label: str) -> bool:
@@ -1850,10 +2632,865 @@ def _p62_render_fallback_page_number(
 
 
 def _p62_record_allows_page_render_fallback(record: dict[str, Any]) -> bool:
-    if str(record.get("status") or "") == "ready":
+    status = str(record.get("status") or "")
+    if status in {"source_visual_unavailable", "figure_label_page_unavailable"}:
+        return False
+    if status == "ready":
         return True
     label_pages = record.get("figure_label_pdf_page_candidates")
     return bool(label_pages)
+
+
+def _p62_false_match_hint_blocks_asset_recovery(
+    hint: str,
+    *,
+    caption_found: bool = False,
+) -> bool:
+    value = str(hint or "")
+    if value == "prose_parenthetical_reference" and caption_found:
+        return False
+    return value in P62_UNRECOVERABLE_FALSE_MATCH_HINTS
+
+
+def _p62_pdf_page_false_match_hint(pdf_path: Path, page_number: int, figure_label: str) -> str:
+    label = str(figure_label or "").strip()
+    if not label or not pdf_path.is_file() or page_number <= 0:
+        return ""
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            if page_number > len(doc):
+                return ""
+            page_text = str(doc.load_page(page_number - 1).get_text("text") or "")
+        finally:
+            doc.close()
+    except Exception:
+        return ""
+    return _p62_false_page_match_hint(page_text, label)
+
+
+def _p62_pdf_page_caption_label_found(pdf_path: Path, page_number: int, figure_label: str) -> bool:
+    label = str(figure_label or "").strip()
+    if not label or not pdf_path.is_file() or page_number <= 0:
+        return False
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            if page_number > len(doc):
+                return False
+            page = doc.load_page(page_number - 1)
+            return bool(_p62_page_caption_label_rects(page, label))
+        finally:
+            doc.close()
+    except Exception:
+        return False
+
+
+def _p62_pdf_visual_inventory(pdf_path: Path) -> dict[str, Any]:
+    if not pdf_path.is_file():
+        return {
+            "status": "missing_pdf",
+            "page_count": 0,
+            "native_image_count": 0,
+            "large_image_count": 0,
+            "pages_with_native_images": [],
+            "pages_with_large_images": [],
+            "error": "",
+        }
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            native_pages: list[dict[str, Any]] = []
+            large_pages: list[dict[str, Any]] = []
+            native_count = 0
+            large_count = 0
+            for page_index in range(len(doc)):
+                page = doc.load_page(page_index)
+                images = page.get_images(full=True)
+                large_images = _p62_large_image_rects(page)
+                native_count += len(images)
+                large_count += len(large_images)
+                if images:
+                    native_pages.append({"page_number": page_index + 1, "count": len(images)})
+                if large_images:
+                    large_pages.append({"page_number": page_index + 1, "count": len(large_images)})
+            return {
+                "status": "ready",
+                "page_count": len(doc),
+                "native_image_count": native_count,
+                "large_image_count": large_count,
+                "pages_with_native_images": native_pages[:40],
+                "pages_with_large_images": large_pages[:40],
+                "error": "",
+            }
+        finally:
+            doc.close()
+    except ImportError as exc:
+        return {
+            "status": "renderer_unavailable",
+            "page_count": 0,
+            "native_image_count": 0,
+            "large_image_count": 0,
+            "pages_with_native_images": [],
+            "pages_with_large_images": [],
+            "error": str(exc),
+        }
+    except Exception as exc:  # pragma: no cover - PDF-specific
+        return {
+            "status": "inventory_error",
+            "page_count": 0,
+            "native_image_count": 0,
+            "large_image_count": 0,
+            "pages_with_native_images": [],
+            "pages_with_large_images": [],
+            "error": str(exc),
+        }
+
+
+def _p62_pypdf_image_inventory(pdf_path: Path) -> dict[str, Any]:
+    if not pdf_path.is_file():
+        return {
+            "status": "missing_pdf",
+            "page_count": 0,
+            "image_count": 0,
+            "pages_with_images": [],
+            "errors": [],
+        }
+    try:
+        from pypdf import PdfReader  # type: ignore[import-not-found]
+
+        reader = PdfReader(str(pdf_path))
+        pages_with_images: list[dict[str, Any]] = []
+        errors: list[str] = []
+        image_count = 0
+        for index, page in enumerate(reader.pages, start=1):
+            try:
+                images = list(getattr(page, "images", []) or [])
+            except Exception as exc:  # pragma: no cover - PDF-specific
+                errors.append(f"page {index}: {exc}")
+                images = []
+            image_count += len(images)
+            if images:
+                pages_with_images.append({"page_number": index, "count": len(images)})
+        return {
+            "status": "ready" if not errors else "partial",
+            "page_count": len(reader.pages),
+            "image_count": image_count,
+            "pages_with_images": pages_with_images[:40],
+            "errors": errors[:8],
+        }
+    except ImportError as exc:
+        return {
+            "status": "parser_unavailable",
+            "page_count": 0,
+            "image_count": 0,
+            "pages_with_images": [],
+            "errors": [str(exc)],
+        }
+    except Exception as exc:  # pragma: no cover - PDF-specific
+        return {
+            "status": "inventory_error",
+            "page_count": 0,
+            "image_count": 0,
+            "pages_with_images": [],
+            "errors": [str(exc)],
+        }
+
+
+def _p62_external_pdf_tool_inventory() -> dict[str, Any]:
+    tools = {}
+    for tool_name in ("pdfimages", "mutool", "pdfinfo", "pdftoppm"):
+        tools[tool_name] = {"available": bool(shutil.which(tool_name))}
+    return {"status": "ready", "tools": tools}
+
+
+def _probe_p62_source_visual_unavailable(
+    pdf_path: Path,
+    figure_label: str,
+    artifact_dir: Path,
+    *,
+    snippets: list[str] | None = None,
+    zoom: float,
+    run_marker: bool = False,
+    marker_timeout_seconds: int = 300,
+    marker_output_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Verify whether a source visual can still be recovered for an unavailable P62 record."""
+
+    label = str(figure_label or "").strip()
+    report: dict[str, Any] = {
+        "status": "not_found",
+        "figure_label": label,
+        "source_pdf_path": str(pdf_path) if pdf_path else "",
+        "text_layer_status": "not_run",
+        "text_layer_error": "",
+        "text_layer_page_count": 0,
+        "label_pages": [],
+        "attempts": [],
+        "visual_inventory": {"status": "not_run"},
+        "pypdf_image_inventory": {"status": "not_run"},
+        "external_tool_inventory": {"status": "not_run"},
+        "marker_execution": {"status": "not_run"},
+        "marker_output_validation": {"status": "not_run"},
+        "asset": {},
+    }
+    if not label:
+        report["status"] = "missing_figure_label"
+        return report
+    if not pdf_path.is_file():
+        report["status"] = "missing_pdf"
+        return report
+
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    text_status, pages, text_error = _pdf_text_pages(pdf_path, max_pages=None)
+    report.update(
+        {
+            "text_layer_status": text_status,
+            "text_layer_error": text_error or "",
+            "text_layer_page_count": len(pages),
+        }
+    )
+    strict_pages = [
+        page_number
+        for page_number, page_text in enumerate(pages, start=1)
+        if _figure_label_present_in_text_strict(page_text, label)
+    ]
+    loose_pages = [
+        page_number
+        for page_number, page_text in enumerate(pages, start=1)
+        if page_number not in strict_pages and _figure_label_present_in_text(page_text, label)
+    ]
+    label_pages = strict_pages + loose_pages
+    report["label_pages"] = label_pages[:40]
+
+    if label_pages:
+        visual_summaries = _p62_pdf_page_visual_summaries(pdf_path, label_pages)
+        for page_number in label_pages:
+            page_text = pages[page_number - 1] if page_number <= len(pages) else ""
+            hint = _p62_false_page_match_hint(page_text, label)
+            caption_found = _p62_pdf_page_caption_label_found(pdf_path, page_number, label)
+            visual_summary = visual_summaries.get(page_number, {})
+            attempt: dict[str, Any] = {
+                "method": "pdf_label_page_asset",
+                "page_number": page_number,
+                "false_match_hint": hint,
+                "caption_found": caption_found,
+                "visual_summary": visual_summary,
+                "status": "not_run",
+            }
+            if _p62_false_match_hint_blocks_asset_recovery(hint, caption_found=caption_found):
+                attempt["status"] = "skipped_false_label_match"
+                report["attempts"].append(attempt)
+                continue
+
+            page_artifact_dir = artifact_dir / f"page_{page_number:04d}"
+            asset = _recover_p62_detached_pdf_figure_plate_asset(
+                pdf_path,
+                page_number,
+                label,
+                page_artifact_dir,
+                zoom=zoom,
+            )
+            if not (asset.get("path") and asset.get("source")):
+                asset = _recover_p62_pdf_figure_asset(
+                    pdf_path,
+                    page_number,
+                    label,
+                    page_artifact_dir,
+                    zoom=zoom,
+                )
+            attempt.update(
+                {
+                    "status": asset.get("status") or "not_found",
+                    "asset_path": asset.get("path") or "",
+                    "asset_source": asset.get("source") or "",
+                    "error": asset.get("error") or "",
+                }
+            )
+            report["attempts"].append(attempt)
+            if asset.get("path") and asset.get("source") and _data_url_from_image_file(Path(str(asset.get("path")))):
+                report["status"] = "found_asset"
+                report["asset"] = asset
+                return report
+    else:
+        report["attempts"].append(
+            {
+                "method": "pdf_label_page_asset",
+                "status": "skipped_no_label_pages",
+                "page_number": 0,
+                "false_match_hint": "",
+            }
+        )
+
+    report["visual_inventory"] = _p62_pdf_visual_inventory(pdf_path)
+    report["pypdf_image_inventory"] = _p62_pypdf_image_inventory(pdf_path)
+    report["external_tool_inventory"] = _p62_external_pdf_tool_inventory()
+
+    if run_marker:
+        marker_output_dir = marker_output_dir or (artifact_dir / "marker_full_pdf")
+        marker_record = {
+            "marker_output_dir": str(marker_output_dir),
+            "marker_command": build_marker_single_command(
+                pdf_path,
+                marker_output_dir,
+                "html",
+                page_range=None,
+                disable_multiprocessing=True,
+            ),
+        }
+        existing_execution_path = marker_output_dir / "marker_execution_report.json"
+        if existing_execution_path.is_file():
+            existing_execution = _load_json(existing_execution_path, default={})
+            report["marker_execution"] = {
+                **existing_execution,
+                "status": f"reused_{existing_execution.get('status') or 'unknown'}",
+            }
+        else:
+            report["marker_execution"] = _execute_p62_marker_command(
+                marker_record,
+                timeout_seconds=marker_timeout_seconds,
+            )
+        marker_validation = _validate_p62_marker_output(marker_output_dir, label)
+        report["marker_output_validation"] = marker_validation
+        marker_image = (
+            _first_valid_image_path(marker_validation)
+            if marker_validation.get("status") == "recovered_image"
+            else None
+        )
+        if marker_image is not None:
+            report["status"] = "found_asset"
+            report["asset"] = {
+                "status": "marker_image_recovered",
+                "path": str(marker_image),
+                "source": "marker_image",
+                "error": "",
+            }
+            return report
+
+    return report
+
+
+def _recover_p62_pdf_figure_asset(
+    pdf_path: Path,
+    page_number: int,
+    figure_label: str,
+    artifact_dir: Path,
+    *,
+    zoom: float,
+) -> dict[str, Any]:
+    if not pdf_path.is_file():
+        return {"status": "missing_pdf", "path": "", "source": "", "error": ""}
+    label = str(figure_label or "").strip()
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            if page_number < 1 or page_number > len(doc):
+                return {
+                    "status": "page_out_of_range",
+                    "path": "",
+                    "source": "",
+                    "error": f"page {page_number} outside 1..{len(doc)}",
+                }
+            page = doc.load_page(page_number - 1)
+            page_area = max(1.0, float(page.rect.width) * float(page.rect.height))
+            caption_label_rects = _p62_page_caption_label_rects(page, label)
+            caption_rects = caption_label_rects or _p62_page_label_rects(page, label)
+            false_match_hint = _p62_false_page_match_hint(str(page.get_text("text") or ""), label)
+            if _p62_false_match_hint_blocks_asset_recovery(
+                false_match_hint,
+                caption_found=bool(caption_label_rects),
+            ):
+                return {
+                    "status": f"false_label_match_{false_match_hint}",
+                    "path": "",
+                    "source": "",
+                    "error": "Matched PDF page is a false figure-label location, not a recoverable visual.",
+                    "page_number": page_number,
+                    "caption_found": bool(caption_rects),
+                    "false_match_hint": false_match_hint,
+                }
+            caption_rect = _fitz_union_rect(caption_rects) if caption_rects else None
+            graphics = _p62_page_graphic_rects(page)
+            selected = _p62_select_graphic_rects_for_caption(page.rect, graphics, caption_rect)
+            if not selected:
+                text_region = _p62_text_figure_region_for_caption(page, caption_rect)
+                if text_region is not None:
+                    text_region = _p62_expand_rect(
+                        text_region,
+                        page.rect,
+                        margin=max(4.0, min(page.rect.width, page.rect.height) * 0.01),
+                    )
+                    if _fitz_rect_area(text_region) > page_area * 0.001:
+                        out_path = artifact_dir / f"fig_{_slug(label or 'unknown', max_len=20)}_pdf_text_region_page_{page_number:04d}.png"
+                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                        pixmap = page.get_pixmap(matrix=fitz.Matrix(float(zoom), float(zoom)), clip=text_region, alpha=False)
+                        pixmap.save(str(out_path))
+                        if _data_url_from_image_file(out_path) is not None:
+                            return {
+                                "status": "text_region_rendered",
+                                "path": str(out_path),
+                                "source": "pdf_figure_region_render",
+                                "error": "",
+                                "page_number": page_number,
+                                "caption_found": bool(caption_rect),
+                                "selected_rect": _fitz_rect_tuple(text_region),
+                                "graphic_count": len(graphics),
+                                "selected_graphic_count": 0,
+                            }
+                return {
+                    "status": "no_figure_region",
+                    "path": "",
+                    "source": "",
+                    "error": "No graphic/image region could be associated with the target caption.",
+                    "page_number": page_number,
+                    "caption_found": bool(caption_rect),
+                    "graphic_count": len(graphics),
+                }
+
+            image_candidates = [item for item in selected if item.get("kind") == "image" and item.get("xref")]
+            selected_area = sum(_fitz_rect_area(item["rect"]) for item in selected)
+            drawing_count = sum(1 for item in selected if item.get("kind") == "drawing")
+            if (
+                len(image_candidates) == 1
+                and drawing_count == 0
+                and selected_area >= page_area * 0.01
+            ):
+                extracted = doc.extract_image(int(image_candidates[0]["xref"]))
+                data = extracted.get("image")
+                ext = str(extracted.get("ext") or "png").lower().lstrip(".")
+                if data:
+                    out_path = artifact_dir / f"fig_{_slug(label or 'unknown', max_len=20)}_pdf_native_page_{page_number:04d}.{ext}"
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    out_path.write_bytes(data)
+                    if _data_url_from_image_file(out_path) is not None:
+                        return {
+                            "status": "native_image_extracted",
+                            "path": str(out_path),
+                            "source": "pdf_native_image",
+                            "error": "",
+                            "page_number": page_number,
+                            "caption_found": bool(caption_rect),
+                            "selected_rect": _fitz_rect_tuple(image_candidates[0]["rect"]),
+                            "graphic_count": len(graphics),
+                        }
+
+            region = _fitz_union_rect([item["rect"] for item in selected])
+            region = _p62_expand_rect(region, page.rect, margin=max(4.0, min(page.rect.width, page.rect.height) * 0.01))
+            region = _p62_include_nearby_text_blocks(page, region, caption_rect)
+            region = _p62_expand_rect(region, page.rect, margin=max(3.0, min(page.rect.width, page.rect.height) * 0.006))
+            if _fitz_rect_area(region) <= page_area * 0.001:
+                return {
+                    "status": "figure_region_too_small",
+                    "path": "",
+                    "source": "",
+                    "error": "Associated figure region is too small.",
+                    "page_number": page_number,
+                    "caption_found": bool(caption_rect),
+                    "selected_rect": _fitz_rect_tuple(region),
+                }
+            out_path = artifact_dir / f"fig_{_slug(label or 'unknown', max_len=20)}_pdf_region_page_{page_number:04d}.png"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(float(zoom), float(zoom)), clip=region, alpha=False)
+            pixmap.save(str(out_path))
+            if _data_url_from_image_file(out_path) is None:
+                return {
+                    "status": "region_render_invalid",
+                    "path": str(out_path),
+                    "source": "",
+                    "error": "Rendered region did not produce a valid image.",
+                    "page_number": page_number,
+                    "caption_found": bool(caption_rect),
+                    "selected_rect": _fitz_rect_tuple(region),
+                }
+            return {
+                "status": "region_rendered",
+                "path": str(out_path),
+                "source": "pdf_figure_region_render",
+                "error": "",
+                "page_number": page_number,
+                "caption_found": bool(caption_rect),
+                "selected_rect": _fitz_rect_tuple(region),
+                "graphic_count": len(graphics),
+                "selected_graphic_count": len(selected),
+            }
+        finally:
+            doc.close()
+    except ImportError as exc:
+        return {"status": "renderer_unavailable", "path": "", "source": "", "error": str(exc)}
+    except Exception as exc:  # pragma: no cover - PDF/render specific
+        return {"status": "figure_asset_error", "path": "", "source": "", "error": str(exc)}
+
+
+def _recover_p62_detached_pdf_figure_plate_asset(
+    pdf_path: Path,
+    anchor_page_number: int,
+    figure_label: str,
+    artifact_dir: Path,
+    *,
+    zoom: float,
+) -> dict[str, Any]:
+    label_index = _p62_simple_numeric_figure_index(figure_label)
+    if label_index <= 0:
+        return {"status": "not_numeric_figure_label", "path": "", "source": "", "error": ""}
+    if not pdf_path.is_file():
+        return {"status": "missing_pdf", "path": "", "source": "", "error": ""}
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        doc = fitz.open(str(pdf_path))
+        try:
+            if anchor_page_number < 1 or anchor_page_number > len(doc):
+                return {
+                    "status": "page_out_of_range",
+                    "path": "",
+                    "source": "",
+                    "error": f"page {anchor_page_number} outside 1..{len(doc)}",
+                }
+            anchor_page = doc.load_page(anchor_page_number - 1)
+            anchor_text = str(anchor_page.get_text("text") or "").casefold()
+            if "accepted article" not in anchor_text:
+                return {"status": "not_detached_plate_pattern", "path": "", "source": "", "error": ""}
+            if _p62_large_image_rects(anchor_page):
+                return {"status": "anchor_page_has_large_image", "path": "", "source": "", "error": ""}
+
+            plates: list[dict[str, Any]] = []
+            for page_index in range(anchor_page_number - 1, len(doc)):
+                page = doc.load_page(page_index)
+                text = str(page.get_text("text") or "").strip()
+                text_blocks = sum(
+                    1
+                    for block in (page.get_text("dict") or {}).get("blocks") or []
+                    if block.get("type") == 0
+                )
+                if text_blocks > 8 and len(text) > 1600:
+                    continue
+                for image in _p62_large_image_rects(page):
+                    plates.append(
+                        {
+                            "page_number": page_index + 1,
+                            "rect": image["rect"],
+                            "xref": image.get("xref") or 0,
+                            "area_ratio": image.get("area_ratio") or 0.0,
+                        }
+                    )
+            plates.sort(
+                key=lambda item: (
+                    int(item.get("page_number") or 0),
+                    float(item["rect"].y0),
+                    float(item["rect"].x0),
+                )
+            )
+            if len(plates) < label_index:
+                return {
+                    "status": "detached_plate_not_found",
+                    "path": "",
+                    "source": "",
+                    "error": f"found {len(plates)} plate images, need figure index {label_index}",
+                    "plate_count": len(plates),
+                }
+            chosen = plates[label_index - 1]
+            page_number = int(chosen["page_number"])
+            page = doc.load_page(page_number - 1)
+            rect = _p62_expand_rect(chosen["rect"], page.rect, margin=3.0)
+            out_path = artifact_dir / f"fig_{_slug(figure_label or 'unknown', max_len=20)}_pdf_plate_page_{page_number:04d}.png"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(float(zoom), float(zoom)), clip=rect, alpha=False)
+            pixmap.save(str(out_path))
+            if _data_url_from_image_file(out_path) is None:
+                return {
+                    "status": "detached_plate_render_invalid",
+                    "path": str(out_path),
+                    "source": "",
+                    "error": "Rendered detached plate did not produce a valid image.",
+                    "page_number": page_number,
+                    "selected_rect": _fitz_rect_tuple(rect),
+                }
+            return {
+                "status": "detached_plate_rendered",
+                "path": str(out_path),
+                "source": "pdf_detached_plate_region_render",
+                "error": "",
+                "page_number": page_number,
+                "anchor_page_number": anchor_page_number,
+                "selected_rect": _fitz_rect_tuple(rect),
+                "plate_count": len(plates),
+                "plate_index": label_index,
+            }
+        finally:
+            doc.close()
+    except ImportError as exc:
+        return {"status": "renderer_unavailable", "path": "", "source": "", "error": str(exc)}
+    except Exception as exc:  # pragma: no cover - PDF/render specific
+        return {"status": "detached_plate_error", "path": "", "source": "", "error": str(exc)}
+
+
+def _p62_simple_numeric_figure_index(figure_label: str) -> int:
+    label = str(figure_label or "").strip()
+    if not re.fullmatch(r"\d{1,3}", label):
+        return 0
+    value = int(label)
+    return value if value > 0 else 0
+
+
+def _p62_large_image_rects(page: Any) -> list[dict[str, Any]]:
+    page_area = max(1.0, float(page.rect.width) * float(page.rect.height))
+    images: list[dict[str, Any]] = []
+    seen: set[tuple[int, tuple[float, float, float, float]]] = set()
+    try:
+        for image_info in page.get_images(full=True):
+            xref = int(image_info[0])
+            try:
+                rects = page.get_image_rects(xref)
+            except Exception:
+                rects = []
+            for rect in rects:
+                area_ratio = _fitz_rect_area(rect) / page_area
+                key = (xref, _fitz_rect_tuple(rect))
+                if area_ratio < 0.04 or key in seen:
+                    continue
+                seen.add(key)
+                images.append({"xref": xref, "rect": rect, "area_ratio": area_ratio})
+    except Exception:
+        return images
+    return images
+
+
+def _p62_page_caption_label_rects(page: Any, figure_label: str) -> list[Any]:
+    label = str(figure_label or "").strip()
+    if not label:
+        return []
+    caption_pattern = re.compile(
+        rf"^\s*(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])\s*[.:|]",
+        re.IGNORECASE,
+    )
+    rects: list[Any] = []
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        blocks = (page.get_text("dict") or {}).get("blocks") or []
+        for block in blocks:
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines") or []:
+                text = "".join(span.get("text", "") for span in line.get("spans") or [])
+                if not caption_pattern.search(text):
+                    continue
+                bbox = line.get("bbox") or block.get("bbox")
+                if bbox:
+                    rects.append(fitz.Rect(bbox))
+    except Exception:
+        return rects
+    return rects
+
+
+def _p62_page_label_rects(page: Any, figure_label: str) -> list[Any]:
+    label = str(figure_label or "").strip()
+    if not label:
+        return []
+    rects: list[Any] = []
+    for needle in (f"Figure {label}", f"FIGURE {label}", f"Fig. {label}", f"Fig {label}"):
+        try:
+            rects.extend(page.search_for(needle))
+        except Exception:
+            continue
+    return rects
+
+
+def _p62_page_graphic_rects(page: Any) -> list[dict[str, Any]]:
+    graphics: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, tuple[float, float, float, float]]] = set()
+    try:
+        for image_info in page.get_images(full=True):
+            xref = int(image_info[0])
+            try:
+                rects = page.get_image_rects(xref)
+            except Exception:
+                rects = []
+            for rect in rects:
+                key = ("image", xref, _fitz_rect_tuple(rect))
+                if key not in seen and _fitz_rect_area(rect) > 1.0:
+                    seen.add(key)
+                    graphics.append({"kind": "image", "xref": xref, "rect": rect})
+    except Exception:
+        pass
+    try:
+        for drawing in page.get_drawings():
+            rect = drawing.get("rect")
+            if rect is None or _fitz_rect_area(rect) <= 4.0:
+                continue
+            key = ("drawing", 0, _fitz_rect_tuple(rect))
+            if key in seen:
+                continue
+            seen.add(key)
+            graphics.append({"kind": "drawing", "xref": 0, "rect": rect})
+    except Exception:
+        pass
+    return graphics
+
+
+def _p62_select_graphic_rects_for_caption(
+    page_rect: Any,
+    graphics: list[dict[str, Any]],
+    caption_rect: Any | None,
+) -> list[dict[str, Any]]:
+    if not graphics:
+        return []
+    page_height = max(1.0, float(page_rect.height))
+    page_width = max(1.0, float(page_rect.width))
+    page_area = page_width * page_height
+    if caption_rect is None:
+        return sorted(graphics, key=lambda item: _fitz_rect_area(item["rect"]), reverse=True)[:8]
+
+    above: list[tuple[float, dict[str, Any]]] = []
+    below: list[tuple[float, dict[str, Any]]] = []
+    overlapping: list[tuple[float, dict[str, Any]]] = []
+    for item in graphics:
+        rect = item["rect"]
+        area = _fitz_rect_area(rect)
+        if area < max(4.0, page_area * 0.00005):
+            continue
+        x_overlap = _fitz_x_overlap_ratio(rect, caption_rect)
+        if x_overlap <= 0 and area < page_area * 0.03:
+            continue
+        if rect.y1 <= caption_rect.y0 + 3:
+            distance = max(0.0, float(caption_rect.y0 - rect.y1))
+            if distance <= page_height * 0.62:
+                above.append((distance - min(0.3, x_overlap) * 40.0, item))
+        elif rect.y0 >= caption_rect.y1 - 3:
+            distance = max(0.0, float(rect.y0 - caption_rect.y1))
+            if distance <= page_height * 0.62:
+                below.append((distance - min(0.3, x_overlap) * 40.0, item))
+        else:
+            overlapping.append((0.0, item))
+
+    chosen_pool = above if above else below if below else overlapping
+    if not chosen_pool:
+        return sorted(graphics, key=lambda item: _fitz_rect_area(item["rect"]), reverse=True)[:8]
+    chosen_pool.sort(key=lambda item: item[0])
+    nearest_distance = chosen_pool[0][0]
+    selected = [
+        item
+        for distance, item in chosen_pool
+        if distance <= nearest_distance + page_height * 0.28
+    ]
+    if not selected:
+        selected = [chosen_pool[0][1]]
+    return selected
+
+
+def _p62_text_figure_region_for_caption(page: Any, caption_rect: Any | None) -> Any | None:
+    if caption_rect is None:
+        return None
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        blocks = (page.get_text("dict") or {}).get("blocks") or []
+    except Exception:
+        return None
+    page_height = max(1.0, float(page.rect.height))
+    page_width = max(1.0, float(page.rect.width))
+    min_y = max(0.0, float(caption_rect.y0) - page_height * 0.48)
+    candidates: list[Any] = []
+    for block in blocks:
+        if block.get("type") != 0 or not block.get("bbox"):
+            continue
+        try:
+            rect = fitz.Rect(block.get("bbox"))
+        except Exception:
+            continue
+        if _fitz_rects_intersect(rect, caption_rect):
+            continue
+        if rect.y1 > caption_rect.y0 + 3:
+            continue
+        if rect.y1 < min_y:
+            continue
+        if rect.width < page_width * 0.18 or rect.height < 5:
+            continue
+        if _fitz_x_overlap_ratio(rect, caption_rect) <= 0 and rect.width < page_width * 0.55:
+            continue
+        candidates.append(rect)
+    if not candidates:
+        return None
+    region = _fitz_union_rect(candidates)
+    if _fitz_rect_area(region) < page_width * page_height * 0.01:
+        return None
+    return region
+
+
+def _p62_include_nearby_text_blocks(page: Any, region: Any, caption_rect: Any | None) -> Any:
+    try:
+        blocks = (page.get_text("dict") or {}).get("blocks") or []
+    except Exception:
+        return region
+    expanded = _p62_expand_rect(region, page.rect, margin=12.0)
+    rects = [region]
+    for block in blocks:
+        if block.get("type") != 0 or not block.get("bbox"):
+            continue
+        try:
+            import fitz  # type: ignore[import-not-found]
+
+            rect = fitz.Rect(block.get("bbox"))
+        except Exception:
+            continue
+        if caption_rect is not None and _fitz_rects_intersect(rect, caption_rect):
+            continue
+        if _fitz_rects_intersect(rect, expanded):
+            rects.append(rect)
+    return _fitz_union_rect(rects)
+
+
+def _fitz_rect_area(rect: Any) -> float:
+    return max(0.0, float(rect.width)) * max(0.0, float(rect.height))
+
+
+def _fitz_x_overlap_ratio(a: Any, b: Any) -> float:
+    overlap = max(0.0, min(float(a.x1), float(b.x1)) - max(float(a.x0), float(b.x0)))
+    return overlap / max(1.0, min(float(a.width), float(b.width)))
+
+
+def _fitz_rects_intersect(a: Any, b: Any) -> bool:
+    return min(float(a.x1), float(b.x1)) > max(float(a.x0), float(b.x0)) and min(float(a.y1), float(b.y1)) > max(float(a.y0), float(b.y0))
+
+
+def _fitz_union_rect(rects: list[Any]) -> Any:
+    if not rects:
+        raise ValueError("Cannot union empty rect list")
+    rect = rects[0]
+    for other in rects[1:]:
+        rect = rect | other
+    return rect
+
+
+def _p62_expand_rect(rect: Any, page_rect: Any, *, margin: float) -> Any:
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        return fitz.Rect(
+            max(float(page_rect.x0), float(rect.x0) - margin),
+            max(float(page_rect.y0), float(rect.y0) - margin),
+            min(float(page_rect.x1), float(rect.x1) + margin),
+            min(float(page_rect.y1), float(rect.y1) + margin),
+        )
+    except Exception:
+        return rect
+
+
+def _fitz_rect_tuple(rect: Any) -> tuple[float, float, float, float]:
+    return (
+        round(float(rect.x0), 2),
+        round(float(rect.y0), 2),
+        round(float(rect.x1), 2),
+        round(float(rect.y1), 2),
+    )
 
 
 def _p62_patch_targets_for_record(
@@ -2036,6 +3673,23 @@ def write_p62_image_recovery_stage(
         or 1.5
     )
     marker_timeout = int(gate_config.get("p62_image_recovery_marker_timeout_seconds") or 300)
+    probe_source_visual_unavailable = bool(
+        gate_config.get("p62_image_recovery_probe_source_visual_unavailable", True)
+    )
+    probe_marker_for_unavailable = bool(
+        gate_config.get("p62_image_recovery_probe_marker_for_unavailable", execute_marker)
+    )
+    probe_marker_timeout = int(
+        gate_config.get("p62_image_recovery_source_visual_probe_marker_timeout_seconds")
+        or marker_timeout
+    )
+    replace_page_render = bool(gate_config.get("p62_image_recovery_replace_page_render", True))
+    remove_false_match_recovery = bool(
+        gate_config.get("p62_image_recovery_remove_false_match_recovery", True)
+    )
+    repair_duplicate_figure_images = bool(
+        gate_config.get("p62_image_recovery_repair_duplicate_figure_images", True)
+    )
 
     manifest = _load_json(run_dir / "manifest.json", default={})
     manifest_by_article = _manifest_article_by_id(manifest)
@@ -2051,6 +3705,7 @@ def write_p62_image_recovery_stage(
     for index, record in enumerate(records, start=1):
         article_id = str(record.get("article") or f"article_{index}")
         figure_label = str(record.get("figure_label") or "").strip()
+        resolved_figure_label = str(record.get("resolved_figure_label") or figure_label).strip()
         artifact_dir = recovery_root / f"{index:03d}_{_slug(article_id, max_len=72)}"
         if figure_label:
             artifact_dir = artifact_dir / f"fig_{_slug(figure_label, max_len=20)}"
@@ -2069,8 +3724,11 @@ def write_p62_image_recovery_stage(
             "article": article_id,
             "source_article": record.get("source_article") or article_id,
             "figure_label": figure_label,
+            "resolved_figure_label": resolved_figure_label,
             "warning_index": record.get("warning_index"),
             "plan_status": record.get("status"),
+            "selected_false_match_hint": record.get("selected_false_match_hint") or "",
+            "source_visual_unavailable_reason": record.get("source_visual_unavailable_reason") or "",
             "source_pdf_path": str(pdf_path) if record.get("source_pdf_path") else "",
             "source_pdf_page_number": source_page_number,
             "patch_target_paths": [str(path) for path in targets],
@@ -2081,42 +3739,131 @@ def write_p62_image_recovery_stage(
             "recovery_detail": "",
             "marker_execution": {"status": "not_run"},
             "marker_output_validation": record.get("existing_marker_output_validation") or {"status": "not_run"},
+            "source_visual_probe_status": "not_run",
+            "source_visual_probe": {"status": "not_run"},
+            "figure_asset_status": "not_run",
+            "figure_asset_path": "",
+            "figure_asset_source": "",
+            "figure_asset_error": "",
             "page_render_status": "not_run",
             "page_render_path": "",
             "page_render_page_number": 0,
             "page_render_selection_reason": "",
+            "existing_page_render_recovery": False,
+            "existing_page_render_upgrade": False,
+            "page_render_recovery_removed": False,
+            "existing_false_match_recovery": False,
+            "false_match_recovery_removed": False,
+            "source_page_false_match_hint": "",
+            "source_page_caption_found": False,
+            "duplicate_visual_repair_count": 0,
+            "duplicate_visual_repairs": [],
             "patch_replacement_count": 0,
             "patched_paths": [],
             "status": "unresolved",
             "unresolved_reason": "",
         }
+        source_page_false_match_hint = _p62_pdf_page_false_match_hint(
+            pdf_path,
+            source_page_number,
+            resolved_figure_label or figure_label,
+        )
+        item["source_page_false_match_hint"] = source_page_false_match_hint
+        source_page_caption_found = _p62_pdf_page_caption_label_found(
+            pdf_path,
+            source_page_number,
+            resolved_figure_label or figure_label,
+        )
+        item["source_page_caption_found"] = source_page_caption_found
 
         if apply_patches and targets:
             warning_still_present = False
+            stale_page_render_present = False
+            false_match_recovery_present = False
             for target_path in targets:
                 try:
                     target_html = target_path.read_text(encoding="utf-8", errors="replace")
                 except OSError as exc:
                     item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
                     continue
-                if _html_has_p62_missing_warning_for_label(target_html, figure_label):
+                if _html_has_p62_missing_warning_for_label(
+                    target_html,
+                    figure_label,
+                ) or _html_has_p62_missing_warning_for_figure_unit(
+                    target_html,
+                    figure_label or resolved_figure_label,
+                ):
                     warning_still_present = True
                     break
+                if replace_page_render and _html_has_p62_stale_page_render_for_label(
+                    target_html,
+                    figure_label or resolved_figure_label,
+                ):
+                    stale_page_render_present = True
+                if (
+                    remove_false_match_recovery
+                    and _p62_false_match_hint_blocks_asset_recovery(
+                        source_page_false_match_hint,
+                        caption_found=source_page_caption_found,
+                    )
+                    and _html_has_p62_recovery_for_label(
+                        target_html,
+                        figure_label or resolved_figure_label,
+                        sources=P62_PDF_DERIVED_RECOVERY_SOURCES,
+                    )
+                ):
+                    false_match_recovery_present = True
+            item["existing_page_render_recovery"] = stale_page_render_present
+            item["existing_false_match_recovery"] = false_match_recovery_present
             if not warning_still_present:
-                item["asset_status"] = "ready"
-                item["recovery_source"] = "existing_patched_html"
-                item["recovery_detail"] = "; ".join(str(path) for path in targets)
-                item["status"] = "already_patched"
-                recovered_records.append(item)
-                if index % 10 == 0 or index == len(records):
-                    ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
-                    patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+                if false_match_recovery_present:
                     print(
-                        "P62 image recovery progress: "
-                        f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                        "P62 false-match recovery probe: "
+                        f"{index}/{len(records)} article={_console_text(article_id)} "
+                        f"fig={figure_label or '?'} hint={source_page_false_match_hint or '?'}",
                         flush=True,
                     )
-                continue
+                elif stale_page_render_present:
+                    print(
+                        "P62 page-render upgrade attempt: "
+                        f"{index}/{len(records)} article={_console_text(article_id)} fig={figure_label or '?'}",
+                        flush=True,
+                    )
+                else:
+                    duplicate_repair = (
+                        _apply_p62_duplicate_figure_image_repairs(
+                            targets,
+                            pdf_path=pdf_path,
+                            artifact_dir=artifact_dir,
+                            zoom=render_zoom,
+                        )
+                        if repair_duplicate_figure_images
+                        else {"repair_count": 0, "patched_paths": [], "repairs": [], "errors": []}
+                    )
+                    item["duplicate_visual_repair_count"] = int(duplicate_repair.get("repair_count") or 0)
+                    item["duplicate_visual_repairs"] = duplicate_repair.get("repairs") or []
+                    if duplicate_repair.get("errors"):
+                        item.setdefault("patch_errors", []).extend(duplicate_repair.get("errors") or [])
+                    item["asset_status"] = "ready"
+                    item["recovery_source"] = "existing_patched_html"
+                    item["recovery_detail"] = "; ".join(str(path) for path in targets)
+                    if item["duplicate_visual_repair_count"]:
+                        item["patch_replacement_count"] = item["duplicate_visual_repair_count"]
+                        item["patched_paths"] = list(duplicate_repair.get("patched_paths") or [])
+                        item["status"] = "patched_duplicate_visuals"
+                        patched_article_ids.add(article_id)
+                    else:
+                        item["status"] = "already_patched"
+                    recovered_records.append(item)
+                    if index % 10 == 0 or index == len(records):
+                        ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
+                        patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+                        print(
+                            "P62 image recovery progress: "
+                            f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                            flush=True,
+                        )
+                    continue
 
         if not pdf_path.is_file():
             item["unresolved_reason"] = "source_pdf_unavailable"
@@ -2128,16 +3875,23 @@ def write_p62_image_recovery_stage(
             continue
 
         marker_validation = dict(record.get("existing_marker_output_validation") or {})
-        if execute_marker and marker_validation.get("status") != "recovered_image":
+        marker_command_available = bool(record.get("marker_command"))
+        marker_output_dir_raw = str(record.get("marker_output_dir") or "").strip()
+        if (
+            execute_marker
+            and marker_validation.get("status") != "recovered_image"
+            and marker_command_available
+            and marker_output_dir_raw
+        ):
             print(
                 "P62 marker attempt: "
-                f"{index}/{len(records)} article={article_id} fig={figure_label or '?'} "
+                f"{index}/{len(records)} article={_console_text(article_id)} fig={figure_label or '?'} "
                 f"page_range={record.get('marker_page_range') or '?'} timeout={marker_timeout}s",
                 flush=True,
             )
             item["marker_execution"] = _execute_p62_marker_command(record, timeout_seconds=marker_timeout)
-            marker_output_dir = Path(str(record.get("marker_output_dir") or ""))
-            marker_validation = _validate_p62_marker_output(marker_output_dir, figure_label)
+            marker_output_dir = Path(marker_output_dir_raw)
+            marker_validation = _validate_p62_marker_output(marker_output_dir, resolved_figure_label or figure_label)
             print(
                 "P62 marker result: "
                 f"{index}/{len(records)} status={item['marker_execution'].get('status')} "
@@ -2145,6 +3899,12 @@ def write_p62_image_recovery_stage(
                 f"elapsed={item['marker_execution'].get('elapsed_seconds')}s",
                 flush=True,
             )
+        elif execute_marker and marker_validation.get("status") != "recovered_image":
+            item["marker_execution"] = {
+                "status": "skipped",
+                "reason": "marker_command_or_output_dir_unavailable",
+                "returncode": None,
+            }
         item["marker_output_validation"] = marker_validation
 
         data_url = ""
@@ -2160,7 +3920,308 @@ def write_p62_image_recovery_stage(
             recovery_source = "marker_image"
             recovery_detail = str(marker_image)
 
+        source_page_is_false_match = _p62_false_match_hint_blocks_asset_recovery(
+            source_page_false_match_hint,
+            caption_found=source_page_caption_found,
+        )
+        needs_source_visual_probe = (
+            str(record.get("status") or "") == "source_visual_unavailable"
+            or bool(item.get("existing_false_match_recovery"))
+            or source_page_is_false_match
+        )
+        if not data_url and needs_source_visual_probe:
+            if probe_source_visual_unavailable:
+                print(
+                    "P62 source-visual probe: "
+                    f"{index}/{len(records)} article={_console_text(article_id)} fig={figure_label or '?'} "
+                    f"marker={probe_marker_for_unavailable} timeout={probe_marker_timeout}s",
+                    flush=True,
+                )
+                source_visual_probe = _probe_p62_source_visual_unavailable(
+                    pdf_path,
+                    resolved_figure_label or figure_label,
+                    artifact_dir / "source_visual_probe",
+                    snippets=[
+                        str(snippet)
+                        for snippet in (record.get("problem_snippets") or [])
+                        if str(snippet).strip()
+                    ],
+                    zoom=render_zoom,
+                    run_marker=probe_marker_for_unavailable,
+                    marker_timeout_seconds=probe_marker_timeout,
+                    marker_output_dir=(
+                        recovery_root
+                        / "_source_visual_probe_marker"
+                        / (
+                            hashlib.sha1(str(pdf_path.resolve(strict=False)).encode("utf-8")).hexdigest()[:12]
+                            + "_"
+                            + _slug(pdf_path.stem, max_len=48)
+                        )
+                    )
+                    if probe_marker_for_unavailable
+                    else None,
+                )
+                item["source_visual_probe"] = source_visual_probe
+                item["source_visual_probe_status"] = source_visual_probe.get("status") or "unknown"
+                probe_asset = source_visual_probe.get("asset") if isinstance(source_visual_probe.get("asset"), dict) else {}
+                if probe_asset.get("path") and probe_asset.get("source"):
+                    asset_path = Path(str(probe_asset.get("path")))
+                    data_url = _data_url_from_image_file(asset_path) or ""
+                    if data_url:
+                        recovery_source = str(probe_asset.get("source") or "source_visual_probe")
+                        recovery_detail = str(asset_path)
+                        item.update(
+                            {
+                                "figure_asset_status": probe_asset.get("status") or "source_visual_probe_asset",
+                                "figure_asset_path": str(asset_path),
+                                "figure_asset_source": recovery_source,
+                                "figure_asset_error": probe_asset.get("error") or "",
+                                "figure_asset_page_number": probe_asset.get("page_number") or 0,
+                                "figure_asset_selected_rect": probe_asset.get("selected_rect"),
+                                "figure_asset_caption_found": probe_asset.get("caption_found"),
+                                "figure_asset_plate_index": probe_asset.get("plate_index"),
+                                "figure_asset_plate_count": probe_asset.get("plate_count"),
+                            }
+                        )
+                print(
+                    "P62 source-visual probe result: "
+                    f"{index}/{len(records)} status={item['source_visual_probe_status']} "
+                    f"source={recovery_source or 'unresolved'}",
+                    flush=True,
+                )
+            if not data_url:
+                if item.get("existing_false_match_recovery") and apply_patches:
+                    patched_paths: list[str] = []
+                    replacement_count = 0
+                    for target_path in targets:
+                        try:
+                            html = target_path.read_text(encoding="utf-8", errors="replace")
+                            patched, replacements = _replace_p62_recovery_with_missing_warning(
+                                html,
+                                figure_label=figure_label or resolved_figure_label,
+                                reason="source_visual_unavailable",
+                            )
+                            if replacements:
+                                target_path.write_text(patched, encoding="utf-8")
+                                patched_paths.append(str(target_path))
+                                replacement_count += replacements
+                        except OSError as exc:
+                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
+                    item["patch_replacement_count"] = replacement_count
+                    item["patched_paths"] = patched_paths
+                    item["false_match_recovery_removed"] = bool(replacement_count)
+                    if replacement_count:
+                        patched_article_ids.add(article_id)
+                if item.get("existing_page_render_recovery") and apply_patches:
+                    patched_paths = list(item.get("patched_paths") or [])
+                    replacement_count = int(item.get("patch_replacement_count") or 0)
+                    for target_path in targets:
+                        try:
+                            html = target_path.read_text(encoding="utf-8", errors="replace")
+                            patched, replacements = _replace_p62_recovery_with_missing_warning(
+                                html,
+                                figure_label=figure_label or resolved_figure_label,
+                                reason="source_visual_unavailable",
+                                replace_sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
+                            )
+                            if replacements:
+                                target_path.write_text(patched, encoding="utf-8")
+                                patched_paths.append(str(target_path))
+                                replacement_count += replacements
+                        except OSError as exc:
+                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
+                    item["patch_replacement_count"] = replacement_count
+                    item["patched_paths"] = patched_paths
+                    item["page_render_recovery_removed"] = bool(replacement_count)
+                    if replacement_count:
+                        patched_article_ids.add(article_id)
+                if source_page_is_false_match and apply_patches:
+                    patched_paths = list(item.get("patched_paths") or [])
+                    replacement_count = int(item.get("patch_replacement_count") or 0)
+                    for target_path in targets:
+                        try:
+                            html = target_path.read_text(encoding="utf-8", errors="replace")
+                            patched, replacements = _replace_p62_figure_unit_target_with_missing_warning(
+                                html,
+                                figure_label=figure_label or resolved_figure_label,
+                                reason="source_visual_unavailable",
+                            )
+                            if replacements:
+                                target_path.write_text(patched, encoding="utf-8")
+                                patched_paths.append(str(target_path))
+                                replacement_count += replacements
+                        except OSError as exc:
+                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
+                    item["patch_replacement_count"] = replacement_count
+                    item["patched_paths"] = patched_paths
+                    if replacement_count:
+                        patched_article_ids.add(article_id)
+                if item.get("existing_false_match_recovery"):
+                    item["unresolved_reason"] = (
+                        "existing_recovery_matches_false_pdf_page:"
+                        f"{source_page_false_match_hint or 'unknown'}"
+                    )
+                elif item.get("existing_page_render_recovery"):
+                    item["unresolved_reason"] = "existing_pdf_page_render_no_higher_fidelity_asset"
+                elif source_page_is_false_match:
+                    item["unresolved_reason"] = (
+                        "source_pdf_page_false_match:"
+                        f"{source_page_false_match_hint or 'unknown'}"
+                    )
+                else:
+                    item["unresolved_reason"] = "source_visual_unavailable"
+                recovered_records.append(item)
+                continue
+
         if not data_url:
+            figure_asset = _recover_p62_detached_pdf_figure_plate_asset(
+                pdf_path,
+                source_page_number,
+                resolved_figure_label or figure_label,
+                artifact_dir,
+                zoom=render_zoom,
+            )
+            if not (figure_asset.get("path") and figure_asset.get("source")):
+                figure_asset = _recover_p62_pdf_figure_asset(
+                    pdf_path,
+                    source_page_number,
+                    resolved_figure_label or figure_label,
+                    artifact_dir,
+                    zoom=render_zoom,
+                )
+            item.update(
+                {
+                    "figure_asset_status": figure_asset.get("status"),
+                    "figure_asset_path": figure_asset.get("path") or "",
+                    "figure_asset_source": figure_asset.get("source") or "",
+                    "figure_asset_error": figure_asset.get("error") or "",
+                    "figure_asset_page_number": figure_asset.get("page_number") or 0,
+                    "figure_asset_selected_rect": figure_asset.get("selected_rect"),
+                    "figure_asset_caption_found": figure_asset.get("caption_found"),
+                    "figure_asset_plate_index": figure_asset.get("plate_index"),
+                    "figure_asset_plate_count": figure_asset.get("plate_count"),
+                }
+            )
+            if figure_asset.get("path") and figure_asset.get("source"):
+                asset_path = Path(str(figure_asset.get("path")))
+                data_url = _data_url_from_image_file(asset_path) or ""
+                if data_url:
+                    recovery_source = str(figure_asset.get("source") or "pdf_figure_region_render")
+                    recovery_detail = str(asset_path)
+
+        if not data_url:
+            if item.get("existing_page_render_recovery") and probe_source_visual_unavailable:
+                print(
+                    "P62 page-render source-visual probe: "
+                    f"{index}/{len(records)} article={_console_text(article_id)} fig={figure_label or '?'} "
+                    f"marker={probe_marker_for_unavailable} timeout={probe_marker_timeout}s",
+                    flush=True,
+                )
+                source_visual_probe = _probe_p62_source_visual_unavailable(
+                    pdf_path,
+                    resolved_figure_label or figure_label,
+                    artifact_dir / "source_visual_probe",
+                    snippets=[
+                        str(snippet)
+                        for snippet in (record.get("problem_snippets") or [])
+                        if str(snippet).strip()
+                    ],
+                    zoom=render_zoom,
+                    run_marker=probe_marker_for_unavailable,
+                    marker_timeout_seconds=probe_marker_timeout,
+                    marker_output_dir=(
+                        recovery_root
+                        / "_source_visual_probe_marker"
+                        / (
+                            hashlib.sha1(str(pdf_path.resolve(strict=False)).encode("utf-8")).hexdigest()[:12]
+                            + "_"
+                            + _slug(pdf_path.stem, max_len=48)
+                        )
+                    )
+                    if probe_marker_for_unavailable
+                    else None,
+                )
+                item["source_visual_probe"] = source_visual_probe
+                item["source_visual_probe_status"] = source_visual_probe.get("status") or "unknown"
+                probe_asset = source_visual_probe.get("asset") if isinstance(source_visual_probe.get("asset"), dict) else {}
+                if probe_asset.get("path") and probe_asset.get("source"):
+                    asset_path = Path(str(probe_asset.get("path")))
+                    data_url = _data_url_from_image_file(asset_path) or ""
+                    if data_url:
+                        recovery_source = str(probe_asset.get("source") or "source_visual_probe")
+                        recovery_detail = str(asset_path)
+                        item.update(
+                            {
+                                "figure_asset_status": probe_asset.get("status") or "source_visual_probe_asset",
+                                "figure_asset_path": str(asset_path),
+                                "figure_asset_source": recovery_source,
+                                "figure_asset_error": probe_asset.get("error") or "",
+                                "figure_asset_page_number": probe_asset.get("page_number") or 0,
+                                "figure_asset_selected_rect": probe_asset.get("selected_rect"),
+                                "figure_asset_caption_found": probe_asset.get("caption_found"),
+                                "figure_asset_plate_index": probe_asset.get("plate_index"),
+                                "figure_asset_plate_count": probe_asset.get("plate_count"),
+                            }
+                        )
+                print(
+                    "P62 page-render source-visual probe result: "
+                    f"{index}/{len(records)} status={item['source_visual_probe_status']} "
+                    f"source={recovery_source or 'unresolved'}",
+                    flush=True,
+                )
+
+        if not data_url:
+            figure_asset_status = str(item.get("figure_asset_status") or "")
+            if source_page_is_false_match or figure_asset_status.startswith("false_label_match_"):
+                item["unresolved_reason"] = (
+                    "source_pdf_page_false_match:"
+                    f"{source_page_false_match_hint or figure_asset_status.removeprefix('false_label_match_') or 'unknown'}"
+                )
+                recovered_records.append(item)
+                if index % 10 == 0 or index == len(records):
+                    ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
+                    patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+                    print(
+                        "P62 image recovery progress: "
+                        f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                        flush=True,
+                    )
+                continue
+            if item.get("existing_page_render_recovery"):
+                if apply_patches:
+                    patched_paths = list(item.get("patched_paths") or [])
+                    replacement_count = int(item.get("patch_replacement_count") or 0)
+                    for target_path in targets:
+                        try:
+                            html = target_path.read_text(encoding="utf-8", errors="replace")
+                            patched, replacements = _replace_p62_recovery_with_missing_warning(
+                                html,
+                                figure_label=figure_label or resolved_figure_label,
+                                reason="source_visual_unavailable",
+                                replace_sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
+                            )
+                            if replacements:
+                                target_path.write_text(patched, encoding="utf-8")
+                                patched_paths.append(str(target_path))
+                                replacement_count += replacements
+                        except OSError as exc:
+                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
+                    item["patch_replacement_count"] = replacement_count
+                    item["patched_paths"] = patched_paths
+                    item["page_render_recovery_removed"] = bool(replacement_count)
+                    if replacement_count:
+                        patched_article_ids.add(article_id)
+                item["unresolved_reason"] = "existing_pdf_page_render_no_higher_fidelity_asset"
+                recovered_records.append(item)
+                if index % 10 == 0 or index == len(records):
+                    ready_so_far = sum(1 for current in recovered_records if current.get("asset_status") == "ready")
+                    patched_so_far = sum(int(current.get("patch_replacement_count") or 0) for current in recovered_records)
+                    print(
+                        "P62 image recovery progress: "
+                        f"{index}/{len(records)} asset_ready={ready_so_far} patched={patched_so_far}",
+                        flush=True,
+                    )
+                continue
             if not _p62_record_allows_page_render_fallback(record):
                 item["unresolved_reason"] = "page_render_fallback_requires_figure_label_page"
                 recovered_records.append(item)
@@ -2176,7 +4237,7 @@ def write_p62_image_recovery_stage(
             render_page, selection_reason = _p62_render_fallback_page_number(
                 pdf_path,
                 source_page_number,
-                figure_label,
+                resolved_figure_label or figure_label,
             )
             render_path = artifact_dir / f"fig_{_slug(figure_label or 'unknown', max_len=20)}_pdf_page_{render_page:04d}.png"
             render = _render_pdf_evidence_page(pdf_path, render_page, render_path, zoom=render_zoom)
@@ -2212,12 +4273,33 @@ def write_p62_image_recovery_stage(
                     html = target_path.read_text(encoding="utf-8", errors="replace")
                     patched, replacements = _replace_p62_missing_warning_with_image(
                         html,
-                        figure_label=figure_label,
+                        figure_label=figure_label or resolved_figure_label,
                         warning_index=warning_index,
                         data_url=data_url,
                         source=recovery_source,
                         source_detail=recovery_detail,
                     )
+                    if not replacements and replace_page_render:
+                        patched, replacements = _replace_p62_stale_recovery_with_image(
+                            html,
+                            figure_label=figure_label or resolved_figure_label,
+                            data_url=data_url,
+                            source=recovery_source,
+                            source_detail=recovery_detail,
+                        )
+                        if replacements:
+                            item["existing_page_render_upgrade"] = True
+                    if not replacements and item.get("existing_false_match_recovery"):
+                        patched, replacements = _replace_p62_stale_recovery_with_image(
+                            html,
+                            figure_label=figure_label or resolved_figure_label,
+                            data_url=data_url,
+                            source=recovery_source,
+                            source_detail=recovery_detail,
+                            replace_sources=P62_PDF_DERIVED_RECOVERY_SOURCES,
+                        )
+                        if replacements:
+                            item["existing_page_render_upgrade"] = recovery_source not in P62_LOW_FIDELITY_RECOVERY_SOURCES
                     if replacements:
                         target_path.write_text(patched, encoding="utf-8")
                         patched_paths.append(str(target_path))
@@ -2226,6 +4308,26 @@ def write_p62_image_recovery_stage(
                     item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
             item["patch_replacement_count"] = replacement_count
             item["patched_paths"] = patched_paths
+            if repair_duplicate_figure_images:
+                duplicate_repair = _apply_p62_duplicate_figure_image_repairs(
+                    targets,
+                    pdf_path=pdf_path,
+                    artifact_dir=artifact_dir,
+                    zoom=render_zoom,
+                )
+                item["duplicate_visual_repair_count"] = int(duplicate_repair.get("repair_count") or 0)
+                item["duplicate_visual_repairs"] = duplicate_repair.get("repairs") or []
+                if duplicate_repair.get("errors"):
+                    item.setdefault("patch_errors", []).extend(duplicate_repair.get("errors") or [])
+                if item["duplicate_visual_repair_count"]:
+                    item["patch_replacement_count"] += item["duplicate_visual_repair_count"]
+                    patched_paths.extend(
+                        path
+                        for path in (duplicate_repair.get("patched_paths") or [])
+                        if path not in patched_paths
+                    )
+                    item["patched_paths"] = patched_paths
+                    patched_article_ids.add(article_id)
             if replacement_count:
                 item["status"] = "patched"
                 patched_article_ids.add(article_id)
@@ -2251,6 +4353,16 @@ def write_p62_image_recovery_stage(
     source_counts = Counter(str(item.get("recovery_source") or "unresolved") for item in recovered_records)
     asset_ready_count = sum(1 for item in recovered_records if item.get("asset_status") == "ready")
     patched_warning_count = sum(int(item.get("patch_replacement_count") or 0) for item in recovered_records)
+    page_render_upgrade_count = sum(1 for item in recovered_records if item.get("existing_page_render_upgrade"))
+    page_render_recovery_removed_count = sum(
+        1 for item in recovered_records if item.get("page_render_recovery_removed")
+    )
+    false_match_recovery_removed_count = sum(
+        1 for item in recovered_records if item.get("false_match_recovery_removed")
+    )
+    duplicate_visual_repair_count = sum(
+        int(item.get("duplicate_visual_repair_count") or 0) for item in recovered_records
+    )
     patch_missed_count = int(status_counts.get("asset_ready_patch_missed", 0))
     unresolved_count = len(recovered_records) - asset_ready_count
     if not records and int(plan.get("candidate_count") or 0) == 0:
@@ -2270,22 +4382,41 @@ def write_p62_image_recovery_stage(
         "status": status,
         "required_checks": [
             "marker_single_page_image",
+            "source_visual_unavailable_probe",
+            "pdf_detached_plate_region_render",
+            "pdf_native_or_region_figure_asset",
+            "false_match_recovery_cleanup",
+            "pdf_page_render_upgrade",
             "pdf_page_render_fallback",
+            "duplicate_figure_visual_repair",
             "html_missing_warning_patch",
         ],
         "candidate_count": int(plan.get("candidate_count") or len(records)),
         "selected_count": len(records),
         "asset_ready_count": asset_ready_count,
         "patched_warning_count": patched_warning_count,
+        "page_render_upgrade_count": page_render_upgrade_count,
+        "page_render_recovery_removed_count": page_render_recovery_removed_count,
+        "false_match_recovery_removed_count": false_match_recovery_removed_count,
+        "duplicate_visual_repair_count": duplicate_visual_repair_count,
         "patch_missed_count": patch_missed_count,
         "unresolved_count": unresolved_count,
         "execute_marker": execute_marker,
         "apply_patches": apply_patches,
         "allow_external_paths": allow_external_paths,
+        "replace_page_render": replace_page_render,
+        "remove_false_match_recovery": remove_false_match_recovery,
+        "repair_duplicate_figure_images": repair_duplicate_figure_images,
         "render_zoom": render_zoom,
         "marker_timeout_seconds": marker_timeout,
+        "probe_source_visual_unavailable": probe_source_visual_unavailable,
+        "probe_marker_for_unavailable": probe_marker_for_unavailable,
+        "source_visual_probe_marker_timeout_seconds": probe_marker_timeout,
         "status_counts": dict(sorted(status_counts.items())),
         "recovery_source_counts": dict(sorted(source_counts.items())),
+        "source_visual_probe_status_counts": dict(
+            sorted(Counter(str(item.get("source_visual_probe_status") or "not_run") for item in recovered_records).items())
+        ),
         "articles": recovered_records,
     }
     _write_json(out_path, report)
@@ -4553,10 +6684,16 @@ def build_analysis_pack(
             "selected_count": p62_image_recovery_report.get("selected_count", 0),
             "asset_ready_count": p62_image_recovery_report.get("asset_ready_count", 0),
             "patched_warning_count": p62_image_recovery_report.get("patched_warning_count", 0),
+            "duplicate_visual_repair_count": p62_image_recovery_report.get("duplicate_visual_repair_count", 0),
             "patch_missed_count": p62_image_recovery_report.get("patch_missed_count", 0),
             "unresolved_count": p62_image_recovery_report.get("unresolved_count", 0),
             "status_counts": p62_image_recovery_report.get("status_counts", {}),
             "recovery_source_counts": p62_image_recovery_report.get("recovery_source_counts", {}),
+            "source_visual_probe_status_counts": p62_image_recovery_report.get(
+                "source_visual_probe_status_counts",
+                {},
+            ),
+            "probe_marker_for_unavailable": p62_image_recovery_report.get("probe_marker_for_unavailable"),
             "execute_marker": p62_image_recovery_report.get("execute_marker"),
             "apply_patches": p62_image_recovery_report.get("apply_patches"),
         },
@@ -4646,8 +6783,10 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
         f"- p62_image_recovery_status: `{(pack.get('p62_image_recovery_stage') or {}).get('status')}`",
         f"- p62_image_recovery_asset_ready_count: `{(pack.get('p62_image_recovery_stage') or {}).get('asset_ready_count')}`",
         f"- p62_image_recovery_patched_warning_count: `{(pack.get('p62_image_recovery_stage') or {}).get('patched_warning_count')}`",
+        f"- p62_duplicate_visual_repair_count: `{(pack.get('p62_image_recovery_stage') or {}).get('duplicate_visual_repair_count')}`",
         f"- p62_image_recovery_unresolved_count: `{(pack.get('p62_image_recovery_stage') or {}).get('unresolved_count')}`",
         f"- p62_image_recovery_source_counts: `{json.dumps((pack.get('p62_image_recovery_stage') or {}).get('recovery_source_counts', {}), ensure_ascii=False, sort_keys=True)}`",
+        f"- p62_source_visual_probe_status_counts: `{json.dumps((pack.get('p62_image_recovery_stage') or {}).get('source_visual_probe_status_counts', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_totals_delta: `{json.dumps(pack.get('comparison_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- comparison_comparable_totals_delta: `{json.dumps(pack.get('comparison_comparable_totals_delta', {}), ensure_ascii=False, sort_keys=True)}`",
         f"- new_article_count: `{pack.get('new_article_count')}`",
@@ -4779,9 +6918,12 @@ def render_llm_prompt(pack: dict[str, Any]) -> str:
                 f"- candidate_count: `{p62_recovery.get('candidate_count')}`",
                 f"- asset_ready_count: `{p62_recovery.get('asset_ready_count')}`",
                 f"- patched_warning_count: `{p62_recovery.get('patched_warning_count')}`",
+                f"- duplicate_visual_repair_count: `{p62_recovery.get('duplicate_visual_repair_count')}`",
                 f"- patch_missed_count: `{p62_recovery.get('patch_missed_count')}`",
                 f"- unresolved_count: `{p62_recovery.get('unresolved_count')}`",
                 f"- recovery_source_counts: `{json.dumps(p62_recovery.get('recovery_source_counts') or {}, ensure_ascii=False, sort_keys=True)}`",
+                f"- source_visual_probe_status_counts: `{json.dumps(p62_recovery.get('source_visual_probe_status_counts') or {}, ensure_ascii=False, sort_keys=True)}`",
+                f"- probe_marker_for_unavailable: `{p62_recovery.get('probe_marker_for_unavailable')}`",
             ]
         )
     manual_observations = pack.get("manual_observations") or {}

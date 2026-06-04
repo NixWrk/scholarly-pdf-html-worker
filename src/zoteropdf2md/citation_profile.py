@@ -21,11 +21,19 @@ PLAIN_SUPERSCRIPT_NUMERIC_CITATION_RE = re.compile(
     r"\d{1,3}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){1,12}"
     r"(?=\s+[A-Z])"
 )
+AUTHOR_YEAR_CITATION_RE = re.compile(
+    r"\b"
+    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    r"(?:\s+(?:et\s+al\.?|and\s+[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+|&\s*[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+))?"
+    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
 PDF_REF_START_RE = re.compile(r"^(?P<num>[1-9]\d{0,2})(?=[A-Z])")
 PDF_REFERENCE_HEADING_RE = re.compile(r"^\s*(?:References|Bibliography|Notes and references)\s*$", re.IGNORECASE)
 PDF_REFERENCE_ENTRY_START_RE = re.compile(
     r"^\s*(?:\[(?P<bracket>[1-9]\d{0,3})\]|(?P<plain>[1-9]\d{0,3})[.)])\s+(?P<body>\S.*)$"
 )
+PDF_CITATION_DEST_RE = re.compile(r"^(?:cite|citation|bib)[.:]", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -109,10 +117,18 @@ def infer_citation_style_from_text(
     *,
     ref_link_count: int = 0,
     superscript_hint_count: int = 0,
+    author_year_hint_count: int = 0,
 ) -> tuple[str, str, int, int]:
     paren_count = len(PAREN_NUMERIC_CITATION_RE.findall(text))
     bracket_count = len(BRACKET_NUMERIC_CITATION_RE.findall(text))
     plain_superscript_count = len(PLAIN_SUPERSCRIPT_NUMERIC_CITATION_RE.findall(text))
+    author_year_count = len(AUTHOR_YEAR_CITATION_RE.findall(text))
+
+    numeric_signal_count = max(paren_count, bracket_count, plain_superscript_count, superscript_hint_count)
+    if author_year_hint_count >= 5 and author_year_hint_count >= max(5, numeric_signal_count * 2):
+        return "author_year", "high", paren_count, bracket_count
+    if author_year_count >= 8 and author_year_count >= max(8, numeric_signal_count * 2):
+        return "author_year", "medium", paren_count, bracket_count
 
     if ref_link_count >= 5 and superscript_hint_count >= max(5, bracket_count * 2, paren_count):
         return "superscript_numeric", "high", paren_count, bracket_count
@@ -289,7 +305,9 @@ def merge_citation_profile_with_zotero_overlays(
     limited_citations = citations[:sample_limit]
 
     def resolved_style(style: str, confidence: str) -> tuple[str, str]:
-        if numeric_count >= 5 and not (style == "paren_numeric" and confidence == "high"):
+        if numeric_count >= 5 and not (
+            style in {"author_year", "paren_numeric"} and confidence == "high"
+        ):
             return "superscript_numeric", "high"
         return style, confidence
 
@@ -578,6 +596,20 @@ def _superscript_reference_hint_count(annotations: list[PdfLinkAnnotation]) -> i
     return count
 
 
+def _is_reference_citation_dest(dest: str) -> bool:
+    return PDF_CITATION_DEST_RE.match(dest) is not None
+
+
+def _author_year_reference_hint_count(annotations: list[PdfLinkAnnotation]) -> int:
+    count = 0
+    for annotation in annotations:
+        if annotation.kind != "reference":
+            continue
+        if AUTHOR_YEAR_CITATION_RE.search(annotation.text):
+            count += 1
+    return count
+
+
 def build_citation_profile_from_pdf(
     pdf_path: str | Path,
     *,
@@ -695,6 +727,9 @@ def build_citation_profile_from_pdf(
         elif table_target:
             kind = "table"
             target = table_target
+        elif _is_reference_citation_dest(dest):
+            kind = "reference"
+            target = dest
         elif uri:
             kind = "external"
             target = uri
@@ -736,6 +771,7 @@ def build_citation_profile_from_pdf(
         "\n".join(text_parts),
         ref_link_count=ref_link_count,
         superscript_hint_count=_superscript_reference_hint_count(annotations),
+        author_year_hint_count=_author_year_reference_hint_count(annotations),
     )
 
     overlay_path_to_merge: Path | None = (

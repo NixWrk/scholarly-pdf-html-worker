@@ -82,11 +82,15 @@ state.
 
 For all `P62` missing-figure warnings, `observe` writes
 `p62_marker_recovery_plan.json` plus `p62_marker_recovery/` context artifacts.
-The plan extracts the caption-side polish context, requires an explicit
-`Fig/Figure N` match in the source PDF text layer, records the 1-based PDF page
-and the zero-based `marker_single --page_range`, and validates any existing
-marker output as `recovered_image`, `caption_only`, `image_without_label`, or
-`not_run`.
+The plan extracts the caption-side polish context, expands short labels such as
+`Figure 3` to full labels such as `Figure 3-1` when the polish context proves
+that hierarchy, and requires an explicit strict `Fig/Figure N` match in the
+source PDF text layer. The resolver rejects common false pages such as tables of
+contents, figure-caption lists, manuscript placeholders, and prose-only
+references, then ranks candidates with caption-head tokens and PDF visual
+objects before recording the 1-based PDF page and zero-based
+`marker_single --page_range`. Existing marker output is validated as
+`recovered_image`, `caption_only`, `image_without_label`, or `not_run`.
 
 After every audit, `observe` must write `pattern_observations.json` and append
 the current all-article pattern summary to an accumulated JSONL history. The
@@ -257,12 +261,31 @@ Suggested resolver order:
    `p62_image_recovery_marker_timeout_seconds` per marker attempt, defaulting
    to 600 seconds in the shared gate config. Accept the marker result only when
    the output contains the expected label and at least one image asset. If
-   marker returns caption text only, render the page, locate
-   the figure region above or near the caption using PDF image/vector/text block
-   geometry, crop a nonblank local asset, and replace the warning with an
-   `<img>` while preserving the existing caption and target. If geometry is
-   ambiguous, queue the page crop for manual or local-LLM review instead of
-   inserting a guessed image.
+   marker returns caption text only, try PDF-backed recovery in this order:
+   detached accepted-article figure plates, native embedded PDF image
+   extraction, region render around image/vector geometry near the caption, and
+   text-block region render for worksheet/table-like figures. A later recovery
+   pass also treats existing `pdf_page_render` insertions as low-fidelity
+   placeholders and replaces them with marker/native/region/plate assets when
+   those can be recovered. PDF-derived recovery blocks tied to false label
+   pages such as TOC entries, caption lists, manuscript placeholders, or prose
+   references are removed back to a missing-figure warning instead of being
+   accepted as images. Full-page render remains only the final fallback. If
+   every strict label match is a false page or has no recoverable visual object,
+   mark the plan record as
+   `source_visual_unavailable`, but the image recovery stage must still run a
+   source-visual probe before skipping: re-check all label pages, inventory
+   native/large PDF images with PyMuPDF, inventory page images with pypdf,
+   record local CLI availability for `pdfimages`/`mutool`/Poppler tools, and
+   optionally run full-PDF marker with
+   `p62_image_recovery_probe_marker_for_unavailable`. Only then may the record
+   stay unresolved as `source_visual_unavailable`. The same stage also audits
+   already-patched HTML for identical inline image payloads reused by different
+   `fig-N` units. When one duplicate is a recovered target and the other is an
+   existing plain figure target, resolve the plain figure's own caption page in
+   the PDF and replace that target with the native/plate/region asset for its
+   label. This catches cases where the converter attached the next figure's
+   image to the previous caption before P62 recovery filled the missing figure.
 3. Repair semantic figure targets for `P61`.
    Build an inventory of visible `Figure N` references, existing `fig-N`
    targets, captions, and `P62` caption-only targets. When a visible caption or

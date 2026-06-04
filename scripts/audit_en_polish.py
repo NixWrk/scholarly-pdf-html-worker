@@ -8,11 +8,13 @@ from bisect import bisect_right
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import hashlib
 from html import unescape
 from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
+import sys
 import urllib.parse
 from typing import Any, Iterable
 
@@ -804,6 +806,7 @@ PDF_LINE_NUMBER_RESIDUE_RE = re.compile(
     r"100\s+As\s+shown|Key\s+25\s+Technologies)\b",
     re.IGNORECASE,
 )
+PDF_CITATION_DEST_RE = re.compile(r"^(?:cite|citation|bib)[.:]", re.IGNORECASE)
 BOX_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-box-unit\b)[^>]*>(?P<body>.*?)</div>",
     re.IGNORECASE | re.DOTALL,
@@ -917,6 +920,13 @@ SUSPICIOUS_FOOTNOTE_WORD_MERGES = {
 }
 AUTHOR_YEAR_TEXT_RE = re.compile(
     r"\b[A-Z][A-Za-z'’.-]+(?:\s+et\s+al\.)?(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
+AUTHOR_YEAR_STYLE_TEXT_RE = re.compile(
+    r"\b"
+    r"[A-Z][A-Za-z'\u2019.-]+"
+    r"(?:\s+(?:et\s+al\.?|and\s+[A-Z][A-Za-z'\u2019.-]+|&\s*[A-Z][A-Za-z'\u2019.-]+))?"
+    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
     re.IGNORECASE,
 )
 FLATTENED_SUP_CITATION_RE = re.compile(
@@ -1412,6 +1422,24 @@ def _missing_local_images(html_path: Path, html: str) -> list[dict[str, Any]]:
     return missing
 
 
+def _image_identity_key(html_path: Path, src: str) -> str | None:
+    src = unescape(src).strip()
+    if not src:
+        return None
+    if src.lower().startswith("data:image/"):
+        return "data:" + hashlib.sha256(src.encode("utf-8", errors="replace")).hexdigest()
+    if _is_inline_or_remote_src(src):
+        return None
+    for candidate in _local_image_candidates(html_path, src):
+        if not candidate.is_file():
+            continue
+        try:
+            return "file:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return f"src:{src}"
+
+
 def _source_pdf_path(raw_path: Path) -> Path:
     return raw_path.parent / PDF_SOURCE_STAGE
 
@@ -1510,6 +1538,62 @@ def _extract_pdf_text(pdf_path: Path) -> tuple[str, str, str | None]:
         errors.append(f"pypdf failed: {exc}")
 
     return "unavailable", "", "; ".join(errors)
+
+
+def _pdf_citation_link_summary(pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "pdf_link_text_status": "disabled",
+        "pdf_link_count": 0,
+        "pdf_citation_dest_links": 0,
+        "pdf_author_year_link_labels": 0,
+        "pdf_citation_link_samples": [],
+        "pdf_link_text_error": None,
+    }
+    if not pdf_path.is_file():
+        summary["pdf_link_text_status"] = "missing"
+        return summary
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except ImportError as exc:
+        summary["pdf_link_text_status"] = "pymupdf_unavailable"
+        summary["pdf_link_text_error"] = str(exc)
+        return summary
+
+    samples: list[dict[str, Any]] = []
+    try:
+        doc = fitz.open(str(pdf_path))
+        try:
+            for page_index, page in enumerate(doc):
+                try:
+                    links = page.get_links()
+                except Exception:
+                    continue
+                summary["pdf_link_count"] += len(links)
+                for link in links:
+                    dest = str(link.get("nameddest") or "")
+                    if not PDF_CITATION_DEST_RE.match(dest):
+                        continue
+                    summary["pdf_citation_dest_links"] += 1
+                    text = ""
+                    try:
+                        rect = fitz.Rect(link["from"])
+                        text = _normalize_ws(page.get_textbox(rect) or "")
+                    except Exception:
+                        text = ""
+                    if AUTHOR_YEAR_TEXT_RE.search(text):
+                        summary["pdf_author_year_link_labels"] += 1
+                    if len(samples) < sample_limit:
+                        samples.append({"page": page_index + 1, "dest": dest, "text": text})
+        finally:
+            doc.close()
+    except Exception as exc:  # pragma: no cover - extractor/environment specific
+        summary["pdf_link_text_status"] = "failed"
+        summary["pdf_link_text_error"] = str(exc)
+        return summary
+
+    summary["pdf_link_text_status"] = "pymupdf"
+    summary["pdf_citation_link_samples"] = samples
+    return summary
 
 
 def _load_pdf_diagnostic_text(
@@ -3160,6 +3244,7 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
     saw_gap = False
     saw_duplicate_prefix = False
     saw_embedded_numbered_reference = False
+    missing_visible_number: list[tuple[int, Block]] = []
 
     def _looks_like_embedded_numbered_reference_tail(tail: str) -> bool:
         text = tail.strip()
@@ -3223,6 +3308,8 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
                 nested_seen_ids[id_number] = block
             else:
                 seen_ids[id_number] = block
+                if visible_number is None and not DOI_ONLY_METADATA_RE.match(block.text):
+                    missing_visible_number.append((id_number, block))
         if is_nested_audit_ref:
             if visible_number is not None and visible_number not in seen_visible:
                 seen_visible[visible_number] = block
@@ -3344,6 +3431,27 @@ def _reference_identity_defects(polish_blocks: list[Block]) -> list[Defect]:
                 )
                 saw_gap = True
                 break
+
+    if missing_visible_number and (seen_visible or len(seen_ids) >= 2):
+        ref_id, block = missing_visible_number[0]
+        defects.append(
+            _defect(
+                defect_id="P97",
+                cc_class="CC-02/CC-13",
+                check="Bibliography target is missing its visible reference number",
+                severity="error",
+                block=block,
+                snippet=block.text,
+                stage=POLISH_STAGE,
+                hypothesis="Reference IDs were created, but one or more bibliography entries were left unnumbered for the reader.",
+                proposed_fix_layer="EN polish bibliography numbering and reference identity audit",
+                regression_test="Every id=ref-N bibliography entry gets visible number N or is explicitly reported.",
+                extra={
+                    "ref_id": ref_id,
+                    "missing_visible_ref_ids": [number for number, _block in missing_visible_number[:12]],
+                },
+            )
+        )
 
     return defects
 
@@ -3790,6 +3898,155 @@ def _image_asset_defects(polish_path: Path, polish_html: str) -> list[Defect]:
             )
         )
     return defects
+
+
+def _figure_visual_identity_defects(polish_path: Path, polish_html: str) -> list[Defect]:
+    line_starts = _line_starts(polish_html)
+    records_by_key: dict[str, list[dict[str, Any]]] = {}
+    for match in FIGURE_UNIT_RE.finditer(polish_html):
+        figure_id = match.group("id")
+        body = match.group("body")
+        caption_numbers = [
+            number
+            for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
+            for number in [_figure_caption_number_from_caption_node(caption_match.group("body"))]
+            if number is not None
+        ]
+        for img_match in IMG_SRC_RE.finditer(body):
+            src = unescape(img_match.group("src")).strip()
+            key = _image_identity_key(polish_path, src)
+            if key is None:
+                continue
+            records_by_key.setdefault(key, []).append(
+                {
+                    "figure_id": figure_id,
+                    "caption_numbers": caption_numbers,
+                    "src": src[:160],
+                    "line": _line_at_from_starts(line_starts, match.start()),
+                    "snippet": _strip_tags(body)[:260],
+                }
+            )
+
+    for records in records_by_key.values():
+        figure_ids = sorted({str(record["figure_id"]) for record in records})
+        if len(figure_ids) < 2:
+            continue
+        caption_sets = {
+            tuple(record.get("caption_numbers") or [])
+            for record in records
+            if record.get("caption_numbers")
+        }
+        if len(caption_sets) == 1 and len(records) <= 2:
+            continue
+        first = records[0]
+        defects = [
+            _defect(
+                defect_id="P96",
+                cc_class="CC-08/CC-13",
+                check="Same visual image is attached to multiple distinct figure targets",
+                severity="error",
+                block=None,
+                snippet=first["snippet"] or f"duplicate visual across {', '.join(figure_ids)}",
+                stage=POLISH_STAGE,
+                hypothesis="A missing-figure recovery or pre-existing figure assignment reused the next/previous figure image for a different caption.",
+                proposed_fix_layer="P62 image recovery duplicate-visual audit and figure-page relocalization",
+                regression_test="Distinct fig-5 and fig-6 units with identical image payloads are reported before review packaging.",
+                extra={
+                    "figure_ids": figure_ids,
+                    "records": records[:6],
+                },
+            )
+        ]
+        return defects
+    return []
+
+
+def _numeric_ref_label_numbers(label: str) -> list[int]:
+    if re.fullmatch(r"[\s\(\)\[\],.;:\-\u2010-\u2014\d]+", label) is None:
+        return []
+    numbers = [int(value) for value in re.findall(r"\d{1,4}", label)]
+    if any(value.startswith("0") for value in re.findall(r"\d{2,4}", label)):
+        return []
+    return [number for number in numbers if not (1800 <= number <= 2099)]
+
+
+def _citation_style_consistency_defects(
+    polish_html: str,
+    polish_blocks: list[Block],
+    *,
+    pdf_text: str = "",
+    pdf_link_summary: dict[str, Any] | None = None,
+) -> list[Defect]:
+    body_blocks = list(_non_reference_body_blocks(polish_blocks))
+    body_text = " ".join(block.text for block in body_blocks)
+    html_author_year_count = len(AUTHOR_YEAR_STYLE_TEXT_RE.findall(body_text))
+    pdf_author_year_count = len(AUTHOR_YEAR_STYLE_TEXT_RE.findall(pdf_text)) if pdf_text else 0
+    pdf_link_summary = pdf_link_summary or {}
+    pdf_citation_dest_links = int(pdf_link_summary.get("pdf_citation_dest_links") or 0)
+    pdf_author_year_link_labels = int(pdf_link_summary.get("pdf_author_year_link_labels") or 0)
+    pdf_author_year_evidence = pdf_citation_dest_links >= 5 and pdf_author_year_link_labels >= 2
+    html_author_year_evidence = html_author_year_count >= 6
+    if not (pdf_author_year_evidence or html_author_year_evidence):
+        return []
+
+    bracket_citation_count = len(re.findall(r"\[\s*\d", body_text))
+    numeric_ref_link_count = sum(
+        1
+        for block in body_blocks
+        for match in REF_ANCHOR_BODY_RE.finditer(block.raw)
+        if _numeric_ref_label_numbers(_strip_tags(match.group("body")))
+    )
+    numeric_sup_ref_link_count = sum(
+        1
+        for block in body_blocks
+        for match in REF_ANCHOR_BODY_RE.finditer(block.raw)
+        if _numeric_ref_label_numbers(_strip_tags(match.group("body")))
+        and "<sup" in block.raw[max(0, match.start() - 40) : match.start()].lower()
+    )
+    numeric_citation_dominant = (
+        numeric_ref_link_count >= 5 and numeric_sup_ref_link_count >= 5
+    ) or (
+        numeric_ref_link_count >= 10 and numeric_sup_ref_link_count >= 3
+    )
+    if numeric_citation_dominant and not pdf_author_year_evidence:
+        return []
+    if bracket_citation_count >= 4 and not pdf_author_year_evidence:
+        return []
+
+    for block in body_blocks:
+        if _block_is_float_or_table_context(block):
+            continue
+        for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
+            label = _strip_tags(match.group("body"))
+            numbers = _numeric_ref_label_numbers(label)
+            if not numbers:
+                continue
+            text_window = _strip_tags(block.raw[max(0, match.start() - 180) : match.end() + 180])
+            if re.search(r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b", text_window, re.IGNORECASE):
+                continue
+            return [
+                _defect(
+                    defect_id="P98",
+                    cc_class="CC-02/CC-13/CC-14",
+                    check="Numeric-only bibliography link appears in author-year article",
+                    severity="error",
+                    block=block,
+                    snippet=block.text,
+                    stage=POLISH_STAGE,
+                    hypothesis="Article-level citation style evidence was author-year, but numeric citation fallback still created a bibliography link.",
+                    proposed_fix_layer="PDF citation-profile driven article-level citation-style lock",
+                    regression_test="When PDF link labels or HTML body evidence prove author-year style, numeric-only body #ref links are unwrapped.",
+                    extra={
+                        "label": label,
+                        "ref_target": match.group("num"),
+                        "html_author_year_count": html_author_year_count,
+                        "pdf_author_year_count": pdf_author_year_count,
+                        "pdf_citation_dest_links": pdf_citation_dest_links,
+                        "pdf_author_year_link_labels": pdf_author_year_link_labels,
+                    },
+                )
+            ]
+    return []
 
 
 def _replacement_chars_are_pdf_source_noise(polish_html: str, pdf_text: str) -> bool:
@@ -5602,6 +5859,16 @@ def analyze_pair(
     }
     if enable_pdf_diagnostics or pdf_text_override is not None:
         pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
+    pdf_link_summary = {
+        "pdf_link_text_status": "disabled",
+        "pdf_link_count": 0,
+        "pdf_citation_dest_links": 0,
+        "pdf_author_year_link_labels": 0,
+        "pdf_citation_link_samples": [],
+        "pdf_link_text_error": None,
+    }
+    if enable_pdf_diagnostics:
+        pdf_link_summary = _pdf_citation_link_summary(Path(pdf_summary["source_pdf_path"]))
 
     defects: list[Defect] = []
     defects.extend(_frontmatter_defects(raw_blocks, polish_blocks))
@@ -5610,7 +5877,16 @@ def analyze_pair(
     defects.extend(_unit_math_defects(raw_html, polish_blocks))
     defects.extend(_equation_table_defects(polish_blocks))
     defects.extend(_figure_caption_ux_defects(polish_html, polish_blocks, pdf_text=pdf_text))
+    defects.extend(_figure_visual_identity_defects(polish_path, polish_html))
     defects.extend(_image_asset_defects(polish_path, polish_html))
+    defects.extend(
+        _citation_style_consistency_defects(
+            polish_html,
+            polish_blocks,
+            pdf_text=pdf_text,
+            pdf_link_summary=pdf_link_summary,
+        )
+    )
     defects.extend(_manual_blind_spot_defects(polish_html, polish_blocks, pdf_text=pdf_text))
     defects.extend(_meine_recent_manual_defects(polish_html, polish_blocks, pdf_text=pdf_text))
     if enable_pdf_diagnostics or pdf_text_override is not None:
@@ -5634,6 +5910,7 @@ def analyze_pair(
         "polish_replacement_chars": polish_html.count("\ufffd"),
         "polish_missing_local_images": len(missing_images),
         **pdf_summary,
+        **pdf_link_summary,
     }
     article = _article_name_from_stage(polish_path)
     return {
@@ -5807,10 +6084,22 @@ def build_report(
     return report
 
 
+def _safe_print(text: str) -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout.buffer.write((text + "\n").encode(encoding, errors="replace"))
+            sys.stdout.flush()
+        else:  # pragma: no cover - unusual redirected stdout implementation
+            print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
+
+
 def _print_summary(report: dict[str, Any]) -> None:
-    print(f"EN raw/polish pair audit: {report['article_count']} pair(s)")
+    _safe_print(f"EN raw/polish pair audit: {report['article_count']} pair(s)")
     totals = report["corpus_summary"]["totals"]
-    print(
+    _safe_print(
         "Totals: "
         f"raw_img={totals['raw_img_tags']} "
         f"polish_img={totals['polish_img_tags']} "
@@ -5823,12 +6112,12 @@ def _print_summary(report: dict[str, Any]) -> None:
     )
     defect_counts = report["corpus_summary"]["defect_counts"]
     if defect_counts:
-        print("Defects by check: " + ", ".join(f"{key}={value}" for key, value in sorted(defect_counts.items())))
+        _safe_print("Defects by check: " + ", ".join(f"{key}={value}" for key, value in sorted(defect_counts.items())))
     else:
-        print("Defects by check: none")
+        _safe_print("Defects by check: none")
     for article in report["articles"]:
         summary = article["summary"]
-        print(
+        _safe_print(
             f"- {article['article']}: "
             f"blocks={summary['raw_blocks']}->{summary['polish_blocks']} "
             f"img={summary['raw_img_tags']}->{summary['polish_img_tags']} "
