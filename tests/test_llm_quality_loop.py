@@ -2175,10 +2175,12 @@ def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_nume
             "<html><body>"
             '<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 '
             'mark author-year style, while <sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> '
-            "is not a bibliography citation.</p>"
+            'is not a bibliography citation. <a href="#ref-3" class="z2m-ref-link">Flores</a> '
+            "et al. (2015) is author-year prose.</p>"
             "<h4>References</h4><ol>"
             '<li id="ref-1">[1] Already visibly numbered.</li>'
             '<li id="ref-2">Missing visible number.</li>'
+            '<li id="ref-3">[3] Flores, A. Example citation.</li>'
             "</ol></body></html>",
             encoding="utf-8",
         )
@@ -2190,6 +2192,7 @@ def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_nume
                     "article": article,
                     "summary": {},
                     "defects_found": [
+                        {"id": "P55", "extra": {"ref_target": "3", "label": "Flores"}},
                         {"id": "P97", "extra": {"missing_visible_ref_ids": [2]}},
                         {"id": "P98", "extra": {"ref_target": "2"}},
                     ],
@@ -2204,12 +2207,17 @@ def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_nume
 
     assert report["status"] == "patched"
     assert report["patched_article_count"] == 1
-    assert report["repair_counts"] == {"P97": 2, "P98": 2}
+    assert report["repair_counts"] == {"P55": 2, "P97": 2, "P98": 2}
     for path in (polish_path, audit_tree_path):
         html = path.read_text(encoding="utf-8")
+        before_refs = html[: html.index("References")]
         assert 'href="#ref-2"' not in html[: html.index("References")]
+        assert 'href="#ref-3"' not in before_refs
+        assert "Flores</a>" not in before_refs
+        assert "Flores et al. (2015)" in before_refs
         assert '<span class="z2m-ref-num">2.</span> Missing visible number.' in html
         assert "[1] Already visibly numbered." in html
+        assert '<li id="ref-3">[3] Flores, A. Example citation.</li>' in html
 
 
 def test_polish_auto_repair_stage_repairs_plain_duplicate_figure_visuals(

@@ -147,6 +147,20 @@ AUTHOR_YEAR_NUMERIC_REF_ANCHOR_RE = re.compile(
     r"(?P<body>[\s\S]{0,120}?)</a>",
     re.IGNORECASE,
 )
+AUTHOR_YEAR_REF_ANCHOR_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*([\"'])#ref-(?P<num>\d{1,4})\2[^>]*)>"
+    r"(?P<body>[\s\S]{0,180}?)</a>",
+    re.IGNORECASE,
+)
+AUTHOR_YEAR_TEXT_RE = re.compile(
+    r"\b[A-Z][A-Za-z'\u2019.-]+(?:\s+et\s+al\.?)?(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
+AUTHOR_YEAR_SURNAME_FRAGMENT_RE = re.compile(r"^[A-Z][A-Za-z'\u2019.-]{3,}$")
+AUTHOR_YEAR_RIGHT_CONTEXT_RE = re.compile(
+    r"^\s*(?:et\s+al\.?|(?:and|&)\s+[A-Z][A-Za-z'\u2019.-]+)?\s*,?\s*\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
 
 
@@ -3674,7 +3688,7 @@ def _audit_articles_by_auto_repair_need(audit_report: dict[str, Any]) -> dict[st
         if not article_id:
             continue
         defect_ids = _audit_defect_ids(article)
-        selected = defect_ids & {"P96", "P97", "P98"}
+        selected = defect_ids & {"P55", "P96", "P97", "P98"}
         if not selected:
             continue
         articles[article_id] = {"article": article, "defect_ids": sorted(selected)}
@@ -3755,6 +3769,32 @@ def _unwrap_author_year_numeric_ref_links(html: str) -> tuple[str, int]:
     return repaired_before + references_and_after, repairs
 
 
+def _looks_like_author_year_ref_anchor(label: str, right_text: str) -> bool:
+    if AUTHOR_YEAR_TEXT_RE.search(label) is not None:
+        return True
+    cleaned = re.sub(r"\s+", " ", label).strip(" ([{,;")
+    if AUTHOR_YEAR_SURNAME_FRAGMENT_RE.fullmatch(cleaned) is None:
+        return False
+    return AUTHOR_YEAR_RIGHT_CONTEXT_RE.match(right_text) is not None
+
+
+def _unwrap_author_year_ref_anchors(html: str) -> tuple[str, int]:
+    before_references, references_and_after = _split_before_references_for_repair(html)
+    repairs = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal repairs
+        label = _visible_html_text(match.group("body"))
+        right_text = _visible_html_text(before_references[match.end() : match.end() + 140])
+        if not _looks_like_author_year_ref_anchor(label, right_text):
+            return match.group(0)
+        repairs += 1
+        return match.group("body")
+
+    repaired_before = AUTHOR_YEAR_REF_ANCHOR_RE.sub(replace, before_references)
+    return repaired_before + references_and_after, repairs
+
+
 def write_polish_auto_repair_stage(
     run_dir: Path,
     *,
@@ -3832,7 +3872,7 @@ def write_polish_auto_repair_stage(
                     }
                 )
 
-        if {"P97", "P98"} & defect_ids and apply_patches:
+        if {"P55", "P97", "P98"} & defect_ids and apply_patches:
             for target_path in targets:
                 try:
                     html = target_path.read_text(encoding="utf-8", errors="replace")
@@ -3840,8 +3880,11 @@ def write_polish_auto_repair_stage(
                     article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                     continue
                 patched = html
+                p55_repairs = 0
                 p97_repairs = 0
                 p98_repairs = 0
+                if "P55" in defect_ids:
+                    patched, p55_repairs = _unwrap_author_year_ref_anchors(patched)
                 if "P97" in defect_ids:
                     patched, p97_repairs = _repair_visible_reference_numbers(patched)
                 if "P98" in defect_ids:
@@ -3855,15 +3898,18 @@ def write_polish_auto_repair_stage(
                     patched_article_ids.add(article_id)
                     article_report["patched"] = True
                     target_patch_counts[str(target_path)] += 1
+                if p55_repairs:
+                    repair_counts["P55"] += p55_repairs
                 if p97_repairs:
                     repair_counts["P97"] += p97_repairs
                 if p98_repairs:
                     repair_counts["P98"] += p98_repairs
-                if p97_repairs or p98_repairs:
+                if p55_repairs or p97_repairs or p98_repairs:
                     article_report["repairs"].append(
                         {
-                            "id": "P97/P98",
+                            "id": "P55/P97/P98",
                             "path": str(target_path),
+                            "p55_author_year_link_unwraps": p55_repairs,
                             "p97_visible_number_repairs": p97_repairs,
                             "p98_numeric_link_unwraps": p98_repairs,
                         }
