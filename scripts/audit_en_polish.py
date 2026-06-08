@@ -64,6 +64,10 @@ from zoteropdf2md.quality_loop.audit_pdf import (
     pdf_path_from_map_record as _pdf_path_from_map_record,
     source_pdf_path,
 )
+from zoteropdf2md.quality_loop.audit_p04 import (
+    unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
+    unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
+)
 from zoteropdf2md.quality_loop.audit_p62 import (
     classify_missing_figure_warning as _classify_missing_figure_warning_base,
     figure_label_from_id as _figure_label_from_id,
@@ -1835,56 +1839,15 @@ def _has_unlinked_sup_numeric_range(block: Block) -> bool:
 
 
 def _unlinked_citation_range_kind(block: Block) -> str:
-    match = CITATION_RANGE_LIST_RE.search(block.text)
-    has_unlinked_plain_match = match is not None and "z2m-ref-link" not in block.raw
-    has_vector_range = has_unlinked_plain_match and _looks_like_numeric_vector(block.text, match)
-    has_plain_range = has_unlinked_plain_match and not has_vector_range
-    has_tagged_range = _has_unlinked_tagged_citation_range(block)
-    has_sup_range = _has_unlinked_sup_numeric_range(block)
-    if not has_plain_range and not has_vector_range and not has_tagged_range and not has_sup_range:
-        return ""
-    if (
-        has_unlinked_plain_match
-        and not has_sup_range
-        and match is not None
-        and _plain_bracket_range_is_likely_non_citation_math_or_measurement(block.text, match)
-    ):
-        return ""
-    if _looks_like_float_or_caption(block):
-        if _block_looks_like_frontmatter_affiliation_table(block):
-            return ""
-        if (
-            has_unlinked_plain_match
-            and not has_sup_range
-            and match is not None
-            and _plain_bracket_range_is_likely_non_citation_table_text(block.text, match)
-        ):
-            return ""
-        return "float"
-    if (
-        has_vector_range
-        or (match is not None and _looks_like_math_or_measurement_range(block.text, match))
-        or _block_looks_like_math_or_measurement_range_context(block)
-    ):
-        return "math"
-    return "body"
+    return _unlinked_citation_range_kind_base(
+        block,
+        looks_like_float_or_caption=_looks_like_float_or_caption,
+        block_looks_like_frontmatter_affiliation_table=_block_looks_like_frontmatter_affiliation_table,
+    )
 
 
 def _unlinked_citation_candidate_numbers(block: Block) -> list[int]:
-    match = CITATION_RANGE_LIST_RE.search(block.text)
-    if match is not None:
-        return [int(value) for value in re.findall(r"\d+", match.group(0))]
-    for sup_match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
-        if "z2m-ref-link" not in sup_match.group(0):
-            return [int(value) for value in re.findall(r"\d+", sup_match.group("body"))]
-    for tagged_match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):
-        body = tagged_match.group("body")
-        if "<" not in body or "z2m-ref-link" in body:
-            continue
-        visible = _strip_tags(body)
-        if CITATION_RANGE_LIST_RE.fullmatch(f"[{visible}]") is not None:
-            return [int(value) for value in re.findall(r"\d+", visible)]
-    return []
+    return _unlinked_citation_candidate_numbers_base(block)
 
 
 def _looks_like_figure_prose_reference_text(text: str) -> bool:
