@@ -64,6 +64,19 @@ from zoteropdf2md.quality_loop.audit_pdf import (
     pdf_path_from_map_record as _pdf_path_from_map_record,
     source_pdf_path,
 )
+from zoteropdf2md.quality_loop.audit_p62 import (
+    classify_missing_figure_warning as _classify_missing_figure_warning_base,
+    figure_label_from_id as _figure_label_from_id,
+    figure_label_from_text as _figure_label_from_text,
+    figure_unit_label as _figure_unit_label,
+    find_warning_block_index as _find_warning_block_index,
+    has_nearby_image as _has_nearby_image,
+    has_nearby_missing_figure_warning as _has_nearby_missing_figure_warning,
+    is_handled_missing_figure_block as _is_handled_missing_figure_block,
+    nearest_figure_label as _nearest_figure_label,
+    nearby_image_offsets as _nearby_image_offsets_base,
+    normalize_figure_label_key as _normalize_figure_label_key,
+)
 
 
 RAW_STAGE = "01.en.raw.html"
@@ -972,11 +985,6 @@ VISIBLE_FIGURE_REF_RE = re.compile(
     r"(?P<letter>[A-Z])?\b",
     re.IGNORECASE,
 )
-FIGURE_LABEL_TEXT_RE = re.compile(
-    r"\b(?:Fig(?:ure)?\.?|Figure)\s+"
-    r"(?P<label>\d+[A-Za-z]?|\d+(?:\s*[.\-\u2010-\u2014]\s*\d+(?!\s*[A-Za-z]))+)\b",
-    re.IGNORECASE,
-)
 SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
     r"^\s*(?:Supplementary|Supplemental|Suppl\.?)\s+"
     r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
@@ -1307,253 +1315,24 @@ def _looks_like_local_abstract_reference_block(blocks: list[Block], index: int) 
     )
 
 
-def _has_nearby_image(blocks: list[Block], index: int, *, window: int = 6) -> bool:
-    start = max(0, index - window)
-    stop = min(len(blocks), index + window + 1)
-    return any(block.has_figure_visual for block in blocks[start:stop])
-
-
-def _normalize_figure_label_key(label: str) -> str | None:
-    label = re.sub(r"\s+", "", label)
-    label = re.sub(r"[.\-\u2010-\u2014]+", "-", label)
-    return label.strip("-").lower() or None
-
-
-def _figure_label_from_text(text: str) -> str | None:
-    match = FIGURE_LABEL_TEXT_RE.search(text)
-    if match is None:
-        return None
-    return _normalize_figure_label_key(match.group("label"))
-
-
-def _figure_label_from_id(value: str) -> str | None:
-    match = re.fullmatch(r"fig-(?P<label>[A-Za-z0-9][A-Za-z0-9.\-\u2010-\u2014]*)", value, re.IGNORECASE)
-    if match is None:
-        return None
-    return _normalize_figure_label_key(match.group("label"))
-
-
-def _figure_unit_label(block: Block) -> str | None:
-    if block.tag != "div" or "z2m-figure-unit" not in block.classes:
-        return None
-    return _figure_label_from_id(block.id)
-
-
-def _nearest_figure_label(
-    blocks: list[Block],
-    index: int,
-    *,
-    direction: int,
-    window: int = 5,
-) -> tuple[str | None, int | None]:
-    if direction == 0:
-        raise ValueError("direction must be non-zero")
-    stop = min(len(blocks), index + window + 1) if direction > 0 else max(-1, index - window - 1)
-    scan = range(index + direction, stop, direction)
-    for candidate_index in scan:
-        label = _figure_label_from_text(blocks[candidate_index].text)
-        if label is not None:
-            return label, abs(candidate_index - index)
-    return None, None
-
-
 def _nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None = None, window: int = 8) -> list[int]:
-    def _allows_missing_warning_image_scan(block: Block) -> bool:
-        unit_label = _figure_unit_label(block)
-        if label is not None and unit_label is not None and unit_label != label:
-            return False
-        block_label = _figure_label_from_text(block.text)
-        if label is not None and block_label is not None and block_label != label:
-            if (
-                block.id.startswith("fig-")
-                or block.classes & {"z2m-figure-caption", "z2m-figure-target"}
-                or _looks_like_figure_caption(block)
-            ):
-                return False
-        if block.has_figure_visual:
-            return True
-        if not block.text.strip():
-            return True
-        if block.tag in {"td", "th"}:
-            return True
-        if block.classes & {
-            "z2m-missing-figure-warning",
-            "z2m-missing-figure-unit",
-            "z2m-figure-caption",
-            "z2m-figure-target",
-        }:
-            return True
-        if block.tag == "div" and block.classes & {"z2m-float-unit", "z2m-figure-unit"}:
-            return True
-        return block_label is not None
-
-    offsets: list[int] = []
-    for direction in (-1, 1):
-        stop = min(len(blocks), index + window + 1) if direction > 0 else max(-1, index - window - 1)
-        for candidate_index in range(index + direction, stop, direction):
-            block = blocks[candidate_index]
-            if block.has_figure_visual:
-                if not _allows_missing_warning_image_scan(block):
-                    break
-                offsets.append(candidate_index - index)
-                continue
-            if not _allows_missing_warning_image_scan(block):
-                break
-    return sorted(offsets)
-
-
-def _find_warning_block_index(blocks: list[Block], warning: Block) -> int | None:
-    for index, candidate in enumerate(blocks):
-        if "z2m-missing-figure-warning" not in candidate.classes:
-            continue
-        if candidate.line == warning.line and candidate.text == warning.text:
-            return index
-    for index, candidate in enumerate(blocks):
-        if "z2m-missing-figure-warning" in candidate.classes and candidate.text == warning.text:
-            return index
-    return None
+    return _nearby_image_offsets_base(
+        blocks,
+        index,
+        label=label,
+        window=window,
+        looks_like_figure_caption=_looks_like_figure_caption,
+    )
 
 
 def _classify_missing_figure_warning(
     warning: Block,
     polish_blocks: list[Block],
 ) -> dict[str, Any]:
-    label = _figure_label_from_text(warning.text)
-    index = _find_warning_block_index(polish_blocks, warning)
-    extra: dict[str, Any] = {
-        "figure_label": label,
-        "p62_subtype": "unclassified",
-    }
-    if warning.attrs.get("data-z2m-origin") == "caption-only-target":
-        extra["quality_counted"] = False
-        extra["warning_origin"] = "caption-only-target"
-    if index is not None:
-        context_start = max(0, index - 4)
-        context_stop = min(len(polish_blocks), index + 5)
-        for context_block in polish_blocks[context_start:context_stop]:
-            if not _is_handled_missing_figure_block(context_block):
-                continue
-            unit_label = _figure_unit_label(context_block) or _figure_label_from_text(context_block.text)
-            if label is not None and unit_label is not None and unit_label != label:
-                continue
-            extra["quality_counted"] = False
-            extra.setdefault("warning_origin", "missing-figure-unit")
-            break
-    if index is None:
-        if not any(block.has_figure_visual for block in polish_blocks):
-            extra["p62_subtype"] = "no_nearby_image"
-            return {
-                "defect_id": "P62",
-                "check": "Missing-figure warning has no nearby image",
-                "hypothesis": "The final HTML is explicit about a missing source image, and no image was found in the block context.",
-                "proposed_fix_layer": "Marker image extraction diagnostics or review packaging",
-                "extra": extra,
-            }
-        return {
-            "defect_id": "P62B",
-            "check": "Missing-figure warning could not be placed in block context",
-            "hypothesis": "The final HTML warns about a missing figure, but audit could not classify the surrounding image context.",
-            "proposed_fix_layer": "EN polish missing-figure warning classifier",
-            "extra": extra,
-        }
-
-    image_offsets = _nearby_image_offsets(polish_blocks, index, label=label)
-    previous_image_offsets = [offset for offset in image_offsets if offset < 0]
-    next_image_offsets = [offset for offset in image_offsets if offset > 0]
-    previous_label, previous_label_distance = _nearest_figure_label(
+    return _classify_missing_figure_warning_base(
+        warning,
         polish_blocks,
-        index,
-        direction=-1,
-    )
-    next_label, next_label_distance = _nearest_figure_label(
-        polish_blocks,
-        index,
-        direction=1,
-    )
-    extra.update(
-        {
-            "block_index": index,
-            "previous_image_offsets": previous_image_offsets[:4],
-            "next_image_offsets": next_image_offsets[:4],
-            "previous_figure_label": previous_label,
-            "previous_figure_label_distance": previous_label_distance,
-            "next_figure_label": next_label,
-            "next_figure_label_distance": next_label_distance,
-        }
-    )
-
-    nearest_previous_image = min((abs(offset) for offset in previous_image_offsets), default=None)
-    nearest_next_image = min(next_image_offsets, default=None)
-    same_next_caption = label is not None and next_label == label
-    same_previous_caption = label is not None and previous_label == label
-    previous_label_does_not_intercept_image = (
-        previous_label is None
-        or previous_label == label
-        or nearest_previous_image is None
-        or previous_label_distance is None
-        or previous_label_distance > nearest_previous_image
-    )
-    if (
-        same_next_caption
-        and previous_label_does_not_intercept_image
-        and (
-            nearest_previous_image is not None
-            and nearest_previous_image <= 4
-            or nearest_next_image is not None
-            and nearest_next_image <= 4
-        )
-    ) or (same_previous_caption and nearest_previous_image is not None and nearest_previous_image <= 4):
-        extra["p62_subtype"] = "same_label_image_near_warning"
-        return {
-            "defect_id": "P62A",
-            "check": "Missing-figure warning is adjacent to a same-label image/caption",
-            "hypothesis": "The figure image appears to be present, but EN polish inserted a stale missing-image warning next to it.",
-            "proposed_fix_layer": "EN polish figure image/caption association",
-            "extra": extra,
-        }
-
-    if not image_offsets and (
-        same_next_caption
-        and next_label_distance is not None
-        and next_label_distance <= 2
-        or same_previous_caption
-        and previous_label_distance is not None
-        and previous_label_distance <= 2
-    ):
-        extra["quality_counted"] = False
-        extra.setdefault("warning_origin", "caption-only-caption")
-
-    if image_offsets:
-        extra["p62_subtype"] = "nearby_image_ambiguous_label"
-        return {
-            "defect_id": "P62B",
-            "check": "Missing-figure warning has nearby image content but ambiguous label match",
-            "hypothesis": "The article contains nearby image content, but the warning could not be confidently matched to the same figure label.",
-            "proposed_fix_layer": "EN polish figure image/caption association and manual review packaging",
-            "extra": extra,
-        }
-
-    extra["p62_subtype"] = "no_nearby_image"
-    return {
-        "defect_id": "P62",
-        "check": "Missing-figure warning has no nearby image",
-        "hypothesis": "The final HTML is explicit about a missing source image, and no nearby image was found in the block context.",
-        "proposed_fix_layer": "Marker image extraction diagnostics or review packaging",
-        "extra": extra,
-    }
-
-
-def _has_nearby_missing_figure_warning(blocks: list[Block], index: int, *, window: int = 2) -> bool:
-    start = max(0, index - window)
-    stop = min(len(blocks), index + window + 1)
-    return any("z2m-missing-figure-warning" in block.classes for block in blocks[start:stop])
-
-
-def _is_handled_missing_figure_block(block: Block) -> bool:
-    return (
-        "z2m-missing-figure-unit" in block.classes
-        and "z2m-missing-figure-warning" in block.raw
-        and "z2m-figure-caption" in block.raw
+        looks_like_figure_caption=_looks_like_figure_caption,
     )
 
 
