@@ -4,48 +4,74 @@
 from __future__ import annotations
 
 import argparse
-from bisect import bisect_right
 from collections import Counter
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict
 import hashlib
 from html import unescape
-from html.parser import HTMLParser
-import json
 from pathlib import Path
 import re
 import sys
 import urllib.parse
 from typing import Any, Iterable
 
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from zoteropdf2md.quality_loop.audit_blocks import (
+    Block,
+    Defect,
+    attrs as _attrs,
+    diagnostic_text as _diagnostic_text,
+    diagnostic_word_text as _diagnostic_word_text,
+    diagnostic_words as _diagnostic_words,
+    line_at as _line_at,
+    line_at_from_starts as _line_at_from_starts,
+    line_starts as _line_starts,
+    missing_figure_warning_blocks as _missing_figure_warning_blocks,
+    normalize_ws as _normalize_ws,
+    parse_blocks as _parse_blocks,
+    parse_overlapping_blocks as _parse_overlapping_blocks,
+    plain_text as _plain_text,
+    reference_identity_blocks as _reference_identity_blocks,
+    snippet as _snippet,
+    strip_tags as _strip_tags,
+    structure_html as _structure_html,
+    unit_diagnostic_text_from_html as _unit_diagnostic_text_from_html,
+    unit_diagnostic_texts as _unit_diagnostic_texts,
+    visible_ref_number_from_match as _visible_ref_number_from_match,
+    word_sequence_match as _word_sequence_match,
+)
+from zoteropdf2md.quality_loop.audit_report import (
+    add_corpus_hit_counts as _add_corpus_hit_counts,
+    assemble_report,
+    corpus_totals as _corpus_totals,
+    defect_quality_counted as _defect_quality_counted,
+    find_stage_pairs,
+    non_quality_corpus_hit_counts as _non_quality_corpus_hit_counts,
+    observed_corpus_hit_counts as _observed_corpus_hit_counts,
+    write_json_report as _write_json_report,
+)
+from zoteropdf2md.quality_loop.audit_pdf import (
+    article_name_from_stage as _article_name_from_stage,
+    extract_pdf_text as _extract_pdf_text,
+    first_path_value as _first_path_value,
+    load_pdf_diagnostic_text,
+    load_pdf_map as _load_pdf_map,
+    pdf_citation_link_summary,
+    pdf_path_from_map_record as _pdf_path_from_map_record,
+    source_pdf_path,
+)
+
 
 RAW_STAGE = "01.en.raw.html"
 POLISH_STAGE = "02.en.polish.html"
 PDF_SOURCE_STAGE = "00.source.pdf"
 
-TAG_RE = re.compile(r"<[^>]+>")
-BLOCK_RE = re.compile(
-    r"<(?P<tag>p|h[1-6]|div|table|figure|figcaption|li|td|th)\b(?P<attrs>[^>]*)>"
-    r"(?P<body>.*?)</(?P=tag)>",
-    re.IGNORECASE | re.DOTALL,
-)
-OPEN_BLOCK_TAG_RE = re.compile(
-    r"<(?P<tag>p|h[1-6]|div|table|figure|figcaption|li|td|th)\b(?P<attrs>[^>]*)>",
-    re.IGNORECASE | re.DOTALL,
-)
-TABLE_CELL_RE = re.compile(
-    r"<t[dh]\b[^>]*>(?P<body>.*?)</t[dh]>",
-    re.IGNORECASE | re.DOTALL,
-)
-ATTR_RE = re.compile(
-    r"(?P<name>[A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*"
-    r"(?:(?P<q>['\"])(?P<quoted>.*?)(?P=q)|(?P<bare>[^\s>]+))",
-    re.DOTALL,
-)
 REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
 FIG_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#fig-([^'\"]+)['\"][^>]*>", re.IGNORECASE)
 TABLE_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#table-([^'\"]+)['\"][^>]*>", re.IGNORECASE)
-NESTED_REF_LIST_ITEM_RE = re.compile(r"<li\b[^>]*\bid\s*=\s*['\"]ref-\d+['\"]", re.IGNORECASE)
 PAGE_LINK_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"]#page-(?P<target>[^'\"]+)['\"][^>]*>"
     r"(?P<body>.*?)</a>",
@@ -74,7 +100,6 @@ REF_ANCHOR_BODY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 IMG_SRC_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
-DATA_IMAGE_RE = re.compile(r"data:image/[^'\"]+", re.IGNORECASE)
 FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
 TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
 REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
@@ -806,7 +831,6 @@ PDF_LINE_NUMBER_RESIDUE_RE = re.compile(
     r"100\s+As\s+shown|Key\s+25\s+Technologies)\b",
     re.IGNORECASE,
 )
-PDF_CITATION_DEST_RE = re.compile(r"^(?:cite|citation|bib)[.:]", re.IGNORECASE)
 BOX_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-box-unit\b)[^>]*>(?P<body>.*?)</div>",
     re.IGNORECASE | re.DOTALL,
@@ -957,12 +981,6 @@ SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
     r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
     re.IGNORECASE,
 )
-MISSING_FIGURE_WARNING_BLOCK_RE = re.compile(
-    r"<(?P<tag>p|div|figure|figcaption|li)\b"
-    r"(?=[^>]*\bz2m-missing-figure-warning\b)(?P<attrs>[^>]*)>"
-    r"(?P<body>.*?)</(?P=tag)>",
-    re.IGNORECASE | re.DOTALL,
-)
 TABLE_REF_PARTIAL_LINK_RE = re.compile(
     r"\bTables?\s+<a\b[^>]*\bhref\s*=\s*['\"]#table-(?P<target>\d+)['\"][^>]*>"
     r"\s*(?P<label>\d+)\s*</a>",
@@ -1011,116 +1029,6 @@ TABLE_WRAPPER_ID_RE = re.compile(
 )
 
 
-@dataclass
-class Block:
-    index: int
-    tag: str
-    attrs: dict[str, str]
-    raw: str
-    text: str
-    line: int
-
-    @property
-    def id(self) -> str:
-        return self.attrs.get("id", "")
-
-    @property
-    def classes(self) -> set[str]:
-        return set(self.attrs.get("class", "").split())
-
-    @property
-    def block_type(self) -> str:
-        return self.attrs.get("block-type", "")
-
-    @property
-    def has_img(self) -> bool:
-        return bool(re.search(r"<img\b", self.raw, re.IGNORECASE))
-
-    @property
-    def has_figure_visual(self) -> bool:
-        return self.has_img or bool(
-            re.search(r"<table\b(?=[^>]*\bz2m-figure-target\b)", self.raw, re.IGNORECASE)
-        )
-
-
-@dataclass
-class Defect:
-    id: str
-    cc_class: str
-    check: str
-    severity: str
-    snippet: str
-    line: int | None
-    first_broken_stage: str
-    hypothesis: str
-    proposed_fix_layer: str
-    regression_test: str
-    status: str = "open"
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-def _normalize_ws(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _strip_tags(fragment: str) -> str:
-    return _normalize_ws(unescape(TAG_RE.sub(" ", fragment)))
-
-
-def _visible_ref_number_from_match(match: re.Match[str] | None) -> int | None:
-    if match is None:
-        return None
-    value = match.group(1) or match.group(2)
-    return int(value) if value is not None else None
-
-
-class _UnitDiagnosticTextParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-        self.skip_depth = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        tag = tag.lower()
-        if self.skip_depth:
-            self.skip_depth += 1
-            return
-
-        attr_map = {name.lower(): value or "" for name, value in attrs}
-        classes = set(attr_map.get("class", "").split())
-        if tag in {"script", "style"} or classes.intersection({"z2m-math", "katex", "katex-html"}):
-            self.skip_depth = 1
-            return
-        self.parts.append(" ")
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if not self.skip_depth:
-            self.parts.append(" ")
-
-    def handle_endtag(self, tag: str) -> None:
-        if self.skip_depth:
-            self.skip_depth -= 1
-            return
-        self.parts.append(" ")
-
-    def handle_data(self, data: str) -> None:
-        if not self.skip_depth:
-            self.parts.append(data)
-
-    def text(self) -> str:
-        return _normalize_ws(unescape(" ".join(self.parts)))
-
-
-def _unit_diagnostic_text_from_html(fragment: str) -> str:
-    parser = _UnitDiagnosticTextParser()
-    try:
-        parser.feed(fragment)
-        parser.close()
-    except Exception:
-        return _strip_tags(fragment)
-    return parser.text()
-
-
 def _inline_tex_contains_citation_bracket(tex: str) -> bool:
     for match in re.finditer(r"\[\s*\d{1,4}\s*\]", tex):
         prefix = tex[: match.start()]
@@ -1159,159 +1067,6 @@ def _bibliography_numbering_residue_is_clean_reference_boundary(
         if re.search(rf"\b{number}\.\s+{re.escape(name)}", li_text) is None:
             return False
     return True
-
-
-def _line_at(text: str, offset: int) -> int:
-    return text.count("\n", 0, offset) + 1
-
-
-def _line_starts(text: str) -> list[int]:
-    return [0] + [match.end() for match in re.finditer(r"\n", text)]
-
-
-def _line_at_from_starts(line_starts: list[int], offset: int) -> int:
-    return bisect_right(line_starts, offset)
-
-
-def _snippet(text: str, start: int = 0, end: int | None = None, *, width: int = 260) -> str:
-    end = start if end is None else end
-    left = max(0, start - width // 2)
-    right = min(len(text), end + width // 2)
-    snippet = _strip_tags(text[left:right])
-    if left > 0:
-        snippet = "..." + snippet
-    if right < len(text):
-        snippet += "..."
-    if len(snippet) <= width:
-        return snippet
-    return snippet[: width - 3].rstrip() + "..."
-
-
-def _attrs(attr_text: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    for match in ATTR_RE.finditer(attr_text):
-        value = match.group("quoted") if match.group("quoted") is not None else match.group("bare")
-        attrs[match.group("name").lower()] = unescape(value or "")
-    return attrs
-
-
-def _parse_blocks(html: str) -> list[Block]:
-    blocks: list[Block] = []
-    line_starts = _line_starts(html)
-    for match in BLOCK_RE.finditer(html):
-        raw = match.group(0)
-        blocks.append(
-            Block(
-                index=len(blocks),
-                tag=match.group("tag").lower(),
-                attrs=_attrs(match.group("attrs")),
-                raw=raw,
-                text=_strip_tags(raw),
-                line=_line_at_from_starts(line_starts, match.start()),
-            )
-        )
-    return blocks
-
-
-def _parse_overlapping_blocks(html: str) -> list[Block]:
-    blocks: list[Block] = []
-    lower_html = html.lower()
-    line_starts = _line_starts(html)
-    for match in OPEN_BLOCK_TAG_RE.finditer(html):
-        tag = match.group("tag").lower()
-        close_token = f"</{tag}>"
-        close_start = lower_html.find(close_token, match.end())
-        if close_start == -1:
-            continue
-        close_end = close_start + len(close_token)
-        raw = html[match.start() : close_end]
-        blocks.append(
-            Block(
-                index=len(blocks),
-                tag=tag,
-                attrs=_attrs(match.group("attrs")),
-                raw=raw,
-                text=_strip_tags(raw),
-                line=_line_at_from_starts(line_starts, match.start()),
-            )
-        )
-    return blocks
-
-
-def _reference_identity_blocks(html: str) -> list[Block]:
-    blocks: list[Block] = []
-    seen_raw: set[str] = set()
-    for block in _parse_blocks(html):
-        if block.tag in {"p", "div"} and not REF_ID_RE.match(block.id) and NESTED_REF_LIST_ITEM_RE.search(block.raw):
-            continue
-        blocks.append(block)
-        seen_raw.add(block.raw)
-
-    for block in _parse_overlapping_blocks(html):
-        if block.tag != "li" or not REF_ID_RE.match(block.id) or block.raw in seen_raw:
-            continue
-        block.attrs["data-z2m-audit-nested-ref-item"] = "1"
-        blocks.append(block)
-        seen_raw.add(block.raw)
-    return blocks
-
-
-def _missing_figure_warning_blocks(html: str) -> list[Block]:
-    blocks: list[Block] = []
-    line_starts = _line_starts(html)
-    for match in MISSING_FIGURE_WARNING_BLOCK_RE.finditer(html):
-        attrs = _attrs(match.group("attrs"))
-        if "z2m-missing-figure-warning" not in set(attrs.get("class", "").split()):
-            continue
-        raw = match.group(0)
-        blocks.append(
-            Block(
-                index=len(blocks),
-                tag=match.group("tag").lower(),
-                attrs=attrs,
-                raw=raw,
-                text=_strip_tags(raw),
-                line=_line_at_from_starts(line_starts, match.start()),
-            )
-        )
-    return blocks
-
-
-def _plain_text(html: str) -> str:
-    return _strip_tags(html)
-
-
-def _structure_html(html: str) -> str:
-    return DATA_IMAGE_RE.sub("data:image/...", html)
-
-
-def _unit_diagnostic_texts(block: Block) -> list[str]:
-    cells = [_unit_diagnostic_text_from_html(match.group("body")) for match in TABLE_CELL_RE.finditer(block.raw)]
-    if cells:
-        return cells
-    return [_unit_diagnostic_text_from_html(block.raw)]
-
-
-def _diagnostic_text(text: str) -> str:
-    text = unescape(TAG_RE.sub(" ", text))
-    text = text.replace("\u2010", "-").replace("\u2011", "-").replace("\u2012", "-")
-    text = text.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
-def _diagnostic_word_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", _diagnostic_text(text)).strip()
-
-
-def _diagnostic_words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", _diagnostic_word_text(text))
-
-
-def _word_sequence_match(text: str, words: list[str], *, start: int = 0) -> re.Match[str] | None:
-    if not words:
-        return None
-    pattern = re.compile(r"\b" + r"\s+".join(re.escape(word) for word in words) + r"\b")
-    return pattern.search(text, pos=start)
 
 
 def _source_pdf_text_confirms_float_gap(left_text: str, right_text: str, pdf_text: str) -> bool:
@@ -1448,159 +1203,15 @@ def _image_identity_key(html_path: Path, src: str) -> str | None:
 
 
 def _source_pdf_path(raw_path: Path) -> Path:
-    return raw_path.parent / PDF_SOURCE_STAGE
-
-
-def _article_name_from_stage(stage_path: Path) -> str:
-    return stage_path.parent.parent.name if stage_path.parent.name == "_z2m_stages" else stage_path.parent.name
-
-
-def _first_path_value(value: Any) -> str | None:
-    if isinstance(value, str) and value:
-        return value
-    if isinstance(value, dict):
-        for key in ("pdf_path", "source_pdf_path", "path"):
-            candidate = value.get(key)
-            if isinstance(candidate, str) and candidate:
-                return candidate
-    if isinstance(value, list):
-        for item in value:
-            candidate = _first_path_value(item)
-            if candidate:
-                return candidate
-    return None
-
-
-def _pdf_path_from_map_record(record: Any) -> Path | None:
-    if isinstance(record, str) and record:
-        return Path(record).expanduser()
-    if not isinstance(record, dict):
-        return None
-    for key in ("pdf_path", "source_pdf_path", "path"):
-        candidate = record.get(key)
-        if isinstance(candidate, str) and candidate:
-            return Path(candidate).expanduser()
-    for key in ("exact_matches", "fuzzy_matches", "matches"):
-        candidate = _first_path_value(record.get(key))
-        if candidate:
-            return Path(candidate).expanduser()
-    return None
-
-
-def _load_pdf_map(pdf_map_path: Path) -> dict[str, Path]:
-    data = json.loads(pdf_map_path.read_text(encoding="utf-8-sig"))
-    if isinstance(data, dict) and not any(key in data for key in ("items", "articles", "records")):
-        return {
-            str(article): path
-            for article, value in data.items()
-            if (path := _pdf_path_from_map_record(value)) is not None
-        }
-
-    if isinstance(data, dict):
-        records = data.get("items") or data.get("articles") or data.get("records") or []
-    else:
-        records = data
-
-    pdf_map: dict[str, Path] = {}
-    if not isinstance(records, list):
-        return pdf_map
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        article = record.get("article")
-        if not isinstance(article, str) or not article:
-            continue
-        pdf_path = _pdf_path_from_map_record(record)
-        if pdf_path is not None:
-            pdf_map[article] = pdf_path
-    return pdf_map
-
-
-def _extract_pdf_text(pdf_path: Path) -> tuple[str, str, str | None]:
-    if not pdf_path.is_file():
-        return "missing", "", None
-
-    errors: list[str] = []
-    try:
-        import fitz  # type: ignore[import-not-found]
-
-        doc = fitz.open(str(pdf_path))
-        try:
-            return "pymupdf", "\n".join(page.get_text("text") for page in doc), None
-        finally:
-            doc.close()
-    except ImportError as exc:
-        errors.append(f"pymupdf unavailable: {exc}")
-    except Exception as exc:  # pragma: no cover - extractor/environment specific
-        errors.append(f"pymupdf failed: {exc}")
-
-    try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
-
-        reader = PdfReader(str(pdf_path))
-        return "pypdf", "\n".join(page.extract_text() or "" for page in reader.pages), None
-    except ImportError as exc:
-        errors.append(f"pypdf unavailable: {exc}")
-    except Exception as exc:  # pragma: no cover - extractor/environment specific
-        errors.append(f"pypdf failed: {exc}")
-
-    return "unavailable", "", "; ".join(errors)
+    return source_pdf_path(raw_path, pdf_source_stage=PDF_SOURCE_STAGE)
 
 
 def _pdf_citation_link_summary(pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
-    summary: dict[str, Any] = {
-        "pdf_link_text_status": "disabled",
-        "pdf_link_count": 0,
-        "pdf_citation_dest_links": 0,
-        "pdf_author_year_link_labels": 0,
-        "pdf_citation_link_samples": [],
-        "pdf_link_text_error": None,
-    }
-    if not pdf_path.is_file():
-        summary["pdf_link_text_status"] = "missing"
-        return summary
-    try:
-        import fitz  # type: ignore[import-not-found]
-    except ImportError as exc:
-        summary["pdf_link_text_status"] = "pymupdf_unavailable"
-        summary["pdf_link_text_error"] = str(exc)
-        return summary
-
-    samples: list[dict[str, Any]] = []
-    try:
-        doc = fitz.open(str(pdf_path))
-        try:
-            for page_index, page in enumerate(doc):
-                try:
-                    links = page.get_links()
-                except Exception:
-                    continue
-                summary["pdf_link_count"] += len(links)
-                for link in links:
-                    dest = str(link.get("nameddest") or "")
-                    if not PDF_CITATION_DEST_RE.match(dest):
-                        continue
-                    summary["pdf_citation_dest_links"] += 1
-                    text = ""
-                    try:
-                        rect = fitz.Rect(link["from"])
-                        text = _normalize_ws(page.get_textbox(rect) or "")
-                    except Exception:
-                        text = ""
-                    if AUTHOR_YEAR_TEXT_RE.search(text):
-                        summary["pdf_author_year_link_labels"] += 1
-                    if len(samples) < sample_limit:
-                        samples.append({"page": page_index + 1, "dest": dest, "text": text})
-        finally:
-            doc.close()
-    except Exception as exc:  # pragma: no cover - extractor/environment specific
-        summary["pdf_link_text_status"] = "failed"
-        summary["pdf_link_text_error"] = str(exc)
-        return summary
-
-    summary["pdf_link_text_status"] = "pymupdf"
-    summary["pdf_citation_link_samples"] = samples
-    return summary
+    return pdf_citation_link_summary(
+        pdf_path,
+        author_year_text_re=AUTHOR_YEAR_TEXT_RE,
+        sample_limit=sample_limit,
+    )
 
 
 def _load_pdf_diagnostic_text(
@@ -1608,29 +1219,13 @@ def _load_pdf_diagnostic_text(
     pdf_text_override: str | None,
     pdf_path_override: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    pdf_path = pdf_path_override or _source_pdf_path(raw_path)
-    pdf_origin = "map" if pdf_path_override is not None else "stage"
-    if pdf_text_override is not None:
-        return pdf_text_override, {
-            "pdf_diagnostics_enabled": True,
-            "source_pdf_path": str(pdf_path),
-            "source_pdf_present": pdf_path.is_file(),
-            "source_pdf_origin": pdf_origin,
-            "pdf_text_status": "override",
-            "pdf_text_chars": len(pdf_text_override),
-            "pdf_text_error": None,
-        }
-
-    status, text, error = _extract_pdf_text(pdf_path)
-    return text, {
-        "pdf_diagnostics_enabled": True,
-        "source_pdf_path": str(pdf_path),
-        "source_pdf_present": pdf_path.is_file(),
-        "source_pdf_origin": pdf_origin,
-        "pdf_text_status": status,
-        "pdf_text_chars": len(text),
-        "pdf_text_error": error,
-    }
+    return load_pdf_diagnostic_text(
+        raw_path,
+        pdf_text_override,
+        pdf_source_stage=PDF_SOURCE_STAGE,
+        pdf_path_override=pdf_path_override,
+        extract_pdf_text_func=_extract_pdf_text,
+    )
 
 
 def _defect(
@@ -5931,81 +5526,7 @@ def analyze_pair(
 
 
 def find_pairs(roots: Iterable[Path]) -> list[tuple[Path, Path]]:
-    pairs: set[tuple[Path, Path]] = set()
-    for root in roots:
-        candidates: list[Path] = []
-        if root.is_file():
-            if root.name == POLISH_STAGE:
-                candidates.append(root)
-            elif root.name == RAW_STAGE and (root.parent / POLISH_STAGE).is_file():
-                candidates.append(root.parent / POLISH_STAGE)
-        elif root.exists():
-            candidates.extend(root.rglob(POLISH_STAGE))
-        for polish_path in candidates:
-            raw_path = polish_path.parent / RAW_STAGE
-            if raw_path.is_file():
-                pairs.add((raw_path.resolve(strict=False), polish_path.resolve(strict=False)))
-    return sorted(pairs, key=lambda pair: str(pair[1]))
-
-
-def _add_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for article in articles:
-        seen = {
-            defect["id"]
-            for defect in article["defects_found"]
-            if _defect_quality_counted(defect)
-        }
-        for defect_id in seen:
-            counts[defect_id] = counts.get(defect_id, 0) + 1
-    observed_counts = _observed_corpus_hit_counts(articles)
-    for article in articles:
-        for defect in article["defects_found"]:
-            defect_id = defect["id"]
-            defect["same_pattern_hits_across_corpus"] = counts.get(defect_id, 0)
-            defect["same_pattern_observed_hits_across_corpus"] = observed_counts.get(defect_id, 0)
-    return counts
-
-
-def _defect_quality_counted(defect: dict[str, Any]) -> bool:
-    extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
-    return extra.get("quality_counted") is not False
-
-
-def _observed_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for article in articles:
-        seen = {defect["id"] for defect in article["defects_found"]}
-        for defect_id in seen:
-            counts[defect_id] = counts.get(defect_id, 0) + 1
-    return counts
-
-
-def _non_quality_corpus_hit_counts(
-    observed_counts: dict[str, int],
-    quality_counts: dict[str, int],
-) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for defect_id, observed_count in observed_counts.items():
-        non_quality_count = observed_count - quality_counts.get(defect_id, 0)
-        if non_quality_count > 0:
-            counts[defect_id] = non_quality_count
-    return counts
-
-
-def _corpus_totals(articles: list[dict[str, Any]]) -> dict[str, int]:
-    return {
-        "raw_img_tags": sum(article["summary"]["raw_img_tags"] for article in articles),
-        "polish_img_tags": sum(article["summary"]["polish_img_tags"] for article in articles),
-        "polish_ref_links": sum(article["summary"]["polish_ref_links"] for article in articles),
-        "polish_fig_links": sum(article["summary"]["polish_fig_links"] for article in articles),
-        "polish_table_links": sum(article["summary"]["polish_table_links"] for article in articles),
-        "polish_page_links": sum(article["summary"]["polish_page_links"] for article in articles),
-        "polish_replacement_chars": sum(article["summary"]["polish_replacement_chars"] for article in articles),
-        "polish_missing_local_images": sum(article["summary"]["polish_missing_local_images"] for article in articles),
-        "source_pdf_present": sum(1 for article in articles if article["summary"]["source_pdf_present"]),
-        "pdf_text_chars": sum(article["summary"]["pdf_text_chars"] for article in articles),
-    }
+    return find_stage_pairs(roots, raw_stage=RAW_STAGE, polish_stage=POLISH_STAGE)
 
 
 def _assemble_report(
@@ -6016,32 +5537,15 @@ def _assemble_report(
     audit_status: str,
     total_pair_count: int,
 ) -> dict[str, Any]:
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "stage": f"{RAW_STAGE} -> {POLISH_STAGE}",
-        "roots": [str(root) for root in roots],
-        "audit_status": audit_status,
-        "processed_pair_count": len(articles),
-        "total_pair_count": total_pair_count,
-        "article_count": len(articles),
-        "corpus_summary": {
-            "defect_counts": defect_counts,
-            "observed_defect_counts": _observed_corpus_hit_counts(articles),
-            "non_quality_defect_counts": _non_quality_corpus_hit_counts(
-                _observed_corpus_hit_counts(articles),
-                defect_counts,
-            ),
-            "totals": _corpus_totals(articles),
-        },
-        "articles": articles,
-    }
-
-
-def _write_json_report(path: Path, report: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
+    return assemble_report(
+        roots,
+        articles,
+        defect_counts,
+        raw_stage=RAW_STAGE,
+        polish_stage=POLISH_STAGE,
+        audit_status=audit_status,
+        total_pair_count=total_pair_count,
+    )
 
 
 def build_report(
