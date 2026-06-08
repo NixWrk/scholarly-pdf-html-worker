@@ -70,6 +70,7 @@ def run_audit(
     enable_pdf_diagnostics: bool = False,
     pdf_map_path: Path | None = None,
     jobs: int = 1,
+    merge_previous_report_path: Path | None = None,
     repo_root: Path = DEFAULT_REPO_ROOT,
 ) -> None:
     audit_roots = [root.resolve(strict=False) for root in roots] if roots else [run_dir / "audit_tree"]
@@ -98,6 +99,8 @@ def run_audit(
         command.extend(["--pdf-map", str(pdf_map_path)])
     if int(jobs or 1) > 1:
         command.extend(["--jobs", str(int(jobs or 1))])
+    if merge_previous_report_path is not None:
+        command.extend(["--merge-previous-report", str(merge_previous_report_path)])
 
     print(f"Audit started: roots={len(audit_roots)} out={run_dir / 'audit_full_checks.json'}", flush=True)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -138,6 +141,10 @@ def run_audit(
             "pdf_diagnostics_enabled": enable_pdf_diagnostics,
             "pdf_map_path": str(pdf_map_path) if pdf_map_path is not None else "",
             "jobs": int(jobs or 1),
+            "merge_previous_report_path": (
+                str(merge_previous_report_path) if merge_previous_report_path is not None else ""
+            ),
+            "targeted_merge_enabled": merge_previous_report_path is not None,
             "started_at": started,
             "finished_at": now(),
             "returncode": returncode,

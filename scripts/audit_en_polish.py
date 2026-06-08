@@ -9,6 +9,7 @@ from collections import Counter
 from dataclasses import asdict
 import hashlib
 from html import unescape
+import json
 from pathlib import Path
 import re
 import sys
@@ -4920,6 +4921,62 @@ def _analyze_pair_task(task: tuple[int, Path, Path, bool, str]) -> tuple[int, di
     )
 
 
+def merge_targeted_report(
+    previous_report: dict[str, Any],
+    targeted_report: dict[str, Any],
+    *,
+    previous_report_path: Path | None = None,
+    allow_new_articles: bool = False,
+) -> dict[str, Any]:
+    previous_articles = previous_report.get("articles") or []
+    targeted_articles = targeted_report.get("articles") or []
+    by_article: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for article in previous_articles:
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        by_article[article_id] = article
+        order.append(article_id)
+
+    replaced: list[str] = []
+    new_articles: list[str] = []
+    for article in targeted_articles:
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        if article_id not in by_article:
+            if not allow_new_articles:
+                raise ValueError(f"Targeted audit article is not present in previous report: {article_id}")
+            order.append(article_id)
+            new_articles.append(article_id)
+        else:
+            replaced.append(article_id)
+        by_article[article_id] = article
+
+    merged_articles = [by_article[article_id] for article_id in order if article_id in by_article]
+    defect_counts = _add_corpus_hit_counts(merged_articles)
+    merged = _assemble_report(
+        [Path(root) for root in previous_report.get("roots") or targeted_report.get("roots") or []],
+        merged_articles,
+        defect_counts,
+        audit_status="complete",
+        total_pair_count=int(previous_report.get("total_pair_count") or len(merged_articles)),
+    )
+    merged["targeted_audit"] = {
+        "enabled": True,
+        "previous_report_path": str(previous_report_path) if previous_report_path is not None else "",
+        "target_roots": targeted_report.get("roots") or [],
+        "target_article_count": len(targeted_articles),
+        "reused_article_count": max(0, len(previous_articles) - len(replaced)),
+        "replaced_article_count": len(replaced),
+        "new_article_count": len(new_articles),
+        "replaced_articles": sorted(replaced),
+        "new_articles": sorted(new_articles),
+    }
+    return merged
+
+
 def _safe_print(text: str) -> None:
     try:
         print(text)
@@ -5014,20 +5071,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=1,
         help="Number of parallel article workers for audit analysis. Defaults to 1.",
     )
+    parser.add_argument(
+        "--merge-previous-report",
+        type=Path,
+        help=(
+            "Merge this targeted audit into an existing full audit report. The roots are treated as "
+            "the changed subset, unchanged articles are reused, and corpus summaries are recomputed."
+        ),
+    )
+    parser.add_argument(
+        "--allow-new-target-articles",
+        action="store_true",
+        help="Allow targeted merge to add articles that were not present in the previous report.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     pdf_map = _load_pdf_map(args.pdf_map) if args.pdf_map is not None else None
+    previous_report: dict[str, Any] | None = None
+    if args.merge_previous_report is not None:
+        previous_report = json.loads(args.merge_previous_report.read_text(encoding="utf-8"))
     report = build_report(
         args.roots,
         enable_pdf_diagnostics=args.pdf_diagnostics,
         pdf_map=pdf_map,
-        progress_out=args.out,
+        progress_out=None if previous_report is not None else args.out,
         progress_write_every=args.progress_write_every,
         jobs=args.jobs,
     )
+    if previous_report is not None:
+        report = merge_targeted_report(
+            previous_report,
+            report,
+            previous_report_path=args.merge_previous_report,
+            allow_new_articles=args.allow_new_target_articles,
+        )
+        if args.out is not None:
+            _write_json_report(args.out, report)
     _print_summary(report)
     if args.out is not None:
         print(f"Wrote {args.out}")

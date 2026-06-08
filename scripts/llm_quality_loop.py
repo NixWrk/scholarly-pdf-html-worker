@@ -2268,6 +2268,7 @@ def write_polish_auto_repair_stage(
         "status": "patched" if patched_article_ids else "no_changes",
         "candidate_count": len(repair_articles),
         "patched_article_count": len(patched_article_ids),
+        "patched_articles": sorted(patched_article_ids),
         "repair_counts": dict(sorted(repair_counts.items())),
         "patched_targets": dict(sorted(target_patch_counts.items())),
         "apply_patches": apply_patches,
@@ -3042,6 +3043,7 @@ def write_p62_image_recovery_stage(
         "selected_count": len(records),
         "asset_ready_count": asset_ready_count,
         "patched_warning_count": patched_warning_count,
+        "patched_articles": sorted(patched_article_ids),
         "page_render_upgrade_count": page_render_upgrade_count,
         "page_render_recovery_removed_count": page_render_recovery_removed_count,
         "false_match_recovery_removed_count": false_match_recovery_removed_count,
@@ -3940,6 +3942,7 @@ def run_audit(
     enable_pdf_diagnostics: bool = False,
     pdf_map_path: Path | None = None,
     jobs: int = 1,
+    merge_previous_report_path: Path | None = None,
 ) -> None:
     quality_commands.run_audit(
         run_dir,
@@ -3947,6 +3950,7 @@ def run_audit(
         enable_pdf_diagnostics=enable_pdf_diagnostics,
         pdf_map_path=pdf_map_path,
         jobs=jobs,
+        merge_previous_report_path=merge_previous_report_path,
         repo_root=ROOT,
     )
 
@@ -3972,6 +3976,34 @@ def _write_gate_report(run_dir: Path, gate_config_path: Path, out_path: Path | N
         out_path=out_path,
         pdf_problem_evidence_name=DEFAULT_PDF_PROBLEM_EVIDENCE_NAME,
     )
+
+
+def _patched_article_ids_from_repair_report(report: dict[str, Any]) -> set[str]:
+    article_ids = {str(article) for article in report.get("patched_articles") or [] if str(article)}
+    for item in report.get("articles") or []:
+        if not isinstance(item, dict):
+            continue
+        patched = (
+            bool(item.get("patched"))
+            or bool(item.get("patched_paths"))
+            or int(item.get("patch_replacement_count") or 0) > 0
+            or int(item.get("duplicate_visual_repair_count") or 0) > 0
+        )
+        if patched and item.get("article"):
+            article_ids.add(str(item.get("article")))
+    return article_ids
+
+
+def _repair_audit_roots_for_articles(run_dir: Path, article_ids: Iterable[str]) -> tuple[list[Path], list[str]]:
+    roots: list[Path] = []
+    missing: list[str] = []
+    for article_id in sorted({str(article_id) for article_id in article_ids if str(article_id)}):
+        root = run_dir / "audit_tree" / article_id
+        if (root / RAW_STAGE).is_file() and (root / POLISH_STAGE).is_file():
+            roots.append(root)
+        else:
+            missing.append(article_id)
+    return roots, missing
 
 
 def observe(args: argparse.Namespace) -> int:
@@ -4043,6 +4075,7 @@ def observe(args: argparse.Namespace) -> int:
             and not audit_existing_converted
         )
         repair_audit_reasons: list[str] = []
+        repair_audit_article_ids: set[str] = set()
         if run_p62_recovery:
             write_p62_marker_recovery_plan(run_dir, gate_config=gate_config)
             recovery_report = write_p62_image_recovery_stage(
@@ -4056,6 +4089,7 @@ def observe(args: argparse.Namespace) -> int:
                 gate_config.get("p62_image_recovery_rerun_audit", True)
             ):
                 repair_audit_reasons.append("p62_image_recovery")
+                repair_audit_article_ids.update(_patched_article_ids_from_repair_report(recovery_report))
         run_polish_auto_repair = (
             bool(gate_config.get("run_polish_auto_repair_stage", True))
             and not audit_existing_converted
@@ -4066,17 +4100,36 @@ def observe(args: argparse.Namespace) -> int:
                 gate_config.get("polish_auto_repair_rerun_audit", True)
             ):
                 repair_audit_reasons.append("polish_auto_repair")
+                repair_audit_article_ids.update(_patched_article_ids_from_repair_report(auto_repair_report))
         if repair_audit_reasons:
+            targeted_repair_audit = bool(gate_config.get("targeted_repair_audit_enabled", True))
+            previous_audit_path = run_dir / "audit_full_checks.json"
+            repair_audit_roots: list[Path] | None = None
+            if targeted_repair_audit and previous_audit_path.is_file():
+                target_roots, missing_articles = _repair_audit_roots_for_articles(run_dir, repair_audit_article_ids)
+                if target_roots and not missing_articles and len(target_roots) == len(repair_audit_article_ids):
+                    repair_audit_roots = target_roots
+                else:
+                    print(
+                        "Targeted repair audit unavailable: "
+                        f"targets={len(target_roots)} articles={len(repair_audit_article_ids)} "
+                        f"missing={','.join(missing_articles[:8])}",
+                        flush=True,
+                    )
             print(
                 "Deferred repair audit: "
-                f"reasons={','.join(repair_audit_reasons)}",
+                f"reasons={','.join(repair_audit_reasons)} "
+                f"mode={'targeted' if repair_audit_roots is not None else 'full'} "
+                f"articles={len(repair_audit_article_ids)}",
                 flush=True,
             )
             run_audit(
                 run_dir,
+                roots=repair_audit_roots,
                 enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
                 pdf_map_path=pdf_map_path,
                 jobs=audit_jobs,
+                merge_previous_report_path=previous_audit_path if repair_audit_roots is not None else None,
             )
     if not args.skip_history:
         run_quality_history(

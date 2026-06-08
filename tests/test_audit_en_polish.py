@@ -2519,6 +2519,40 @@ def test_build_report_parallel_jobs_match_serial_report() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_merge_targeted_report_matches_full_reaudit() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        root = tmp_path / "root"
+        article_one = root / "Article one" / "_z2m_stages"
+        article_two = root / "Article two" / "_z2m_stages"
+        for stage_dir in (article_one, article_two):
+            stage_dir.mkdir(parents=True)
+            (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+            (stage_dir / "02.en.polish.html").write_text(
+                "<html><body><p>Polished.</p></body></html>",
+                encoding="utf-8",
+            )
+
+        previous = audit.build_report([root], jobs=1)
+        (article_two / "02.en.polish.html").write_text(
+            "<html><body><p>Replacement \ufffd char.</p></body></html>",
+            encoding="utf-8",
+        )
+
+        targeted = audit.build_report([article_two], jobs=1)
+        merged = audit.merge_targeted_report(previous, targeted)
+        full = audit.build_report([root], jobs=1)
+
+        assert merged["targeted_audit"]["replaced_articles"] == ["Article two"]
+        for report in (merged, full):
+            report["generated_at"] = ""
+            report.pop("targeted_audit", None)
+        assert merged == full
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_load_pdf_map_accepts_zotero_candidate_records() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
