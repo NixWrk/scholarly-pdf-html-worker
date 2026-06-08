@@ -38,6 +38,11 @@ from .html_images import (
     validate_data_url as _validate_data_url,
 )
 from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
+from .url_repair import (
+    BROKEN_PLAIN_URL_PROTOCOL_PATTERN as _BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
+    repair_broken_visible_url_text as _repair_broken_visible_url_text,
+    split_url_and_trailing_punct as _split_url_and_trailing_punct,
+)
 
 
 _IMG_SRC_PATTERN = re.compile(r'(<img\b[^>]*?\ssrc\s*=\s*)(["\'])([^"\']+)(\2)', re.IGNORECASE)
@@ -2816,58 +2821,6 @@ _SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
-_BROKEN_PLAIN_URL_PROTOCOL_PATTERN = re.compile(r"\b(https?://)\s+", re.IGNORECASE)
-_BROKEN_PLAIN_URL_SPACED_PROTOCOL_PATTERN = re.compile(r"\b(https?):\s+//\s*", re.IGNORECASE)
-_BROKEN_PLAIN_URL_DUPLICATE_PROTOCOL_PATTERN = re.compile(
-    r"\bhttps?://\s*(?=https?://)",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_KNOWN_LINEBREAK_DOMAIN_PATTERN = re.compile(
-    r"\bcreativecom-\s*mons\.org\b",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_SCHEME_PATTERN = re.compile(r"\b(?:hps|htps|ttps)://", re.IGNORECASE)
-_BROKEN_PLAIN_URL_PATH_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\bhttps?://[A-Za-z0-9._~:/?#\[\]{}@!$&'()*+,;=%-]*/)\s+"
-    r"(?=[A-Za-z0-9._~:/?#\[\]{}@!$&'*+,;=%-])",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\bhttps?://[A-Za-z0-9._~:/?#\[\]{}@!$&'()*+,;=%-]*[/_-])\s+"
-    r"(?=[A-Za-z0-9._~:/?#\[\]{}@!$&'*+,;=%-])",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_SPACE_BEFORE_SLASH_PATTERN = re.compile(
-    r"(?P<prefix>\bhttps?://[A-Za-z0-9._~:/?#\[\]{}@!$&'()*+,;=%-]+)\s+"
-    r"(?=/[A-Za-z0-9._~:/?#\[\]{}@!$&'*+,;=%-])",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\b(?:(?:https?://)?www|https?://[A-Za-z0-9-]+)(?:\.[A-Za-z0-9-]+)*)"
-    r"\s+\.\s+(?=[A-Za-z0-9-]+(?:[./]|$))",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\b(?:(?:https?://)?www|https?://[A-Za-z0-9-]+)(?:\.[A-Za-z0-9-]+)*\.)"
-    r"\s+(?=[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?\.)",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\b(?:(?:https?://)?www\.|https?://[A-Za-z0-9-]+\.)(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+)"
-    r"\s+(?P<tail>[A-Za-z0-9-]{1,40})(?=\.)",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_DOMAIN_WORD_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\bhttps?://[A-Za-z0-9-]{3,})\s+"
-    r"(?P<tail>[A-Za-z0-9-]+\.[A-Za-z]{2,})(?=[/:?#)]|/|$)",
-    re.IGNORECASE,
-)
-_BROKEN_PLAIN_URL_TLD_SPACE_PATTERN = re.compile(
-    r"(?P<prefix>\bhttps?://(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+\.)\s+"
-    r"(?P<tail>[A-Za-z]{2,63})(?=[/:?#)\s]|$)",
-    re.IGNORECASE,
-)
-
 # Quick-scan trigger: only run the subscript-spill fix when this substring exists.
 _SUBSCRIPT_OPEN = re.compile(r'[_^]\{')
 # Detect an = followed immediately by a "large" LaTeX command inside a subscript/
@@ -4599,25 +4552,6 @@ def _unwrap_spurious_math_captions(html: str) -> str:
     ``<math>`` block that does is safe to unwrap so cleanup and translation can process it.
     """
     return _SPURIOUS_MATH_CAPTION_PATTERN.sub(r'\1', html)
-
-
-def _split_url_and_trailing_punct(url: str) -> tuple[str, str]:
-    core = url
-    trailing = ""
-
-    while core and core[-1] in ".,;:!?":
-        trailing = core[-1] + trailing
-        core = core[:-1]
-
-    while core.endswith(")") and core.count("(") < core.count(")"):
-        trailing = ")" + trailing
-        core = core[:-1]
-
-    while core.endswith("]") and core.count("[") < core.count("]"):
-        trailing = "]" + trailing
-        core = core[:-1]
-
-    return core, trailing
 
 
 def _autolink_text_urls(text: str) -> str:
@@ -7864,48 +7798,6 @@ def _repair_broken_plain_url_text(html: str) -> str:
         out.append(repair_text(part))
 
     return "".join(out)
-
-
-def _repair_broken_visible_url_text(text: str) -> str:
-    fixed = _BROKEN_PLAIN_URL_SCHEME_PATTERN.sub("https://", text)
-    fixed = _BROKEN_PLAIN_URL_SPACED_PROTOCOL_PATTERN.sub(r"\1://", fixed)
-    fixed = _BROKEN_PLAIN_URL_DUPLICATE_PROTOCOL_PATTERN.sub("", fixed)
-    fixed = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", fixed)
-    fixed = _BROKEN_PLAIN_URL_KNOWN_LINEBREAK_DOMAIN_PATTERN.sub("creativecommons.org", fixed)
-    fixed = re.sub(r"\b(?P<label>\d{1,3})(?=www\.)", r"\g<label> ", fixed)
-    fixed = re.sub(r"\b10\s+\.\s*(?=\d{4,9}/)", "10.", fixed)
-    fixed = re.sub(r"\b10\.\s+(?=\d{4,9}/)", "10.", fixed)
-    fixed = re.sub(
-        r"(?P<head>\b(?:(?:doi|DOI)\s*:\s*|(?:Digital\s+Object\s+Identifier|DOI)\s+)?"
-        r"10\.\d{4,9}/)\s+(?=[A-Za-z0-9])",
-        r"\g<head>",
-        fixed,
-        flags=re.IGNORECASE,
-    )
-    previous = None
-    while previous != fixed:
-        previous = fixed
-        fixed = re.sub(
-            r"(?P<head>\b10\.\d{4,9}/[A-Za-z]{1,3})\s+"
-            r"(?P<tail>[A-Za-z][A-Za-z0-9._-]*\d[A-Za-z0-9._-]*)",
-            r"\g<head>\g<tail>",
-            fixed,
-        )
-        fixed = _BROKEN_PLAIN_URL_DOT_BEFORE_SPACE_PATTERN.sub(r"\g<prefix>.", fixed)
-        fixed = _BROKEN_PLAIN_URL_DOT_AFTER_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-        fixed = _BROKEN_PLAIN_URL_DOMAIN_WORD_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
-        fixed = _BROKEN_PLAIN_URL_DOMAIN_LABEL_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
-        fixed = _BROKEN_PLAIN_URL_TLD_SPACE_PATTERN.sub(r"\g<prefix>\g<tail>", fixed)
-        fixed = _BROKEN_PLAIN_URL_SPACE_BEFORE_SLASH_PATTERN.sub(r"\g<prefix>", fixed)
-        fixed = _BROKEN_PLAIN_URL_PATH_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-        fixed = _BROKEN_PLAIN_URL_CONTINUATION_SPACE_PATTERN.sub(r"\g<prefix>", fixed)
-    fixed = re.sub(
-        r"\b(?P<ext>png|jpe?g|gif|svg|webp|pdf)(?P=ext)\b",
-        r"\g<ext>",
-        fixed,
-        flags=re.IGNORECASE,
-    )
-    return fixed
 
 
 def _repair_spaced_protocol_url_anchors(html: str) -> str:
