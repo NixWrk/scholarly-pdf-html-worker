@@ -85,11 +85,16 @@ from zoteropdf2md.quality_loop.run_utils import (  # noqa: E402
     slug as _slug,
     write_json as _write_json,
 )
+from zoteropdf2md.quality_loop.p62_duplicates import (  # noqa: E402
+    apply_duplicate_figure_image_repairs as _apply_p62_duplicate_figure_image_repairs_impl,
+    repair_duplicate_figure_images as _repair_p62_duplicate_figure_images_impl,
+)
 from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     clean_resolved_missing_unit_classes as _clean_resolved_p62_missing_unit_classes,
     data_url_image_hash as _p62_data_url_image_hash,
     extract_html_figure_units as _p62_extract_html_figure_units,
     figure_label_from_unit_id as _p62_figure_label_from_unit_id,
+    html_has_missing_warning_for_label as _html_has_p62_missing_warning_for_label,
     html_has_missing_warning_for_figure_unit as _html_has_p62_missing_warning_for_figure_unit,
     html_has_recovery_for_label as _html_has_p62_recovery_for_label,
     html_has_stale_page_render_for_label as _html_has_p62_stale_page_render_for_label,
@@ -152,11 +157,6 @@ P62_MISSING_WARNING_TEXT_RE = re.compile(
     r"\bFigure\s+(?P<label>[\w.-]+)\s+image\s+was\s+not\s+extracted\b",
     re.IGNORECASE,
 )
-P62_MISSING_WARNING_ELEMENT_RE = re.compile(
-    r"<(?P<tag>p|div|span)\b(?P<attrs>[^>]*\bz2m-missing-figure-warning\b[^>]*)>"
-    r"[\s\S]*?</(?P=tag)>",
-    re.IGNORECASE,
-)
 P62_MISSING_FIGURE_UNIT_RE = re.compile(
     r"<div\b(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>",
     re.IGNORECASE,
@@ -171,7 +171,6 @@ P62_RECOVERY_SOURCE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 P62_LOW_FIDELITY_RECOVERY_SOURCES = {"pdf_page_render"}
-P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES = {"marker_image"} | P62_LOW_FIDELITY_RECOVERY_SOURCES
 P62_PDF_DERIVED_RECOVERY_SOURCES = {
     "pdf_page_render",
     "pdf_figure_region_render",
@@ -1163,27 +1162,6 @@ def _path_is_inside(path: Path, root: Path) -> bool:
         return False
 
 
-def _remove_class_from_open_tag(open_tag: str, class_name: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        quote = match.group(1)
-        classes = [
-            item
-            for item in re.split(r"\s+", match.group(2).strip())
-            if item and item != class_name
-        ]
-        if not classes:
-            return ""
-        return f"class={quote}{' '.join(classes)}{quote}"
-
-    return re.sub(
-        r"\bclass\s*=\s*(['\"])(.*?)\1",
-        replace,
-        open_tag,
-        count=1,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-
-
 def _repair_p62_duplicate_figure_images(
     html: str,
     *,
@@ -1192,150 +1170,19 @@ def _repair_p62_duplicate_figure_images(
     zoom: float,
     repair_plain_duplicates: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
-    if not pdf_path.is_file():
-        return html, []
-    units = _p62_extract_html_figure_units(html)
-    by_hash: dict[str, list[dict[str, Any]]] = {}
-    for unit in units:
-        for image_hash in unit.get("image_hashes") or []:
-            by_hash.setdefault(str(image_hash), []).append(unit)
-
-    duplicate_groups = [
-        group
-        for group in by_hash.values()
-        if len({str(unit.get("label") or "") for unit in group}) > 1
-    ]
-    if not duplicate_groups:
-        return html, []
-
-    text_status, pages, text_error = _pdf_text_pages(pdf_path, max_pages=None)
-    if text_status == "missing" or not pages:
-        return html, []
-
-    patched = html
-    repairs: list[dict[str, Any]] = []
-    repaired_labels: set[str] = set()
-    for group in duplicate_groups:
-        labels = [str(unit.get("label") or "") for unit in group if unit.get("label")]
-        if not any(unit.get("recovery_sources") for unit in group) and not repair_plain_duplicates:
-            continue
-        plain_candidates = [unit for unit in group if not unit.get("recovery_sources")]
-        repair_mode = "plain_duplicate_target"
-        if not any(unit.get("recovery_sources") for unit in group):
-            repair_mode = "plain_duplicate_group"
-            candidates = list(group)
-        elif plain_candidates:
-            candidates = plain_candidates
-        else:
-            repair_mode = "recovered_duplicate_target"
-            candidates = [
-                unit
-                for unit in group
-                if set(str(source) for source in (unit.get("recovery_sources") or []))
-                & P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES
-            ]
-        for unit in candidates:
-            label = str(unit.get("label") or "")
-            if not label or label in repaired_labels:
-                continue
-            candidate_recovery_sources = [
-                str(source) for source in (unit.get("recovery_sources") or []) if str(source)
-            ]
-            caption = str(unit.get("caption") or "")
-            snippets = [caption] if caption else [f"Figure {label}"]
-            resolver = _resolve_p62_pdf_page_for_figure(snippets, pages, label, pdf_path=pdf_path)
-            page_number = int(resolver.get("page_number") or 0)
-            duplicate_hash = str((unit.get("image_hashes") or [""])[0])
-            if page_number <= 0 or bool(resolver.get("source_visual_unavailable")):
-                repairs.append(
-                    {
-                        "figure_label": label,
-                        "status": "unresolved",
-                        "reason": "pdf_page_unavailable_or_source_visual_unavailable",
-                        "duplicate_labels": labels,
-                        "duplicate_hash": duplicate_hash,
-                        "repair_mode": repair_mode,
-                        "candidate_recovery_sources": candidate_recovery_sources,
-                        "text_layer_status": text_status,
-                        "text_layer_error": text_error or "",
-                    }
-                )
-                continue
-            repair_dir = artifact_dir / "duplicate_visual_repair" / f"fig_{_slug(label, max_len=20)}"
-            asset = _recover_p62_detached_pdf_figure_plate_asset(
-                pdf_path,
-                page_number,
-                label,
-                repair_dir,
-                zoom=zoom,
-            )
-            if not (asset.get("path") and asset.get("source")):
-                asset = _recover_p62_pdf_figure_asset(
-                    pdf_path,
-                    page_number,
-                    label,
-                    repair_dir,
-                    zoom=zoom,
-                )
-            asset_path = Path(str(asset.get("path") or ""))
-            data_url = _data_url_from_image_file(asset_path) if asset_path else None
-            if not data_url or not asset.get("source"):
-                repairs.append(
-                    {
-                        "figure_label": label,
-                        "status": asset.get("status") or "unresolved",
-                        "reason": asset.get("error") or "no_recoverable_duplicate_asset",
-                        "source_pdf_page_number": page_number,
-                        "duplicate_labels": labels,
-                        "duplicate_hash": duplicate_hash,
-                        "repair_mode": repair_mode,
-                        "candidate_recovery_sources": candidate_recovery_sources,
-                        "resolver": resolver,
-                    }
-                )
-                continue
-            next_html, replacements = _replace_p62_figure_unit_target_with_image(
-                patched,
-                figure_label=label,
-                data_url=data_url,
-                source=str(asset.get("source") or ""),
-                source_detail=str(asset_path),
-            )
-            if not replacements:
-                repairs.append(
-                    {
-                        "figure_label": label,
-                        "status": "patch_missed",
-                        "reason": "figure_unit_target_not_found",
-                        "source_pdf_page_number": page_number,
-                        "duplicate_labels": labels,
-                        "duplicate_hash": duplicate_hash,
-                        "repair_mode": repair_mode,
-                        "candidate_recovery_sources": candidate_recovery_sources,
-                        "asset_path": str(asset_path),
-                        "asset_source": asset.get("source") or "",
-                    }
-                )
-                continue
-            patched = next_html
-            repaired_labels.add(label)
-            repairs.append(
-                {
-                    "figure_label": label,
-                    "status": "patched",
-                    "source_pdf_page_number": page_number,
-                    "duplicate_labels": labels,
-                    "duplicate_hash": duplicate_hash,
-                    "repair_mode": repair_mode,
-                    "candidate_recovery_sources": candidate_recovery_sources,
-                    "asset_path": str(asset_path),
-                    "asset_source": asset.get("source") or "",
-                    "asset_status": asset.get("status") or "",
-                    "resolver": resolver,
-                    "replacement_count": replacements,
-                }
-            )
-    return patched, repairs
+    return _repair_p62_duplicate_figure_images_impl(
+        html,
+        pdf_path=pdf_path,
+        artifact_dir=artifact_dir,
+        zoom=zoom,
+        pdf_text_pages=_pdf_text_pages,
+        resolve_pdf_page_for_figure=_resolve_p62_pdf_page_for_figure,
+        recover_detached_pdf_figure_plate_asset=_recover_p62_detached_pdf_figure_plate_asset,
+        recover_pdf_figure_asset=_recover_p62_pdf_figure_asset,
+        data_url_from_image_file=_data_url_from_image_file,
+        slug=_slug,
+        repair_plain_duplicates=repair_plain_duplicates,
+    )
 
 
 def _apply_p62_duplicate_figure_image_repairs(
@@ -1346,45 +1193,18 @@ def _apply_p62_duplicate_figure_image_repairs(
     zoom: float,
     repair_plain_duplicates: bool = False,
 ) -> dict[str, Any]:
-    report: dict[str, Any] = {
-        "repair_count": 0,
-        "patched_paths": [],
-        "repairs": [],
-        "errors": [],
-    }
-    if not targets or not pdf_path.is_file():
-        return report
-    for target_path in targets:
-        try:
-            html = target_path.read_text(encoding="utf-8", errors="replace")
-            patched, repairs = _repair_p62_duplicate_figure_images(
-                html,
-                pdf_path=pdf_path,
-                artifact_dir=artifact_dir / _slug(target_path.stem, max_len=48),
-                zoom=zoom,
-                repair_plain_duplicates=repair_plain_duplicates,
-            )
-            patched_repairs = [repair for repair in repairs if repair.get("status") == "patched"]
-            if patched_repairs and patched != html:
-                target_path.write_text(patched, encoding="utf-8")
-                report["patched_paths"].append(str(target_path))
-                report["repair_count"] += sum(int(repair.get("replacement_count") or 0) for repair in patched_repairs)
-            for repair in repairs:
-                report["repairs"].append({"path": str(target_path), **repair})
-        except OSError as exc:
-            report["errors"].append({"path": str(target_path), "error": str(exc)})
-    return report
-
-
-def _html_has_p62_missing_warning_for_label(html: str, figure_label: str) -> bool:
-    matches = list(P62_MISSING_WARNING_ELEMENT_RE.finditer(html))
-    if not matches:
-        return False
-    if not figure_label:
-        return True
-    return any(
-        _figure_label_present_in_text(_visible_html_text(match.group(0)), figure_label)
-        for match in matches
+    return _apply_p62_duplicate_figure_image_repairs_impl(
+        targets,
+        pdf_path=pdf_path,
+        artifact_dir=artifact_dir,
+        zoom=zoom,
+        pdf_text_pages=_pdf_text_pages,
+        resolve_pdf_page_for_figure=_resolve_p62_pdf_page_for_figure,
+        recover_detached_pdf_figure_plate_asset=_recover_p62_detached_pdf_figure_plate_asset,
+        recover_pdf_figure_asset=_recover_p62_pdf_figure_asset,
+        data_url_from_image_file=_data_url_from_image_file,
+        slug=_slug,
+        repair_plain_duplicates=repair_plain_duplicates,
     )
 
 

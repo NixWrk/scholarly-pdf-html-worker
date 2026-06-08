@@ -263,6 +263,18 @@ def html_has_missing_warning_for_figure_unit(html: str, figure_label: str) -> bo
     return False
 
 
+def html_has_missing_warning_for_label(html: str, figure_label: str) -> bool:
+    matches = list(P62_MISSING_WARNING_ELEMENT_RE.finditer(html))
+    if not matches:
+        return False
+    if not figure_label:
+        return True
+    return any(
+        figure_label_present_in_text(_visible_html_text(match.group(0)), figure_label)
+        for match in matches
+    )
+
+
 def replace_recovery_with_missing_warning(
     html: str,
     *,

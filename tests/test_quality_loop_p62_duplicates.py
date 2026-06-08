@@ -1,0 +1,83 @@
+import base64
+from pathlib import Path
+from typing import Any
+
+from zoteropdf2md.quality_loop.p62_duplicates import repair_duplicate_figure_images
+
+
+def _duplicate_figure_html() -> str:
+    duplicated_payload = base64.b64encode(b"same-visual").decode("ascii")
+    duplicated_data_url = f"data:image/png;base64,{duplicated_payload}"
+    return (
+        '<div class="z2m-figure-unit" id="fig-1">'
+        f'<p class="z2m-figure-target"><img alt="Figure 1" src="{duplicated_data_url}"/></p>'
+        '<p class="z2m-figure-caption">Figure 1. First caption.</p>'
+        "</div>"
+        '<div class="z2m-figure-unit" id="fig-2">'
+        f'<p class="z2m-figure-target"><img alt="Figure 2" src="{duplicated_data_url}"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Second caption.</p>'
+        "</div>"
+    )
+
+
+def test_duplicate_repair_skips_plain_duplicates_without_flag(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    pdf_path.write_bytes(b"%PDF")
+
+    patched, repairs = repair_duplicate_figure_images(
+        _duplicate_figure_html(),
+        pdf_path=pdf_path,
+        artifact_dir=tmp_path / "artifacts",
+        zoom=1.0,
+        pdf_text_pages=lambda *_args, **_kwargs: ("ok", ["Figure 1", "Figure 2"], None),
+        resolve_pdf_page_for_figure=lambda *_args, **_kwargs: {"page_number": 1},
+        recover_detached_pdf_figure_plate_asset=lambda *_args, **_kwargs: {},
+        recover_pdf_figure_asset=lambda *_args, **_kwargs: {},
+        data_url_from_image_file=lambda _path: None,
+        slug=lambda value, **_kwargs: str(value),
+    )
+
+    assert patched == _duplicate_figure_html()
+    assert repairs == []
+
+
+def test_duplicate_repair_patches_plain_duplicate_group_when_enabled(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    pdf_path.write_bytes(b"%PDF")
+
+    def recover_asset(
+        _pdf_path: Path,
+        _page_number: int,
+        label: str,
+        out_dir: Path,
+        **_kwargs: Any,
+    ) -> dict[str, str]:
+        return {
+            "path": str(out_dir / f"fig-{label}.png"),
+            "source": "pdf_figure_region_render",
+            "status": "rendered",
+        }
+
+    def data_url_from_image_file(path: Path) -> str:
+        payload = base64.b64encode(path.stem.encode("ascii")).decode("ascii")
+        return f"data:image/png;base64,{payload}"
+
+    patched, repairs = repair_duplicate_figure_images(
+        _duplicate_figure_html(),
+        pdf_path=pdf_path,
+        artifact_dir=tmp_path / "artifacts",
+        zoom=1.0,
+        pdf_text_pages=lambda *_args, **_kwargs: ("ok", ["Figure 1", "Figure 2"], None),
+        resolve_pdf_page_for_figure=lambda *_args, **_kwargs: {"page_number": 1},
+        recover_detached_pdf_figure_plate_asset=lambda *_args, **_kwargs: {},
+        recover_pdf_figure_asset=recover_asset,
+        data_url_from_image_file=data_url_from_image_file,
+        slug=lambda value, **_kwargs: str(value),
+        repair_plain_duplicates=True,
+    )
+
+    assert [repair["status"] for repair in repairs] == ["patched", "patched"]
+    assert {repair["figure_label"] for repair in repairs} == {"1", "2"}
+    assert 'alt="Recovered Figure 1 visual from source PDF"' in patched
+    assert 'alt="Recovered Figure 2 visual from source PDF"' in patched
+    assert patched.count("z2m-p62-recovered-target") == 2
