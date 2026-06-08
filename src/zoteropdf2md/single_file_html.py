@@ -29,6 +29,7 @@ from .citation_profile_recovery import (
     pdf_recovered_reference_section_from_profile as _pdf_recovered_reference_section_from_profile,
     profile_item_value as _profile_item_value,
 )
+from .email_repair import repair_split_visible_emails as _repair_split_visible_emails
 from .html_images import (
     InlineHtmlResult,
     detect_image_signature as _detect_image_signature,
@@ -2328,19 +2329,6 @@ _EN_OCR_CROSS_TAG_REPAIRS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match
         ),
         lambda m: f"{m.group('stem')}i",
     ),
-)
-_SPLIT_EMAIL_AFTER_AT_PATTERN = re.compile(
-    r"(?P<local>\b[A-Za-z0-9._%+-]{2,})@\s+(?P<domain>[A-Za-z0-9.-]+\.[A-Za-z]{2,})"
-)
-_SPLIT_EMAIL_DOMAIN_DOT_PATTERN = re.compile(
-    r"(?P<local>\b[A-Za-z0-9._%+-]{2,}@[A-Za-z0-9-]+)(?:\s*\.\s+|\s+\.\s*)"
-    r"(?P<tld>(?:[A-Za-z0-9-]+\.)*[A-Za-z]{2,})\b"
-)
-_SPLIT_EMAIL_LABELED_LOCAL_DOT_PATTERN = re.compile(
-    r"(?P<label>\b(?:e-?mail|email\s+address|correspondence(?:\s+to)?|contact)\s*:\s*)"
-    r"(?P<left>[A-Za-z0-9_%+-][A-Za-z0-9._%+-]{1,})\.\s+"
-    r"(?P<right>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
-    re.IGNORECASE,
 )
 _DETACHED_ACCENT_AUTHOR_AND_PATTERN = re.compile(r",\s*[\u00b4\u00a8\u02c6]\s+(?=and\b)")
 _DETACHED_CEDILLA_INITIAL_PATTERN = re.compile(r"\bC[\u00b8\u0327]\s*\.\s+(?=Varel\b)")
@@ -6249,17 +6237,8 @@ def _repair_safe_text_artifacts(html: str) -> str:
     out: list[str] = []
     skip_stack: list[str] = []
 
-    def _repair_split_emails(text: str) -> str:
-        repaired = _SPLIT_EMAIL_LABELED_LOCAL_DOT_PATTERN.sub(
-            r"\g<label>\g<left>.\g<right>",
-            text,
-        )
-        repaired = _SPLIT_EMAIL_AFTER_AT_PATTERN.sub(r"\g<local>@\g<domain>", repaired)
-        repaired = _SPLIT_EMAIL_DOMAIN_DOT_PATTERN.sub(r"\g<local>.\g<tld>", repaired)
-        return repaired
-
     def _repair_text(text: str) -> str:
-        repaired = _repair_split_emails(text)
+        repaired = _repair_split_visible_emails(text)
         if len(repaired) > 5000:
             return repaired
         repaired = _DETACHED_ACCENT_AUTHOR_AND_PATTERN.sub(", ", repaired)
