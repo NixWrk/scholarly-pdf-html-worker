@@ -3320,6 +3320,88 @@ def test_run_audit_writes_stream_logs_and_command_report(tmp_path: Path) -> None
     assert audit["article_count"] == 1
 
 
+def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_dir = tmp_path / "run"
+    source_dir = tmp_path / "source"
+    audit_calls: list[dict[str, object]] = []
+    repair_calls: list[str] = []
+
+    gate_config = {
+        "require_pdf_text_layer_diagnostics": False,
+        "run_p62_image_recovery_stage": True,
+        "p62_image_recovery_execute_marker": True,
+        "p62_image_recovery_apply_patches": True,
+        "p62_image_recovery_rerun_audit": True,
+        "run_polish_auto_repair_stage": True,
+        "polish_auto_repair_rerun_audit": True,
+        "article_review_bundle_max_articles": 0,
+    }
+
+    def fake_repolish(*args: object, **kwargs: object) -> dict[str, object]:
+        return {"raw_count": 1, "article_count": 1, "skipped_count": 0, "changed_count": 1}
+
+    def fake_run_audit(*args: object, **kwargs: object) -> None:
+        audit_calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(llm_quality_loop, "load_gate_config", lambda *args, **kwargs: gate_config)
+    monkeypatch.setattr(llm_quality_loop, "repolish_cached_run", fake_repolish)
+    monkeypatch.setattr(llm_quality_loop, "run_audit", fake_run_audit)
+    monkeypatch.setattr(llm_quality_loop, "run_quality_history", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_p62_marker_recovery_plan",
+        lambda *args, **kwargs: repair_calls.append("p62_plan") or {},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_p62_image_recovery_stage",
+        lambda *args, **kwargs: repair_calls.append("p62_recovery") or {"patched_warning_count": 3},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_polish_auto_repair_stage",
+        lambda *args, **kwargs: repair_calls.append("polish_auto_repair") or {"patched_article_count": 2},
+    )
+    monkeypatch.setattr(llm_quality_loop, "write_manual_review_queue", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_article_review_stage",
+        lambda *args, **kwargs: {"status": "not_required", "pending_mandatory_count": 0},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_pattern_observations",
+        lambda *args, **kwargs: {"pattern_count": 0, "problem_candidates": []},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_manual_observation_summary",
+        lambda *args, **kwargs: {"observation_count": 0, "problem_candidates": []},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_analysis_pack",
+        lambda *args, **kwargs: {"resolver_decisions": {"repair_candidate_counts": {}}, "articles": []},
+    )
+    monkeypatch.setattr(llm_quality_loop, "_write_gate_report", lambda *args, **kwargs: {"status": "pass"})
+
+    args = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            str(source_dir),
+            "--out-dir",
+            str(run_dir),
+            "--skip-tests",
+            "--skip-history",
+        ]
+    )
+
+    assert llm_quality_loop.observe(args) == 0
+    assert repair_calls == ["p62_plan", "p62_recovery", "polish_auto_repair"]
+    assert len(audit_calls) == 2
+
+
 def test_run_test_command_writes_stream_logs_and_command_report(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     report = run_test_command(f"{json.dumps(sys.executable)} -c \"print('ok')\"", run_dir)

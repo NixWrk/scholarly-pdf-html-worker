@@ -4,6 +4,7 @@
   "require_article_review_stage": true,
   "article_review_bundle_max_articles": 0,
   "max_pending_mandatory_reviews": 0,
+  "audit_jobs": 4,
   "require_pdf_text_layer_diagnostics": true,
   "require_pdf_problem_evidence_stage": true,
   "pdf_problem_evidence_max_articles": 12,

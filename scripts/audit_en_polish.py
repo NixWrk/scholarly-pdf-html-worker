@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from dataclasses import asdict
 import hashlib
@@ -4835,34 +4836,64 @@ def build_report(
     pdf_map: dict[str, Path] | None = None,
     progress_out: Path | None = None,
     progress_write_every: int = 10,
+    jobs: int = 1,
 ) -> dict[str, Any]:
     pairs = find_pairs(roots)
-    articles: list[dict[str, Any]] = []
     progress_every = max(1, progress_write_every)
-    for index, (raw_path, polish_path) in enumerate(pairs, 1):
-        articles.append(
-            analyze_pair(
+    worker_count = max(1, int(jobs or 1))
+    articles_by_index: list[dict[str, Any] | None] = [None] * len(pairs)
+
+    def completed_articles() -> list[dict[str, Any]]:
+        return [article for article in articles_by_index if article is not None]
+
+    def write_progress(completed: int) -> None:
+        if progress_out is None or not (completed % progress_every == 0 or completed == len(pairs)):
+            return
+        articles = completed_articles()
+        defect_counts = _add_corpus_hit_counts(articles)
+        partial_report = _assemble_report(
+            roots,
+            articles,
+            defect_counts,
+            audit_status=("complete" if completed == len(pairs) else "running"),
+            total_pair_count=len(pairs),
+        )
+        _write_json_report(progress_out, partial_report)
+        print(
+            f"Audit progress: {completed}/{len(pairs)} articles={len(articles)} "
+            f"defects={sum(len(article['defects_found']) for article in articles)}",
+            flush=True,
+        )
+
+    if worker_count <= 1 or len(pairs) <= 1:
+        for index, (raw_path, polish_path) in enumerate(pairs, 1):
+            articles_by_index[index - 1] = analyze_pair(
                 raw_path,
                 polish_path,
                 enable_pdf_diagnostics=enable_pdf_diagnostics,
                 pdf_path_override=(pdf_map or {}).get(_article_name_from_stage(raw_path)),
             )
-        )
-        if progress_out is not None and (index % progress_every == 0 or index == len(pairs)):
-            defect_counts = _add_corpus_hit_counts(articles)
-            partial_report = _assemble_report(
-                roots,
-                articles,
-                defect_counts,
-                audit_status=("complete" if index == len(pairs) else "running"),
-                total_pair_count=len(pairs),
+            write_progress(index)
+    else:
+        tasks = [
+            (
+                index,
+                raw_path,
+                polish_path,
+                enable_pdf_diagnostics,
+                str((pdf_map or {}).get(_article_name_from_stage(raw_path)) or ""),
             )
-            _write_json_report(progress_out, partial_report)
-            print(
-                f"Audit progress: {index}/{len(pairs)} articles={len(articles)} "
-                f"defects={sum(len(article['defects_found']) for article in articles)}",
-                flush=True,
-            )
+            for index, (raw_path, polish_path) in enumerate(pairs, 1)
+        ]
+        completed = 0
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(_analyze_pair_task, task) for task in tasks]
+            for future in as_completed(futures):
+                index, article = future.result()
+                articles_by_index[index - 1] = article
+                completed += 1
+                write_progress(completed)
+    articles = completed_articles()
     defect_counts = _add_corpus_hit_counts(articles)
     report = _assemble_report(
         roots,
@@ -4874,6 +4905,19 @@ def build_report(
     if progress_out is not None:
         _write_json_report(progress_out, report)
     return report
+
+
+def _analyze_pair_task(task: tuple[int, Path, Path, bool, str]) -> tuple[int, dict[str, Any]]:
+    index, raw_path, polish_path, enable_pdf_diagnostics, pdf_path = task
+    return (
+        index,
+        analyze_pair(
+            raw_path,
+            polish_path,
+            enable_pdf_diagnostics=enable_pdf_diagnostics,
+            pdf_path_override=Path(pdf_path) if pdf_path else None,
+        ),
+    )
 
 
 def _safe_print(text: str) -> None:
@@ -4964,6 +5008,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "a list of {article,pdf_path} records, or Zotero candidate records with exact/fuzzy matches."
         ),
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of parallel article workers for audit analysis. Defaults to 1.",
+    )
     return parser.parse_args(argv)
 
 
@@ -4976,6 +5026,7 @@ def main(argv: list[str] | None = None) -> int:
         pdf_map=pdf_map,
         progress_out=args.out,
         progress_write_every=args.progress_write_every,
+        jobs=args.jobs,
     )
     _print_summary(report)
     if args.out is not None:

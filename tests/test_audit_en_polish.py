@@ -2492,6 +2492,33 @@ def test_build_report_refreshes_progress_json_while_auditing() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_build_report_parallel_jobs_match_serial_report() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        root = tmp_path / "root"
+        for article_name, polish_html in (
+            ("Article one", "<html><body><p>Polished.</p></body></html>"),
+            ("Article two", "<html><body><p>Replacement \ufffd char.</p></body></html>"),
+            ("Article three", "<html><body><p id=\"ref-1\">Reference.</p></body></html>"),
+        ):
+            stage_dir = root / article_name / "_z2m_stages"
+            stage_dir.mkdir(parents=True)
+            (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+            (stage_dir / "02.en.polish.html").write_text(polish_html, encoding="utf-8")
+
+        serial = audit.build_report([root], jobs=1)
+        parallel = audit.build_report([root], jobs=2)
+
+        serial["generated_at"] = ""
+        parallel["generated_at"] = ""
+        assert parallel["articles"] == serial["articles"]
+        assert parallel["corpus_summary"] == serial["corpus_summary"]
+        assert parallel == serial
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_load_pdf_map_accepts_zotero_candidate_records() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

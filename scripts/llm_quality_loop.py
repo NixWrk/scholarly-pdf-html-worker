@@ -3939,12 +3939,14 @@ def run_audit(
     *,
     enable_pdf_diagnostics: bool = False,
     pdf_map_path: Path | None = None,
+    jobs: int = 1,
 ) -> None:
     quality_commands.run_audit(
         run_dir,
         roots=roots,
         enable_pdf_diagnostics=enable_pdf_diagnostics,
         pdf_map_path=pdf_map_path,
+        jobs=jobs,
         repo_root=ROOT,
     )
 
@@ -4016,6 +4018,7 @@ def observe(args: argparse.Namespace) -> int:
             manifest = prepare_converted_run(converted_roots, run_dir)
             print(f"Prepared converted stage run: articles={manifest['article_count']}")
     gate_config = load_gate_config(args.gate_config)
+    audit_jobs = int(gate_config.get("audit_jobs") or 1)
     if args.run_tests:
         run_test_command(args.test_command or gate_config.get("required_test_command") or "python -m pytest -q", run_dir)
     if not args.skip_audit:
@@ -4030,6 +4033,7 @@ def observe(args: argparse.Namespace) -> int:
             roots=converted_roots if audit_existing_converted else None,
             enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
             pdf_map_path=pdf_map_path,
+            jobs=audit_jobs,
         )
         if audit_existing_converted:
             normalize_converted_audit_article_ids(run_dir)
@@ -4038,6 +4042,7 @@ def observe(args: argparse.Namespace) -> int:
             and not args.skip_p62_recovery
             and not audit_existing_converted
         )
+        repair_audit_reasons: list[str] = []
         if run_p62_recovery:
             write_p62_marker_recovery_plan(run_dir, gate_config=gate_config)
             recovery_report = write_p62_image_recovery_stage(
@@ -4050,11 +4055,7 @@ def observe(args: argparse.Namespace) -> int:
             if int(recovery_report.get("patched_warning_count") or 0) > 0 and bool(
                 gate_config.get("p62_image_recovery_rerun_audit", True)
             ):
-                run_audit(
-                    run_dir,
-                    enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
-                    pdf_map_path=pdf_map_path,
-                )
+                repair_audit_reasons.append("p62_image_recovery")
         run_polish_auto_repair = (
             bool(gate_config.get("run_polish_auto_repair_stage", True))
             and not audit_existing_converted
@@ -4064,11 +4065,19 @@ def observe(args: argparse.Namespace) -> int:
             if int(auto_repair_report.get("patched_article_count") or 0) > 0 and bool(
                 gate_config.get("polish_auto_repair_rerun_audit", True)
             ):
-                run_audit(
-                    run_dir,
-                    enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
-                    pdf_map_path=pdf_map_path,
-                )
+                repair_audit_reasons.append("polish_auto_repair")
+        if repair_audit_reasons:
+            print(
+                "Deferred repair audit: "
+                f"reasons={','.join(repair_audit_reasons)}",
+                flush=True,
+            )
+            run_audit(
+                run_dir,
+                enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
+                pdf_map_path=pdf_map_path,
+                jobs=audit_jobs,
+            )
     if not args.skip_history:
         run_quality_history(
             run_dir,
@@ -4380,6 +4389,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 args.run_dir,
                 enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
                 pdf_map_path=pdf_map_path if pdf_map_path.is_file() else None,
+                jobs=int(gate_config.get("audit_jobs") or 1),
             )
         print(
             "P62 image recovery: "
