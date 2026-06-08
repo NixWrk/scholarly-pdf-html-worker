@@ -6,6 +6,7 @@
   "max_pending_mandatory_reviews": 0,
   "audit_jobs": 4,
   "targeted_repair_audit_enabled": true,
+  "pdf_diagnostics_cache_dir": ".tmp_local2/pdf_diagnostics_cache",
   "require_pdf_text_layer_diagnostics": true,
   "require_pdf_problem_evidence_stage": true,
   "pdf_problem_evidence_max_articles": 12,

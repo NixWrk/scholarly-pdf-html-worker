@@ -3941,6 +3941,7 @@ def run_audit(
     *,
     enable_pdf_diagnostics: bool = False,
     pdf_map_path: Path | None = None,
+    pdf_diagnostics_cache_dir: Path | None = None,
     jobs: int = 1,
     merge_previous_report_path: Path | None = None,
 ) -> None:
@@ -3949,6 +3950,7 @@ def run_audit(
         roots=roots,
         enable_pdf_diagnostics=enable_pdf_diagnostics,
         pdf_map_path=pdf_map_path,
+        pdf_diagnostics_cache_dir=pdf_diagnostics_cache_dir,
         jobs=jobs,
         merge_previous_report_path=merge_previous_report_path,
         repo_root=ROOT,
@@ -4006,6 +4008,13 @@ def _repair_audit_roots_for_articles(run_dir: Path, article_ids: Iterable[str]) 
     return roots, missing
 
 
+def _configured_optional_path(value: Any) -> Path | None:
+    if value is None or value == "":
+        return None
+    path = Path(str(value))
+    return path if path.is_absolute() else ROOT / path
+
+
 def observe(args: argparse.Namespace) -> int:
     run_dir = args.out_dir.resolve(strict=False)
     converted_roots = list(args.converted_roots or [])
@@ -4051,6 +4060,7 @@ def observe(args: argparse.Namespace) -> int:
             print(f"Prepared converted stage run: articles={manifest['article_count']}")
     gate_config = load_gate_config(args.gate_config)
     audit_jobs = int(gate_config.get("audit_jobs") or 1)
+    pdf_diagnostics_cache_dir = _configured_optional_path(gate_config.get("pdf_diagnostics_cache_dir"))
     if args.run_tests:
         run_test_command(args.test_command or gate_config.get("required_test_command") or "python -m pytest -q", run_dir)
     if not args.skip_audit:
@@ -4065,6 +4075,7 @@ def observe(args: argparse.Namespace) -> int:
             roots=converted_roots if audit_existing_converted else None,
             enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
             pdf_map_path=pdf_map_path,
+            pdf_diagnostics_cache_dir=pdf_diagnostics_cache_dir,
             jobs=audit_jobs,
         )
         if audit_existing_converted:
@@ -4128,6 +4139,7 @@ def observe(args: argparse.Namespace) -> int:
                 roots=repair_audit_roots,
                 enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
                 pdf_map_path=pdf_map_path,
+                pdf_diagnostics_cache_dir=pdf_diagnostics_cache_dir,
                 jobs=audit_jobs,
                 merge_previous_report_path=previous_audit_path if repair_audit_roots is not None else None,
             )
@@ -4442,6 +4454,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                 args.run_dir,
                 enable_pdf_diagnostics=bool(gate_config.get("require_pdf_text_layer_diagnostics", False)),
                 pdf_map_path=pdf_map_path if pdf_map_path.is_file() else None,
+                pdf_diagnostics_cache_dir=_configured_optional_path(gate_config.get("pdf_diagnostics_cache_dir")),
                 jobs=int(gate_config.get("audit_jobs") or 1),
             )
         print(

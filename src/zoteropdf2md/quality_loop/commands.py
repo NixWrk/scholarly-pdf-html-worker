@@ -69,6 +69,7 @@ def run_audit(
     *,
     enable_pdf_diagnostics: bool = False,
     pdf_map_path: Path | None = None,
+    pdf_diagnostics_cache_dir: Path | None = None,
     jobs: int = 1,
     merge_previous_report_path: Path | None = None,
     repo_root: Path = DEFAULT_REPO_ROOT,
@@ -97,6 +98,8 @@ def run_audit(
         command.append("--pdf-diagnostics")
     if pdf_map_path is not None:
         command.extend(["--pdf-map", str(pdf_map_path)])
+    if pdf_diagnostics_cache_dir is not None:
+        command.extend(["--pdf-diagnostics-cache-dir", str(pdf_diagnostics_cache_dir)])
     if int(jobs or 1) > 1:
         command.extend(["--jobs", str(int(jobs or 1))])
     if merge_previous_report_path is not None:
@@ -140,6 +143,9 @@ def run_audit(
             "roots": [str(root) for root in audit_roots],
             "pdf_diagnostics_enabled": enable_pdf_diagnostics,
             "pdf_map_path": str(pdf_map_path) if pdf_map_path is not None else "",
+            "pdf_diagnostics_cache_dir": (
+                str(pdf_diagnostics_cache_dir) if pdf_diagnostics_cache_dir is not None else ""
+            ),
             "jobs": int(jobs or 1),
             "merge_previous_report_path": (
                 str(merge_previous_report_path) if merge_previous_report_path is not None else ""

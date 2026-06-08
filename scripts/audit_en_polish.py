@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import threading
 import urllib.parse
 from typing import Any, Iterable
 
@@ -1068,6 +1069,106 @@ def _load_pdf_diagnostic_text(
         pdf_path_override=pdf_path_override,
         extract_pdf_text_func=_extract_pdf_text,
     )
+
+
+class PdfDiagnosticsCache:
+    def __init__(self, cache_dir: Path) -> None:
+        self.cache_dir = cache_dir
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def _key(self, pdf_path: Path, *, kind: str, extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        if not pdf_path.is_file():
+            return None
+        stat = pdf_path.stat()
+        return {
+            "version": 1,
+            "kind": kind,
+            "path": str(pdf_path.resolve(strict=False)),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "extra": extra or {},
+        }
+
+    def _path_for_key(self, key: dict[str, Any]) -> Path:
+        digest = hashlib.sha256(json.dumps(key, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        return self.cache_dir / f"{digest}.json"
+
+    def _load(self, key: dict[str, Any]) -> Any | None:
+        path = self._path_for_key(key)
+        with self._lock:
+            if not path.is_file():
+                return None
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+        if data.get("key") != key:
+            return None
+        return data.get("value")
+
+    def _store(self, key: dict[str, Any], value: Any) -> None:
+        path = self._path_for_key(key)
+        payload = {"key": key, "value": value}
+        tmp_path = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        with self._lock:
+            try:
+                tmp_path.write_text(text, encoding="utf-8")
+                tmp_path.replace(path)
+            except OSError:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+
+    def load_text(
+        self,
+        raw_path: Path,
+        pdf_text_override: str | None,
+        pdf_path_override: Path | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        if pdf_text_override is not None:
+            text, summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
+            summary["pdf_text_cache_status"] = "override"
+            return text, summary
+        pdf_path = pdf_path_override or _source_pdf_path(raw_path)
+        key = self._key(pdf_path, kind="text", extra={"extractor": "extract_pdf_text:v1"})
+        if key is None:
+            text, summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
+            summary["pdf_text_cache_status"] = "disabled"
+            return text, summary
+        cached = self._load(key)
+        if isinstance(cached, dict):
+            summary = dict(cached.get("summary") or {})
+            summary["pdf_text_cache_status"] = "hit"
+            return str(cached.get("text") or ""), summary
+        text, summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
+        summary = dict(summary)
+        summary["pdf_text_cache_status"] = "miss"
+        self._store(key, {"text": text, "summary": summary})
+        return text, summary
+
+    def link_summary(self, pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
+        key = self._key(
+            pdf_path,
+            kind="links",
+            extra={"sample_limit": sample_limit, "author_year_text_re": "AUTHOR_YEAR_TEXT_RE:v1"},
+        )
+        if key is None:
+            summary = _pdf_citation_link_summary(pdf_path, sample_limit=sample_limit)
+            summary["pdf_link_cache_status"] = "disabled"
+            return summary
+        cached = self._load(key)
+        if isinstance(cached, dict):
+            summary = dict(cached)
+            summary["pdf_link_cache_status"] = "hit"
+            return summary
+        summary = _pdf_citation_link_summary(pdf_path, sample_limit=sample_limit)
+        summary = dict(summary)
+        summary["pdf_link_cache_status"] = "miss"
+        self._store(key, summary)
+        return summary
 
 
 def _defect(
@@ -4726,6 +4827,7 @@ def analyze_pair(
     enable_pdf_diagnostics: bool = False,
     pdf_text_override: str | None = None,
     pdf_path_override: Path | None = None,
+    pdf_diagnostics_cache: PdfDiagnosticsCache | None = None,
 ) -> dict[str, Any]:
     raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
     polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
@@ -4741,9 +4843,14 @@ def analyze_pair(
         "pdf_text_status": "disabled",
         "pdf_text_chars": 0,
         "pdf_text_error": None,
+        "pdf_text_cache_status": "disabled",
     }
     if enable_pdf_diagnostics or pdf_text_override is not None:
-        pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
+        if pdf_diagnostics_cache is not None:
+            pdf_text, pdf_summary = pdf_diagnostics_cache.load_text(raw_path, pdf_text_override, pdf_path_override)
+        else:
+            pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
+            pdf_summary["pdf_text_cache_status"] = "disabled"
     pdf_link_summary = {
         "pdf_link_text_status": "disabled",
         "pdf_link_count": 0,
@@ -4751,9 +4858,14 @@ def analyze_pair(
         "pdf_author_year_link_labels": 0,
         "pdf_citation_link_samples": [],
         "pdf_link_text_error": None,
+        "pdf_link_cache_status": "disabled",
     }
     if enable_pdf_diagnostics:
-        pdf_link_summary = _pdf_citation_link_summary(Path(pdf_summary["source_pdf_path"]))
+        if pdf_diagnostics_cache is not None:
+            pdf_link_summary = pdf_diagnostics_cache.link_summary(Path(pdf_summary["source_pdf_path"]))
+        else:
+            pdf_link_summary = _pdf_citation_link_summary(Path(pdf_summary["source_pdf_path"]))
+            pdf_link_summary["pdf_link_cache_status"] = "disabled"
 
     defects: list[Defect] = []
     defects.extend(_frontmatter_defects(raw_blocks, polish_blocks))
@@ -4838,11 +4950,17 @@ def build_report(
     progress_out: Path | None = None,
     progress_write_every: int = 10,
     jobs: int = 1,
+    pdf_diagnostics_cache_dir: Path | None = None,
 ) -> dict[str, Any]:
     pairs = find_pairs(roots)
     progress_every = max(1, progress_write_every)
     worker_count = max(1, int(jobs or 1))
     articles_by_index: list[dict[str, Any] | None] = [None] * len(pairs)
+    pdf_diagnostics_cache = (
+        PdfDiagnosticsCache(pdf_diagnostics_cache_dir)
+        if enable_pdf_diagnostics and pdf_diagnostics_cache_dir is not None
+        else None
+    )
 
     def completed_articles() -> list[dict[str, Any]]:
         return [article for article in articles_by_index if article is not None]
@@ -4873,6 +4991,7 @@ def build_report(
                 polish_path,
                 enable_pdf_diagnostics=enable_pdf_diagnostics,
                 pdf_path_override=(pdf_map or {}).get(_article_name_from_stage(raw_path)),
+                pdf_diagnostics_cache=pdf_diagnostics_cache,
             )
             write_progress(index)
     else:
@@ -4883,6 +5002,7 @@ def build_report(
                 polish_path,
                 enable_pdf_diagnostics,
                 str((pdf_map or {}).get(_article_name_from_stage(raw_path)) or ""),
+                pdf_diagnostics_cache,
             )
             for index, (raw_path, polish_path) in enumerate(pairs, 1)
         ]
@@ -4908,8 +5028,8 @@ def build_report(
     return report
 
 
-def _analyze_pair_task(task: tuple[int, Path, Path, bool, str]) -> tuple[int, dict[str, Any]]:
-    index, raw_path, polish_path, enable_pdf_diagnostics, pdf_path = task
+def _analyze_pair_task(task: tuple[int, Path, Path, bool, str, PdfDiagnosticsCache | None]) -> tuple[int, dict[str, Any]]:
+    index, raw_path, polish_path, enable_pdf_diagnostics, pdf_path, pdf_diagnostics_cache = task
     return (
         index,
         analyze_pair(
@@ -4917,6 +5037,7 @@ def _analyze_pair_task(task: tuple[int, Path, Path, bool, str]) -> tuple[int, di
             polish_path,
             enable_pdf_diagnostics=enable_pdf_diagnostics,
             pdf_path_override=Path(pdf_path) if pdf_path else None,
+            pdf_diagnostics_cache=pdf_diagnostics_cache,
         ),
     )
 
@@ -5080,6 +5201,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--pdf-diagnostics-cache-dir",
+        type=Path,
+        help="Optional directory cache for PDF text/link diagnostics keyed by path, size, and mtime.",
+    )
+    parser.add_argument(
         "--allow-new-target-articles",
         action="store_true",
         help="Allow targeted merge to add articles that were not present in the previous report.",
@@ -5100,6 +5226,7 @@ def main(argv: list[str] | None = None) -> int:
         progress_out=None if previous_report is not None else args.out,
         progress_write_every=args.progress_write_every,
         jobs=args.jobs,
+        pdf_diagnostics_cache_dir=args.pdf_diagnostics_cache_dir,
     )
     if previous_report is not None:
         report = merge_targeted_report(

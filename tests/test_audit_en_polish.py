@@ -2553,6 +2553,78 @@ def test_merge_targeted_report_matches_full_reaudit() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_pdf_diagnostics_cache_reuses_and_invalidates_by_pdf_stat() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    original_extract = audit._extract_pdf_text
+    original_link_summary = audit._pdf_citation_link_summary
+    try:
+        root = tmp_path / "root"
+        for article_name in ("Article one", "Article two"):
+            stage_dir = root / article_name / "_z2m_stages"
+            stage_dir.mkdir(parents=True)
+            (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+            (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polished.</p></body></html>", encoding="utf-8")
+        pdf_path = tmp_path / "paper.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 one\n")
+        calls = {"text": 0, "links": 0}
+
+        def fake_extract(path: Path):
+            assert path == pdf_path
+            calls["text"] += 1
+            return "fake", f"PDF text {calls['text']}", None
+
+        def fake_link_summary(path: Path, *, sample_limit: int = 12):
+            assert path == pdf_path
+            calls["links"] += 1
+            return {
+                "pdf_link_text_status": "fake",
+                "pdf_link_count": calls["links"],
+                "pdf_citation_dest_links": 0,
+                "pdf_author_year_link_labels": 0,
+                "pdf_citation_link_samples": [],
+                "pdf_link_text_error": None,
+            }
+
+        audit._extract_pdf_text = fake_extract
+        audit._pdf_citation_link_summary = fake_link_summary
+        pdf_map = {"Article one": pdf_path, "Article two": pdf_path}
+        cache_dir = tmp_path / "pdf_cache"
+
+        first = audit.build_report(
+            [root],
+            enable_pdf_diagnostics=True,
+            pdf_map=pdf_map,
+            pdf_diagnostics_cache_dir=cache_dir,
+        )
+        assert calls == {"text": 1, "links": 1}
+        assert [article["summary"]["pdf_text_cache_status"] for article in first["articles"]] == ["miss", "hit"]
+        assert [article["summary"]["pdf_link_cache_status"] for article in first["articles"]] == ["miss", "hit"]
+
+        second = audit.build_report(
+            [root],
+            enable_pdf_diagnostics=True,
+            pdf_map=pdf_map,
+            pdf_diagnostics_cache_dir=cache_dir,
+        )
+        assert calls == {"text": 1, "links": 1}
+        assert {article["summary"]["pdf_text_cache_status"] for article in second["articles"]} == {"hit"}
+        assert {article["summary"]["pdf_link_cache_status"] for article in second["articles"]} == {"hit"}
+
+        pdf_path.write_bytes(b"%PDF-1.4 changed and larger\n")
+        audit.build_report(
+            [root],
+            enable_pdf_diagnostics=True,
+            pdf_map=pdf_map,
+            pdf_diagnostics_cache_dir=cache_dir,
+        )
+        assert calls == {"text": 2, "links": 2}
+    finally:
+        audit._extract_pdf_text = original_extract
+        audit._pdf_citation_link_summary = original_link_summary
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_load_pdf_map_accepts_zotero_candidate_records() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
