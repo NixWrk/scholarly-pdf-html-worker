@@ -22,7 +22,6 @@ import subprocess
 import sys
 import time
 import urllib.parse
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -48,6 +47,21 @@ from zoteropdf2md.quality_loop import commands as quality_commands  # noqa: E402
 from zoteropdf2md.quality_loop import gates as quality_gates  # noqa: E402
 from zoteropdf2md.quality_loop import pdf_utils as quality_pdf_utils  # noqa: E402
 from zoteropdf2md.quality_loop import source_pdf as quality_source_pdf  # noqa: E402
+from zoteropdf2md.quality_loop.run_utils import (  # noqa: E402
+    article_dir_from_stage as _article_dir_from_stage,
+    article_name_from_stage as _article_name_from_stage,
+    artifact_hint as _artifact_hint,
+    console_text as _console_text,
+    converted_article_id as _converted_article_id,
+    git_dirty as _git_dirty,
+    git_short_head as _git_short_head,
+    load_json as _load_json,
+    norm_path as _norm_path,
+    now as _now,
+    profile_value as _profile_value,
+    slug as _slug,
+    write_json as _write_json,
+)
 from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     clean_resolved_missing_unit_classes as _clean_resolved_p62_missing_unit_classes,
     data_url_image_hash as _p62_data_url_image_hash,
@@ -199,91 +213,6 @@ AUTHOR_YEAR_RIGHT_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
-
-
-def _slug(value: str, *, max_len: int = 80) -> str:
-    cleaned = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("._")
-    cleaned = re.sub(r"_+", "_", cleaned)
-    return (cleaned or "article")[:max_len]
-
-
-def _load_json(path: Path, default: Any | None = None) -> Any:
-    if not path.is_file():
-        if default is not None:
-            return default
-        raise FileNotFoundError(path)
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _console_text(value: Any) -> str:
-    text = str(value)
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-
-
-def _git_short_head() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
-    except Exception:
-        return ""
-
-
-def _git_dirty() -> bool:
-    try:
-        return bool(subprocess.check_output(["git", "status", "--short"], cwd=ROOT, text=True).strip())
-    except Exception:
-        return True
-
-
-def _profile_value(profile: dict[str, Any], key: str, default: str = "") -> str:
-    return str(profile.get(key) or default)
-
-
-def _article_dir_from_stage(stage_path: Path) -> Path:
-    return stage_path.parent.parent if stage_path.parent.name == "_z2m_stages" else stage_path.parent
-
-
-def _article_name_from_stage(stage_path: Path) -> str:
-    return _article_dir_from_stage(stage_path).name
-
-
-def _artifact_hint(stage_path: Path, *, depth: int = 5) -> str:
-    return str(Path(*stage_path.parts[-depth:])) if len(stage_path.parts) >= depth else str(stage_path)
-
-
-def _norm_path(value: Any) -> str:
-    return str(Path(str(value)).resolve(strict=False)) if value else ""
-
-
-def _converted_article_id(raw_path: Path, index: int | None = None) -> str:
-    article_dir = _article_dir_from_stage(raw_path)
-    version = article_dir.parent.name if article_dir.parent != article_dir else ""
-    attachment = article_dir.parent.parent.name if article_dir.parent.parent != article_dir.parent else ""
-    library = (
-        article_dir.parent.parent.parent.name
-        if article_dir.parent.parent.parent != article_dir.parent.parent
-        else ""
-    )
-    prefix = "_".join(
-        part
-        for part in (
-            _slug(library, max_len=14),
-            _slug(attachment, max_len=10),
-            _slug(version, max_len=22),
-        )
-        if part
-    )
-    suffix = _slug(article_dir.name, max_len=72)
-    return f"{prefix}_{suffix}" if prefix else suffix
 
 
 def _html_plain_text_for_profile(html: str) -> str:
