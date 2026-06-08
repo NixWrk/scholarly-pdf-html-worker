@@ -1372,6 +1372,29 @@ def test_polish_html_document_appends_pdf_recovered_reference_section_without_ex
     assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
 
 
+def test_polish_html_document_appends_pdf_recovered_prefix_for_later_body_citation_range() -> None:
+    html = "<html><body><p>Settings were described in [6, 7].</p></body></html>"
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries_recovery_numbers": [6, 7],
+            "reference_entries": [
+                {"page": 3, "number": number, "text": f"Reference {number}. Journal, 2020."}
+                for number in range(1, 8)
+            ],
+        },
+    )
+    ref_section = polished[polished.index("References") :]
+    body = polished[: polished.index("References")]
+
+    assert 'id="ref-1"' in ref_section
+    assert 'id="ref-7"' in ref_section
+    assert '<a href="#ref-6" class="z2m-ref-link">6</a>' in body
+    assert '<a href="#ref-7" class="z2m-ref-link">7</a>' in body
+
+
 def test_polish_html_document_links_remaining_plain_superscript_ranges_in_superscript_docs() -> None:
     refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 20))
     html = (
@@ -9492,6 +9515,25 @@ def test_polish_html_document_unwraps_broken_page_anchor_links() -> None:
     assert "page 11" in polished
     assert 'href="#page-10-0"' not in polished
     assert 'href="#page-11-0"' not in polished
+
+
+def test_polish_html_document_unwraps_broken_internal_semantic_links_after_late_repairs() -> None:
+    html = (
+        "<html><body>"
+        '<p>Comments are shown in Table <a href="#table-5" class="z2m-table-link">5.</a></p>'
+        '<p>Some improvement with an adult knee coil. <a href="#page-8-0">Adam et</a> al. (2001).</p>'
+        '<p><a href="#custom-missing">custom</a> anchor remains custom.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+
+    assert 'href="#table-5"' not in polished
+    assert 'href="#page-8-0"' not in polished
+    assert "Table 5." in compact
+    assert "Adam et al. (2001)" in compact
+    assert 'href="#custom-missing"' in polished
 
 
 def test_polish_html_document_keeps_working_page_anchor_links() -> None:

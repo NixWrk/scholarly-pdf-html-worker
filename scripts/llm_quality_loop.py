@@ -17,7 +17,6 @@ from html import escape, unescape
 import json
 import os
 import re
-import signal
 import shutil
 import subprocess
 import sys
@@ -45,6 +44,44 @@ from zoteropdf2md.citation_profile import (  # noqa: E402
 )
 from zoteropdf2md.marker_runner import build_marker_single_command  # noqa: E402
 from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
+from zoteropdf2md.quality_loop import commands as quality_commands  # noqa: E402
+from zoteropdf2md.quality_loop import gates as quality_gates  # noqa: E402
+from zoteropdf2md.quality_loop import pdf_utils as quality_pdf_utils  # noqa: E402
+from zoteropdf2md.quality_loop import source_pdf as quality_source_pdf  # noqa: E402
+from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
+    clean_resolved_missing_unit_classes as _clean_resolved_p62_missing_unit_classes,
+    data_url_image_hash as _p62_data_url_image_hash,
+    extract_html_figure_units as _p62_extract_html_figure_units,
+    figure_label_from_unit_id as _p62_figure_label_from_unit_id,
+    html_has_missing_warning_for_figure_unit as _html_has_p62_missing_warning_for_figure_unit,
+    html_has_recovery_for_label as _html_has_p62_recovery_for_label,
+    html_has_stale_page_render_for_label as _html_has_p62_stale_page_render_for_label,
+    id_matches_figure_label as _p62_id_matches_figure_label,
+    missing_warning_target_html as _p62_missing_warning_target_html,
+    recovered_target_matches_label as _p62_recovered_target_matches_label,
+    recovered_target_source as _p62_recovered_target_source,
+    recovery_target_html as _p62_recovery_target_html,
+    replace_figure_unit_target_with_image as _replace_p62_figure_unit_target_with_image,
+    replace_figure_unit_target_with_missing_warning as _replace_p62_figure_unit_target_with_missing_warning,
+    replace_missing_warning_with_image as _replace_p62_missing_warning_with_image,
+    replace_recovery_with_missing_warning as _replace_p62_recovery_with_missing_warning,
+    replace_stale_recovery_with_image as _replace_p62_stale_recovery_with_image,
+)
+from zoteropdf2md.quality_loop.p62_marker import execute_marker_command as _execute_p62_marker_command_impl  # noqa: E402
+from zoteropdf2md.quality_loop.p62_matching import (  # noqa: E402
+    best_pdf_text_page as _best_pdf_text_page,
+    caption_head_present_near_label as _p62_caption_head_present_near_label,
+    caption_head_tokens as _p62_caption_head_tokens,
+    evidence_snippet_tokens as _evidence_snippet_tokens,
+    false_page_match_hint as _p62_false_page_match_hint,
+    figure_label_present_in_text as _figure_label_present_in_text,
+    figure_label_present_in_text_strict as _figure_label_present_in_text_strict,
+    full_figure_label_from_context as _p62_full_figure_label_from_context,
+    label_looks_caption_like as _p62_label_looks_caption_like,
+    pdf_page_match_score as _pdf_page_match_score,
+    pdf_page_visual_summaries as _p62_pdf_page_visual_summaries,
+    tokenize_evidence_text as _tokenize_evidence_text,
+)
 
 
 RAW_STAGE = "01.en.raw.html"
@@ -298,6 +335,15 @@ def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, 
     }
 
 
+def _href_has_local_page_query(href: str) -> bool:
+    if "page=" not in href.lower():
+        return False
+    parsed = urllib.parse.urlsplit(href)
+    if parsed.scheme or parsed.netloc:
+        return False
+    return re.search(r"(?:^|&)page=", parsed.query, re.IGNORECASE) is not None
+
+
 def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict[str, Any]:
     ids = {match.group("id") for match in ID_RE.finditer(html)}
     href_counts: dict[str, int] = {}
@@ -313,7 +359,7 @@ def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict
         if href.startswith("#page-"):
             href_counts["page_links"] = href_counts.get("page_links", 0) + 1
             href_counts["internal_page_anchor_links"] = href_counts.get("internal_page_anchor_links", 0) + 1
-        if "?page=" in href:
+        if _href_has_local_page_query(href):
             href_counts["external_page_query_links"] = href_counts.get("external_page_query_links", 0) + 1
         if href.startswith("#") and href[1:] not in ids:
             href_counts["broken_internal_links"] = href_counts.get("broken_internal_links", 0) + 1
@@ -517,173 +563,43 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
 
 
 def _manifest_article_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    articles: dict[str, dict[str, Any]] = {}
-    for article in manifest.get("articles") or []:
-        if not isinstance(article, dict):
-            continue
-        article_id = article.get("article_id") or article.get("article")
-        if article_id:
-            articles[str(article_id)] = article
-    return articles
+    return quality_source_pdf.manifest_article_by_id(manifest)
 
 
 def _configured_path_prefix_pairs() -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = [
-        ("/pdf_html_translator_repo", str(ROOT)),
-        ("/data/html", r"D:\Elvis_projects\Zotero_automatization\data\html"),
-        ("/zotero_roots/pc_zotero", r"C:\PC\Zotero"),
-        ("/zotero_roots/user_zotero", r"C:\Users\ELVIS_NIX\Zotero"),
-    ]
-    for env_name in ("HTML_DOCKER_MOUNT_PREFIX_MAP", "ZOTERO_PATH_PREFIX_MAP"):
-        for item in os.environ.get(env_name, "").split(";"):
-            if "=" not in item:
-                continue
-            left, right = (part.strip() for part in item.split("=", 1))
-            if left and right:
-                pairs.append((left, right))
-                pairs.append((right, left))
-    return pairs
+    return quality_source_pdf.configured_path_prefix_pairs(ROOT)
 
 
 def _host_path_candidates(value: str) -> list[Path]:
-    raw = value.strip()
-    if not raw:
-        return []
-    candidates = [Path(raw).resolve(strict=False)]
-    normalized = raw.replace("\\", "/")
-    for source_prefix, target_prefix in _configured_path_prefix_pairs():
-        source_norm = source_prefix.replace("\\", "/").rstrip("/")
-        if normalized == source_norm or normalized.startswith(source_norm + "/"):
-            suffix = normalized[len(source_norm) :].lstrip("/")
-            candidates.append((Path(target_prefix) / Path(*suffix.split("/"))).resolve(strict=False))
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(candidate)
-    return deduped
+    return quality_source_pdf.host_path_candidates(value, repo_root=ROOT)
 
 
 def _collect_pdf_path_strings(value: Any) -> list[str]:
-    found: list[str] = []
-    if isinstance(value, dict):
-        for key, nested in value.items():
-            key_lower = str(key).lower()
-            if isinstance(nested, str) and (
-                key_lower in {"source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf", "source_path", "path"}
-                or "pdf" in key_lower
-            ):
-                if nested.lower().split("?", 1)[0].endswith(".pdf"):
-                    found.append(nested)
-            found.extend(_collect_pdf_path_strings(nested))
-    elif isinstance(value, list):
-        for nested in value:
-            found.extend(_collect_pdf_path_strings(nested))
-    elif isinstance(value, str) and value.lower().split("?", 1)[0].endswith(".pdf"):
-        found.append(value)
-    return found
+    return quality_source_pdf.collect_pdf_path_strings(value)
 
 
 def _source_export_dirs_from_stage_related_path(value: Any) -> list[Path]:
-    if not value:
-        return []
-    path = Path(str(value)).resolve(strict=False)
-    if path.name in {RAW_STAGE, POLISH_STAGE} or path.parent.name == "_z2m_stages":
-        article_dir = _article_dir_from_stage(path)
-    else:
-        article_dir = path
-    parts = list(article_dir.parts)
-    dirs: list[Path] = []
-    for marker in ("source_exports", "converted", "final_exports", "translated"):
-        if marker not in parts:
-            continue
-        idx = parts.index(marker)
-        after = parts[idx + 1 :]
-        if len(after) < 3:
-            continue
-        dirs.append(Path(*parts[:idx], "source_exports", *after[:3]).resolve(strict=False))
-    return dirs
+    return quality_source_pdf.source_export_dirs_from_stage_related_path(
+        value,
+        raw_stage=RAW_STAGE,
+        polish_stage=POLISH_STAGE,
+    )
 
 
 def _pdf_candidates_from_source_export_dir(source_dir: Path) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    if not source_dir.is_dir():
-        return candidates
-    for json_path in sorted([source_dir / "manifest.json", *source_dir.glob("*_meta.json")], key=str):
-        if not json_path.is_file():
-            continue
-        data = _load_json(json_path, default={})
-        for pdf_value in _collect_pdf_path_strings(data):
-            for host_path in _host_path_candidates(pdf_value):
-                candidates.append(
-                    {
-                        "path": str(host_path),
-                        "exists": host_path.is_file(),
-                        "source": str(json_path),
-                        "original_path": pdf_value,
-                    }
-                )
-    return candidates
+    return quality_source_pdf.pdf_candidates_from_source_export_dir(source_dir, repo_root=ROOT)
 
 
 def _zotero_root_paths() -> list[Path]:
-    roots: list[Path] = []
-    for source_prefix, target_prefix in _configured_path_prefix_pairs():
-        if "zotero" not in source_prefix.lower() and "zotero" not in target_prefix.lower():
-            continue
-        root = Path(target_prefix).resolve(strict=False)
-        if root not in roots:
-            roots.append(root)
-    return roots
+    return quality_source_pdf.zotero_root_paths(repo_root=ROOT)
 
 
 def _attachment_keys_from_article(article: str, manifest_article: dict[str, Any]) -> list[str]:
-    keys: list[str] = []
-
-    def add(value: str) -> None:
-        if value and value not in keys:
-            keys.append(value)
-
-    for token in re.split(r"[_\\/]+", article):
-        if re.fullmatch(r"[A-Z0-9]{6,10}", token) and any(ch.isdigit() for ch in token):
-            add(token)
-    for key in ("attachment_key", "zotero_attachment_key", "zotero_key"):
-        value = manifest_article.get(key)
-        if isinstance(value, str) and re.fullmatch(r"[A-Z0-9]{6,10}", value):
-            add(value)
-    for path_key in ("raw_stage_path", "polish_stage_path", "restored_image_source"):
-        value = manifest_article.get(path_key)
-        if not value:
-            continue
-        for part in Path(str(value)).parts:
-            if re.fullmatch(r"[A-Z0-9]{6,10}", part):
-                add(part)
-    return keys
+    return quality_source_pdf.attachment_keys_from_article(article, manifest_article)
 
 
 def _pdf_candidates_from_zotero_storage(attachment_key: str) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    if not attachment_key:
-        return candidates
-    for root in _zotero_root_paths():
-        storage_dirs = [root / "storage" / attachment_key]
-        if root.is_dir():
-            storage_dirs.extend(root.glob(f"*/storage/{attachment_key}"))
-        for storage_dir in storage_dirs:
-            if not storage_dir.is_dir():
-                continue
-            for pdf_path in sorted(storage_dir.glob("*.pdf"), key=str):
-                candidates.append(
-                    {
-                        "path": str(pdf_path.resolve(strict=False)),
-                        "exists": pdf_path.is_file(),
-                        "source": f"zotero_storage.{attachment_key}",
-                        "original_path": str(storage_dir.resolve(strict=False)),
-                    }
-                )
-    return candidates
+    return quality_source_pdf.pdf_candidates_from_zotero_storage(attachment_key, repo_root=ROOT)
 
 
 def _article_source_pdf_candidates(
@@ -692,70 +608,15 @@ def _article_source_pdf_candidates(
     audit_summary: dict[str, Any],
     manifest_article: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    visited_runs: set[Path] = set()
-
-    def add_pdf_value(value: Any, source: str) -> None:
-        if not value:
-            return
-        for host_path in _host_path_candidates(str(value)):
-            candidates.append(
-                {
-                    "path": str(host_path),
-                    "exists": host_path.is_file(),
-                    "source": source,
-                    "original_path": str(value),
-                }
-            )
-
-    def add_source_dirs_from_item(item: dict[str, Any]) -> None:
-        for key in (
-            "article_dir",
-            "raw_stage_path",
-            "source_polish_path",
-            "polish_stage_path",
-            "polish_path",
-            "restored_image_source",
-        ):
-            for source_dir in _source_export_dirs_from_stage_related_path(item.get(key)):
-                candidates.extend(_pdf_candidates_from_source_export_dir(source_dir))
-
-    add_pdf_value(audit_summary.get("source_pdf_path"), "audit_summary.source_pdf_path")
-    add_source_dirs_from_item(manifest_article)
-    for key in ("source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf"):
-        add_pdf_value(manifest_article.get(key), f"manifest.{key}")
-    for attachment_key in _attachment_keys_from_article(article, manifest_article):
-        candidates.extend(_pdf_candidates_from_zotero_storage(attachment_key))
-
-    def visit(source_run: Path) -> None:
-        source_run = source_run.resolve(strict=False)
-        if source_run in visited_runs:
-            return
-        visited_runs.add(source_run)
-        manifest = _load_json(source_run / "manifest.json", default={})
-        item = _manifest_article_for(manifest, article) or {}
-        if item:
-            add_source_dirs_from_item(item)
-            for key in ("source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf"):
-                add_pdf_value(item.get(key), f"{source_run.name}.manifest.{key}")
-            for attachment_key in _attachment_keys_from_article(article, item):
-                candidates.extend(_pdf_candidates_from_zotero_storage(attachment_key))
-        nested = manifest.get("source_run_dir")
-        if nested:
-            visit(Path(str(nested)))
-
-    visit(run_dir)
-
-    deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = f"{candidate.get('path')}|{candidate.get('original_path')}"
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(candidate)
-    deduped.sort(key=lambda item: (not bool(item.get("exists")), str(item.get("path"))))
-    return deduped[:12]
+    return quality_source_pdf.article_source_pdf_candidates(
+        run_dir,
+        article,
+        audit_summary,
+        manifest_article,
+        repo_root=ROOT,
+        raw_stage=RAW_STAGE,
+        polish_stage=POLISH_STAGE,
+    )
 
 
 def write_source_pdf_map_for_run(
@@ -771,296 +632,19 @@ def write_source_pdf_map_for_run(
     ``audit_en_polish.py --pdf-diagnostics`` use those external PDFs.
     """
 
-    run_dir = run_dir.resolve(strict=False)
-    manifest = manifest or _load_json(run_dir / "manifest.json", default={})
-    out_path = out_path or (run_dir / DEFAULT_SOURCE_PDF_MAP_NAME)
-    records: list[dict[str, Any]] = []
-    mapped: dict[str, dict[str, Any]] = {}
-    for item in manifest.get("articles") or []:
-        if not isinstance(item, dict):
-            continue
-        article = str(item.get("article_id") or item.get("article") or "")
-        if not article:
-            continue
-        candidates = _article_source_pdf_candidates(run_dir, article, {}, item)
-        selected = next((candidate for candidate in candidates if candidate.get("exists")), None)
-        record = {
-            "article": article,
-            "source_article": item.get("article"),
-            "pdf_path": selected.get("path") if selected else "",
-            "source": selected.get("source") if selected else "",
-            "exists": bool(selected),
-            "candidate_count": len(candidates),
-            "candidates": candidates,
-        }
-        records.append(record)
-        if selected:
-            mapped[article] = record
-
-    report = {
-        "generated_at": _now(),
-        "run_dir": str(run_dir),
-        "status": "ready" if mapped else "empty",
-        "article_count": len(records),
-        "mapped_count": len(mapped),
-        "unmapped_count": len(records) - len(mapped),
-        "records": records,
-    }
-    _write_json(out_path, report)
-    return report
+    return quality_source_pdf.write_source_pdf_map_for_run(
+        run_dir,
+        manifest,
+        out_path=out_path,
+        repo_root=ROOT,
+        raw_stage=RAW_STAGE,
+        polish_stage=POLISH_STAGE,
+        output_name=DEFAULT_SOURCE_PDF_MAP_NAME,
+    )
 
 
 def _pdf_text_pages(pdf_path: Path, *, max_pages: int | None = None) -> tuple[str, list[str], str | None]:
-    if not pdf_path.is_file():
-        return "missing", [], None
-
-    errors: list[str] = []
-    try:
-        import fitz  # type: ignore[import-not-found]
-
-        doc = fitz.open(str(pdf_path))
-        try:
-            limit = len(doc) if not max_pages or max_pages <= 0 else min(len(doc), max_pages)
-            return "pymupdf", [doc.load_page(index).get_text("text") or "" for index in range(limit)], None
-        finally:
-            doc.close()
-    except ImportError as exc:
-        errors.append(f"pymupdf unavailable: {exc}")
-    except Exception as exc:  # pragma: no cover - PDF/parser specific
-        errors.append(f"pymupdf failed: {exc}")
-
-    try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
-
-        reader = PdfReader(str(pdf_path))
-        pages = list(reader.pages)
-        limit = len(pages) if not max_pages or max_pages <= 0 else min(len(pages), max_pages)
-        return "pypdf", [pages[index].extract_text() or "" for index in range(limit)], None
-    except ImportError as exc:
-        errors.append(f"pypdf unavailable: {exc}")
-    except Exception as exc:  # pragma: no cover - PDF/parser specific
-        errors.append(f"pypdf failed: {exc}")
-
-    return "unavailable", [], "; ".join(errors)
-
-
-def _tokenize_evidence_text(value: str) -> list[str]:
-    return [
-        token
-        for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9]{3,}", unescape(str(value)).casefold())
-        if not token.isdigit()
-    ]
-
-
-def _best_pdf_text_page(snippets: list[str], pages: list[str]) -> tuple[int, float]:
-    if not pages:
-        return 0, 0.0
-    snippet_tokens = _evidence_snippet_tokens(snippets)
-    if not snippet_tokens:
-        return 1, 0.0
-
-    best_page = 1
-    best_score = -1.0
-    for index, page_text in enumerate(pages, start=1):
-        page_tokens = set(_tokenize_evidence_text(page_text))
-        if not page_tokens:
-            score = 0.0
-        else:
-            score = len(snippet_tokens & page_tokens) / max(1, len(snippet_tokens))
-        if score > best_score:
-            best_page = index
-            best_score = score
-    return best_page, max(0.0, best_score)
-
-
-def _evidence_snippet_tokens(snippets: list[str]) -> set[str]:
-    snippet_tokens: set[str] = set()
-    for snippet in snippets:
-        snippet_tokens.update(_tokenize_evidence_text(snippet)[:80])
-    return snippet_tokens
-
-
-def _pdf_page_match_score(snippet_tokens: set[str], page_text: str) -> float:
-    if not snippet_tokens:
-        return 0.0
-    page_tokens = set(_tokenize_evidence_text(page_text))
-    if not page_tokens:
-        return 0.0
-    return len(snippet_tokens & page_tokens) / max(1, len(snippet_tokens))
-
-
-def _figure_label_present_in_text(text: str, figure_label: str) -> bool:
-    label = str(figure_label or "").strip()
-    if not label:
-        return False
-    return bool(
-        re.search(
-            rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?=\b|[^\w])",
-            str(text or ""),
-            re.IGNORECASE,
-        )
-    )
-
-
-def _figure_label_present_in_text_strict(text: str, figure_label: str) -> bool:
-    label = str(figure_label or "").strip()
-    if not label:
-        return False
-    return bool(
-        re.search(
-            rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
-            str(text or ""),
-            re.IGNORECASE,
-        )
-    )
-
-
-def _p62_full_figure_label_from_context(context: str, fallback_label: str) -> str:
-    fallback = str(fallback_label or "").strip()
-    candidates: list[str] = []
-    for match in re.finditer(
-        r"\b(?:fig(?:ure)?\.?)\s*([A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)*[A-Za-z]?)\b",
-        str(context or ""),
-        re.IGNORECASE,
-    ):
-        label = match.group(1).strip().rstrip(".")
-        if not label:
-            continue
-        if fallback:
-            lower = label.casefold()
-            base = fallback.casefold()
-            if lower == base or lower.startswith(base + "-") or lower.startswith(base + "."):
-                candidates.append(label)
-        else:
-            candidates.append(label)
-    if candidates:
-        return max(candidates, key=lambda item: (len(item), item))
-    return fallback
-
-
-def _p62_false_page_match_hint(page_text: str, figure_label: str) -> str:
-    text = str(page_text or "")
-    compact = re.sub(r"\s+", " ", text).strip()
-    lower = compact.casefold()
-    label = re.escape(str(figure_label or "").strip())
-    if not label:
-        return ""
-    label_ref = rf"(?:fig(?:ure)?\.?)\s*{label}(?![\w-]|\.[A-Za-z0-9])"
-    label_pos = re.search(label_ref, compact, re.IGNORECASE)
-    window = lower
-    if label_pos:
-        start = max(0, label_pos.start() - 500)
-        end = min(len(compact), label_pos.end() + 500)
-        window = compact[start:end].casefold()
-    if "table of contents" in window or re.search(r"\bcontents\b", window) and "....." in window:
-        return "toc_or_contents"
-    if "figure captions" in window or "list of figures" in window:
-        return "figure_caption_list"
-    if re.search(rf"\binsert\s+(?:fig(?:ure)?\.?)\s*{label}\b", window, re.IGNORECASE):
-        return "manuscript_placeholder"
-    if re.search(rf"\({label_ref}\)", window, re.IGNORECASE):
-        return "prose_parenthetical_reference"
-    if re.search(r"\breferences\b", window[:160], re.IGNORECASE):
-        return "backmatter_or_reference_text"
-    return ""
-
-
-def _p62_label_looks_caption_like(page_text: str, figure_label: str) -> bool:
-    label = str(figure_label or "").strip()
-    if not label:
-        return False
-    pattern = re.compile(
-        rf"^\s*(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])[\s:.\-–|]+.{8,}",
-        re.IGNORECASE,
-    )
-    return any(pattern.search(line) for line in str(page_text or "").splitlines())
-
-
-def _p62_caption_head_tokens(snippets: list[str], figure_label: str) -> list[str]:
-    label = str(figure_label or "").strip()
-    if not label:
-        return []
-    label_pattern = re.compile(
-        rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
-        re.IGNORECASE,
-    )
-    for snippet in snippets:
-        text = str(snippet or "")
-        match = label_pattern.search(text)
-        if not match:
-            continue
-        tokens = _tokenize_evidence_text(text[match.end() : match.end() + 360])
-        if tokens:
-            return tokens[:16]
-    return []
-
-
-def _p62_caption_head_present_near_label(
-    page_text: str,
-    figure_label: str,
-    snippets: list[str],
-) -> bool:
-    expected_tokens = _p62_caption_head_tokens(snippets, figure_label)
-    if not expected_tokens:
-        return False
-    label = str(figure_label or "").strip()
-    label_pattern = re.compile(
-        rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
-        re.IGNORECASE,
-    )
-    threshold = min(6, max(3, len(expected_tokens) // 2))
-    required_head = expected_tokens[: min(3, len(expected_tokens))]
-    for match in label_pattern.finditer(str(page_text or "")):
-        window_tokens = _tokenize_evidence_text(page_text[match.end() : match.end() + 700])
-        window_set = set(window_tokens)
-        if not window_set:
-            continue
-        head_hits = sum(1 for token in required_head if token in window_set)
-        total_hits = sum(1 for token in expected_tokens if token in window_set)
-        if head_hits >= max(1, len(required_head) - 1) and total_hits >= threshold:
-            return True
-    return False
-
-
-def _p62_pdf_page_visual_summaries(
-    pdf_path: Path,
-    page_numbers: Iterable[int],
-) -> dict[int, dict[str, Any]]:
-    wanted = {int(page_number) for page_number in page_numbers if int(page_number) > 0}
-    if not wanted or not pdf_path.is_file():
-        return {}
-    summaries: dict[int, dict[str, Any]] = {}
-    try:
-        import fitz  # type: ignore[import-not-found]
-
-        doc = fitz.open(str(pdf_path))
-        try:
-            for page_number in sorted(wanted):
-                if page_number < 1 or page_number > len(doc):
-                    continue
-                page = doc.load_page(page_number - 1)
-                text_dict = page.get_text("dict") or {}
-                blocks = text_dict.get("blocks") or []
-                image_blocks = [block for block in blocks if block.get("type") == 1]
-                text_blocks = [block for block in blocks if block.get("type") == 0]
-                try:
-                    drawings = page.get_drawings()
-                except Exception:
-                    drawings = []
-                summaries[page_number] = {
-                    "page_number": page_number,
-                    "image_xrefs": len(page.get_images(full=True)),
-                    "image_blocks": len(image_blocks),
-                    "drawings": len(drawings),
-                    "text_blocks": len(text_blocks),
-                    "width": float(page.rect.width),
-                    "height": float(page.rect.height),
-                }
-        finally:
-            doc.close()
-    except Exception:
-        return summaries
-    return summaries
+    return quality_pdf_utils.pdf_text_pages(pdf_path, max_pages=max_pages)
 
 
 def _resolve_p62_pdf_page_for_figure(
@@ -1201,31 +785,7 @@ def _best_pdf_text_page_for_figure(
 
 
 def _render_pdf_evidence_page(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float) -> dict[str, Any]:
-    if not pdf_path.is_file():
-        return {"status": "missing_pdf", "path": "", "error": ""}
-    try:
-        import fitz  # type: ignore[import-not-found]
-
-        doc = fitz.open(str(pdf_path))
-        try:
-            if page_number < 1 or page_number > len(doc):
-                return {
-                    "status": "page_out_of_range",
-                    "path": "",
-                    "error": f"page {page_number} outside 1..{len(doc)}",
-                }
-            page = doc.load_page(page_number - 1)
-            matrix = fitz.Matrix(float(zoom), float(zoom))
-            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            pixmap.save(str(out_path))
-            return {"status": "rendered", "path": str(out_path), "error": ""}
-        finally:
-            doc.close()
-    except ImportError as exc:
-        return {"status": "renderer_unavailable", "path": "", "error": str(exc)}
-    except Exception as exc:  # pragma: no cover - PDF/render specific
-        return {"status": "render_error", "path": "", "error": str(exc)}
+    return quality_pdf_utils.render_pdf_page(pdf_path, page_number, out_path, zoom=zoom)
 
 
 def _problem_snippets_for_evidence(article: dict[str, Any]) -> list[str]:
@@ -1973,335 +1533,6 @@ def _remove_class_from_open_tag(open_tag: str, class_name: str) -> str:
     )
 
 
-def _clean_resolved_p62_missing_unit_classes(html: str) -> str:
-    def replace_unit(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        if "z2m-missing-figure-warning" in raw:
-            return raw
-        open_end = raw.find(">")
-        if open_end < 0:
-            return raw
-        open_tag = _remove_class_from_open_tag(raw[: open_end + 1], "z2m-missing-figure-unit")
-        return open_tag + raw[open_end + 1 :]
-
-    return P62_MISSING_FIGURE_UNIT_RE.sub(replace_unit, html)
-
-
-def _p62_recovery_target_html(
-    data_url: str,
-    *,
-    figure_label: str,
-    source: str,
-    source_detail: str,
-) -> str:
-    label = str(figure_label or "").strip()
-    alt = f"Recovered Figure {label} visual from source PDF" if label else "Recovered figure visual from source PDF"
-    return (
-        '<p class="z2m-figure-target z2m-p62-recovered-target">'
-        '<img '
-        f'data-z2m-src="{_escape_html_attr(source_detail)}" '
-        f'data-z2m-recovery-source="{_escape_html_attr(source)}" '
-        f'alt="{_escape_html_attr(alt)}" '
-        f'src="{_escape_html_attr(data_url)}"/>'
-        "</p>"
-    )
-
-
-def _replace_p62_missing_warning_with_image(
-    html: str,
-    *,
-    figure_label: str,
-    warning_index: int | None,
-    data_url: str,
-    source: str,
-    source_detail: str,
-) -> tuple[str, int]:
-    matches = list(P62_MISSING_WARNING_ELEMENT_RE.finditer(html))
-    if not matches:
-        return html, 0
-
-    label_matches = [
-        match
-        for match in matches
-        if not figure_label or _figure_label_present_in_text(_visible_html_text(match.group(0)), figure_label)
-    ]
-    usable_matches = label_matches or matches
-    if warning_index and warning_index > 0 and warning_index <= len(usable_matches):
-        target = usable_matches[warning_index - 1]
-    else:
-        target = usable_matches[0]
-
-    replacement = _p62_recovery_target_html(
-        data_url,
-        figure_label=figure_label,
-        source=source,
-        source_detail=source_detail,
-    )
-    patched = html[: target.start()] + replacement + html[target.end() :]
-    return _clean_resolved_p62_missing_unit_classes(patched), 1
-
-
-def _p62_recovered_target_source(raw: str) -> str:
-    match = P62_RECOVERY_SOURCE_RE.search(raw)
-    if not match:
-        return ""
-    return unescape(str(match.group("source") or "")).strip()
-
-
-def _p62_id_matches_figure_label(raw_id: str, figure_label: str) -> bool:
-    normalized_id = re.sub(r"[^a-z0-9]+", "-", str(raw_id or "").casefold()).strip("-")
-    normalized_label = re.sub(r"[^a-z0-9]+", "-", str(figure_label or "").casefold()).strip("-")
-    return bool(normalized_label) and normalized_id in {
-        f"fig-{normalized_label}",
-        f"figure-{normalized_label}",
-    }
-
-
-def _p62_recovered_target_matches_label(
-    html: str,
-    match: re.Match[str],
-    figure_label: str,
-) -> bool:
-    label = str(figure_label or "").strip()
-    if not label:
-        return True
-    before = html[max(0, match.start() - 800) : match.start()]
-    div_tags = list(re.finditer(r"<div\b[^>]*>", before, flags=re.IGNORECASE | re.DOTALL))
-    if div_tags:
-        nearest_div = div_tags[-1].group(0)
-        id_match = ID_RE.search(nearest_div)
-        if id_match:
-            raw_id = unescape(str(id_match.group("id") or ""))
-            return _p62_id_matches_figure_label(raw_id, label)
-
-    after = html[match.end() : min(len(html), match.end() + 1800)]
-    return _figure_label_present_in_text(_visible_html_text(after), label)
-
-
-def _html_has_p62_stale_page_render_for_label(html: str, figure_label: str) -> bool:
-    return _html_has_p62_recovery_for_label(
-        html,
-        figure_label,
-        sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
-    )
-
-
-def _html_has_p62_recovery_for_label(
-    html: str,
-    figure_label: str,
-    *,
-    sources: set[str] | None = None,
-) -> bool:
-    for match in P62_RECOVERED_TARGET_ELEMENT_RE.finditer(html):
-        source = _p62_recovered_target_source(match.group(0))
-        if sources is not None and source not in sources:
-            continue
-        if _p62_recovered_target_matches_label(html, match, figure_label):
-            return True
-    return False
-
-
-def _p62_missing_warning_target_html(figure_label: str, *, reason: str = "") -> str:
-    label = str(figure_label or "").strip()
-    figure_text = f"Figure {label}" if label else "Figure"
-    reason_attr = f' data-z2m-recovery-status="{_escape_html_attr(reason)}"' if reason else ""
-    return (
-        f'<p class="z2m-missing-figure-warning z2m-figure-target" role="note"{reason_attr}>'
-        f"{escape(figure_text, quote=False)} image was not extracted into this HTML. "
-        "Please check the original PDF for the missing visual content."
-        "</p>"
-    )
-
-
-def _replace_p62_figure_unit_target_with_missing_warning(
-    html: str,
-    *,
-    figure_label: str,
-    reason: str,
-) -> tuple[str, int]:
-    label = str(figure_label or "").strip()
-    if not label:
-        return html, 0
-    div_re = re.compile(r"<div\b[^>]*>", re.IGNORECASE | re.DOTALL)
-    for div_match in div_re.finditer(html):
-        id_match = ID_RE.search(div_match.group(0))
-        if not id_match or not _p62_id_matches_figure_label(unescape(id_match.group("id")), label):
-            continue
-        close_index = html.find("</div>", div_match.end())
-        if close_index < 0:
-            continue
-        body = html[div_match.end() : close_index]
-        target = P62_MISSING_WARNING_ELEMENT_RE.search(body) or P62_RECOVERED_TARGET_ELEMENT_RE.search(body)
-        if not target:
-            continue
-        replacement = _p62_missing_warning_target_html(label, reason=reason)
-        if target.group(0) == replacement:
-            return html, 0
-        start = div_match.end() + target.start()
-        end = div_match.end() + target.end()
-        return html[:start] + replacement + html[end:], 1
-    return html, 0
-
-
-def _html_has_p62_missing_warning_for_figure_unit(html: str, figure_label: str) -> bool:
-    label = str(figure_label or "").strip()
-    if not label:
-        return False
-    div_re = re.compile(r"<div\b[^>]*>", re.IGNORECASE | re.DOTALL)
-    for div_match in div_re.finditer(html):
-        id_match = ID_RE.search(div_match.group(0))
-        if not id_match or not _p62_id_matches_figure_label(unescape(id_match.group("id")), label):
-            continue
-        close_index = html.find("</div>", div_match.end())
-        if close_index < 0:
-            continue
-        body = html[div_match.end() : close_index]
-        return bool(P62_MISSING_WARNING_ELEMENT_RE.search(body))
-    return False
-
-
-def _replace_p62_recovery_with_missing_warning(
-    html: str,
-    *,
-    figure_label: str,
-    reason: str,
-    replace_sources: set[str] | None = None,
-) -> tuple[str, int]:
-    sources = replace_sources or P62_PDF_DERIVED_RECOVERY_SOURCES
-    for match in P62_RECOVERED_TARGET_ELEMENT_RE.finditer(html):
-        existing_source = _p62_recovered_target_source(match.group(0))
-        if existing_source not in sources:
-            continue
-        if not _p62_recovered_target_matches_label(html, match, figure_label):
-            continue
-        replacement = _p62_missing_warning_target_html(figure_label, reason=reason)
-        return html[: match.start()] + replacement + html[match.end() :], 1
-    return html, 0
-
-
-def _replace_p62_stale_recovery_with_image(
-    html: str,
-    *,
-    figure_label: str,
-    data_url: str,
-    source: str,
-    source_detail: str,
-    replace_sources: set[str] | None = None,
-) -> tuple[str, int]:
-    sources = replace_sources or P62_LOW_FIDELITY_RECOVERY_SOURCES
-    for match in P62_RECOVERED_TARGET_ELEMENT_RE.finditer(html):
-        existing_source = _p62_recovered_target_source(match.group(0))
-        if existing_source not in sources:
-            continue
-        if not _p62_recovered_target_matches_label(html, match, figure_label):
-            continue
-        replacement = _p62_recovery_target_html(
-            data_url,
-            figure_label=figure_label,
-            source=source,
-            source_detail=source_detail,
-        )
-        return html[: match.start()] + replacement + html[match.end() :], 1
-    return html, 0
-
-
-def _p62_data_url_image_hash(raw: str) -> str:
-    match = re.search(r"\bsrc\s*=\s*([\"'])data:image/[^;]+;base64,(?P<data>.*?)\1", raw, re.IGNORECASE | re.DOTALL)
-    if not match:
-        return ""
-    raw_data = str(match.group("data") or "")
-    try:
-        data = base64.b64decode(raw_data, validate=False)
-    except Exception:
-        return hashlib.sha256(raw_data.encode("utf-8", errors="replace")).hexdigest()
-    return hashlib.sha256(data).hexdigest()
-
-
-def _p62_figure_label_from_unit_id(raw_id: str) -> str:
-    value = str(raw_id or "").strip()
-    if not value.casefold().startswith("fig-"):
-        return ""
-    return re.sub(r"[^0-9A-Za-z]+", "-", value[4:]).strip("-")
-
-
-def _p62_extract_html_figure_units(html: str) -> list[dict[str, Any]]:
-    units: list[dict[str, Any]] = []
-    div_re = re.compile(r"<div\b[^>]*>", re.IGNORECASE | re.DOTALL)
-    target_re = re.compile(r"<p\b[^>]*\bz2m-figure-target\b[^>]*>[\s\S]*?</p>", re.IGNORECASE)
-    fallback_img_target_re = re.compile(r"<p\b[^>]*>\s*<img\b[\s\S]*?</p>", re.IGNORECASE)
-    caption_re = re.compile(
-        r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>(?P<body>[\s\S]*?)</p>",
-        re.IGNORECASE,
-    )
-    for div_match in div_re.finditer(html):
-        div_tag = div_match.group(0)
-        id_match = ID_RE.search(div_tag)
-        if not id_match:
-            continue
-        raw_id = unescape(str(id_match.group("id") or ""))
-        label = _p62_figure_label_from_unit_id(raw_id)
-        if not label:
-            continue
-        if "z2m-figure-unit" not in div_tag and "z2m-float-unit" not in div_tag:
-            continue
-        close_index = html.find("</div>", div_match.end())
-        if close_index < 0:
-            continue
-        body = html[div_match.end() : close_index]
-        target_match = target_re.search(body) or fallback_img_target_re.search(body)
-        caption_match = caption_re.search(body)
-        img_hashes: list[str] = []
-        recovery_sources: list[str] = []
-        for img_match in re.finditer(r"<img\b[^>]*>", body, re.IGNORECASE | re.DOTALL):
-            image_hash = _p62_data_url_image_hash(img_match.group(0))
-            if image_hash:
-                img_hashes.append(image_hash)
-            source = _p62_recovered_target_source(img_match.group(0))
-            if source:
-                recovery_sources.append(source)
-        units.append(
-            {
-                "id": raw_id,
-                "label": label,
-                "start": div_match.start(),
-                "end": close_index + len("</div>"),
-                "body_start": div_match.end(),
-                "body_end": close_index,
-                "target_start": div_match.end() + target_match.start() if target_match else 0,
-                "target_end": div_match.end() + target_match.end() if target_match else 0,
-                "caption": _visible_html_text(caption_match.group("body")) if caption_match else "",
-                "image_hashes": img_hashes,
-                "recovery_sources": recovery_sources,
-            }
-        )
-    return units
-
-
-def _replace_p62_figure_unit_target_with_image(
-    html: str,
-    *,
-    figure_label: str,
-    data_url: str,
-    source: str,
-    source_detail: str,
-) -> tuple[str, int]:
-    for unit in _p62_extract_html_figure_units(html):
-        if str(unit.get("label") or "") != str(figure_label or ""):
-            continue
-        start = int(unit.get("target_start") or 0)
-        end = int(unit.get("target_end") or 0)
-        if not start or not end or end <= start:
-            continue
-        replacement = _p62_recovery_target_html(
-            data_url,
-            figure_label=figure_label,
-            source=source,
-            source_detail=source_detail,
-        )
-        return html[:start] + replacement + html[end:], 1
-    return html, 0
-
-
 def _repair_p62_duplicate_figure_images(
     html: str,
     *,
@@ -2507,20 +1738,11 @@ def _html_has_p62_missing_warning_for_label(html: str, figure_label: str) -> boo
 
 
 def _data_url_from_image_file(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    data_url = _to_data_url(path, detect_by_signature=True, log_func=None)
-    if data_url is None or not _validate_data_url(data_url, path):
-        return None
-    return data_url
+    return quality_pdf_utils.data_url_from_image_file(path)
 
 
 def _first_valid_image_path(validation: dict[str, Any]) -> Path | None:
-    for raw_path in validation.get("image_paths") or []:
-        path = Path(str(raw_path))
-        if _data_url_from_image_file(path) is not None:
-            return path
-    return None
+    return quality_pdf_utils.first_valid_image_path(validation)
 
 
 def _execute_p62_marker_command(
@@ -2528,107 +1750,7 @@ def _execute_p62_marker_command(
     *,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    command = list(record.get("marker_command") or [])
-    if not command:
-        return {"status": "skipped", "reason": "marker_command_unavailable", "returncode": None}
-
-    marker_output_dir = Path(str(record.get("marker_output_dir") or ""))
-    if marker_output_dir:
-        marker_output_dir.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    started = _now()
-    started_monotonic = time.monotonic()
-    stdout = ""
-    try:
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        process = subprocess.Popen(
-            command,
-            cwd=ROOT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            creationflags=creationflags,
-            start_new_session=os.name != "nt",
-        )
-        try:
-            stdout, _ = process.communicate(timeout=timeout_seconds if timeout_seconds > 0 else None)
-        except subprocess.TimeoutExpired:
-            _terminate_process_tree(process)
-            try:
-                more_stdout, _ = process.communicate(timeout=5)
-                stdout = (stdout or "") + (more_stdout or "")
-            except Exception:
-                pass
-            report = {
-                "status": "timeout",
-                "command": command,
-                "started_at": started,
-                "finished_at": _now(),
-                "elapsed_seconds": round(time.monotonic() - started_monotonic, 2),
-                "returncode": None,
-                "timeout_seconds": timeout_seconds,
-                "stdout_tail": (stdout or "")[-4000:],
-            }
-            if marker_output_dir:
-                _write_json(marker_output_dir / "marker_execution_report.json", report)
-            return report
-
-        stdout = stdout or ""
-        report = {
-            "status": "completed" if process.returncode == 0 else "failed",
-            "command": command,
-            "started_at": started,
-            "finished_at": _now(),
-            "elapsed_seconds": round(time.monotonic() - started_monotonic, 2),
-            "returncode": process.returncode,
-            "timeout_seconds": timeout_seconds,
-            "stdout_tail": stdout[-4000:],
-        }
-    except FileNotFoundError as exc:
-        report = {
-            "status": "failed",
-            "command": command,
-            "started_at": started,
-            "finished_at": _now(),
-            "elapsed_seconds": round(time.monotonic() - started_monotonic, 2),
-            "returncode": None,
-            "timeout_seconds": timeout_seconds,
-            "error": str(exc),
-        }
-
-    if marker_output_dir:
-        _write_json(marker_output_dir / "marker_execution_report.json", report)
-    return report
-
-
-def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
-    if process.poll() is not None:
-        return
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-            cwd=ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        return
-
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=5)
-    except Exception:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except Exception:
-            process.kill()
+    return _execute_p62_marker_command_impl(record, timeout_seconds=timeout_seconds, cwd=ROOT)
 
 
 def _p62_render_fallback_page_number(
@@ -5454,7 +4576,7 @@ def repolish_cached_run(
 
 
 def load_gate_config(path: Path = DEFAULT_GATE_CONFIG) -> dict[str, Any]:
-    return _load_json(path)
+    return quality_gates.load_gate_config(path)
 
 
 def evaluate_quality_gate(
@@ -5466,177 +4588,14 @@ def evaluate_quality_gate(
     audit_command_report: dict[str, Any] | None = None,
     pdf_problem_evidence_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    failures: list[dict[str, Any]] = []
-    status = str(comparison.get("status") or "")
-    if status == "no_previous_entry":
-        if not gate_config.get("allow_missing_previous", False):
-            failures.append({"kind": "missing_previous", "message": "No previous quality entry was available."})
-    elif status != "ok":
-        failures.append({"kind": "comparison_status", "status": status})
-
-    regressions = list(comparison.get("regressions") or [])
-    max_regressions = int(gate_config.get("max_regressions", 0))
-    if len(regressions) > max_regressions:
-        failures.append(
-            {
-                "kind": "regressions",
-                "observed": len(regressions),
-                "limit": max_regressions,
-                "articles": [item.get("article") for item in regressions],
-            }
-        )
-
-    totals_delta = comparison.get("totals_delta") if isinstance(comparison.get("totals_delta"), dict) else {}
-    comparable_totals_delta = (
-        comparison.get("comparable_totals_delta")
-        if isinstance(comparison.get("comparable_totals_delta"), dict)
-        else {}
+    return quality_gates.evaluate_quality_gate(
+        comparison,
+        gate_config,
+        article_review_report=article_review_report,
+        audit_report=audit_report,
+        audit_command_report=audit_command_report,
+        pdf_problem_evidence_report=pdf_problem_evidence_report,
     )
-    gate_totals_delta = comparable_totals_delta or totals_delta
-    for metric, limit in dict(gate_config.get("max_total_deltas") or {}).items():
-        observed = float(gate_totals_delta.get(metric, 0) or 0)
-        if observed > float(limit):
-            failures.append({"kind": "total_delta", "metric": metric, "observed": observed, "limit": limit})
-
-    article_limits = dict(gate_config.get("max_article_deltas") or {})
-    for item in regressions:
-        for metric, limit in article_limits.items():
-            observed = float(item.get(metric, 0) or 0)
-            if observed > float(limit):
-                failures.append(
-                    {
-                        "kind": "article_delta",
-                        "article": item.get("article"),
-                        "metric": metric,
-                        "observed": observed,
-                        "limit": limit,
-                    }
-                )
-
-    article_review_summary: dict[str, Any] | None = None
-    if gate_config.get("require_article_review_stage", False):
-        if not isinstance(article_review_report, dict):
-            failures.append(
-                {
-                    "kind": "article_review_stage_missing",
-                    "message": "article_review_report.json was not generated for this run.",
-                }
-            )
-        else:
-            article_review_summary = {
-                "status": article_review_report.get("status"),
-                "review_dir": article_review_report.get("review_dir"),
-                "queue_count": article_review_report.get("queue_count"),
-                "mandatory_count": article_review_report.get("mandatory_count"),
-                "pending_mandatory_count": article_review_report.get("pending_mandatory_count"),
-                "selected_count": article_review_report.get("selected_count"),
-            }
-            if article_review_report.get("status") not in {"ready", "not_required"}:
-                failures.append(
-                    {
-                        "kind": "article_review_stage",
-                        "status": article_review_report.get("status"),
-                        "message": "Article review stage did not finish cleanly.",
-                    }
-                )
-            if gate_config.get("max_pending_mandatory_reviews") is not None:
-                pending_limit = int(gate_config.get("max_pending_mandatory_reviews") or 0)
-                pending = int(article_review_report.get("pending_mandatory_count") or 0)
-                if pending > pending_limit:
-                    failures.append(
-                        {
-                            "kind": "mandatory_review_pending",
-                            "observed": pending,
-                            "limit": pending_limit,
-                        }
-                    )
-
-    audit_pdf_summary: dict[str, Any] | None = None
-    if gate_config.get("require_pdf_text_layer_diagnostics", False):
-        audit_totals = {}
-        if isinstance(audit_report, dict):
-            audit_totals = dict((audit_report.get("corpus_summary") or {}).get("totals") or {})
-        audit_pdf_summary = {
-            "pdf_text_chars": int(audit_totals.get("pdf_text_chars") or 0),
-            "source_pdf_present": int(audit_totals.get("source_pdf_present") or 0),
-            "command_used_pdf_diagnostics": bool(
-                isinstance(audit_command_report, dict)
-                and audit_command_report.get("pdf_diagnostics_enabled")
-            ),
-            "pdf_map_path": (
-                audit_command_report.get("pdf_map_path")
-                if isinstance(audit_command_report, dict)
-                else None
-            ),
-        }
-        if not isinstance(audit_report, dict):
-            failures.append(
-                {
-                    "kind": "pdf_text_layer_diagnostics_missing",
-                    "message": "audit_full_checks.json was not available for PDF text-layer diagnostics validation.",
-                }
-            )
-        elif not audit_pdf_summary["command_used_pdf_diagnostics"]:
-            failures.append(
-                {
-                    "kind": "pdf_text_layer_diagnostics_disabled",
-                    "message": "Audit did not run with --pdf-diagnostics.",
-                }
-            )
-        elif audit_pdf_summary["source_pdf_present"] > 0 and audit_pdf_summary["pdf_text_chars"] <= 0:
-            failures.append(
-                {
-                    "kind": "pdf_text_layer_empty",
-                    "source_pdf_present": audit_pdf_summary["source_pdf_present"],
-                    "pdf_text_chars": audit_pdf_summary["pdf_text_chars"],
-                }
-            )
-
-    pdf_problem_evidence_summary: dict[str, Any] | None = None
-    if gate_config.get("require_pdf_problem_evidence_stage", False):
-        if not isinstance(pdf_problem_evidence_report, dict):
-            failures.append(
-                {
-                    "kind": "pdf_problem_evidence_stage_missing",
-                    "message": "pdf_problem_evidence_report.json was not generated for this run.",
-                }
-            )
-        else:
-            pdf_problem_evidence_summary = {
-                "status": pdf_problem_evidence_report.get("status"),
-                "report_path": pdf_problem_evidence_report.get("report_path"),
-                "evidence_dir": pdf_problem_evidence_report.get("evidence_dir"),
-                "selected_count": pdf_problem_evidence_report.get("selected_count", 0),
-                "ready_count": pdf_problem_evidence_report.get("ready_count", 0),
-                "source_pdf_unavailable_count": pdf_problem_evidence_report.get(
-                    "source_pdf_unavailable_count", 0
-                ),
-                "blocking_issue_count": pdf_problem_evidence_report.get("blocking_issue_count", 0),
-                "required_checks": pdf_problem_evidence_report.get("required_checks", []),
-            }
-            if pdf_problem_evidence_report.get("status") not in {"ready", "not_required"}:
-                failures.append(
-                    {
-                        "kind": "pdf_problem_evidence_stage",
-                        "status": pdf_problem_evidence_report.get("status"),
-                        "blocking_issue_count": pdf_problem_evidence_report.get("blocking_issue_count", 0),
-                    }
-                )
-
-    return {
-        "generated_at": _now(),
-        "status": "fail" if failures else "pass",
-        "failures": failures,
-        "regression_count": len(regressions),
-        "improvement_count": len(comparison.get("improvements") or []),
-        "totals_delta": totals_delta,
-        "comparable_totals_delta": comparable_totals_delta,
-        "new_article_count": int(comparison.get("new_article_count") or 0),
-        "removed_article_count": int(comparison.get("removed_article_count") or 0),
-        "article_review_stage": article_review_summary,
-        "pdf_text_layer_diagnostics": audit_pdf_summary,
-        "pdf_problem_evidence_stage": pdf_problem_evidence_summary,
-    }
 
 
 def _defect_summary(defect: dict[str, Any], defect_patterns: dict[str, Any]) -> dict[str, Any]:
@@ -7491,53 +6450,7 @@ def run_quality_history(run_dir: Path, *, run_id: str | None, previous_entry: Pa
 
 
 def run_test_command(command: str, run_dir: Path) -> dict[str, Any]:
-    started = _now()
-    run_dir.mkdir(parents=True, exist_ok=True)
-    stdout_path = run_dir / "test_stdout.log"
-    stderr_path = run_dir / "test_stderr.log"
-    print(f"Tests started: {command}", flush=True)
-    with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
-        "w",
-        encoding="utf-8",
-        errors="replace",
-    ) as stderr_file:
-        process = subprocess.Popen(
-            command,
-            cwd=ROOT,
-            shell=True,
-            text=True,
-            stdout=stdout_file,
-            stderr=stderr_file,
-        )
-        started_monotonic = time.monotonic()
-        next_report = started_monotonic + 15
-        while True:
-            returncode = process.poll()
-            if returncode is not None:
-                break
-            now = time.monotonic()
-            if now >= next_report:
-                print(f"Tests running: elapsed={int(now - started_monotonic)}s", flush=True)
-                next_report = now + 15
-            time.sleep(1)
-
-    stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stdout_path.is_file() else ""
-    stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stderr_path.is_file() else ""
-    report = {
-        "command": command,
-        "started_at": started,
-        "finished_at": _now(),
-        "returncode": returncode,
-        "stdout_path": str(stdout_path),
-        "stderr_path": str(stderr_path),
-        "stdout_tail": stdout_tail,
-        "stderr_tail": stderr_tail,
-    }
-    _write_json(run_dir / "test_command_report.json", report)
-    print(f"Tests finished: exit={returncode}", flush=True)
-    if returncode != 0:
-        raise SystemExit(f"Test command failed with exit code {returncode}: {command}")
-    return report
+    return quality_commands.run_test_command(command, run_dir, cwd=ROOT)
 
 
 def _write_gate_report(run_dir: Path, gate_config_path: Path, out_path: Path | None = None) -> dict[str, Any]:

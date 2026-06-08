@@ -515,6 +515,12 @@ _PAGE_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
+_SEMANTIC_INTERNAL_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])#'
+    r'(?P<target>(?:table|page)-[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
 _SPLIT_PAGE_FIG_LINK_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
     r'(?P<body>\s*[\(\[]?\s*(?:FIG(?:URE)?|Fig(?:ure)?|Figs?|Figures?)\.?\s*)</a>'
@@ -9861,7 +9867,7 @@ def _contiguous_profile_reference_recovery_numbers(
     if not requested:
         return []
     max_number = max(requested)
-    if min(requested) != 1 or max_number > _MAX_PROFILE_REFERENCE_SECTION_RECOVERY:
+    if max_number > _MAX_PROFILE_REFERENCE_SECTION_RECOVERY:
         return []
     numbers = list(range(1, max_number + 1))
     if any(number not in entries_by_number for number in numbers):
@@ -14060,6 +14066,36 @@ def _unwrap_broken_page_anchor_links(html: str) -> str:
         return match.group("body")
 
     return _PAGE_ANCHOR_PATTERN.sub(_replace, html)
+
+
+def _unwrap_broken_internal_semantic_links(html: str) -> str:
+    """Drop late broken table/page links without stripping preserved citation markup."""
+    if 'href="#' not in html and "href='#" not in html:
+        return html
+    ids = {
+        match.group("id")
+        for match in re.finditer(
+            r'\bid\s*=\s*(["\'])(?P<id>[^"\']+)\1',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+    }
+
+    def _replace(match: re.Match[str]) -> str:
+        target = match.group("target")
+        if target in ids:
+            return match.group(0)
+        if target.startswith("page-"):
+            label = _visible_text(match.group("body")).strip()
+            left_text = _visible_text(html[max(0, match.start() - 100) : match.start()])
+            if re.fullmatch(r"[\[\(]?\s*(?:pages?|pp?\.?|p\.?)?\s*\d{1,4}[\)\]\.,;:]?", label, re.IGNORECASE):
+                return match.group(0)
+            if re.search(r"\b(?:fig(?:ure)?|figs?|figures?|table|рисунок|фигура|таблица)\s*$", left_text, re.IGNORECASE):
+                if re.fullmatch(r"\d{1,4}[A-Za-zА-Яа-я]?", label):
+                    return match.group(0)
+        return match.group("body")
+
+    return _SEMANTIC_INTERNAL_ANCHOR_PATTERN.sub(_replace, html)
 
 
 def _repair_statistical_ref_false_positives(html: str) -> str:
@@ -22454,6 +22490,7 @@ def polish_html_document(
     polished = _repair_second_echelon_ocr_residue_html(polished)
     polished = _repair_confirmed_front_matter_artifacts(polished)
     polished = _normalize_double_escaped_url_anchor_text(polished)
+    polished = _unwrap_broken_internal_semantic_links(polished)
     return polished
 
 

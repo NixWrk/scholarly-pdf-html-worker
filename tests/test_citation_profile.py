@@ -124,6 +124,106 @@ def test_reference_entries_from_page_texts_extracts_spotnitz_style_bracket_refs(
     assert "atraumatic fibrin sealant" in entries[1].text
 
 
+def test_reference_entries_from_page_texts_extracts_spaced_reference_heading() -> None:
+    entries = _reference_entries_from_page_texts(
+        [
+            (
+                13,
+                "Acknowledgements\n"
+                "R E F E R E N C E S\n"
+                "[1] A. Sherwood, M.T. Allen et al., Methodological Guidelines, Psychophysiology, 1990.\n"
+                "[2] B. P. Pickett, J. C. Buell, Validity of Cardiac Output Measurement,\n"
+                "The American Journal of Cardiology, 1992.\n",
+            )
+        ]
+    )
+
+    assert [entry.number for entry in entries] == [1, 2]
+    assert "Sherwood" in entries[0].text
+    assert "American Journal" in entries[1].text
+
+
+def test_reference_entries_from_page_texts_extracts_tail_sequence_without_heading() -> None:
+    entries = _reference_entries_from_page_texts(
+        [
+            (
+                2,
+                "Received October 20; accepted November 4, 1975.\n"
+                "1 Brindley, G. S., and Lewin, W., J. Physiol., 1968.\n"
+                "2 Brindley, G. S., Handbook of Sensory Physiology, 1973.\n"
+                "3 Dobelle, W. H., Mladejovsky, M. G., and Girvin, J. P., Science, 1974.\n"
+                "4 Donaldson, P. E. K., IEE Proc., 1973.\n"
+            )
+        ]
+    )
+
+    assert [entry.number for entry in entries] == [1, 2, 3, 4]
+    assert "Dobelle" in entries[2].text
+
+
+def test_reference_entries_from_page_texts_extracts_zero_width_and_tight_number_refs() -> None:
+    entries = _reference_entries_from_page_texts(
+        [
+            (
+                19,
+                "The copyright holder for this preprint; cha1\u200b\n"
+                "Searls DE, Pazdera L, Korbel E, Vysata O, Caplan LR. Symptoms and Signs. Arch Neurol 2012.\n",
+            ),
+            (
+                20,
+                "2\u200b Teasell R, Foley N, Doherty T. Clinical characteristics. Arch Phys Med Rehabil 2002.\n"
+                "3\u200bStavisky SD. Restoring Speech Using Brain-Computer Interfaces. Annu Rev Biomed Eng 2025.\n"
+                "4Laureys S, Pellas F, Van Eeckhout P, et al. The locked-in syndrome. Elsevier, 2005.\n",
+            ),
+        ]
+    )
+
+    assert [entry.number for entry in entries] == [1, 2, 3, 4]
+    assert "Searls" in entries[0].text
+    assert "Laureys" in entries[3].text
+
+
+def test_reference_entries_from_page_texts_extracts_number_only_reference_markers() -> None:
+    entries = _reference_entries_from_page_texts(
+        [
+            (
+                7,
+                "Notes and references\n"
+                "10\n"
+                "b Guilin Normal College, Guilin, China.\n"
+                "1\n"
+                "Y. Fang, S. Guo, D. Li, C. Zhu, W. Ren, S. Dong and E. Wang, ACS\n"
+                "15\n"
+                "Nano, 2012, 6, 400-409.\n"
+                "2\n"
+                "S. N. Baker and G. A. Baker, Angew. Chem. Int. Ed., 2010, 49, 6726-6744.\n"
+                "3\n"
+                "L. Cao, X. Wang, M. J. Meziani, F. Lu and Y. P. Sun, J. Am. Chem. Soc., 2007.\n",
+            )
+        ]
+    )
+
+    assert [entry.number for entry in entries] == [1, 2, 3]
+    assert "Nano, 2012" in entries[0].text
+    assert 10 not in [entry.number for entry in entries]
+
+
+def test_reference_entries_from_page_texts_ignores_short_numbered_body_without_heading() -> None:
+    entries = _reference_entries_from_page_texts(
+        [
+            (
+                4,
+                "1. Qualitative analysis of aortic volume changes\n"
+                "The body section contains equations and measurements.\n"
+                "2. Introduction of the SV formula in this paper\n"
+                "The numbered section is not a bibliography.\n",
+            )
+        ]
+    )
+
+    assert entries == []
+
+
 def test_load_zotero_overlay_citations_reads_probe_summary() -> None:
     overlay_path = Path(".tmp_local2/test_zotero_overlay_probe_summary.overlays.json")
     overlay_path.parent.mkdir(parents=True, exist_ok=True)

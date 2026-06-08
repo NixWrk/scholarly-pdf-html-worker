@@ -29,10 +29,19 @@ AUTHOR_YEAR_CITATION_RE = re.compile(
     re.IGNORECASE,
 )
 PDF_REF_START_RE = re.compile(r"^(?P<num>[1-9]\d{0,2})(?=[A-Z])")
-PDF_REFERENCE_HEADING_RE = re.compile(r"^\s*(?:References|Bibliography|Notes and references)\s*$", re.IGNORECASE)
-PDF_REFERENCE_ENTRY_START_RE = re.compile(
-    r"^\s*(?:\[(?P<bracket>[1-9]\d{0,3})\]|(?P<plain>[1-9]\d{0,3})[.)])\s+(?P<body>\S.*)$"
+PDF_REFERENCE_HEADING_RE = re.compile(
+    r"^\s*(?:References|Bibliography|Notes and references|R\s+E\s+F\s+E\s+R\s+E\s+N\s+C\s+E\s+S)\s*$",
+    re.IGNORECASE,
 )
+PDF_REFERENCE_ENTRY_START_RE = re.compile(
+    r"^\s*(?:"
+    r"\[(?P<bracket>[1-9]\d{0,3})\]\s*(?P<bracket_body>.*)"
+    r"|(?P<punct>[1-9]\d{0,3})[.)]\s*(?P<punct_body>.*)"
+    r"|(?P<plain>[1-9]\d{0,3})(?:[\s\u200b]+(?P<plain_body>.*)|(?P<tight_body>(?=[A-Z])\S.*))"
+    r"|(?P<bare>[1-9]\d{0,3})"
+    r")\s*$"
+)
+PDF_REFERENCE_TAIL_MARKER_RE = re.compile(r"(?P<num>[1-9]\d{0,3})\u200b+\s*$")
 PDF_CITATION_DEST_RE = re.compile(r"^(?:cite|citation|bib)[.:]", re.IGNORECASE)
 
 
@@ -451,10 +460,82 @@ def _is_pdf_reference_page_furniture(line: str, page_number: int) -> bool:
     return False
 
 
-def _reference_entries_from_page_texts(page_texts: list[tuple[int, str]]) -> list[PdfReferenceEntry]:
+def _pdf_reference_entry_start(line: str) -> tuple[int, str, str] | None:
+    text = line.strip()
+    match = PDF_REFERENCE_ENTRY_START_RE.match(text)
+    if match is not None:
+        for number_group, body_group, kind in (
+            ("bracket", "bracket_body", "body"),
+            ("punct", "punct_body", "body"),
+            ("plain", "plain_body", "body"),
+            ("plain", "tight_body", "body"),
+            ("bare", "", "bare"),
+        ):
+            raw_number = match.group(number_group)
+            if not raw_number:
+                continue
+            raw_body = match.group(body_group) if body_group else ""
+            if raw_body is None:
+                continue
+            body = raw_body.strip(" \t\u200b")
+            if not body and kind == "body":
+                kind = "punct_only"
+            return int(raw_number), body, kind
+
+    tail_match = PDF_REFERENCE_TAIL_MARKER_RE.search(text)
+    if tail_match is not None:
+        return int(tail_match.group("num")), "", "tail"
+    return None
+
+
+def _looks_like_pdf_reference_body(text: str) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 8:
+        return False
+    if not re.match(r"[\[(\"'A-Z\u00c0-\u00de]", stripped):
+        return False
+    if re.search(r"\b(?:18|19|20)\d{2}\b|\bdoi\b|https?://", stripped, re.IGNORECASE):
+        return True
+    if re.match(r"(?:[A-Z]\.\s*){1,3}[A-Z\u00c0-\u00de]", stripped):
+        return True
+    if re.match(r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'’.-]+(?:\s+[A-Z]\.?|,\s)", stripped):
+        return True
+    if (
+        re.match(r"[A-Z\u00c0-\u00de]", stripped)
+        and re.search(r"[,.;:]", stripped)
+        and len(re.findall(r"[A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]{3,}", stripped)) >= 3
+    ):
+        return True
+    if re.search(r"\b(?:journal|proceedings?|press|university|patent|science|nature|med(?:icine)?|physiol)\b", stripped, re.IGNORECASE):
+        return True
+    return False
+
+
+def _append_pdf_reference_entry(entries: list[PdfReferenceEntry], current: dict[str, Any] | None) -> None:
+    if current is None:
+        return
+    text = str(current["text"]).strip()
+    if not text:
+        return
+    entries.append(
+        PdfReferenceEntry(
+            page=int(current["page"]),
+            number=int(current["number"]),
+            text=text,
+        )
+    )
+
+
+def _collect_reference_entries_from_page_texts(
+    page_texts: list[tuple[int, str]],
+    *,
+    require_heading: bool,
+) -> list[PdfReferenceEntry]:
     entries: list[PdfReferenceEntry] = []
     current: dict[str, Any] | None = None
-    in_references = False
+    pending_number: int | None = None
+    pending_page = 0
+    in_references = not require_heading
 
     for page_number, page_text in page_texts:
         for line in page_text.splitlines():
@@ -462,37 +543,91 @@ def _reference_entries_from_page_texts(page_texts: list[tuple[int, str]]) -> lis
             if not in_references:
                 if PDF_REFERENCE_HEADING_RE.match(stripped):
                     in_references = True
+                    current = None
+                    pending_number = None
+                continue
+            start = _pdf_reference_entry_start(stripped)
+            if start is not None:
+                number, body, kind = start
+                if kind in {"bare", "punct_only", "tail"}:
+                    if current is not None:
+                        expected_next = int(current["number"]) + 1
+                        if kind == "bare" and number != expected_next:
+                            continue
+                        _append_pdf_reference_entry(entries, current)
+                        current = None
+                    pending_number = number
+                    pending_page = page_number
+                    continue
+                if not require_heading and not _looks_like_pdf_reference_body(body):
+                    if current is not None:
+                        current["text"] = f"{current['text']} {stripped}".strip()
+                    pending_number = None
+                    continue
+                if current is not None:
+                    current_number = int(current["number"])
+                    expected_next = current_number + 1
+                    if number <= current_number or number > expected_next + 2:
+                        pending_number = None
+                        continue
+                _append_pdf_reference_entry(entries, current)
+                current = {
+                    "page": page_number,
+                    "number": number,
+                    "text": body,
+                }
+                pending_number = None
                 continue
             if _is_pdf_reference_page_furniture(stripped, page_number):
                 continue
-            start_match = PDF_REFERENCE_ENTRY_START_RE.match(stripped)
-            if start_match is not None:
-                if current is not None:
-                    entries.append(
-                        PdfReferenceEntry(
-                            page=int(current["page"]),
-                            number=int(current["number"]),
-                            text=str(current["text"]).strip(),
-                        )
-                    )
-                current = {
-                    "page": page_number,
-                    "number": int(start_match.group("bracket") or start_match.group("plain")),
-                    "text": start_match.group("body").strip(),
-                }
+            if pending_number is not None:
+                if _looks_like_pdf_reference_body(stripped):
+                    current = {
+                        "page": pending_page or page_number,
+                        "number": pending_number,
+                        "text": stripped,
+                    }
+                pending_number = None
                 continue
             if current is not None:
                 current["text"] = f"{current['text']} {stripped}".strip()
 
-    if current is not None:
-        entries.append(
-            PdfReferenceEntry(
-                page=int(current["page"]),
-                number=int(current["number"]),
-                text=str(current["text"]).strip(),
-            )
-        )
+    _append_pdf_reference_entry(entries, current)
     return entries
+
+
+def _longest_reference_entry_sequence(entries: list[PdfReferenceEntry]) -> list[PdfReferenceEntry]:
+    best: list[PdfReferenceEntry] = []
+    current: list[PdfReferenceEntry] = []
+    previous_number = 0
+    seen_in_current: set[int] = set()
+    for entry in entries:
+        number = entry.number
+        if number in seen_in_current:
+            continue
+        if not current or number == previous_number + 1:
+            current.append(entry)
+            seen_in_current.add(number)
+        else:
+            if len(current) > len(best):
+                best = current
+            current = [entry]
+            seen_in_current = {number}
+        previous_number = number
+    if len(current) > len(best):
+        best = current
+    return best
+
+
+def _reference_entries_from_page_texts(page_texts: list[tuple[int, str]]) -> list[PdfReferenceEntry]:
+    headed_entries = _collect_reference_entries_from_page_texts(page_texts, require_heading=True)
+    if headed_entries:
+        return headed_entries
+    fallback_entries = _collect_reference_entries_from_page_texts(page_texts, require_heading=False)
+    fallback_sequence = _longest_reference_entry_sequence(fallback_entries)
+    if len(fallback_sequence) >= 4:
+        return fallback_sequence
+    return []
 
 
 def extract_reference_entries_from_pdf(pdf_path: str | Path) -> list[PdfReferenceEntry]:

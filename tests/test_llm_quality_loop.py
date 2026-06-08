@@ -3095,6 +3095,20 @@ def test_assessment_warning_count_ignores_css_selector_without_body_warning() ->
     assert assessment["missing_warning_count"] == 0
 
 
+def test_assessment_does_not_count_http_page_query_links_as_local_page_queries() -> None:
+    html = (
+        "<html><body>"
+        '<p><a href="https://example.org/items?page=4">external page query</a> '
+        '<a href="viewer.html?page=4">local viewer</a> '
+        '<a href="?page=5">local query</a></p>'
+        "</body></html>"
+    )
+
+    assessment = assess_polish_html("article_a", html, {"status": "ok", "style": "unknown", "confidence": "low"})
+
+    assert assessment["href_counts"]["external_page_query_links"] == 2
+
+
 def test_assessment_does_not_count_bracket_link_after_unit_sup_as_mixed_style() -> None:
     html = (
         "<html><body>"
