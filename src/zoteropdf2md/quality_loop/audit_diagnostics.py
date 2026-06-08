@@ -60,10 +60,10 @@ DIAGNOSTIC_SPECS: dict[str, DiagnosticSpec] = {
     ),
     "P35": DiagnosticSpec(
         id="P35",
-        detector="_figure_caption_ux_defects",
-        summary="Figure target/caption grouping is navigable but needs layout or review attention.",
-        audit_signal="Checks target wrappers, image/caption association, and same-label figure context.",
-        repair_hint="Figure unit target wrapping and review packaging.",
+        detector="_replacement_char_defects",
+        summary="Unicode replacement character remains visible.",
+        audit_signal="Searches polish HTML for U+FFFD and records PDF text-layer evidence when source noise explains it.",
+        repair_hint="Raw symbol diagnostics, OCR/text-layer triage, or EN polish table-symbol repair.",
         quality_counted_by_default=False,
     ),
     "P45M": DiagnosticSpec(

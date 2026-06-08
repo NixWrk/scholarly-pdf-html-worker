@@ -46,7 +46,6 @@ from zoteropdf2md.quality_loop.audit_blocks import (
 from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
 from zoteropdf2md.quality_loop.audit_manual_patterns import (
     looks_like_affiliation_label_roman_boundary as _looks_like_affiliation_label_roman_boundary,
-    replacement_chars_are_pdf_source_noise as _replacement_chars_are_pdf_source_noise,
 )
 from zoteropdf2md.quality_loop.audit_report import (
     add_corpus_hit_counts as _add_corpus_hit_counts,
@@ -73,6 +72,7 @@ from zoteropdf2md.quality_loop.audit_p04 import (
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
 )
+from zoteropdf2md.quality_loop.audit_p35 import replacement_char_defects as _replacement_char_defects
 from zoteropdf2md.quality_loop.audit_p61 import (
     figure_target_keys as _figure_target_keys,
     figure_target_numbers as _figure_target_numbers,
@@ -3228,31 +3228,7 @@ def _manual_blind_spot_defects(
             )
         )
 
-    replacement_pos = polish_html.find("\ufffd")
-    if replacement_pos != -1:
-        replacement_extra: dict[str, Any] = {"count": polish_html.count("\ufffd")}
-        if _replacement_chars_are_pdf_source_noise(polish_html, pdf_text):
-            replacement_extra.update(
-                {
-                    "quality_counted": False,
-                    "source_pdf_text_layer_evidence": "replacement characters align with source PDF text-layer symbol/OCR loss",
-                }
-            )
-        defects.append(
-            _defect(
-                defect_id="P35",
-                cc_class="CC-04/CC-13",
-                check="Unicode replacement character remains visible",
-                severity="warning",
-                block=None,
-                snippet=_snippet(polish_html, replacement_pos, replacement_pos + 1),
-                stage=POLISH_STAGE,
-                hypothesis="A symbol was lost during PDF/OCR/html decoding, often a comparison sign or table significance mark.",
-                proposed_fix_layer="raw symbol diagnostics and EN polish table-symbol repair",
-                regression_test="Audit reports U+FFFD in table headers, footnotes, and scientific symbols.",
-                extra=replacement_extra,
-            )
-        )
+    defects.extend(_replacement_char_defects(polish_html, pdf_text, stage=POLISH_STAGE))
 
     plain = _plain_text(slim_html)
     url_check_plain = _plain_text(URL_ANCHOR_RE.sub(" URL ", slim_html))
