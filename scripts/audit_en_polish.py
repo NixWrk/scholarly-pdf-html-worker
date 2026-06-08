@@ -65,6 +65,7 @@ from zoteropdf2md.quality_loop.audit_pdf import (
     source_pdf_path,
 )
 from zoteropdf2md.quality_loop.audit_p04 import (
+    looks_like_math_or_measurement_range as _looks_like_math_or_measurement_range,
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
 )
@@ -1691,34 +1692,6 @@ def _looks_like_comma_decimal_stat_ref(raw: str, match: re.Match[str]) -> bool:
         left_text,
         re.IGNORECASE,
     ) is not None
-
-
-def _looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
-    body = match.group(0).strip()[1:-1]
-    numbers = [int(item) for item in re.findall(r"\d+", body)]
-    if not numbers:
-        return False
-    if any(number == 0 for number in numbers):
-        return True
-    left = text[max(0, match.start() - 100): match.start()].lower()
-    return bool(
-        re.search(
-            r"\b(?:vector|vectors|array|arrays|assignment|assignments|interval|intervals|"
-            r"likelihood|likelihoods|score|scores|class|classes|elements|normalized|dividing)\b",
-            left,
-        )
-    )
-
-
-def _looks_like_math_or_measurement_range(text: str, match: re.Match[str]) -> bool:
-    body = match.group(0)
-    if re.search(r"\[\s*(?:0|[-\u2212])", body):
-        return True
-    window = text[max(0, match.start() - 180): min(len(text), match.end() + 180)]
-    left = text[max(0, match.start() - 120): match.start()]
-    if re.search(r"\b(?:within|in|the)\s+(?:the\s+)?range\s*$", left, re.IGNORECASE):
-        return True
-    return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(window) is not None
 
 
 def _plain_bracket_range_is_likely_non_citation_math_or_measurement(text: str, match: re.Match[str]) -> bool:
