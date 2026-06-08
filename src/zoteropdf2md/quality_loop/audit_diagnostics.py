@@ -116,10 +116,10 @@ DIAGNOSTIC_SPECS: dict[str, DiagnosticSpec] = {
     ),
     "P71": DiagnosticSpec(
         id="P71",
-        detector="_meine_recent_manual_defects",
-        summary="Recently observed manual-review diagnostic from MEINE/loop corpus.",
-        audit_signal="Pattern-based scanner for recent corpus-specific OCR, URL, email, reference, and layout issues.",
-        repair_hint="Targeted cleanup rule or accepted telemetry classification.",
+        detector="_known_ocr_token_defects",
+        summary="Known OCR token or phrase remains in polish text.",
+        audit_signal="Searches final polish plain text for curated manual-review OCR residue tokens and PDF-layer evidence.",
+        repair_hint="Targeted OCR cleanup rule or accepted telemetry classification when the source PDF layer already contains it.",
         quality_counted_by_default=False,
     ),
 }
