@@ -5,35 +5,22 @@ import base64
 import functools
 import hashlib
 import html as html_lib
-import mimetypes
 import re
 import urllib.parse
 from collections import Counter
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from .abbreviations import RU_ABBREV_TO_LATIN
+from .html_images import (
+    InlineHtmlResult,
+    detect_image_signature as _detect_image_signature,
+    detect_jpeg_colorspace as _detect_jpeg_colorspace,
+    is_inline_or_remote as _is_inline_or_remote,
+    to_data_url as _to_data_url,
+    validate_data_url as _validate_data_url,
+)
 from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
-
-
-# Image signature (magic numbers) to MIME type mapping
-_IMAGE_SIGNATURES: dict[bytes, str] = {
-    # Generic JPEG SOI+marker prefix (fallback for uncommon APP markers).
-    b"\xff\xd8\xff": "image/jpeg",
-    b"\x89PNG\r\n\x1a\n": "image/png",
-    b"\xff\xd8\xff\xe0": "image/jpeg",  # JPEG with APP0 marker (JFIF)
-    b"\xff\xd8\xff\xe1": "image/jpeg",  # JPEG with APP1 marker (EXIF)
-    b"\xff\xd8\xff\xed": "image/jpeg",  # JPEG with APP13 marker (Photoshop - often CMYK)
-    b"\xff\xd8\xff\xff": "image/jpeg",  # JPEG without app marker (rare)
-    b"GIF87a": "image/gif",
-    b"GIF89a": "image/gif",
-    b"RIFF": "image/webp",  # WebP: RIFF####WEBP
-    b"%PDF": "application/pdf",  # PDF (not image, but for diagnostics)
-    b"\x49\x49\x2a\x00": "image/tiff",  # TIFF Little Endian
-    b"\x4d\x4d\x00\x2a": "image/tiff",  # TIFF Big Endian
-    b"\x42\x4d": "image/bmp",  # BMP
-}
 
 
 _IMG_SRC_PATTERN = re.compile(r'(<img\b[^>]*?\ssrc\s*=\s*)(["\'])([^"\']+)(\2)', re.IGNORECASE)
@@ -3196,12 +3183,6 @@ _MOJIBAKE_REPLACEMENTS = _MOJIBAKE_REPLACEMENTS + (
 )
 
 
-@dataclass(frozen=True)
-class InlineHtmlResult:
-    html: str
-    inlined_images: int
-
-
 def _unwrap_nested_fig_links(fragment: str) -> str:
     prev = ""
     current = fragment
@@ -3229,172 +3210,6 @@ def _unwrap_nested_same_href_internal_links(fragment: str) -> str:
         prev = current
         current = _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN.sub(replace, current)
     return current
-
-
-def _is_inline_or_remote(value: str) -> bool:
-    lowered = value.lower()
-    return (
-        lowered.startswith("http://")
-        or lowered.startswith("https://")
-        or lowered.startswith("data:")
-        or lowered.startswith("mailto:")
-        or lowered.startswith("#")
-        or lowered.startswith("javascript:")
-    )
-
-
-def _detect_image_signature(file_path: Path) -> str | None:
-    """Detect MIME type by reading magic bytes from file."""
-    try:
-        with open(file_path, "rb") as f:
-            header = f.read(12)  # Read first 12 bytes for signature detection
-    except OSError:
-        return None
-
-    if not header:
-        return None
-
-    # Check against known signatures
-    for sig, mime in _IMAGE_SIGNATURES.items():
-        if header.startswith(sig):
-            return mime
-    return None
-
-
-def _detect_jpeg_colorspace(header: bytes) -> str | None:
-    """Detect JPEG colorspace by parsing APP13 marker (Photoshop).
-
-    Returns 'cmyk' if CMYK detected, 'rgb' otherwise.
-    """
-    if len(header) < 4:
-        return None
-
-    # Check for JPEG markers after SOI (FF D8 FF)
-    offset = 3
-    while offset + 4 <= len(header):
-        if header[offset] != 0xFF:
-            break
-        marker = header[offset + 1]
-        # APP13 marker is 0xED
-        if marker == 0xED:
-            # APP13 length bytes (big endian)
-            if offset + 4 > len(header):
-                return None
-            length = (header[offset + 2] << 8) | header[offset + 3]
-            if offset + 2 + length > len(header):
-                return None
-            # Photoshop signature: "Photoshop " (12 bytes after length)
-            start = offset + 4
-            end = start + 12
-            if end <= len(header) and header[start:end] == b"Photoshop ":
-                # Check color data type
-                color_data_offset = start + 8
-                if color_data_offset + 2 <= len(header):
-                    # 0 = RGB, 1 = CMYK
-                    color_type = header[color_data_offset]
-                    return "cmyk" if color_type == 1 else "rgb"
-        elif marker in (0xE0, 0xE1, 0xEE):  # APP0, APP1, APP14
-            # Read length and skip
-            if offset + 4 > len(header):
-                break
-            length = (header[offset + 2] << 8) | header[offset + 3]
-            if length < 2:
-                break
-            offset += 2 + length
-            continue
-        else:
-            # Other marker - try to skip
-            if offset + 4 > len(header):
-                break
-            length = (header[offset + 2] << 8) | header[offset + 3]
-            if length < 2:
-                break
-            offset += 2 + length
-            continue
-
-    return None
-
-
-def _to_data_url(
-    file_path: Path, *, detect_by_signature: bool = True, log_func=None
-) -> str | None:
-    """Convert image file to data URL with signature-based MIME detection.
-
-    Args:
-        file_path: Path to the image file
-        detect_by_signature: If True, use magic bytes to detect MIME type
-                             instead of extension (more reliable for JPEG/CMYK)
-        log_func: Optional function for logging diagnostics
-
-    Returns:
-        Data URL string or None if conversion fails
-    """
-    # Detect MIME by signature first (more reliable than extension)
-    mime_by_sig = _detect_image_signature(file_path) if detect_by_signature else None
-    mime_by_ext, _ = mimetypes.guess_type(file_path.name)
-
-    # Use signature-based detection when available
-    detected_mime = mime_by_sig or mime_by_ext
-
-    if not detected_mime or not detected_mime.startswith("image/"):
-        if log_func:
-            log_func(
-                f"[DIAG] MIME detect fail: path={file_path.name} "
-                f"sig={mime_by_sig} ext={mime_by_ext}"
-            )
-        return None
-
-    # Read file and compute hash for integrity check
-    blob = file_path.read_bytes()
-    file_hash = hashlib.sha256(blob).hexdigest()[:16]
-
-    # Detect CMYK JPEG (which browsers may not render correctly)
-    cmyk_warning = ""
-    if detected_mime == "image/jpeg" and len(blob) >= 4:
-        colorspace = _detect_jpeg_colorspace(blob)
-        if colorspace == "cmyk":
-            cmyk_warning = " [WARNING: CMYK JPEG - may not display correctly in browsers]"
-
-    try:
-        encoded = base64.b64encode(blob).decode("ascii")
-        data_url = f"data:{detected_mime};base64,{encoded}"
-
-        if log_func:
-            log_func(
-                f"[DIAG] MIME detected: path={file_path.name} "
-                f"sig={mime_by_sig} ext={mime_by_ext} hash={file_hash}{cmyk_warning}"
-            )
-        return data_url
-    except Exception as exc:
-        if log_func:
-            log_func(f"[DIAG] Base64 encode fail: {file_path.name}: {exc}")
-        return None
-
-
-def _validate_data_url(data_url: str, original_file: Path) -> bool:
-    """Validate that a data URL can be decoded back to the original file.
-
-    Returns True if validation passes, False otherwise.
-    """
-    try:
-        # Extract base64 content from data URL
-        if not data_url.startswith("data:image/"):
-            return False
-
-        # Find the comma after the metadata and get base64 part
-        comma_idx = data_url.find(",")
-        if comma_idx == -1:
-            return False
-
-        b64_content = data_url[comma_idx + 1 :]
-
-        # Decode and verify
-        decoded = base64.b64decode(b64_content)
-        original = original_file.read_bytes()
-
-        return decoded == original
-    except Exception:
-        return False
 
 
 def _refresh_inlined_data_urls_by_hint(
