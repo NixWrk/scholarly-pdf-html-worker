@@ -43,6 +43,7 @@ from zoteropdf2md.quality_loop.audit_blocks import (
     visible_ref_number_from_match as _visible_ref_number_from_match,
     word_sequence_match as _word_sequence_match,
 )
+from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
 from zoteropdf2md.quality_loop.audit_report import (
     add_corpus_hit_counts as _add_corpus_hit_counts,
     assemble_report,
@@ -1242,18 +1243,18 @@ def _defect(
     regression_test: str,
     extra: dict[str, Any] | None = None,
 ) -> Defect:
-    return Defect(
-        id=defect_id,
+    return make_defect(
+        defect_id=defect_id,
         cc_class=cc_class,
         check=check,
         severity=severity,
-        snippet=snippet[:260],
-        line=block.line if block is not None else None,
-        first_broken_stage=stage,
+        block=block,
+        snippet=snippet,
+        stage=stage,
         hypothesis=hypothesis,
         proposed_fix_layer=proposed_fix_layer,
         regression_test=regression_test,
-        extra=extra or {},
+        extra=extra,
     )
 
 

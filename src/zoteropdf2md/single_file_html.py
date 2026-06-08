@@ -12,6 +12,23 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from .abbreviations import RU_ABBREV_TO_LATIN
+from .citation_profile_recovery import (
+    MAX_PROFILE_REFERENCE_GAP_RECOVERY as _MAX_PROFILE_REFERENCE_GAP_RECOVERY,
+    citation_profile_confidence as _citation_profile_confidence,
+    citation_profile_has_zotero_reference_evidence as _citation_profile_has_zotero_reference_evidence,
+    citation_profile_is_author_year as _citation_profile_is_author_year,
+    citation_profile_is_bracket_numeric as _citation_profile_is_bracket_numeric,
+    citation_profile_is_high_confidence_paren_numeric as _citation_profile_is_high_confidence_paren_numeric,
+    citation_profile_is_high_confidence_superscript_numeric as _citation_profile_is_high_confidence_superscript_numeric,
+    citation_profile_items as _citation_profile_items,
+    citation_profile_ref_prefix as _citation_profile_ref_prefix,
+    citation_profile_reference_entries_by_number as _citation_profile_reference_entries_by_number,
+    citation_profile_reference_recovery_numbers as _citation_profile_reference_recovery_numbers,
+    citation_profile_style as _citation_profile_style,
+    contiguous_profile_reference_recovery_numbers as _contiguous_profile_reference_recovery_numbers,
+    pdf_recovered_reference_section_from_profile as _pdf_recovered_reference_section_from_profile,
+    profile_item_value as _profile_item_value,
+)
 from .html_images import (
     InlineHtmlResult,
     detect_image_signature as _detect_image_signature,
@@ -9561,155 +9578,6 @@ def _repair_ocr_letter_glued_page_citation_links(html: str, ref_count: int) -> s
 
     html = paren_pattern.sub(replace_parenthesis, html)
     return page_anchor_pattern.sub(replace, html)
-
-
-def _citation_profile_style(citation_profile: Any | None) -> str:
-    if citation_profile is None:
-        return ""
-    if isinstance(citation_profile, dict):
-        return str(citation_profile.get("style") or "")
-    return str(getattr(citation_profile, "style", "") or "")
-
-
-def _citation_profile_confidence(citation_profile: Any | None) -> str:
-    if citation_profile is None:
-        return ""
-    if isinstance(citation_profile, dict):
-        return str(citation_profile.get("confidence") or "")
-    return str(getattr(citation_profile, "confidence", "") or "")
-
-
-def _citation_profile_is_high_confidence_paren_numeric(citation_profile: Any | None) -> bool:
-    return (
-        _citation_profile_style(citation_profile) == "paren_numeric"
-        and _citation_profile_confidence(citation_profile) == "high"
-    )
-
-
-def _citation_profile_is_high_confidence_superscript_numeric(citation_profile: Any | None) -> bool:
-    return (
-        _citation_profile_style(citation_profile) == "superscript_numeric"
-        and _citation_profile_confidence(citation_profile) == "high"
-    )
-
-
-def _citation_profile_is_bracket_numeric(citation_profile: Any | None) -> bool:
-    return (
-        _citation_profile_style(citation_profile) == "bracket_numeric"
-        and _citation_profile_confidence(citation_profile) in {"medium", "high"}
-    )
-
-
-def _citation_profile_is_author_year(citation_profile: Any | None) -> bool:
-    return (
-        _citation_profile_style(citation_profile) == "author_year"
-        and _citation_profile_confidence(citation_profile) in {"medium", "high"}
-    )
-
-
-def _citation_profile_items(citation_profile: Any | None, key: str) -> list[Any]:
-    if citation_profile is None:
-        return []
-    if isinstance(citation_profile, dict):
-        value = citation_profile.get(key)
-    else:
-        value = getattr(citation_profile, key, None)
-    return value if isinstance(value, list) else []
-
-
-def _citation_profile_ref_prefix(citation_profile: Any | None) -> str:
-    if citation_profile is None:
-        return ""
-    if isinstance(citation_profile, dict):
-        return str(citation_profile.get("ref_dest_prefix") or "")
-    return str(getattr(citation_profile, "ref_dest_prefix", "") or "")
-
-
-def _citation_profile_has_zotero_reference_evidence(citation_profile: Any | None) -> bool:
-    if citation_profile is None:
-        return False
-    try:
-        count = int(_profile_item_value(citation_profile, "zotero_citation_count", 0) or 0)
-    except (TypeError, ValueError):
-        count = 0
-    return count > 0 or bool(_citation_profile_items(citation_profile, "zotero_citations"))
-
-
-def _profile_item_value(item: Any, key: str, default: Any = "") -> Any:
-    if isinstance(item, dict):
-        return item.get(key, default)
-    return getattr(item, key, default)
-
-
-_MAX_PROFILE_REFERENCE_GAP_RECOVERY = 24
-_MAX_PROFILE_REFERENCE_SECTION_RECOVERY = 80
-
-
-def _citation_profile_reference_entries_by_number(citation_profile: Any | None) -> dict[int, str]:
-    entries: dict[int, str] = {}
-    for item in _citation_profile_items(citation_profile, "reference_entries"):
-        try:
-            number = int(_profile_item_value(item, "number", 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        text = str(_profile_item_value(item, "text", "") or "").strip()
-        if number <= 0 or not text:
-            continue
-        entries.setdefault(number, text)
-    return entries
-
-
-def _citation_profile_reference_recovery_numbers(citation_profile: Any | None) -> list[int]:
-    raw_values = _profile_item_value(citation_profile, "reference_entries_recovery_numbers", [])
-    if not isinstance(raw_values, list):
-        return []
-    numbers: list[int] = []
-    for value in raw_values:
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            continue
-        if number > 0 and number not in numbers:
-            numbers.append(number)
-    return sorted(numbers)
-
-
-def _contiguous_profile_reference_recovery_numbers(
-    citation_profile: Any | None,
-    entries_by_number: dict[int, str],
-) -> list[int]:
-    requested = _citation_profile_reference_recovery_numbers(citation_profile)
-    if not requested:
-        return []
-    max_number = max(requested)
-    if max_number > _MAX_PROFILE_REFERENCE_SECTION_RECOVERY:
-        return []
-    numbers = list(range(1, max_number + 1))
-    if any(number not in entries_by_number for number in numbers):
-        return []
-    return numbers
-
-
-def _pdf_recovered_reference_section_from_profile(citation_profile: Any | None) -> tuple[str, int]:
-    entries_by_number = _citation_profile_reference_entries_by_number(citation_profile)
-    if not entries_by_number:
-        return "", 0
-    numbers = _contiguous_profile_reference_recovery_numbers(citation_profile, entries_by_number)
-    if not numbers:
-        return "", 0
-    items = []
-    for number in numbers:
-        escaped = html_lib.escape(entries_by_number[number], quote=False)
-        items.append(
-            f'<li block-type="ListItem" id="ref-{number}" data-z2m-pdf-recovered-ref="1">{escaped}</li>'
-        )
-    section = (
-        '<h2 data-z2m-pdf-recovered-references="1">References</h2>'
-        '<ul class="z2m-pdf-recovered-references" data-z2m-pdf-recovered-references="1">'
-        + " ".join(items)
-        + "</ul>"
-    )
-    return section, numbers[-1]
 
 
 def _append_pdf_recovered_reference_section_if_safe(
