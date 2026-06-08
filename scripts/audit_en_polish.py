@@ -73,6 +73,11 @@ from zoteropdf2md.quality_loop.audit_p04 import (
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
 )
+from zoteropdf2md.quality_loop.audit_p61 import (
+    figure_target_keys as _figure_target_keys,
+    figure_target_numbers as _figure_target_numbers,
+    visible_figure_target_defects as _visible_figure_target_defects,
+)
 from zoteropdf2md.quality_loop.audit_p62 import (
     classify_missing_figure_warning as _classify_missing_figure_warning_base,
     figure_label_from_id as _figure_label_from_id,
@@ -956,14 +961,6 @@ COMMA_DECIMAL_REF_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<right>\d{1,3})['\"][^>]*>\s*(?P=right)\s*</a>",
     re.IGNORECASE,
 )
-VISIBLE_FIGURE_REF_RE = re.compile(
-    r"\b(?P<supp>(?:Supplementary|Supplemental|Suppl\.?)\s+)?"
-    r"(?:Fig\.?|Figure)\s+"
-    r"(?P<num>(?:S\s*)?\d{1,3}"
-    r"(?:\s*(?:[\-\u2010-\u2014]\s*\d{1,3}|\.\s*(?:\d{1,2}(?!\d)|\d{3}(?!\s+[A-Za-z]))))*)"
-    r"(?P<letter>[A-Z])?\b",
-    re.IGNORECASE,
-)
 SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
     r"^\s*(?:Supplementary|Supplemental|Suppl\.?)\s+"
     r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
@@ -1517,37 +1514,8 @@ def _reference_target_numbers(html: str) -> set[int]:
     return {int(number) for number in re.findall(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)}
 
 
-def _figure_key_from_visible_number(value: str) -> str:
-    value = re.sub(r"(?i)^s\s+(?=\d)", "s", value.strip())
-    value = re.sub(r"\s*[.\-\u2010-\u2014]\s*", "-", value)
-    return value.strip("-.").lower()
-
-
-def _figure_key_from_visible_match(match: re.Match[str]) -> str:
-    key = _figure_key_from_visible_number(match.group("num"))
-    if match.group("supp"):
-        return f"supplementary-{key}"
-    return key
-
-
-def _is_external_supplementary_figure_ref(match: re.Match[str]) -> bool:
-    key = _figure_key_from_visible_number(match.group("num"))
-    return bool(match.group("supp")) or key.startswith("s")
-
-
 def _is_supplementary_figure_block(block: Block) -> bool:
     return block.id.lower().startswith("fig-supplementary-") or SUPPLEMENTARY_FIGURE_LABEL_RE.match(block.text) is not None
-
-
-def _figure_target_keys(html: str) -> set[str]:
-    return {
-        key.lower()
-        for key in re.findall(r"\bid\s*=\s*['\"]fig-([A-Za-z0-9-]+)['\"]", html, re.IGNORECASE)
-    }
-
-
-def _figure_target_numbers(html: str) -> set[int]:
-    return {int(key) for key in _figure_target_keys(html) if key.isdigit()}
 
 
 def _non_reference_body_blocks(blocks: list[Block]) -> Iterable[Block]:
@@ -1567,15 +1535,6 @@ def _ref_anchor_visible_number(label: str) -> int | None:
     if len(numbers) != 1:
         return None
     return int(numbers[0])
-
-
-def _has_nearby_fig_link(block: Block, figure_key: str, text_pos: int) -> bool:
-    raw_text = _strip_tags(block.raw)
-    if text_pos >= len(raw_text):
-        raw_window = block.raw
-    else:
-        raw_window = block.raw[max(0, text_pos - 180) : text_pos + 220]
-    return re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_key)}['\"]", raw_window, re.IGNORECASE) is not None
 
 
 def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -> bool:
@@ -4262,40 +4221,14 @@ def _meine_recent_manual_defects(
         )
         break
 
-    for block in body_blocks:
-        if _looks_like_float_or_caption(block):
-            continue
-        for match in VISIBLE_FIGURE_REF_RE.finditer(block.text):
-            figure_key = _figure_key_from_visible_match(match)
-            if _is_external_supplementary_figure_ref(match):
-                continue
-            if figure_key in fig_targets:
-                continue
-            if _has_nearby_fig_link(block, figure_key, match.start()):
-                continue
-            defects.append(
-                _defect(
-                    defect_id="P61",
-                    cc_class="CC-03/CC-08/CC-10",
-                    check="Visible figure reference has no matching semantic figure target",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Figure extraction/wrapping did not create targets for all visible figure references.",
-                    proposed_fix_layer="EN polish figure target completeness audit",
-                    regression_test="References such as Figure 3D, Figure 4A, and Figure 4 report missing targets when no fig-3/fig-4 wrapper exists.",
-                    extra={
-                        "figure": figure_key,
-                        "figure_key": figure_key,
-                        "visible_label": match.group(0),
-                        "quality_counted": False,
-                    },
-                )
-            )
-            break
-        if defects and defects[-1].id == "P61":
-            break
+    defects.extend(
+        _visible_figure_target_defects(
+            body_blocks,
+            fig_targets,
+            looks_like_float_or_caption=_looks_like_float_or_caption,
+            stage=POLISH_STAGE,
+        )
+    )
 
     warning_context_blocks = _parse_overlapping_blocks(polish_html)
     for warning_index, block in enumerate(_missing_figure_warning_blocks(polish_html)):

@@ -84,10 +84,10 @@ DIAGNOSTIC_SPECS: dict[str, DiagnosticSpec] = {
     ),
     "P61": DiagnosticSpec(
         id="P61",
-        detector="_manual_blind_spot_defects",
-        summary="Observed OCR/text residue pattern that is tracked but not quality-counted.",
-        audit_signal="Scans final polish plain text for known OCR residue, lost ligatures, spacing, and glue patterns.",
-        repair_hint="OCR cleanup, page-furniture cleanup, or article-level manual review routing.",
+        detector="_visible_figure_target_defects",
+        summary="Visible figure reference has no matching semantic figure target.",
+        audit_signal="Scans body prose for Figure/Fig references and compares them with fig-* targets and nearby links.",
+        repair_hint="Figure target wrapping, figure extraction, or accepted telemetry for source-missing figures.",
         quality_counted_by_default=False,
     ),
     "P62": DiagnosticSpec(
