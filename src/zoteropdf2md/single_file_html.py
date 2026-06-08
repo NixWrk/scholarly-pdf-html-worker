@@ -39,6 +39,11 @@ from .html_images import (
     validate_data_url as _validate_data_url,
 )
 from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
+from .semantic_labels import (
+    figure_key_from_visible_number as _figure_key_from_visible_number,
+    normalize_table_key as _normalize_table_key,
+    supplementary_figure_key_from_visible_number as _supplementary_figure_key_from_visible_number,
+)
 from .url_repair import (
     BROKEN_PLAIN_URL_PROTOCOL_PATTERN as _BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
     repair_broken_visible_url_text as _repair_broken_visible_url_text,
@@ -16043,20 +16048,6 @@ def _caption_tail_opens_caption(tail: str) -> bool:
     return word not in prose_verbs
 
 
-def _normalize_semantic_key(value: str) -> str:
-    normalized = value.strip().strip(".")
-    normalized = re.sub(r"\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*", "-", normalized)
-    return normalized.strip("-").lower()
-
-
-def _figure_key_from_visible_number(value: str) -> str:
-    return _normalize_semantic_key(re.sub(r"(?i)^s\s+(?=\d)", "s", value.strip()))
-
-
-def _supplementary_figure_key_from_visible_number(value: str) -> str:
-    return f"supplementary-{_figure_key_from_visible_number(value)}"
-
-
 def _figure_caption_num_from_visible(visible: str) -> str | None:
     supplementary_match = re.match(
         rf"^\s*{_SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s+"
@@ -16135,10 +16126,6 @@ def _figure_caption_num_from_visible(visible: str) -> str | None:
     if not _caption_tail_opens_caption(tail):
         return None
     return _figure_key_from_visible_number(match.group(1))
-
-
-def _normalize_table_key(label: str) -> str:
-    return _normalize_semantic_key(label)
 
 
 def _table_caption_key_from_visible(visible: str) -> str | None:

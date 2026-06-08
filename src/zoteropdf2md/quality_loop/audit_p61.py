@@ -5,6 +5,7 @@ import re
 
 from zoteropdf2md.quality_loop.audit_blocks import Block, Defect, strip_tags
 from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
+from zoteropdf2md.semantic_labels import figure_key_from_visible_number
 
 
 VISIBLE_FIGURE_REF_RE = re.compile(
@@ -15,12 +16,6 @@ VISIBLE_FIGURE_REF_RE = re.compile(
     r"(?P<letter>[A-Z])?\b",
     re.IGNORECASE,
 )
-
-
-def figure_key_from_visible_number(value: str) -> str:
-    value = re.sub(r"(?i)^s\s+(?=\d)", "s", value.strip())
-    value = re.sub(r"\s*[.\-\u2010-\u2014]\s*", "-", value)
-    return value.strip("-.").lower()
 
 
 def figure_key_from_visible_match(match: re.Match[str]) -> str:
