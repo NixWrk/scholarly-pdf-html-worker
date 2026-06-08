@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from zoteropdf2md.single_file_html import _to_data_url, _validate_data_url
+from zoteropdf2md.html_images import to_data_url as _to_data_url
+from zoteropdf2md.html_images import validate_data_url as _validate_data_url
 
 
 def pdf_text_pages(pdf_path: Path, *, max_pages: int | None = None) -> tuple[str, list[str], str | None]:

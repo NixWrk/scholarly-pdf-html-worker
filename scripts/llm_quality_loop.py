@@ -32,9 +32,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from zoteropdf2md.html_images import to_data_url as _to_data_url  # noqa: E402
+from zoteropdf2md.html_images import validate_data_url as _validate_data_url  # noqa: E402
 from zoteropdf2md.single_file_html import (  # noqa: E402
-    _to_data_url,
-    _validate_data_url,
     close_katex_v8_context,
     polish_html_document,
 )
