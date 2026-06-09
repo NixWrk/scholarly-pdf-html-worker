@@ -151,6 +151,37 @@ def test_polish_web_html_document_extracts_arxiv_latexml_article() -> None:
     assert 'href="#S1"' in result.html
     assert "#web-doc :target" in result.html
     assert "outline: 3px solid" in result.html
+    assert "figure.ltx_table .ltx_transformed_inner" in result.html
+    assert ".off-screen, .sr-only" in result.html
+
+
+def test_polish_web_html_document_absolutizes_root_relative_publisher_urls() -> None:
+    html = f"""
+    <html>
+      <head>
+        <title>Publisher Article</title>
+        <link rel="canonical" href="https://www.tandfonline.com/doi/full/10.1080/example">
+      </head>
+      <body>
+        <article>
+          <h1>Article</h1>
+          <p>{" ".join([LONG_PARAGRAPH] * 20)}</p>
+          <a href="/action/downloadSupplement?doi=10.1080%2Fexample&amp;file=sm.docx">Supplement</a>
+          <img src="/cms/asset/figure.jpg" alt="Figure">
+          <picture><source srcset="/cms/asset/figure-small.jpg 1x, /cms/asset/figure-large.jpg 2x"></picture>
+        </article>
+      </body>
+    </html>
+    """
+
+    result = polish_web_html_document(html)
+
+    assert 'href="https://www.tandfonline.com/action/downloadSupplement?doi=10.1080%2Fexample&amp;file=sm.docx"' in result.html
+    assert 'src="https://www.tandfonline.com/cms/asset/figure.jpg"' in result.html
+    assert "https://www.tandfonline.com/cms/asset/figure-small.jpg 1x" in result.html
+    assert "https://www.tandfonline.com/cms/asset/figure-large.jpg 2x" in result.html
+    assert 'href="/action/' not in result.html
+    assert 'src="/cms/' not in result.html
 
 
 def test_polish_web_html_document_extracts_pmc_article() -> None:
@@ -164,7 +195,11 @@ def test_polish_web_html_document_extracts_pmc_article() -> None:
             <h1>Comparison of methods</h1>
             <section id="sec1"><p>{" ".join([LONG_PARAGRAPH] * 20)}</p></section>
             <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC8911527/#sec1">same document</a>
+            <a href="/articles/PMC8911527/figure/fig1/">Figure 1</a>
+            <a href="/articles/PMC8911527/table/table1/">Table 1</a>
             <a href="https://example.org/outside">outside</a>
+            <figure id="FIG1"><figcaption>Figure 1.</figcaption></figure>
+            <div id="T1"><table><tr><td>Value</td></tr></table></div>
           </article>
         </main>
       </body>
@@ -178,6 +213,8 @@ def test_polish_web_html_document_extracts_pmc_article() -> None:
     assert result.article_selector in {"article .pmc-article", ".pmc-article"}
     assert "PMC navigation" not in result.html
     assert 'href="#sec1"' in result.html
+    assert 'href="#FIG1"' in result.html
+    assert 'href="#T1"' in result.html
     assert 'href="https://example.org/outside"' in result.html
 
 
@@ -246,6 +283,60 @@ def test_taylor_francis_polish_rewrites_script_backed_internal_controls() -> Non
     assert '<a class="displaySizeTable" href="#t0001" data-id="t0001" data-behaviour="show-popup">' in result.html
 
 
+def test_taylor_francis_polish_targets_existing_table_and_figure_wrappers() -> None:
+    html = f"""
+    <html>
+      <head><title>Taylor Article</title></head>
+      <body>
+        <article class="NLM_article">
+          <div class="hlFld-Fulltext">
+            <div class="NLM_sec" id="S0001"><p>{" ".join([LONG_PARAGRAPH] * 20)}</p></div>
+            <p>
+              <button class="ref show-table-fig-ref" data-id="t0001">Table 1</button>
+              <a class="displaySizeTable" href="#" data-id="t0001" data-behaviour="show-popup">Display Table</a>
+              <button class="ref show-table-fig-ref" data-id="f0001">Figure 1</button>
+            </p>
+            <div id="t0001-table-wrapper"><table><tr><td>Value</td></tr></table></div>
+            <figure id="f0001-figure-wrapper"><figcaption>Figure 1.</figcaption></figure>
+          </div>
+        </article>
+      </body>
+    </html>
+    """
+
+    result = polish_web_html_document(
+        html,
+        source_url="https://www.tandfonline.com/doi/full/10.1080/example",
+    )
+
+    assert '<a class="z2m-web-ref-button" href="#t0001-table-wrapper">Table 1</a>' in result.html
+    assert '<a class="displaySizeTable" href="#t0001-table-wrapper" data-id="t0001" data-behaviour="show-popup">' in result.html
+    assert '<a class="z2m-web-ref-button" href="#f0001-figure-wrapper">Figure 1</a>' in result.html
+
+
+def test_taylor_francis_polish_uses_publisher_origin_for_doi_source_root_links() -> None:
+    html = f"""
+    <html>
+      <head><title>Taylor Article</title></head>
+      <body>
+        <article class="NLM_article">
+          <div class="hlFld-Fulltext">
+            <div class="NLM_sec" id="S0001"><p>{" ".join([LONG_PARAGRAPH] * 20)}</p></div>
+            <a href="/action/downloadSupplement?doi=10.1080%2Fexample&amp;file=sm.docx">Supplement</a>
+            <img src="/cms/asset/figure.jpg" alt="Figure">
+          </div>
+        </article>
+      </body>
+    </html>
+    """
+
+    result = polish_web_html_document(html, source_url="https://doi.org/10.1080/example")
+
+    assert 'href="https://www.tandfonline.com/action/downloadSupplement?doi=10.1080%2Fexample&amp;file=sm.docx"' in result.html
+    assert 'src="https://www.tandfonline.com/cms/asset/figure.jpg"' in result.html
+    assert "https://doi.org/action/downloadSupplement" not in result.html
+
+
 def test_polish_web_html_document_extracts_springer_nature_body() -> None:
     html = f"""
     <html>
@@ -256,6 +347,7 @@ def test_polish_web_html_document_extracts_springer_nature_body() -> None:
           <div class="c-article-body" id="body">
             <h2 id="Sec1">Introduction</h2>
             <p>{" ".join([LONG_PARAGRAPH] * 22)}</p>
+            <a href="/article/10.1007/example/figures/1">Full image</a>
           </div>
         </article>
       </body>
@@ -268,6 +360,7 @@ def test_polish_web_html_document_extracts_springer_nature_body() -> None:
     assert result.article_extracted is True
     assert result.article_selector in {"article .c-article-body", ".c-article-body"}
     assert "related articles" not in result.html
+    assert 'href="https://link.springer.com/article/10.1007/example/figures/1"' in result.html
 
 
 def test_polish_web_html_document_rejects_known_non_full_text_web_pages() -> None:

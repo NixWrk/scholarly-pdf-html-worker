@@ -90,7 +90,7 @@ class _ArticleCandidate:
 
 
 _ATTR_HREF_RE = re.compile(
-    r"(?P<prefix>\bhref\s*=\s*)(?P<quote>['\"])(?P<href>.*?)(?P=quote)",
+    r"(?P<prefix>(?<![\w:-])href\s*=\s*)(?P<quote>['\"])(?P<href>.*?)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
 )
 _IMG_SRC_RE = re.compile(
@@ -101,16 +101,21 @@ _SRCSET_RE = re.compile(
     r"(?P<prefix><(?:img|source)\b[^>]*?\ssrcset\s*=\s*)(?P<quote>['\"])(?P<srcset>.*?)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
 )
+_ROOT_RELATIVE_URL_ATTR_RE = re.compile(
+    r"(?P<prefix>(?<![\w:-])(?P<name>href|src|action|poster)\s*=\s*)"
+    r"(?P<quote>['\"])(?P<url>.*?)(?P=quote)",
+    re.IGNORECASE | re.DOTALL,
+)
 _HREF_VALUE_RE = re.compile(
-    r"<a\b[^>]*\bhref\s*=\s*(['\"])(?P<href>.*?)\1",
+    r"<a\b[^>]*(?<![\w:-])href\s*=\s*(['\"])(?P<href>.*?)\1",
     re.IGNORECASE | re.DOTALL,
 )
 _DECLARED_URL_RE = re.compile(
     r"<(?:link|meta)\b(?P<attrs>[^>]*)>",
     re.IGNORECASE | re.DOTALL,
 )
-_ID_VALUE_RE = re.compile(r"\bid\s*=\s*(['\"])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
-_NAME_VALUE_RE = re.compile(r"\bname\s*=\s*(['\"])(?P<name>.*?)\1", re.IGNORECASE | re.DOTALL)
+_ID_VALUE_RE = re.compile(r"(?<![\w:-])id\s*=\s*(['\"])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
+_NAME_VALUE_RE = re.compile(r"(?<![\w:-])name\s*=\s*(['\"])(?P<name>.*?)\1", re.IGNORECASE | re.DOTALL)
 _TITLE_RE = re.compile(r"<title\b[^>]*>(?P<title>[\s\S]*?)</title>", re.IGNORECASE)
 _BODY_RE = re.compile(r"<body\b[^>]*>(?P<body>[\s\S]*?)</body>", re.IGNORECASE)
 _ARTICLE_START_RE = re.compile(
@@ -175,6 +180,37 @@ pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
 a { color: #0645ad; overflow-wrap: anywhere; }
 figure { margin: 24px 0; }
 figcaption, caption { color: #4b5563; font-size: 0.95em; }
+.off-screen, .sr-only, .visually-hidden, .u-visually-hidden, .usa-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+figure.ltx_table { overflow-x: auto; }
+figure.ltx_table .ltx_transformed_outer {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  vertical-align: baseline !important;
+  overflow-x: auto;
+}
+figure.ltx_table .ltx_transformed_inner {
+  display: block;
+  transform: none !important;
+}
+figure.ltx_table table {
+  width: auto;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.ltx_align_center { text-align: center; }
+.ltx_align_left { text-align: left; }
+.ltx_align_right { text-align: right; }
 #web-doc :target {
   outline: 3px solid #f59e0b;
   outline-offset: 4px;
@@ -284,8 +320,16 @@ def polish_web_html_document(
         source_url=source_url,
         canonical_url=inferred_canonical_url,
     )
-    wrapped = _wrap_web_article_html(
+    article_html = absolutize_root_relative_urls(
         canonicalized.html,
+        base_url=_root_relative_url_base(
+            kind=kind,
+            canonical_url=inferred_canonical_url,
+            source_url=source_url,
+        ),
+    )
+    wrapped = _wrap_web_article_html(
+        article_html,
         kind=kind,
         title=title,
         article_selector=extraction.selector,
@@ -387,6 +431,83 @@ def inline_local_images_from_web_html_document(html: str, *, base_dir: Path) -> 
     html = _IMG_SRC_RE.sub(replace_src, html)
     html = _SRCSET_RE.sub(replace_srcset, html)
     return InlineHtmlResult(html=html, inlined_images=inlined_count)
+
+
+def absolutize_root_relative_urls(html: str, *, base_url: str | None) -> str:
+    """Rewrite ``/...`` publisher links so local ``file://`` viewing does not hijack them."""
+
+    parsed_base = _urlsplit_or_none(base_url)
+    if parsed_base is None or not parsed_base.scheme or not parsed_base.netloc:
+        return html
+
+    origin = urllib.parse.urlunsplit((parsed_base.scheme, parsed_base.netloc, "/", "", ""))
+
+    def absolute_url(raw_url: str) -> str | None:
+        value = unescape(raw_url).strip()
+        if not _is_root_relative_url(value):
+            return None
+        return urllib.parse.urljoin(origin, value)
+
+    def replace_attr(match: re.Match[str]) -> str:
+        rewritten = absolute_url(match.group("url"))
+        if rewritten is None:
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{match.group('prefix')}{quote}{html_escape(rewritten, quote=True)}{quote}"
+
+    def replace_srcset(match: re.Match[str]) -> str:
+        changed = False
+        entries: list[str] = []
+        for raw_entry in match.group("srcset").split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            parts = entry.split()
+            rewritten = absolute_url(parts[0])
+            if rewritten is None:
+                entries.append(entry)
+                continue
+            changed = True
+            descriptor = " ".join(parts[1:])
+            entries.append(f"{rewritten} {descriptor}".strip())
+        if not changed:
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{match.group('prefix')}{quote}{html_escape(', '.join(entries), quote=True)}{quote}"
+
+    html = _ROOT_RELATIVE_URL_ATTR_RE.sub(replace_attr, html)
+    html = _SRCSET_RE.sub(replace_srcset, html)
+    return html
+
+
+def _root_relative_url_base(
+    *,
+    kind: WebHtmlKind,
+    canonical_url: str | None,
+    source_url: str | None,
+) -> str | None:
+    for raw_url in (canonical_url, source_url):
+        parsed = _urlsplit_or_none(raw_url)
+        if parsed is not None and parsed.scheme and parsed.netloc and not _is_doi_host(parsed.netloc):
+            return raw_url
+    return _publisher_default_origin(kind)
+
+
+def _publisher_default_origin(kind: WebHtmlKind) -> str | None:
+    if kind == WebHtmlKind.ARXIV_LATEXML:
+        return "https://arxiv.org/"
+    if kind == WebHtmlKind.PMC_ARTICLE:
+        return "https://pmc.ncbi.nlm.nih.gov/"
+    if kind == WebHtmlKind.TAYLOR_FRANCIS_ARTICLE:
+        return "https://www.tandfonline.com/"
+    if kind == WebHtmlKind.SPRINGER_NATURE_ARTICLE:
+        return "https://link.springer.com/"
+    return None
+
+
+def _is_doi_host(host: str) -> bool:
+    normalized = host.lower().split(":", 1)[0]
+    return normalized in {"doi.org", "dx.doi.org", "www.doi.org"}
 
 
 def extract_web_article_fragment(html: str, *, kind: WebHtmlKind | None = None) -> WebArticleExtraction:
@@ -567,7 +688,7 @@ def _remove_elements_by_attr_tokens(
 
 def _attr_value(attrs: str, name: str) -> str | None:
     match = re.search(
-        rf"\b{re.escape(name)}\s*=\s*(['\"])(?P<value>.*?)\1",
+        rf"(?<![\w:-]){re.escape(name)}\s*=\s*(['\"])(?P<value>.*?)\1",
         attrs,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -579,7 +700,7 @@ def _attr_value(attrs: str, name: str) -> str | None:
 def _set_attr_value(open_tag: str, name: str, value: str) -> str:
     escaped_value = html_escape(value, quote=True)
     attr_re = re.compile(
-        rf"(?P<prefix>\b{re.escape(name)}\s*=\s*)(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
+        rf"(?P<prefix>(?<![\w:-]){re.escape(name)}\s*=\s*)(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
         re.IGNORECASE | re.DOTALL,
     )
     if attr_re.search(open_tag):
@@ -1113,6 +1234,10 @@ def _is_same_document(
 
 def _is_plain_local_fragment(parsed: urllib.parse.SplitResult) -> bool:
     return not parsed.scheme and not parsed.netloc and not parsed.path and not parsed.query and bool(parsed.fragment)
+
+
+def _is_root_relative_url(value: str) -> bool:
+    return value.startswith("/") and not value.startswith("//")
 
 
 def _relative_same_document(
