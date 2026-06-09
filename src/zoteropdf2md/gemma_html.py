@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from .abbreviations import LATIN_ABBREV_TO_RU, RU_ABBREV_TO_LATIN
-from .single_file_html import _REFERENCES_HEADING_PATTERN
+from .html_references import REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN
 
 
 DEFAULT_GEMMA_MODEL = "p6_google_gemma-4-26b-a4b@q6_k"

@@ -34,6 +34,14 @@ math = [
 [project.scripts]
 pdf-html-convert = "pdf_html_translator.cli.convert_file:main"
 pdf-html-translate = "pdf_html_translator.cli.translate_html:main"
+pdf-html-polish-web = "zoteropdf2md.web_polish.cli:main"
+pdf-html-polish-web-arxiv = "zoteropdf2md.web_polish.cli:main_arxiv"
+pdf-html-polish-web-pmc = "zoteropdf2md.web_polish.cli:main_pmc"
+pdf-html-polish-web-taylor-francis = "zoteropdf2md.web_polish.cli:main_taylor_francis"
+pdf-html-polish-web-springer-nature = "zoteropdf2md.web_polish.cli:main_springer_nature"
+pdf-html-polish-web-researchgate = "zoteropdf2md.web_polish.cli:main_researchgate"
+pdf-html-polish-web-ojs = "zoteropdf2md.web_polish.cli:main_ojs"
+pdf-html-polish-web-sciendo = "zoteropdf2md.web_polish.cli:main_sciendo"
 
 [tool.setuptools.packages.find]
 where = ["src"]

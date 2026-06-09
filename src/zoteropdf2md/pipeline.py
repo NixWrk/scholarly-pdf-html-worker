@@ -23,7 +23,7 @@ from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
 from .single_file_html import (
     close_katex_v8_context,
     drop_repeated_phrases,
-    inline_images_from_html_file,
+    polish_and_inline_html_file,
 )
 from .staging import (
     DEFAULT_MAX_BASE_LEN,
@@ -936,7 +936,7 @@ def run_pipeline(
                             staged_file.source_pdf_path,
                             staged_file.alias_base_name,
                         )
-                        result = inline_images_from_html_file(
+                        result = polish_and_inline_html_file(
                             html_path,
                             citation_profile=citation_profile,
                         )
@@ -1060,7 +1060,7 @@ def run_pipeline(
                                 staged_file.source_pdf_path,
                                 staged_file.alias_base_name,
                             )
-                            inline_result = inline_images_from_html_file(
+                            inline_result = polish_and_inline_html_file(
                                 html_path,
                                 citation_profile=citation_profile,
                             )

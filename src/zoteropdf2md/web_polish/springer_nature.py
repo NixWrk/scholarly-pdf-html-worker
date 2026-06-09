@@ -7,8 +7,8 @@ from html import unescape
 import re
 import urllib.parse
 
+from ..html_links import _ATTR_HREF_RE
 from ..web_html_polish import (
-    _ATTR_HREF_RE,
     _attr_value,
     WebArticleExtraction,
     WebHtmlKind,

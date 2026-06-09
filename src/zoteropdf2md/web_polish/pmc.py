@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 import urllib.parse
 
+from ..html_links import _html_fragment_targets
 from ..web_html_polish import (
     WebArticleExtraction,
     WebHtmlKind,
     _attr_value,
     _extract_fragment_by_attr_tokens,
-    _html_fragment_targets,
     _remove_elements_by_attr_tokens,
     _set_attr_value,
     extract_generic_web_article_fragment,

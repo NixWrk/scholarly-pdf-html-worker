@@ -23,6 +23,7 @@ from zoteropdf2md.single_file_html import (
     _to_data_url,
     _validate_data_url,
     close_katex_v8_context,
+    inline_images_only_from_html_file,
     inline_images_from_html_file,
     polish_html_document,
 )
@@ -61,6 +62,23 @@ def test_inline_images_from_html_file() -> None:
         assert "data:image/png;base64," in result.html
         assert re.search(r'\s+src=(["\'])img\.png\1', result.html) is None
         assert 'data-z2m-src="img.png"' in result.html
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_inline_images_only_from_html_file_does_not_apply_marker_polish() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        html_path = tmp_path / "doc.html"
+        image_path = tmp_path / "img.png"
+        image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        html_path.write_text('<html><body><img src="img.png"></body></html>', encoding="utf-8")
+
+        result = inline_images_only_from_html_file(html_path)
+
+        assert result.inlined_images == 1
+        assert "data:image/png;base64," in result.html
+        assert 'data-z2m-style="readable"' not in result.html
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 

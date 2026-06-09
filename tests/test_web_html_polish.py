@@ -1,5 +1,9 @@
 import pytest
 
+from zoteropdf2md.html_links import (
+    canonicalize_same_document_links as canonicalize_links_from_shared_module,
+    count_same_document_absolute_fragment_links as count_links_from_shared_module,
+)
 from zoteropdf2md.web_html_polish import (
     WebHtmlKind,
     WebHtmlPolishError,
@@ -98,6 +102,24 @@ def test_canonicalize_same_document_links_allows_versionless_arxiv_source_url() 
     assert result.rewritten_count == 2
     assert 'href="#S1"' in result.html
     assert 'href="#bib.bib56"' in result.html
+
+
+def test_same_document_link_helpers_are_source_agnostic() -> None:
+    html = """
+    <html><body>
+      <article>
+        <section id="sec1"></section>
+        <a href="https://example.org/article#sec1">same</a>
+        <a href="https://example.org/other#sec1">external</a>
+      </article>
+    </body></html>
+    """
+
+    result = canonicalize_links_from_shared_module(html, source_url="https://example.org/article")
+
+    assert 'href="#sec1"' in result.html
+    assert 'href="https://example.org/other#sec1"' in result.html
+    assert count_links_from_shared_module(result.html, source_url="https://example.org/article") == 0
 
 
 def test_canonicalize_same_document_links_preserves_unresolved_self_fragments() -> None:

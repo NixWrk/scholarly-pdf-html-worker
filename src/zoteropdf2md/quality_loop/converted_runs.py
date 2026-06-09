@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from zoteropdf2md.citation_profile import infer_citation_style_from_text
-from zoteropdf2md.web_html_polish import count_same_document_absolute_fragment_links
+from zoteropdf2md.html_links import count_same_document_absolute_fragment_links
 
 from .run_utils import (
     article_dir_from_stage,

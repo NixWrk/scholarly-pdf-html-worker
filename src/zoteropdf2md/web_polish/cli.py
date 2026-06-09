@@ -56,6 +56,10 @@ def run_web_polish_cli(expected_kind: WebHtmlKind | None = None) -> int:
     return 0
 
 
+def main() -> int:
+    return run_web_polish_cli()
+
+
 def main_arxiv() -> int:
     return run_web_polish_cli(WebHtmlKind.ARXIV_LATEXML)
 
@@ -82,3 +86,7 @@ def main_ojs() -> int:
 
 def main_sciendo() -> int:
     return run_web_polish_cli(WebHtmlKind.SCIENDO_ABSTRACT_PAGE)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

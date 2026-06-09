@@ -38,6 +38,10 @@ from .html_images import (
     to_data_url as _to_data_url,
     validate_data_url as _validate_data_url,
 )
+from .html_references import (
+    NOTES_AND_REFERENCES_HEADING_PATTERN as _NOTES_AND_REFERENCES_HEADING_PATTERN,
+    REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN,
+)
 from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
 from .semantic_labels import (
     figure_key_from_visible_number as _figure_key_from_visible_number,
@@ -134,20 +138,6 @@ _JOURNAL_PAGE_FURNITURE_PATTERN = re.compile(
     r"(?:\s*\.\s*https?://doi\.org/\S+)?"
     r"(?:\s+\d+\s+of\s+\d+)?\s*$",
     re.IGNORECASE,
-)
-_REFERENCES_HEADING_PATTERN = re.compile(
-    r"<h([1-6])\b[^>]*>\s*(?:<[^>]+>\s*)*"
-    r"(?:(?:[IVXLCM]+|\d+)\.?\s*)?(?:<[^>]+>\s*)*"
-    r"(?:References|Bibliography|Литература|Список литературы|Источники|Referenzen|参考文献|参考资料)"
-    r"\s*(?:</[^>]+>\s*)*</h\1>",
-    re.IGNORECASE | re.DOTALL,
-)
-_NOTES_AND_REFERENCES_HEADING_PATTERN = re.compile(
-    r"<h([1-6])\b[^>]*>\s*(?:<[^>]+>\s*)*"
-    r"(?:(?:[IVXLCM]+|\d+)\.?\s*)?(?:<[^>]+>\s*)*"
-    r"Notes\s+and\s+references"
-    r"\s*(?:</[^>]+>\s*)*</h\1>",
-    re.IGNORECASE | re.DOTALL,
 )
 _LI_OPEN_PATTERN = re.compile(r"<li\b([^>]*)>", re.IGNORECASE)
 _LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.IGNORECASE | re.DOTALL)
@@ -22079,9 +22069,7 @@ def _looks_like_ru_html_artifact(html_path: Path) -> bool:
     )
 
 
-def inline_images_from_html_file(html_path: Path, citation_profile: Any | None = None) -> InlineHtmlResult:
-    text = html_path.read_text(encoding="utf-8", errors="replace")
-    base_dir = html_path.parent
+def _inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlResult, dict[str, str]]:
     inlined_count = 0
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
     sidecar_images = sorted(
@@ -22213,6 +22201,25 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
         return f"{prefix}{quote}{data_url}{suffix}"
 
     inlined_html = _IMG_SRC_PATTERN.sub(replace, text)
+    return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count), image_cache
+
+
+def inline_images_only_from_html_file(html_path: Path) -> InlineHtmlResult:
+    """Inline sidecar images without applying Marker/PDF HTML polish."""
+
+    text = html_path.read_text(encoding="utf-8", errors="replace")
+    result, _ = _inline_images_from_html_text(text, html_path.parent)
+    return result
+
+
+def polish_and_inline_html_file(html_path: Path, citation_profile: Any | None = None) -> InlineHtmlResult:
+    """Inline sidecar images and run Marker/PDF HTML polish."""
+
+    text = html_path.read_text(encoding="utf-8", errors="replace")
+    base_dir = html_path.parent
+    inline_result, image_cache = _inline_images_from_html_text(text, base_dir)
+    inlined_html = inline_result.html
+    inlined_count = inline_result.inlined_images
     is_ru_html = _looks_like_ru_html_artifact(html_path)
     inlined_html = polish_html_document(
         inlined_html,
@@ -22232,4 +22239,10 @@ def inline_images_from_html_file(html_path: Path, citation_profile: Any | None =
     )
     inlined_count += refreshed_from_cache
     return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count)
+
+
+def inline_images_from_html_file(html_path: Path, citation_profile: Any | None = None) -> InlineHtmlResult:
+    """Backward-compatible alias for Marker/PDF polish plus image inlining."""
+
+    return polish_and_inline_html_file(html_path, citation_profile=citation_profile)
 
