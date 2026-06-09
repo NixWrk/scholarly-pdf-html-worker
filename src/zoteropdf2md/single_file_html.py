@@ -11,7 +11,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from .abbreviations import RU_ABBREV_TO_LATIN
 from .citation_profile_recovery import (
     MAX_PROFILE_REFERENCE_GAP_RECOVERY as _MAX_PROFILE_REFERENCE_GAP_RECOVERY,
     citation_profile_confidence as _citation_profile_confidence,
@@ -51,6 +50,14 @@ from .raw_html_polish import (
     default_polish_phase_names,
     run_polish_phases,
 )
+from .raw_html_polish.presentation import (
+    cleanup_empty_html_blocks as _cleanup_empty_html_blocks,
+    fix_heading_translation_breaks as _fix_heading_translation_breaks,
+    inject_default_styles as _presentation_inject_default_styles,
+    inject_utf8_charset as _inject_utf8_charset,
+    restore_abbreviations as _restore_abbreviations,
+    wrap_body_in_container as _wrap_body_in_container,
+)
 from .semantic_labels import (
     figure_key_from_visible_number as _figure_key_from_visible_number,
     normalize_table_key as _normalize_table_key,
@@ -68,14 +75,7 @@ _IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
     r'\bdata-z2m-image-key\s*=\s*(["\'])([^"\']+)\1',
     re.IGNORECASE,
 )
-_HEAD_OPEN_PATTERN = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
 _HEAD_CLOSE_PATTERN = re.compile(r"</head>", re.IGNORECASE)
-_META_CHARSET_PATTERN = re.compile(r"<meta\s+charset\s*=\s*['\"]?utf-8['\"]?\s*/?>", re.IGNORECASE)
-_HTML_OPEN_PATTERN = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
-_READABILITY_STYLE_BLOCK_PATTERN = re.compile(
-    r"<style\b[^>]*\bdata-z2m-style\s*=\s*['\"]readable['\"][^>]*>[\s\S]*?</style>",
-    re.IGNORECASE,
-)
 _BODY_PATTERN = re.compile(r"(<body\b[^>]*>)(.*?)(</body>)", re.IGNORECASE | re.DOTALL)
 _TAG_SPLIT_PATTERN = re.compile(r"(<[^>]+>)")
 _OPEN_TAG_PATTERN = re.compile(r"^<\s*([a-zA-Z0-9:_-]+)")
@@ -90,8 +90,6 @@ _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SPACED_INLINE_TAG_PATTERN = re.compile(r"<\s*(/?)\s*(sup|sub)\s*>", re.IGNORECASE)
-_EMPTY_PARAGRAPH_PATTERN = re.compile(r"<p>\s*(?:&nbsp;|\u00a0)?\s*</p>", re.IGNORECASE)
-_EXCESSIVE_BREAKS_PATTERN = re.compile(r"(?:<br\s*/?>\s*){4,}", re.IGNORECASE)
 _URL_PATTERN = re.compile(r"(?P<url>(?:https?://|www\.)[^\s<>\"]+)", re.IGNORECASE)
 _DOI_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_./-])\bdoi:\s*(?P<doi>10\.\d{4,9}/[^\s<>\"]+)",
@@ -370,14 +368,6 @@ _LEAKED_UNIT_EXPONENT_PATTERN = re.compile(
 _HEADING_TAG_PATTERN = re.compile(
     r'(<h[1-6]\b[^>]*>)(.*?)(</h[1-6]>)',
     re.IGNORECASE | re.DOTALL,
-)
-_HEADING_PERIOD_BEFORE_ABBREV_PATTERN = re.compile(
-    r'\.\s+(<(?:i|em|b|strong)\b[^>]*>\s*[A-Z]{2,})',
-    re.IGNORECASE,
-)
-_HEADING_ACRONYM_SENSOR_PATTERN = re.compile(
-    r'(<(i|em|b|strong)\b[^>]*>\s*[A-Z0-9]{2,8}\s*</\2>)\s+датчик\b',
-    re.IGNORECASE,
 )
 _HEADING_OPEN_TAG_PATTERN = re.compile(r"^<h[1-6](?P<attrs>\b[^>]*)>$", re.IGNORECASE)
 _Z2M_LINK_GLUE_PATTERN = re.compile(
@@ -3108,6 +3098,11 @@ _DEFAULT_READABILITY_STYLE = """
 </style>
 """.strip()
 
+_inject_default_styles = functools.partial(
+    _presentation_inject_default_styles,
+    readability_style=_DEFAULT_READABILITY_STYLE,
+)
+
 _MOJIBAKE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("вЂ”", "—"),
     ("вЂ“", "–"),
@@ -3268,55 +3263,6 @@ def _escape_html_attr(value: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
-
-
-def _inject_default_styles(html: str) -> str:
-    if _READABILITY_STYLE_BLOCK_PATTERN.search(html):
-        return _READABILITY_STYLE_BLOCK_PATTERN.sub(_DEFAULT_READABILITY_STYLE, html, count=1)
-
-    if _HEAD_CLOSE_PATTERN.search(html):
-        return _HEAD_CLOSE_PATTERN.sub(f"{_DEFAULT_READABILITY_STYLE}\n</head>", html, count=1)
-
-    if _HTML_OPEN_PATTERN.search(html):
-        return _HTML_OPEN_PATTERN.sub(
-            lambda m: f"{m.group(0)}\n<head>\n{_DEFAULT_READABILITY_STYLE}\n</head>",
-            html,
-            count=1,
-        )
-
-    return f"<head>\n{_DEFAULT_READABILITY_STYLE}\n</head>\n{html}"
-
-
-def _inject_utf8_charset(html: str) -> str:
-    if _META_CHARSET_PATTERN.search(html):
-        return html
-
-    if _HEAD_OPEN_PATTERN.search(html):
-        return _HEAD_OPEN_PATTERN.sub(
-            lambda m: f'{m.group(0)}\n<meta charset="utf-8">',
-            html,
-            count=1,
-        )
-
-    if _HTML_OPEN_PATTERN.search(html):
-        return _HTML_OPEN_PATTERN.sub(
-            lambda m: f'{m.group(0)}\n<head>\n<meta charset="utf-8">\n</head>',
-            html,
-            count=1,
-        )
-
-    return f'<head>\n<meta charset="utf-8">\n</head>\n{html}'
-
-
-def _wrap_body_in_container(html: str) -> str:
-    if 'id="marker-doc"' in html:
-        return html
-
-    def replace(match: re.Match[str]) -> str:
-        body_open, body_inner, body_close = match.groups()
-        return f'{body_open}\n  <main id="marker-doc">\n{body_inner}\n  </main>\n{body_close}'
-
-    return _BODY_PATTERN.sub(replace, html, count=1)
 
 
 def _add_body_class(html: str, class_name: str) -> str:
@@ -11252,12 +11198,6 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     return linked_document
 
 
-def _cleanup_empty_html_blocks(html: str) -> str:
-    cleaned = _EMPTY_PARAGRAPH_PATTERN.sub("", html)
-    cleaned = _EXCESSIVE_BREAKS_PATTERN.sub("<br><br>", cleaned)
-    return cleaned
-
-
 def _set_block_type_attr(open_tag: str, value: str) -> str:
     if re.search(r"\bblock-type\s*=", open_tag, re.IGNORECASE):
         return re.sub(
@@ -14632,44 +14572,6 @@ def _convert_latex_sup_citations(html: str) -> str:
     """
     html = _LATEX_SUP_CITATION_PATTERN.sub(r'<sup>\1</sup>', html)
     return _LATEX_SUP_CITATION_BARE_PATTERN.sub(r'<sup>\1</sup>', html)
-
-
-def _fix_heading_translation_breaks(html: str) -> str:
-    """Remove false sentence-break periods inserted before inline abbreviations in headings.
-
-    Also lowercase the first Cyrillic capital letter following closing inline tags
-    (</i>, </em>, </b>, </strong>) within headings, as a fallback when heading
-    text node merging fails.
-
-    The translator processes heading text nodes in isolation, so it may end the
-    first node with a period: ``"беспроводного. <i>LC</i> Датчик"``.
-    Inside ``<h1>``–``<h6>`` a period before ``<i>``/``<b>``/``<em>``/``<strong>``
-    that starts with 2+ uppercase Latin letters is a translation artefact and is removed.
-    """
-    def fix_heading(m: re.Match[str]) -> str:
-        open_tag, content, close_tag = m.group(1), m.group(2), m.group(3)
-
-        # Fix 1: Remove period before inline markup
-        fixed = _HEADING_PERIOD_BEFORE_ABBREV_PATTERN.sub(r' \1', content)
-
-        # Fix 2: Lowercase Cyrillic capital after </i>, </em>, etc.
-        # Pattern: </tag> followed by whitespace and Cyrillic capital letter
-        # This handles the case where "Sensor" became "Датчик" instead of "датчика"
-        fixed = re.sub(
-            r'(</(i|em|b|strong)>)\s+([А-ЯЁ])',
-            lambda m: m.group(1) + ' ' + m.group(3).lower(),
-            fixed,
-            flags=re.IGNORECASE
-        )
-        # Fix 3: common title artefact "... <i>LC</i> датчик" -> "... <i>LC</i>-датчика"
-        fixed = _HEADING_ACRONYM_SENSOR_PATTERN.sub(
-            lambda m: f"{m.group(1)}-датчика",
-            fixed,
-        )
-
-        return f"{open_tag}{fixed}{close_tag}"
-
-    return _HEADING_TAG_PATTERN.sub(fix_heading, html)
 
 
 def _normalize_numeric_section_heading_levels(html: str) -> str:
@@ -22134,37 +22036,6 @@ def polish_html_document(
         context=context,
         phases=_raw_html_polish_phases(),
     ).html
-
-
-def _restore_abbreviations(html: str) -> str:
-    """Restore Latin abbreviations in text nodes without touching HTML tags.
-
-    This function intentionally skips tags/attributes so it cannot mutate
-    `data:image/...;base64,...` payloads in `<img src="...">`.
-    """
-    if _CYRILLIC_CHAR_PATTERN.search(html) is None:
-        return html
-    parts = _TAG_SPLIT_PATTERN.split(html)
-    out: list[str] = []
-
-    for part in parts:
-        if not part:
-            continue
-        if part.startswith("<"):
-            out.append(part)
-            continue
-
-        restored_part = part
-        for pattern, replacement in RU_ABBREV_TO_LATIN.items():
-            restored_part = re.sub(
-                pattern,
-                lambda _: replacement,
-                restored_part,
-                flags=re.IGNORECASE,
-            )
-        out.append(restored_part)
-
-    return "".join(out)
 
 
 def _looks_like_ru_html_artifact(html_path: Path) -> bool:
