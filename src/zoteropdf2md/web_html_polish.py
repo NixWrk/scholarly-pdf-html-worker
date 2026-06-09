@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import urllib.parse
 
+from .html_theme import web_readability_style
 from .html_images import (
     InlineHtmlResult,
     is_inline_or_remote,
@@ -43,6 +44,12 @@ from .web_polish.core import (
     _visible_text,
     _visible_text_length,
     extract_generic_web_article_fragment,
+)
+from .web_polish.registry import (
+    default_origin_for_kind,
+    extract_source_specific_article_fragment,
+    normalize_source_specific_article_fragment,
+    rejection_message_for_kind,
 )
 
 
@@ -81,153 +88,6 @@ _ROOT_RELATIVE_URL_ATTR_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TITLE_RE = re.compile(r"<title\b[^>]*>(?P<title>[\s\S]*?)</title>", re.IGNORECASE)
-_WEB_READABILITY_STYLE = """<style data-z2m-style="web-html-polish">
-:root { color-scheme: light; }
-body {
-  margin: 0;
-  background: #f7f8fa;
-  color: #171717;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  line-height: 1.6;
-}
-#web-doc {
-  box-sizing: border-box;
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 32px 24px 56px;
-  background: #fff;
-}
-img, svg, video, canvas { max-width: 100%; height: auto; }
-table { width: 100%; border-collapse: collapse; }
-th, td { border: 1px solid #d8dde6; padding: 6px 8px; vertical-align: top; }
-pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
-a { color: #0645ad; overflow-wrap: anywhere; }
-figure,
-.fig,
-.fig-inline,
-.tbl,
-.table-wrap,
-.tableView,
-.NLM_table-wrap,
-.NLM_table,
-.c-article-section__figure,
-.c-article-section__table,
-.c-article-table,
-figure.ltx_table {
-  margin: 28px 0;
-  padding: 14px 0;
-  border-top: 1px solid #cbd5e1;
-  border-bottom: 1px solid #cbd5e1;
-  background: #fff;
-  clear: both;
-}
-.c-article-section__figure figure,
-.c-article-section__table figure,
-.c-article-table figure,
-figure figure {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-figcaption,
-caption,
-.fig-caption,
-.table-caption,
-.caption,
-.captionText,
-.tableCaption,
-.NLM_caption,
-.c-article-table__caption,
-.ltx_caption {
-  display: block;
-  margin: 0 0 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e5e7eb;
-  color: #374151;
-  font-size: 0.95em;
-  line-height: 1.5;
-}
-.captionLabel,
-.fig-label,
-.table-label,
-.ltx_tag_caption,
-.c-article-section__figure-caption,
-.c-article-section__table-caption,
-.c-article-table__caption b {
-  color: #111827;
-  font-weight: 650;
-}
-.c-article-references,
-ul.ref-list,
-ul.references.numeric-ordered-list,
-.ref-list > ul,
-.references > ul {
-  list-style: none;
-  counter-reset: z2m-ref;
-  padding-left: 0;
-}
-.c-article-references > li,
-ul.ref-list > li,
-ul.references.numeric-ordered-list > li,
-.ref-list > ul > li,
-.references > ul > li {
-  counter-increment: z2m-ref;
-  position: relative;
-  padding-left: 2.8em;
-  margin: 0.6em 0;
-}
-.c-article-references > li::before,
-ul.ref-list > li::before,
-ul.references.numeric-ordered-list > li::before,
-.ref-list > ul > li::before,
-.references > ul > li::before {
-  content: counter(z2m-ref) ".";
-  position: absolute;
-  left: 0;
-  width: 2.2em;
-  text-align: right;
-  color: #4b5563;
-  font-weight: 600;
-}
-.off-screen, .sr-only, .visually-hidden, .u-visually-hidden, .usa-sr-only {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  padding: 0 !important;
-  margin: -1px !important;
-  overflow: hidden !important;
-  clip: rect(0, 0, 0, 0) !important;
-  white-space: nowrap !important;
-  border: 0 !important;
-}
-figure.ltx_table { overflow-x: auto; }
-figure.ltx_table .ltx_transformed_outer {
-  width: 100% !important;
-  max-width: 100% !important;
-  height: auto !important;
-  vertical-align: baseline !important;
-  overflow-x: auto;
-}
-figure.ltx_table .ltx_transformed_inner {
-  display: block;
-  transform: none !important;
-}
-figure.ltx_table table {
-  width: auto;
-  max-width: 100%;
-  margin: 0 auto;
-}
-.ltx_align_center { text-align: center; }
-.ltx_align_left { text-align: left; }
-.ltx_align_right { text-align: right; }
-#web-doc :target {
-  outline: 3px solid #f59e0b;
-  outline-offset: 4px;
-  background: #fff7d6;
-  border-radius: 4px;
-  scroll-margin-top: 24px;
-}
-</style>"""
 
 
 def detect_web_html_kind(html: str, *, source_url: str | None = None) -> WebHtmlKind:
@@ -281,22 +141,9 @@ def require_web_article_html(html: str, *, source_url: str | None = None) -> Web
     """Return the source kind, rejecting known landing pages."""
 
     kind = detect_web_html_kind(html, source_url=source_url)
-    if kind == WebHtmlKind.ARXIV_ABS_PAGE:
-        raise WebHtmlPolishError(
-            "arXiv abstract pages are landing pages, not article HTML; use the /html/ attachment instead."
-        )
-    if kind == WebHtmlKind.RESEARCHGATE_PAGE:
-        raise WebHtmlPolishError(
-            "ResearchGate pages are landing/PDF pages, not stable article HTML; use the PDF attachment when available."
-        )
-    if kind == WebHtmlKind.SCIENDO_ABSTRACT_PAGE:
-        raise WebHtmlPolishError(
-            "Sciendo/Reference Global abstract-tab pages are not full article HTML; fetch the ?tab=article URL first."
-        )
-    if kind == WebHtmlKind.OJS_ABSTRACT_PAGE:
-        raise WebHtmlPolishError(
-            "OJS article pages with only abstract/galley links are not full article HTML; use the PDF galley when available."
-        )
+    rejection_message = rejection_message_for_kind(kind)
+    if rejection_message is not None:
+        raise WebHtmlPolishError(rejection_message)
     return kind
 
 
@@ -503,15 +350,7 @@ def _root_relative_url_base(
 
 
 def _publisher_default_origin(kind: WebHtmlKind) -> str | None:
-    if kind == WebHtmlKind.ARXIV_LATEXML:
-        return "https://arxiv.org/"
-    if kind == WebHtmlKind.PMC_ARTICLE:
-        return "https://pmc.ncbi.nlm.nih.gov/"
-    if kind == WebHtmlKind.TAYLOR_FRANCIS_ARTICLE:
-        return "https://www.tandfonline.com/"
-    if kind == WebHtmlKind.SPRINGER_NATURE_ARTICLE:
-        return "https://link.springer.com/"
-    return None
+    return default_origin_for_kind(kind)
 
 
 def _is_doi_host(host: str) -> bool:
@@ -537,23 +376,12 @@ def normalize_web_article_fragment(
 ) -> str:
     """Apply publisher-specific static normalizations after extraction."""
 
-    if kind == WebHtmlKind.ARXIV_LATEXML:
-        from .web_polish import arxiv  # pylint: disable=import-outside-toplevel
-
-        return arxiv.normalize_article_fragment(html, source_url=source_url, canonical_url=canonical_url)
-    if kind == WebHtmlKind.PMC_ARTICLE:
-        from .web_polish import pmc  # pylint: disable=import-outside-toplevel
-
-        return pmc.normalize_article_fragment(html, source_url=source_url, canonical_url=canonical_url)
-    if kind == WebHtmlKind.TAYLOR_FRANCIS_ARTICLE:
-        from .web_polish import taylor_francis  # pylint: disable=import-outside-toplevel
-
-        return taylor_francis.normalize_article_fragment(html, source_url=source_url, canonical_url=canonical_url)
-    if kind == WebHtmlKind.SPRINGER_NATURE_ARTICLE:
-        from .web_polish import springer_nature  # pylint: disable=import-outside-toplevel
-
-        return springer_nature.normalize_article_fragment(html, source_url=source_url, canonical_url=canonical_url)
-    return html
+    return normalize_source_specific_article_fragment(
+        html,
+        kind=kind,
+        source_url=source_url,
+        canonical_url=canonical_url,
+    )
 
 
 def _extract_source_specific_article_fragment(
@@ -561,23 +389,7 @@ def _extract_source_specific_article_fragment(
     *,
     kind: WebHtmlKind | None,
 ) -> WebArticleExtraction | None:
-    if kind == WebHtmlKind.ARXIV_LATEXML:
-        from .web_polish import arxiv  # pylint: disable=import-outside-toplevel
-
-        return arxiv.extract_article_fragment(html)
-    if kind == WebHtmlKind.PMC_ARTICLE:
-        from .web_polish import pmc  # pylint: disable=import-outside-toplevel
-
-        return pmc.extract_article_fragment(html)
-    if kind == WebHtmlKind.TAYLOR_FRANCIS_ARTICLE:
-        from .web_polish import taylor_francis  # pylint: disable=import-outside-toplevel
-
-        return taylor_francis.extract_article_fragment(html)
-    if kind == WebHtmlKind.SPRINGER_NATURE_ARTICLE:
-        from .web_polish import springer_nature  # pylint: disable=import-outside-toplevel
-
-        return springer_nature.extract_article_fragment(html)
-    return None
+    return extract_source_specific_article_fragment(html, kind=kind)
 
 
 def _looks_like_arxiv_abs_page(sample: str) -> bool:
@@ -693,7 +505,7 @@ def _wrap_web_article_html(
         "<head>\n"
         '<meta charset="utf-8">\n'
         f"<title>{escaped_title}</title>\n"
-        f"{_WEB_READABILITY_STYLE}\n"
+        f"{web_readability_style()}\n"
         "</head>\n"
         "<body>\n"
         f'<main id="web-doc" data-z2m-source-kind="{escaped_kind}"{selector_attr}>\n'

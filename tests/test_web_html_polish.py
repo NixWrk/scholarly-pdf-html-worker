@@ -4,9 +4,15 @@ from zoteropdf2md.html_links import (
     canonicalize_same_document_links as canonicalize_links_from_shared_module,
     count_same_document_absolute_fragment_links as count_links_from_shared_module,
 )
+from zoteropdf2md.html_theme import web_readability_style
 from zoteropdf2md.web_polish.core import (
     WebHtmlKind as CoreWebHtmlKind,
     WebHtmlPolishError as CoreWebHtmlPolishError,
+)
+from zoteropdf2md.web_polish.registry import (
+    default_origin_for_kind,
+    handler_for_kind,
+    registered_web_polish_handlers,
 )
 from zoteropdf2md.web_html_polish import (
     WebHtmlKind,
@@ -16,6 +22,7 @@ from zoteropdf2md.web_html_polish import (
     detect_web_html_kind,
     polish_web_html_file,
     polish_web_html_document,
+    require_web_article_html,
 )
 
 
@@ -57,6 +64,28 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\nz2m-test-image"
 def test_web_html_polish_reexports_core_types() -> None:
     assert WebHtmlKind is CoreWebHtmlKind
     assert WebHtmlPolishError is CoreWebHtmlPolishError
+
+
+def test_web_polish_registry_covers_publisher_handlers() -> None:
+    registered_kinds = {handler.kind for handler in registered_web_polish_handlers()}
+
+    assert WebHtmlKind.ARXIV_LATEXML in registered_kinds
+    assert WebHtmlKind.PMC_ARTICLE in registered_kinds
+    assert default_origin_for_kind(WebHtmlKind.SPRINGER_NATURE_ARTICLE) == "https://link.springer.com/"
+
+    arxiv_handler = handler_for_kind(WebHtmlKind.ARXIV_LATEXML)
+    assert arxiv_handler is not None
+    assert arxiv_handler.module_name == "arxiv"
+
+
+def test_web_polish_registry_rejects_known_landing_pages() -> None:
+    abs_html = """
+    <html><head><meta name="citation_arxiv_id" content="2511.02824"></head>
+    <body><a class="abs-button" href="https://arxiv.org/html/2511.02824v2">HTML (experimental)</a></body></html>
+    """
+
+    with pytest.raises(WebHtmlPolishError, match="/html/ attachment"):
+        require_web_article_html(abs_html)
 
 
 def test_detect_web_html_kind_distinguishes_arxiv_latexml_from_abs_page() -> None:
@@ -180,6 +209,7 @@ def test_polish_web_html_document_extracts_arxiv_latexml_article() -> None:
     assert "publisher footer should disappear" not in result.html
     assert "self.__next_f.push" not in result.html
     assert 'href="#S1"' in result.html
+    assert web_readability_style() in result.html
     assert "#web-doc :target" in result.html
     assert "outline: 3px solid" in result.html
     assert "border-top: 1px solid #cbd5e1" in result.html

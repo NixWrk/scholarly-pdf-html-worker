@@ -3,22 +3,33 @@ from __future__ import annotations
 import glob
 import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 from typing import Callable
 
-from .attachments import resolve_pdf_attachments
 from .citation_profile import build_citation_profile_from_pdf
-from .export_modes import ExportMode, get_export_mode_spec, parse_export_mode
+from .export_modes import ExportMode, get_export_mode_spec
 from .history import append_history
 from .html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME, html_stage_dir_for_html, save_html_stage
 from .llm_bundle import LlmBundleResult, create_llm_bundle
 from .marker_runner import MarkerRunner
-from .models import AttachmentRecord, PipelineSummary, ResolvedAttachment, StagedFile
+from .models import PipelineSummary, StagedFile
 from .ocr_quality import assess_ocr_quality_from_html, enqueue_reocr_candidate, load_reocr_queue
 from .output_state import detect_existing_results, normalize_source_path
 from .paths import resolve_zotero_data_dir
+from .pipeline_discovery import discover_collection_pdfs, discover_source_pdfs
+from .pipeline_options import PdfDiscoveryResult, PipelineOptions
+from .pipeline_translation import (
+    log_externalized_translation_notice,
+    log_legacy_translation_config,
+    log_non_html_translation_skip,
+)
+from .pipeline_webdav import (
+    resolve_webdav_config_path,
+    retry_pending_webdav_exports,
+    upload_webdav_mirror_if_configured,
+)
+from .pipeline_zotero import retry_pending_zotero_exports, zotero_write_lock_detected as detect_zotero_write_lock
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
 from .single_file_html import (
     close_katex_v8_context,
@@ -26,88 +37,22 @@ from .single_file_html import (
     polish_and_inline_html_file,
 )
 from .staging import (
-    DEFAULT_MAX_BASE_LEN,
     FILENAME_MAP_NAME,
     cleanup_staging_dir,
     expected_output_artifact_path,
     stage_resolved_pdfs,
     write_filename_map,
 )
-from .gemma_html import DEFAULT_GEMMA_MODEL, language_name_for_code, normalize_language_code
-from .webdav_config import DEFAULT_CONFIG_PATH
-from .webdav_pending import (
-    WebDavUploadSummary,
-    retry_pending_webdav_uploads,
-    upload_webdav_with_pending,
-)
-from .zotero import ZoteroRepository
-from .zotero_html_attachment import attach_single_file_html, check_zotero_write_access
+from .webdav_pending import WebDavUploadSummary
+from .zotero_html_attachment import attach_single_file_html
 from .zotero_pending import (
     build_pending_entry,
     enqueue_pending_attachments,
     load_pending_attachments,
-    retry_pending_attachments,
 )
 
 
 OVERLAY_SUFFIX_RE = re.compile(r"_([0-9a-f]{8})(?:\.pdf)?$", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class PipelineOptions:
-    zotero_data_dir: str = ""
-    collection_key: str = ""
-    include_subcollections: bool = False
-    output_dir: str = ""
-    skip_existing: bool = True
-    use_cuda: bool = True
-    cuda_device_index: int | None = 0
-    model_cache_dir: str | None = None
-    max_base_len: int = DEFAULT_MAX_BASE_LEN
-    disable_batch_multiprocessing: bool = False
-    cleanup_staging: bool = True
-    source_pdf_paths: list[str] | None = None
-    selected_source_pdf_paths: list[str] | None = None
-    skip_existing_source_pdf_paths: list[str] | None = None
-    # Comma-separated export modes, e.g. "classic" or "classic,llm_bundle".
-    # Multiple modes sharing the same marker_output_format run with one Marker call.
-    export_mode: str = ExportMode.CLASSIC.value
-    # Legacy GUI flag. Package automation should run pdf-html-translate after conversion.
-    translate_html_with_gemma: bool = False
-    translation_target_language_code: str = "ru"
-    translation_source_language: str = "English"
-    translation_backend: str = "lmstudio"
-    translation_model_ref: str = DEFAULT_GEMMA_MODEL
-    translation_hf_token: str | None = None
-    translation_max_input_tokens: int = 1800
-    translation_enable_heading_oov_guard: bool = False
-    translation_context_window_segments: int = 8
-    translation_context_overlap_segments: int = 1
-    translation_context_max_window_chars: int = 40_000
-    translation_enable_en_residual_quality_gate: bool = True
-    translation_en_residual_quality_gate_max_segments: int = 8
-    zotero_overlay_dir: str | None = None
-    webdav_upload_enabled: bool = False
-    webdav_config_path: str | None = None
-
-    @property
-    def export_modes_list(self) -> list[ExportMode]:
-        return [parse_export_mode(m.strip()) for m in self.export_mode.split(",") if m.strip()]
-
-
-@dataclass(frozen=True)
-class PdfCandidate:
-    resolved_attachment: ResolvedAttachment
-    already_in_output: bool
-
-
-@dataclass(frozen=True)
-class PdfDiscoveryResult:
-    collection_name: str
-    collection_key: str
-    attachments_total: int
-    unresolved_total: int
-    candidates: list[PdfCandidate]
 
 
 def _log_elapsed(log: Callable[[str], None] | None, stage: str, started_at: float) -> None:
@@ -116,95 +61,19 @@ def _log_elapsed(log: Callable[[str], None] | None, stage: str, started_at: floa
     log(f"[timer] {stage}: {perf_counter() - started_at:.2f}s")
 
 
-def _webdav_upload_if_configured(
-    file_path: Path,
-    output_dir: Path,
-    log: Callable[[str], None] | None,
-) -> None:
-    """Upload ``file_path`` to every enabled WebDAV server, if configured.
-
-    Looks for ``webdav_config.json`` in the current working directory. When the
-    file is absent, the call is a silent no-op (WebDAV is not configured).
-    Upload errors are logged but never raised — the pipeline must not break
-    if a remote server is down or misconfigured.
-    """
-    config_path = Path("webdav_config.json")
-    if not config_path.is_file():
-        return
-
-    def _emit(message: str) -> None:
-        if log is not None:
-            log(message)
-
-    try:
-        from .webdav_config import WebDavConfig
-        from .webdav_uploader import WebDavUploader
-
-        config = WebDavConfig.load(config_path)
-        enabled = config.get_enabled_servers()
-        if not enabled:
-            return
-
-        uploader = WebDavUploader()
-        try:
-            relative = file_path.relative_to(output_dir).as_posix()
-        except ValueError:
-            # File is not under output_dir — fall back to just the filename.
-            relative = file_path.name
-
-        for server in enabled:
-            try:
-                ok, msg = uploader.upload_file(server, file_path, relative)
-            except Exception as exc:  # noqa: BLE001 — never break pipeline
-                _emit(f"WebDAV upload error: {server.name}: {exc}")
-                continue
-            if ok:
-                _emit(f"WebDAV upload: {server.name} <- {file_path.name}")
-            else:
-                _emit(f"WebDAV upload failed: {server.name}: {msg}")
-    except Exception as exc:  # noqa: BLE001 — never break pipeline
-        _emit(f"WebDAV upload error: {exc}")
-
-
 def _webdav_upload_mirror_if_configured(
     file_path: Path,
     output_dir: Path,
     options: PipelineOptions,
     log: Callable[[str], None] | None,
 ) -> WebDavUploadSummary:
-    """Upload ``file_path`` to enabled WebDAV mirrors without breaking conversion."""
-    queue_path = output_dir / "_webdav_pending_uploads.json"
-    if not options.webdav_upload_enabled:
-        return WebDavUploadSummary(
-            uploaded=0,
-            failed=0,
-            queued=0,
-            pending_total=0,
-            queue_path=queue_path,
-        )
-
-    config_path = (
-        Path(options.webdav_config_path).expanduser().resolve(strict=False)
-        if options.webdav_config_path
-        else DEFAULT_CONFIG_PATH
+    return upload_webdav_mirror_if_configured(
+        file_path=file_path,
+        output_dir=output_dir,
+        upload_enabled=options.webdav_upload_enabled,
+        webdav_config_path=options.webdav_config_path,
+        log=log,
     )
-    try:
-        return upload_webdav_with_pending(
-            file_path=file_path,
-            output_dir=output_dir,
-            config_path=config_path,
-            log=log,
-        )
-    except Exception as exc:  # noqa: BLE001 - WebDAV mirror must not break conversion
-        if log is not None:
-            log(f"WebDAV upload error: {exc}")
-        return WebDavUploadSummary(
-            uploaded=0,
-            failed=1,
-            queued=0,
-            pending_total=0,
-            queue_path=queue_path,
-        )
 
 
 def _build_env(options: PipelineOptions) -> dict[str, str]:
@@ -220,130 +89,6 @@ def _build_env(options: PipelineOptions) -> dict[str, str]:
         env["MODEL_CACHE_DIR"] = str(cache_dir)
 
     return env
-
-
-def discover_collection_pdfs(
-    zotero_data_dir: str,
-    collection_key: str,
-    include_subcollections: bool,
-    output_dir: str,
-    artifact_extension: str = ".md",
-    temp_root: Path | None = None,
-    log: Callable[[str], None] | None = None,
-) -> PdfDiscoveryResult:
-    discover_started_at = perf_counter()
-
-    started_at = perf_counter()
-    zotero_dir = resolve_zotero_data_dir(zotero_data_dir)
-    out_dir = Path(output_dir).expanduser().resolve()
-    _log_elapsed(log, "discover.resolve_paths", started_at)
-
-    started_at = perf_counter()
-    repo = ZoteroRepository(zotero_dir, snapshot_temp_root=temp_root)
-    _log_elapsed(log, "discover.open_repository", started_at)
-
-    started_at = perf_counter()
-    collection = repo.get_collection_by_key(collection_key)
-    _log_elapsed(log, "discover.get_collection", started_at)
-
-    started_at = perf_counter()
-    collection_ids = repo.get_descendant_collection_ids(collection.collection_id, include_subcollections)
-    _log_elapsed(log, "discover.get_descendant_collection_ids", started_at)
-
-    started_at = perf_counter()
-    attachment_records = repo.get_attachment_records(collection_ids)
-    _log_elapsed(log, "discover.get_attachment_records", started_at)
-
-    started_at = perf_counter()
-    resolved, unresolved = resolve_pdf_attachments(zotero_dir, attachment_records)
-    _log_elapsed(log, "discover.resolve_pdf_attachments", started_at)
-
-    started_at = perf_counter()
-    existing_in_output = detect_existing_results(
-        out_dir,
-        [r.source_pdf_path for r in resolved],
-        artifact_extension=artifact_extension,
-    )
-    _log_elapsed(log, "discover.detect_existing_results", started_at)
-
-    candidates = [
-        PdfCandidate(
-            resolved_attachment=r,
-            already_in_output=(normalize_source_path(r.source_pdf_path) in existing_in_output),
-        )
-        for r in resolved
-    ]
-    _log_elapsed(log, "discover.total", discover_started_at)
-
-    return PdfDiscoveryResult(
-        collection_name=collection.full_name,
-        collection_key=collection.key,
-        attachments_total=len(attachment_records),
-        unresolved_total=len(unresolved),
-        candidates=candidates,
-    )
-
-
-def discover_source_pdfs(
-    source_pdf_paths: list[str],
-    output_dir: str,
-    artifact_extension: str = ".md",
-    log: Callable[[str], None] | None = None,
-) -> PdfDiscoveryResult:
-    discover_started_at = perf_counter()
-
-    started_at = perf_counter()
-    out_dir = Path(output_dir).expanduser().resolve()
-    _log_elapsed(log, "discover_file.resolve_paths", started_at)
-
-    resolved: list[ResolvedAttachment] = []
-    unresolved_total = 0
-    seen: set[str] = set()
-    for index, raw_path in enumerate(source_pdf_paths, start=1):
-        pdf_path = Path(raw_path).expanduser().resolve(strict=False)
-        normalized = normalize_source_path(pdf_path)
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        if not pdf_path.is_file() or pdf_path.suffix.lower() != ".pdf":
-            unresolved_total += 1
-            if log is not None:
-                log(f"Skipped non-PDF or missing source: {pdf_path}")
-            continue
-        record = AttachmentRecord(
-            item_id=index,
-            attachment_key=f"direct_pdf_{index:04d}",
-            parent_item_id=None,
-            link_mode=None,
-            path=str(pdf_path),
-            content_type="application/pdf",
-        )
-        resolved.append(ResolvedAttachment(attachment=record, source_pdf_path=pdf_path))
-
-    started_at = perf_counter()
-    existing_in_output = detect_existing_results(
-        out_dir,
-        [r.source_pdf_path for r in resolved],
-        artifact_extension=artifact_extension,
-    )
-    _log_elapsed(log, "discover_file.detect_existing_results", started_at)
-
-    candidates = [
-        PdfCandidate(
-            resolved_attachment=r,
-            already_in_output=(normalize_source_path(r.source_pdf_path) in existing_in_output),
-        )
-        for r in resolved
-    ]
-    _log_elapsed(log, "discover_file.total", discover_started_at)
-
-    return PdfDiscoveryResult(
-        collection_name="direct PDF files",
-        collection_key="direct_pdf",
-        attachments_total=len(seen),
-        unresolved_total=unresolved_total,
-        candidates=candidates,
-    )
 
 
 def _clean_md_repeated_phrases(md_path: Path, log: Callable[[str], None]) -> None:
@@ -634,17 +379,12 @@ def run_pipeline(
         if ExportMode.ZOTERO in export_modes_list:
             started_at = perf_counter()
             zotero_dir_for_mode = resolve_zotero_data_dir(options.zotero_data_dir)
-            try:
-                check_zotero_write_access(zotero_dir_for_mode)
-            except RuntimeError as exc:
-                if "locked for writing" in str(exc).lower():
-                    zotero_write_lock_detected = True
-                    log(
-                        "Zotero write lock detected before conversion. "
-                        "HTML results will be queued in output pending file for retry."
-                    )
-                else:
-                    raise
+            if detect_zotero_write_lock(zotero_dir_for_mode):
+                zotero_write_lock_detected = True
+                log(
+                    "Zotero write lock detected before conversion. "
+                    "HTML results will be queued in output pending file for retry."
+                )
             _log_elapsed(log, "pipeline.zotero_preflight_write_access", started_at)
 
         if is_cancelled():
@@ -682,28 +422,10 @@ def run_pipeline(
             f"artifact_extension={artifact_extension}"
         )
         if options.webdav_upload_enabled:
-            config_path = (
-                Path(options.webdav_config_path).expanduser().resolve(strict=False)
-                if options.webdav_config_path
-                else DEFAULT_CONFIG_PATH
-            )
-            log(f"WebDAV mirror: enabled (config={config_path})")
+            log(f"WebDAV mirror: enabled (config={resolve_webdav_config_path(options.webdav_config_path)})")
             if marker_output_format != "html":
                 log("WebDAV mirror: current output group is not HTML; upload skipped.")
-        if options.translate_html_with_gemma:
-            log(
-                "Gemma config: "
-                f"backend={options.translation_backend}, "
-                f"target_language={options.translation_target_language_code}, "
-                f"source_language={options.translation_source_language}, "
-                f"model_ref={options.translation_model_ref}, "
-                f"max_input_tokens={options.translation_max_input_tokens}, "
-                f"context_window_segments={options.translation_context_window_segments}, "
-                f"context_overlap_segments={options.translation_context_overlap_segments}, "
-                f"context_max_window_chars={options.translation_context_max_window_chars}, "
-                f"quality_gate={options.translation_enable_en_residual_quality_gate}, "
-                f"quality_gate_max_segments={options.translation_en_residual_quality_gate_max_segments}"
-            )
+        log_legacy_translation_config(options, log)
 
         staged_source_bytes = 0
         for staged_file in stage.staged_files:
@@ -969,23 +691,12 @@ def run_pipeline(
 
             if converted_source_paths and marker_output_format == "html" and options.translate_html_with_gemma:
                 started_at = perf_counter()
-                translated_html_language_code = normalize_language_code(
-                    options.translation_target_language_code
-                )
-                translated_html_language_name = language_name_for_code(
-                    translated_html_language_code
-                )
-                log(
-                    "Gemma HTML translation is handled by the package translation runner, "
-                    "not by the PDF conversion pipeline. Use pdf-html-translate "
-                    "for 03.ru.translate.html output."
-                )
+                translation_status = log_externalized_translation_notice(options, log)
+                translated_html_language_code = translation_status.language_code
+                translated_html_language_name = translation_status.language_name
                 _log_elapsed(log, "pipeline.gemma_html", started_at)
             elif options.translate_html_with_gemma and marker_output_format != "html":
-                log(
-                    "Gemma translation enabled, but current group output format is not HTML. "
-                    "Translation skipped for this group."
-                )
+                log_non_html_translation_skip(log)
 
             if converted_source_paths and ExportMode.ZOTERO in export_modes_list:
                 started_at = perf_counter()
@@ -1149,52 +860,3 @@ def run_pipeline(
         cleanup_runtime_temp_root(runtime_tmp_root)
         log(f"Runtime temp cleaned: {runtime_tmp_root}")
         _log_elapsed(log, "pipeline.total", pipeline_started_at)
-
-
-def retry_pending_zotero_exports(
-    zotero_data_dir: str,
-    output_dir: str,
-    log: Callable[[str], None],
-) -> None:
-    summary = retry_pending_attachments(
-        zotero_data_dir=zotero_data_dir,
-        output_dir=output_dir,
-        log=log,
-    )
-    log(
-        "Pending retry summary: "
-        f"attempted={summary.attempted}, "
-        f"attached={summary.attached}, "
-        f"kept_pending={summary.kept_pending}, "
-        f"dropped_missing_html={summary.dropped_missing_html}, "
-        f"failed_non_lock={summary.failed_non_lock}, "
-        f"lock_blocked={summary.lock_blocked}"
-    )
-    log(f"Pending queue file: {summary.queue_path}")
-
-
-def retry_pending_webdav_exports(
-    output_dir: str,
-    webdav_config_path: str | None,
-    log: Callable[[str], None],
-) -> None:
-    config_path = (
-        Path(webdav_config_path).expanduser().resolve(strict=False)
-        if webdav_config_path
-        else DEFAULT_CONFIG_PATH
-    )
-    summary = retry_pending_webdav_uploads(
-        output_dir=output_dir,
-        config_path=config_path,
-        log=log,
-    )
-    log(
-        "Pending WebDAV retry summary: "
-        f"attempted={summary.attempted}, "
-        f"uploaded={summary.uploaded}, "
-        f"kept_pending={summary.kept_pending}, "
-        f"dropped_missing_local={summary.dropped_missing_local}, "
-        f"server_missing={summary.server_missing}, "
-        f"failed={summary.failed}"
-    )
-    log(f"Pending WebDAV queue file: {summary.queue_path}")

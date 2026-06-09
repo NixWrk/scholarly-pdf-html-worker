@@ -43,6 +43,7 @@ from .html_references import (
     REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN,
 )
 from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
+from .raw_html_polish import default_polish_phase_names
 from .semantic_labels import (
     figure_key_from_visible_number as _figure_key_from_visible_number,
     normalize_table_key as _normalize_table_key,
@@ -21694,6 +21695,12 @@ def _split_table_units_before_section_headings(html: str) -> str:
         previous = current
         current = table_unit.sub(_replace, current)
     return current
+
+
+def polish_html_phase_names() -> tuple[str, ...]:
+    """Return the documented raw HTML polish phase order."""
+
+    return default_polish_phase_names()
 
 
 def polish_html_document(
