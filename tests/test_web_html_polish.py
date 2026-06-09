@@ -151,6 +151,8 @@ def test_polish_web_html_document_extracts_arxiv_latexml_article() -> None:
     assert 'href="#S1"' in result.html
     assert "#web-doc :target" in result.html
     assert "outline: 3px solid" in result.html
+    assert "border-top: 1px solid #cbd5e1" in result.html
+    assert "counter-reset: z2m-ref" in result.html
     assert "figure.ltx_table .ltx_transformed_inner" in result.html
     assert ".off-screen, .sr-only" in result.html
 
@@ -347,6 +349,27 @@ def test_polish_web_html_document_extracts_springer_nature_body() -> None:
           <div class="c-article-body" id="body">
             <h2 id="Sec1">Introduction</h2>
             <p>{" ".join([LONG_PARAGRAPH] * 22)}</p>
+            <p>
+              See <a href="#Fig1">Fig. 1</a>
+              and <a href="https://link.springer.com/article/10.1007/example#Tab1">Table 1</a>.
+            </p>
+            <div class="c-article-section__figure" id="figure-1" data-container-section="figure">
+              <figure>
+                <figcaption>
+                  <b id="Fig1" class="c-article-section__figure-caption">Fig. 1</b>
+                  Figure caption text.
+                </figcaption>
+              </figure>
+            </div>
+            <div class="c-article-table" id="table-1" data-container-section="table">
+              <div class="c-article-table__caption">
+                <b id="Tab1">Table 1</b> Table caption text.
+              </div>
+              <table><tr><td>Value</td></tr></table>
+            </div>
+            <section data-title="References">
+              <ul class="c-article-references"><li>Reference one.</li></ul>
+            </section>
             <a href="/article/10.1007/example/figures/1">Full image</a>
           </div>
         </article>
@@ -360,6 +383,12 @@ def test_polish_web_html_document_extracts_springer_nature_body() -> None:
     assert result.article_extracted is True
     assert result.article_selector in {"article .c-article-body", ".c-article-body"}
     assert "related articles" not in result.html
+    assert 'href="#figure-1"' in result.html
+    assert 'href="#table-1"' in result.html
+    assert 'id="Fig1"' in result.html
+    assert 'id="Tab1"' in result.html
+    assert 'href="#Fig1"' not in result.html
+    assert 'href="https://link.springer.com/article/10.1007/example#Tab1"' not in result.html
     assert 'href="https://link.springer.com/article/10.1007/example/figures/1"' in result.html
 
 
