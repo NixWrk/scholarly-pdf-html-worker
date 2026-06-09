@@ -47,3 +47,25 @@ def test_assess_polish_html_counts_navigation_and_citation_style_signals() -> No
     assert assessment["bracket_ref_links"] == 1
     assert assessment["mixed_citation_style"] is True
     assert assessment["missing_warning_count"] == 1
+
+
+def test_assess_polish_html_counts_remaining_same_document_absolute_links() -> None:
+    html = """
+    <html><body>
+      <section id="S1"></section>
+      <section id="bib.bib56"></section>
+      <p>
+        <a href="https://arxiv.org/html/2511.02824v2#S1">Section 1</a>
+        <a href="https://arxiv.org/html/2511.02824v2#bib.bib56">[56]</a>
+        <a href="https://example.org/html/2511.02824#S1">external fragment</a>
+      </p>
+    </body></html>
+    """
+
+    assessment = assess_polish_html(
+        "article",
+        html,
+        {"status": "ok", "style": "unknown", "confidence": "low"},
+    )
+
+    assert assessment["href_counts"]["same_document_absolute_links_remaining"] == 2

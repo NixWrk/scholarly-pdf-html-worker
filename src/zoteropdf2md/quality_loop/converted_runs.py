@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from zoteropdf2md.citation_profile import infer_citation_style_from_text
+from zoteropdf2md.web_html_polish import count_same_document_absolute_fragment_links
 
 from .run_utils import (
     article_dir_from_stage,
@@ -110,6 +111,9 @@ def assess_polish_html(article: str, html: str, profile: dict[str, Any]) -> dict
     ids = {match.group("id") for match in ID_RE.finditer(html)}
     href_counts: dict[str, int] = {}
     broken_targets: list[str] = []
+    same_document_absolute_links = count_same_document_absolute_fragment_links(html)
+    if same_document_absolute_links:
+        href_counts["same_document_absolute_links_remaining"] = same_document_absolute_links
     for match in HREF_RE.finditer(html):
         href = match.group("href")
         if href.startswith("#ref-"):

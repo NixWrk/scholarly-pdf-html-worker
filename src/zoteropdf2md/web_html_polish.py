@@ -1,0 +1,859 @@
+"""Web-native HTML normalization helpers.
+
+This module is intentionally separate from ``single_file_html``.  The latter
+repairs Marker/PDF HTML, while web-native sources such as arXiv LaTeXML mostly
+need source-aware normalization.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from html import escape as html_escape
+from html import unescape
+from pathlib import Path
+import re
+import urllib.parse
+
+from .html_images import (
+    InlineHtmlResult,
+    is_inline_or_remote,
+    to_data_url,
+    validate_data_url,
+)
+
+
+class WebHtmlKind(str, Enum):
+    """Known web HTML source kinds."""
+
+    ARXIV_ABS_PAGE = "arxiv_abs_page"
+    ARXIV_LATEXML = "arxiv_latexml"
+    PMC_ARTICLE = "pmc_article"
+    TAYLOR_FRANCIS_ARTICLE = "taylor_francis_article"
+    SPRINGER_NATURE_ARTICLE = "springer_nature_article"
+    RESEARCHGATE_PAGE = "researchgate_page"
+    GENERIC_ARTICLE = "generic_article"
+    UNKNOWN = "unknown"
+
+
+class WebHtmlPolishError(ValueError):
+    """Raised when a web HTML attachment cannot be polished as an article."""
+
+
+@dataclass(frozen=True)
+class SameDocumentLinkCanonicalization:
+    html: str
+    rewritten_count: int
+    unresolved_count: int
+    candidate_document_urls: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WebHtmlPolishResult:
+    html: str
+    kind: WebHtmlKind
+    article_extracted: bool
+    article_selector: str | None
+    same_document_links_rewritten: int
+    unresolved_same_document_links: int
+
+
+@dataclass(frozen=True)
+class WebHtmlFilePolishResult:
+    html: str
+    kind: WebHtmlKind
+    article_extracted: bool
+    article_selector: str | None
+    same_document_links_rewritten: int
+    unresolved_same_document_links: int
+    inlined_images: int
+
+
+@dataclass(frozen=True)
+class WebArticleExtraction:
+    html: str
+    extracted: bool
+    selector: str | None
+    text_length: int
+
+
+@dataclass(frozen=True)
+class _ArticleCandidate:
+    html: str
+    tag: str
+    attrs: str
+    score: int
+    selector: str
+    text_length: int
+
+
+_ATTR_HREF_RE = re.compile(
+    r"(?P<prefix>\bhref\s*=\s*)(?P<quote>['\"])(?P<href>.*?)(?P=quote)",
+    re.IGNORECASE | re.DOTALL,
+)
+_IMG_SRC_RE = re.compile(
+    r"(?P<prefix><img\b[^>]*?\ssrc\s*=\s*)(?P<quote>['\"])(?P<src>.*?)(?P=quote)",
+    re.IGNORECASE | re.DOTALL,
+)
+_HREF_VALUE_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*(['\"])(?P<href>.*?)\1",
+    re.IGNORECASE | re.DOTALL,
+)
+_ID_VALUE_RE = re.compile(r"\bid\s*=\s*(['\"])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
+_NAME_VALUE_RE = re.compile(r"\bname\s*=\s*(['\"])(?P<name>.*?)\1", re.IGNORECASE | re.DOTALL)
+_TITLE_RE = re.compile(r"<title\b[^>]*>(?P<title>[\s\S]*?)</title>", re.IGNORECASE)
+_BODY_RE = re.compile(r"<body\b[^>]*>(?P<body>[\s\S]*?)</body>", re.IGNORECASE)
+_ARTICLE_START_RE = re.compile(
+    r"<(?P<tag>article|main|section|div)\b(?P<attrs>[^<>]*)>",
+    re.IGNORECASE,
+)
+_HTML_TAG_RE = re.compile(r"</?(?P<tag>[A-Za-z][A-Za-z0-9:-]*)(?P<attrs>[^<>]*)?>", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
+_NON_ARTICLE_BLOCK_RE = re.compile(
+    r"<(?:script|style|noscript|template)\b[\s\S]*?</(?:script|style|noscript|template)>",
+    re.IGNORECASE,
+)
+_ARXIV_HTML_PATH_RE = re.compile(
+    r"^/html/(?P<id>\d{4}\.\d{4,5})(?:v(?P<version>\d+))?/?$",
+    re.IGNORECASE,
+)
+_ARXIV_ABS_PATH_RE = re.compile(
+    r"^/abs/(?P<id>\d{4}\.\d{4,5})(?:v(?P<version>\d+))?/?$",
+    re.IGNORECASE,
+)
+_ARXIV_HTML_HREF_RE = re.compile(
+    r"https?://(?:www\.)?arxiv\.org/html/(?P<id>\d{4}\.\d{4,5})(?:v(?P<version>\d+))?#",
+    re.IGNORECASE,
+)
+_VOID_TAGS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
+_WEB_READABILITY_STYLE = """<style data-z2m-style="web-html-polish">
+:root { color-scheme: light; }
+body {
+  margin: 0;
+  background: #f7f8fa;
+  color: #171717;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.6;
+}
+#web-doc {
+  box-sizing: border-box;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 24px 56px;
+  background: #fff;
+}
+img, svg, video, canvas { max-width: 100%; height: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #d8dde6; padding: 6px 8px; vertical-align: top; }
+pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
+a { color: #0645ad; overflow-wrap: anywhere; }
+figure { margin: 24px 0; }
+figcaption, caption { color: #4b5563; font-size: 0.95em; }
+</style>"""
+
+
+def detect_web_html_kind(html: str, *, source_url: str | None = None) -> WebHtmlKind:
+    """Classify known web HTML attachments."""
+
+    parsed_source = _urlsplit_or_none(source_url)
+    if parsed_source is not None and _arxiv_abs_parts(parsed_source) is not None:
+        return WebHtmlKind.ARXIV_ABS_PAGE
+
+    sample = html[:500_000].lower()
+    if _looks_like_arxiv_abs_page(sample):
+        return WebHtmlKind.ARXIV_ABS_PAGE
+    if _looks_like_arxiv_latexml(sample, parsed_source):
+        return WebHtmlKind.ARXIV_LATEXML
+    if _looks_like_pmc_article(sample, parsed_source):
+        return WebHtmlKind.PMC_ARTICLE
+    if _looks_like_taylor_francis_article(sample, parsed_source):
+        return WebHtmlKind.TAYLOR_FRANCIS_ARTICLE
+    if _looks_like_springer_nature_article(sample, parsed_source):
+        return WebHtmlKind.SPRINGER_NATURE_ARTICLE
+    if _looks_like_researchgate_page(sample, parsed_source):
+        return WebHtmlKind.RESEARCHGATE_PAGE
+    if "<article" in sample:
+        return WebHtmlKind.GENERIC_ARTICLE
+    return WebHtmlKind.UNKNOWN
+
+
+def require_web_article_html(html: str, *, source_url: str | None = None) -> WebHtmlKind:
+    """Return the source kind, rejecting known landing pages."""
+
+    kind = detect_web_html_kind(html, source_url=source_url)
+    if kind == WebHtmlKind.ARXIV_ABS_PAGE:
+        raise WebHtmlPolishError(
+            "arXiv abstract pages are landing pages, not article HTML; use the /html/ attachment instead."
+        )
+    return kind
+
+
+def polish_web_html_document(
+    html: str,
+    *,
+    source_url: str | None = None,
+    canonical_url: str | None = None,
+) -> WebHtmlPolishResult:
+    """Normalize a web-native article HTML document.
+
+    This keeps web-native sources separate from the Marker/PDF repair path:
+    strip executable payloads, extract the article-like fragment, canonicalize
+    same-document links, and wrap the result in a stable readable shell.
+    """
+
+    kind = require_web_article_html(html, source_url=source_url)
+    title = _document_title(html)
+    extraction = extract_web_article_fragment(html, kind=kind)
+    canonicalized = canonicalize_same_document_links(
+        extraction.html,
+        source_url=source_url,
+        canonical_url=canonical_url,
+    )
+    wrapped = _wrap_web_article_html(
+        canonicalized.html,
+        kind=kind,
+        title=title,
+        article_selector=extraction.selector,
+    )
+    return WebHtmlPolishResult(
+        html=wrapped,
+        kind=kind,
+        article_extracted=extraction.extracted,
+        article_selector=extraction.selector,
+        same_document_links_rewritten=canonicalized.rewritten_count,
+        unresolved_same_document_links=canonicalized.unresolved_count,
+    )
+
+
+def polish_web_html_file(
+    html_path: Path,
+    *,
+    source_url: str | None = None,
+    canonical_url: str | None = None,
+) -> WebHtmlFilePolishResult:
+    """Polish a web-native HTML file and inline local sidecar images."""
+
+    html = html_path.read_text(encoding="utf-8", errors="replace")
+    document = polish_web_html_document(
+        html,
+        source_url=source_url,
+        canonical_url=canonical_url,
+    )
+    inlined = inline_local_images_from_web_html_document(document.html, base_dir=html_path.parent)
+    return WebHtmlFilePolishResult(
+        html=inlined.html,
+        kind=document.kind,
+        article_extracted=document.article_extracted,
+        article_selector=document.article_selector,
+        same_document_links_rewritten=document.same_document_links_rewritten,
+        unresolved_same_document_links=document.unresolved_same_document_links,
+        inlined_images=inlined.inlined_images,
+    )
+
+
+def inline_local_images_from_web_html_document(html: str, *, base_dir: Path) -> InlineHtmlResult:
+    """Inline local ``<img src>`` references without running Marker polish."""
+
+    base_dir = base_dir.resolve(strict=False)
+    inlined_count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal inlined_count
+        prefix = match.group("prefix")
+        quote = match.group("quote")
+        src_value = unescape(match.group("src")).strip()
+        if not src_value or _is_nonlocal_image_src(src_value):
+            return match.group(0)
+
+        candidate = _resolve_local_asset(src_value, base_dir=base_dir)
+        if candidate is None:
+            return match.group(0)
+
+        data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
+        if data_url is None or not validate_data_url(data_url, candidate):
+            return match.group(0)
+
+        inlined_count += 1
+        prefix = _add_src_hint(prefix, src_value)
+        return f"{prefix}{quote}{data_url}{quote}"
+
+    return InlineHtmlResult(html=_IMG_SRC_RE.sub(replace, html), inlined_images=inlined_count)
+
+
+def extract_web_article_fragment(html: str, *, kind: WebHtmlKind | None = None) -> WebArticleExtraction:
+    """Extract the central article-like fragment from third-party web HTML."""
+
+    cleaned = _strip_non_article_payloads(html)
+    candidates: list[_ArticleCandidate] = []
+    for match in _ARTICLE_START_RE.finditer(cleaned):
+        tag = match.group("tag")
+        attrs = match.group("attrs")
+        if not _promising_article_start(tag, attrs, kind=kind):
+            continue
+        fragment = _balanced_element_from_match(cleaned, match)
+        if fragment is None:
+            continue
+        candidate = _score_article_candidate(fragment, tag, attrs, kind=kind)
+        if candidate is not None:
+            candidates.append(candidate)
+
+    if candidates:
+        best = max(candidates, key=lambda candidate: (candidate.score, candidate.text_length))
+        if best.score >= 1_500 and best.text_length >= 1_000:
+            return WebArticleExtraction(
+                html=best.html.strip(),
+                extracted=True,
+                selector=best.selector,
+                text_length=best.text_length,
+            )
+
+    body = _body_inner(cleaned) or cleaned
+    text_length = _visible_text_length(body)
+    return WebArticleExtraction(
+        html=body.strip(),
+        extracted=False,
+        selector="body" if body != cleaned else None,
+        text_length=text_length,
+    )
+
+
+def canonicalize_same_document_links(
+    html: str,
+    *,
+    source_url: str | None = None,
+    canonical_url: str | None = None,
+    require_fragment_target: bool = True,
+) -> SameDocumentLinkCanonicalization:
+    """Rewrite absolute same-document fragment links to local fragments."""
+
+    ids = _html_fragment_targets(html)
+    candidates = _document_url_candidates(
+        html,
+        ids=ids,
+        source_url=source_url,
+        canonical_url=canonical_url,
+    )
+    if not candidates:
+        return SameDocumentLinkCanonicalization(
+            html=html,
+            rewritten_count=0,
+            unresolved_count=0,
+            candidate_document_urls=(),
+        )
+
+    rewritten_count = 0
+    unresolved_count = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal rewritten_count, unresolved_count
+        href = unescape(match.group("href")).strip()
+        parsed = _urlsplit_or_none(href)
+        if parsed is None or not parsed.fragment:
+            return match.group(0)
+        if _is_plain_local_fragment(parsed):
+            return match.group(0)
+        if not _is_same_document(parsed, candidates):
+            return match.group(0)
+
+        target = urllib.parse.unquote(parsed.fragment)
+        if require_fragment_target and ids and target not in ids:
+            unresolved_count += 1
+            return match.group(0)
+
+        rewritten_count += 1
+        quote = match.group("quote")
+        local_href = html_escape(f"#{parsed.fragment}", quote=True)
+        return f"{match.group('prefix')}{quote}{local_href}{quote}"
+
+    return SameDocumentLinkCanonicalization(
+        html=_ATTR_HREF_RE.sub(replace, html),
+        rewritten_count=rewritten_count,
+        unresolved_count=unresolved_count,
+        candidate_document_urls=tuple(_base_url_from_parsed(candidate) for candidate in candidates),
+    )
+
+
+def count_same_document_absolute_fragment_links(
+    html: str,
+    *,
+    source_url: str | None = None,
+    canonical_url: str | None = None,
+) -> int:
+    """Count absolute links that still point to this document's fragments."""
+
+    ids = _html_fragment_targets(html)
+    candidates = _document_url_candidates(
+        html,
+        ids=ids,
+        source_url=source_url,
+        canonical_url=canonical_url,
+    )
+    if not candidates:
+        return 0
+
+    count = 0
+    for match in _HREF_VALUE_RE.finditer(html):
+        href = unescape(match.group("href")).strip()
+        parsed = _urlsplit_or_none(href)
+        if parsed is None or not parsed.fragment:
+            continue
+        if _is_plain_local_fragment(parsed):
+            continue
+        if not _is_same_document(parsed, candidates):
+            continue
+        target = urllib.parse.unquote(parsed.fragment)
+        if ids and target not in ids:
+            continue
+        count += 1
+    return count
+
+
+def _looks_like_arxiv_abs_page(sample: str) -> bool:
+    return (
+        'name="citation_arxiv_id"' in sample
+        and ("html (experimental)" in sample or "latexml-download-link" in sample)
+        and ("abs-button" in sample or "extra-services" in sample)
+    )
+
+
+def _looks_like_arxiv_latexml(
+    sample: str,
+    parsed_source: urllib.parse.SplitResult | None,
+) -> bool:
+    if "ltx_page_main" not in sample:
+        return False
+    if "generated" in sample and "latexml" in sample:
+        return True
+    if "ltx_bibliography" in sample or "ltx_title_document" in sample:
+        return True
+    return parsed_source is not None and _arxiv_html_parts(parsed_source) is not None
+
+
+def _looks_like_pmc_article(sample: str, parsed_source: urllib.parse.SplitResult | None) -> bool:
+    host = (parsed_source.netloc.lower() if parsed_source is not None else "")
+    if host in {"pmc.ncbi.nlm.nih.gov", "www.ncbi.nlm.nih.gov"}:
+        return True
+    return "pmc-article" in sample or 'id="main-content"' in sample and "pmc" in sample
+
+
+def _looks_like_taylor_francis_article(sample: str, parsed_source: urllib.parse.SplitResult | None) -> bool:
+    host = (parsed_source.netloc.lower() if parsed_source is not None else "")
+    if host.endswith("tandfonline.com"):
+        return True
+    return "hlfld-fulltext" in sample or "nlm_article" in sample
+
+
+def _looks_like_springer_nature_article(sample: str, parsed_source: urllib.parse.SplitResult | None) -> bool:
+    host = (parsed_source.netloc.lower() if parsed_source is not None else "")
+    if host in {"link.springer.com", "www.nature.com"}:
+        return True
+    return "c-article-body" in sample or "article__body" in sample
+
+
+def _looks_like_researchgate_page(sample: str, parsed_source: urllib.parse.SplitResult | None) -> bool:
+    host = (parsed_source.netloc.lower() if parsed_source is not None else "")
+    return host.endswith("researchgate.net") or "researchgate" in sample
+
+
+def _strip_non_article_payloads(html: str) -> str:
+    cleaned = _COMMENT_RE.sub(" ", html)
+    previous = None
+    while cleaned != previous:
+        previous = cleaned
+        cleaned = _NON_ARTICLE_BLOCK_RE.sub(" ", cleaned)
+    return cleaned
+
+
+def _document_title(html: str) -> str:
+    match = _TITLE_RE.search(html)
+    if match is None:
+        return "Web Article"
+    title = _visible_text(match.group("title"))
+    return title or "Web Article"
+
+
+def _body_inner(html: str) -> str | None:
+    match = _BODY_RE.search(html)
+    if match is None:
+        return None
+    return match.group("body")
+
+
+def _balanced_element_from_match(html: str, start_match: re.Match[str]) -> str | None:
+    tag = start_match.group("tag").lower()
+    depth = 0
+    for match in _HTML_TAG_RE.finditer(html, start_match.start()):
+        token_tag = match.group("tag").lower()
+        if token_tag != tag:
+            continue
+        raw = match.group(0)
+        if raw.startswith("</"):
+            depth -= 1
+            if depth == 0:
+                return html[start_match.start() : match.end()]
+            continue
+        if raw.endswith("/>") or token_tag in _VOID_TAGS:
+            continue
+        depth += 1
+    return None
+
+
+def _score_article_candidate(
+    fragment: str,
+    tag: str,
+    attrs: str,
+    *,
+    kind: WebHtmlKind | None,
+) -> _ArticleCandidate | None:
+    text_length = _visible_text_length(fragment)
+    if text_length < 500:
+        return None
+
+    tag = tag.lower()
+    attrs_lower = unescape(attrs).lower()
+    fragment_probe = fragment[:300_000].lower()
+    score = min(text_length // 75, 3_000)
+    selector = tag
+
+    if "ltx_page_main" in attrs_lower:
+        score += 8_000
+        selector = ".ltx_page_main"
+    if "pmc-article" in attrs_lower:
+        score += 7_000
+        selector = ".pmc-article"
+    if "nlm_article" in attrs_lower:
+        score += 6_500
+        selector = ".NLM_article"
+    if "c-article-body" in attrs_lower:
+        score += 5_800
+        selector = ".c-article-body"
+    elif "article__body" in attrs_lower or "article-body" in attrs_lower:
+        score += 5_500
+        selector = ".article-body"
+    if "article-content" in attrs_lower or "article__content" in attrs_lower:
+        score += 5_000
+        selector = ".article-content"
+    if "hlfld-fulltext" in attrs_lower:
+        score += 3_200
+        selector = ".hlFld-Fulltext"
+    if 'id="main-content"' in attrs_lower or "'main-content'" in attrs_lower:
+        score += 3_000
+        selector = "#main-content"
+
+    if tag == "article":
+        score += 3_000
+        selector = "article" if selector == tag else selector
+    elif tag == "main":
+        score += 1_800
+        selector = "main" if selector == tag else selector
+
+    if tag == "article" and "pmc-article" in fragment_probe:
+        score += 3_000
+        selector = "article .pmc-article"
+    if tag == "article" and "c-article-body" in fragment_probe:
+        score += 2_500
+        selector = "article .c-article-body"
+    if tag == "article" and "nlm_article" in fragment_probe:
+        score += 2_500
+        selector = "article .NLM_article"
+    if "ltx_bibliography" in fragment_probe or "references" in fragment_probe or "bibliography" in fragment_probe:
+        score += 600
+
+    if "abstract" in attrs_lower and "fulltext" not in attrs_lower and text_length < 8_000:
+        score -= 2_500
+    if any(word in attrs_lower for word in ("navbar", "navigation", "footer", "header", "sidebar", "cookie")):
+        score -= 3_000
+
+    if kind == WebHtmlKind.ARXIV_LATEXML and "ltx_page_main" not in attrs_lower:
+        score -= 1_000
+    if kind == WebHtmlKind.RESEARCHGATE_PAGE and text_length < 12_000:
+        score -= 1_500
+
+    return _ArticleCandidate(
+        html=fragment,
+        tag=tag,
+        attrs=attrs,
+        score=score,
+        selector=selector,
+        text_length=text_length,
+    )
+
+
+def _promising_article_start(tag: str, attrs: str, *, kind: WebHtmlKind | None) -> bool:
+    tag = tag.lower()
+    if tag in {"article", "main"}:
+        return True
+
+    attrs_lower = unescape(attrs).lower()
+    if not attrs_lower:
+        return False
+
+    strong_tokens = (
+        "ltx_page_main",
+        "pmc-article",
+        "nlm_article",
+        "c-article-body",
+        "article__body",
+        "article-body",
+        "article__content",
+        "article-content",
+        "hlfld-fulltext",
+        "main-content",
+        "fulltext-view",
+        "article-section",
+    )
+    if any(token in attrs_lower for token in strong_tokens):
+        return True
+
+    if kind == WebHtmlKind.ARXIV_LATEXML and "ltx_" in attrs_lower:
+        return True
+    if tag == "section" and "jats" in attrs_lower and "article" in attrs_lower:
+        return True
+    return False
+
+
+def _visible_text_length(html: str) -> int:
+    return len(_visible_text(html))
+
+
+def _visible_text(html: str) -> str:
+    text = _TAG_RE.sub(" ", html)
+    return " ".join(unescape(text).split())
+
+
+def _wrap_web_article_html(
+    article_html: str,
+    *,
+    kind: WebHtmlKind,
+    title: str,
+    article_selector: str | None,
+) -> str:
+    escaped_title = html_escape(title, quote=False)
+    escaped_kind = html_escape(kind.value, quote=True)
+    selector_attr = ""
+    if article_selector:
+        selector_attr = f' data-z2m-article-selector="{html_escape(article_selector, quote=True)}"'
+    return (
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '<meta charset="utf-8">\n'
+        f"<title>{escaped_title}</title>\n"
+        f"{_WEB_READABILITY_STYLE}\n"
+        "</head>\n"
+        "<body>\n"
+        f'<main id="web-doc" data-z2m-source-kind="{escaped_kind}"{selector_attr}>\n'
+        f"{article_html}\n"
+        "</main>\n"
+        "</body>\n"
+        "</html>\n"
+    )
+
+
+def _is_nonlocal_image_src(src_value: str) -> bool:
+    lowered = src_value.lower()
+    return lowered.startswith("file:") or is_inline_or_remote(src_value)
+
+
+def _resolve_local_asset(src_value: str, *, base_dir: Path) -> Path | None:
+    clean_src = src_value.split("?", 1)[0].split("#", 1)[0]
+    decoded = urllib.parse.unquote(clean_src)
+    if not decoded:
+        return None
+    raw_path = Path(decoded)
+    if raw_path.is_absolute():
+        return None
+    candidate = (base_dir / raw_path).resolve(strict=False)
+    try:
+        candidate.relative_to(base_dir)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def _add_src_hint(prefix: str, hint_path: str) -> str:
+    if re.search(r"\bdata-z2m-src\s*=", prefix, re.IGNORECASE):
+        return prefix
+    escaped_hint = html_escape(hint_path, quote=True)
+    return re.sub(
+        r"\bsrc\s*=\s*$",
+        f'data-z2m-src="{escaped_hint}" src=',
+        prefix,
+        flags=re.IGNORECASE,
+    )
+
+
+def _html_fragment_targets(html: str) -> set[str]:
+    targets = {unescape(match.group("id")) for match in _ID_VALUE_RE.finditer(html)}
+    targets.update(unescape(match.group("name")) for match in _NAME_VALUE_RE.finditer(html))
+    return {target for target in targets if target}
+
+
+def _document_url_candidates(
+    html: str,
+    *,
+    ids: set[str],
+    source_url: str | None,
+    canonical_url: str | None,
+) -> tuple[urllib.parse.SplitResult, ...]:
+    explicit: list[urllib.parse.SplitResult] = []
+    for raw_url in (source_url, canonical_url):
+        parsed = _urlsplit_or_none(raw_url)
+        if parsed is not None and parsed.scheme and parsed.netloc:
+            explicit.append(parsed._replace(fragment=""))
+    if explicit:
+        return tuple(dict.fromkeys(explicit))
+
+    arxiv_counts: dict[tuple[str, str | None], int] = {}
+    arxiv_parsed: dict[tuple[str, str | None], urllib.parse.SplitResult] = {}
+    generic_counts: dict[tuple[str, str, str, str], int] = {}
+    generic_parsed: dict[tuple[str, str, str, str], urllib.parse.SplitResult] = {}
+    for match in _HREF_VALUE_RE.finditer(html):
+        href = unescape(match.group("href")).strip()
+        parsed = _urlsplit_or_none(href)
+        if parsed is None or not parsed.fragment or not parsed.scheme or not parsed.netloc:
+            continue
+        target = urllib.parse.unquote(parsed.fragment)
+        if ids and target not in ids:
+            continue
+        parts = _arxiv_html_parts(parsed)
+        if parts is not None:
+            arxiv_id, version = parts
+            key = (arxiv_id, version)
+            arxiv_counts[key] = arxiv_counts.get(key, 0) + 1
+            arxiv_parsed[key] = parsed._replace(fragment="")
+        base = parsed._replace(fragment="")
+        base_key = _base_key(base)
+        generic_counts[base_key] = generic_counts.get(base_key, 0) + 1
+        generic_parsed[base_key] = base
+
+    if arxiv_counts:
+        # Without an explicit source URL, only infer arXiv self-links when the same
+        # article base repeats.  Single arXiv links can be ordinary references.
+        top_count = max(arxiv_counts.values())
+        if top_count >= 2:
+            top_id = max(arxiv_counts.items(), key=lambda item: item[1])[0][0]
+            return tuple(
+                parsed
+                for key, parsed in arxiv_parsed.items()
+                if key[0] == top_id and arxiv_counts.get(key, 0) == top_count
+            )
+
+    if not generic_counts:
+        return ()
+
+    # Generic inference stays conservative: one absolute fragment link can be an
+    # ordinary external reference, but repeated links to the same base whose
+    # fragments exist in this document are same-document navigation with high
+    # confidence.
+    top_count = max(generic_counts.values())
+    if top_count < 2:
+        return ()
+    return tuple(
+        parsed
+        for key, parsed in generic_parsed.items()
+        if generic_counts.get(key, 0) == top_count
+    )
+
+
+def _is_same_document(
+    parsed_href: urllib.parse.SplitResult,
+    candidates: tuple[urllib.parse.SplitResult, ...],
+) -> bool:
+    for candidate in candidates:
+        if _relative_same_document(parsed_href, candidate):
+            return True
+        if _same_arxiv_html_document(parsed_href, candidate):
+            return True
+        if _base_key(parsed_href) == _base_key(candidate):
+            return True
+    return False
+
+
+def _is_plain_local_fragment(parsed: urllib.parse.SplitResult) -> bool:
+    return not parsed.scheme and not parsed.netloc and not parsed.path and not parsed.query and bool(parsed.fragment)
+
+
+def _relative_same_document(
+    parsed_href: urllib.parse.SplitResult,
+    candidate: urllib.parse.SplitResult,
+) -> bool:
+    if parsed_href.scheme or parsed_href.netloc:
+        return False
+    if not parsed_href.fragment:
+        return False
+    if not parsed_href.path:
+        return bool(parsed_href.query)
+    return parsed_href.path.rstrip("/") == candidate.path.rstrip("/")
+
+
+def _same_arxiv_html_document(
+    left: urllib.parse.SplitResult,
+    right: urllib.parse.SplitResult,
+) -> bool:
+    left_parts = _arxiv_html_parts(left)
+    right_parts = _arxiv_html_parts(right)
+    if left_parts is None or right_parts is None:
+        return False
+    left_id, left_version = left_parts
+    right_id, right_version = right_parts
+    if left_id != right_id:
+        return False
+    return left_version == right_version or left_version is None or right_version is None
+
+
+def _arxiv_html_parts(parsed: urllib.parse.SplitResult) -> tuple[str, str | None] | None:
+    if parsed.netloc.lower() not in {"arxiv.org", "www.arxiv.org"}:
+        return None
+    match = _ARXIV_HTML_PATH_RE.match(parsed.path)
+    if match is None:
+        return None
+    return match.group("id"), match.group("version")
+
+
+def _arxiv_abs_parts(parsed: urllib.parse.SplitResult) -> tuple[str, str | None] | None:
+    if parsed.netloc.lower() not in {"arxiv.org", "www.arxiv.org"}:
+        return None
+    match = _ARXIV_ABS_PATH_RE.match(parsed.path)
+    if match is None:
+        return None
+    return match.group("id"), match.group("version")
+
+
+def _base_key(parsed: urllib.parse.SplitResult) -> tuple[str, str, str, str]:
+    path = parsed.path.rstrip("/") or "/"
+    return (parsed.scheme.lower(), parsed.netloc.lower(), path, parsed.query)
+
+
+def _base_url_from_parsed(parsed: urllib.parse.SplitResult) -> str:
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+def _urlsplit_or_none(raw_url: str | None) -> urllib.parse.SplitResult | None:
+    if raw_url is None:
+        return None
+    value = unescape(str(raw_url)).strip()
+    if not value:
+        return None
+    try:
+        return urllib.parse.urlsplit(value)
+    except ValueError:
+        return None
