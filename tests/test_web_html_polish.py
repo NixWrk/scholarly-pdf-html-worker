@@ -149,6 +149,8 @@ def test_polish_web_html_document_extracts_arxiv_latexml_article() -> None:
     assert "publisher footer should disappear" not in result.html
     assert "self.__next_f.push" not in result.html
     assert 'href="#S1"' in result.html
+    assert "#web-doc :target" in result.html
+    assert "outline: 3px solid" in result.html
 
 
 def test_polish_web_html_document_extracts_pmc_article() -> None:
@@ -208,6 +210,42 @@ def test_polish_web_html_document_extracts_taylor_francis_nlm_fulltext() -> None
     assert 'href="#S0001"' in result.html
 
 
+def test_taylor_francis_polish_rewrites_script_backed_internal_controls() -> None:
+    html = f"""
+    <html>
+      <head><title>Taylor Article</title></head>
+      <body>
+        <article class="NLM_article">
+          <div class="hlFld-Fulltext">
+            <div class="NLM_sec" id="S0001"><p>{" ".join([LONG_PARAGRAPH] * 20)}</p></div>
+            <p>
+              <a href="#" data-rid="CIT0001 CIT0002" data-ref-type="bibr">1-2</a>
+              <a href="#" data-rid="EN0001" data-ref-type="fn">note</a>
+              <a href="#" data-behaviour-ref="#references-Section1">References</a>
+              <button class="ref show-table-fig-ref" data-id="t0001">Table 1</button>
+              <a class="displaySizeTable" href="#" data-id="t0001" data-behaviour="show-popup">Display Table</a>
+            </p>
+            <div id="references-Section1"><ol><li id="CIT0001">Reference one.</li></ol></div>
+            <div id="EN0001">Footnote one.</div>
+            <div id="t0001"><table><tr><td>Value</td></tr></table></div>
+          </div>
+        </article>
+      </body>
+    </html>
+    """
+
+    result = polish_web_html_document(
+        html,
+        source_url="https://www.tandfonline.com/doi/full/10.1080/example",
+    )
+
+    assert 'href="#CIT0001"' in result.html
+    assert 'href="#EN0001"' in result.html
+    assert 'href="#references-Section1"' in result.html
+    assert '<a class="z2m-web-ref-button" href="#t0001">Table 1</a>' in result.html
+    assert '<a class="displaySizeTable" href="#t0001" data-id="t0001" data-behaviour="show-popup">' in result.html
+
+
 def test_polish_web_html_document_extracts_springer_nature_body() -> None:
     html = f"""
     <html>
@@ -232,6 +270,53 @@ def test_polish_web_html_document_extracts_springer_nature_body() -> None:
     assert "related articles" not in result.html
 
 
+def test_polish_web_html_document_rejects_known_non_full_text_web_pages() -> None:
+    researchgate_html = """
+    <html><body><h1>ResearchGate publication page</h1><a>Download full-text PDF</a></body></html>
+    """
+    sciendo_html = """
+    <html><body><div id="content-tabs"><button id="tab-button-article"></button>
+    <div id="abstract-content">Abstract only</div><script>self.__next_f.push([])</script></div></body></html>
+    """
+    ojs_html = """
+    <html><head><meta name="citation_pdf_url" content="https://almclinmed.ru/jour/article/download/335/341"></head>
+    <body><div id="articleAbstract">Abstract</div><div id="articleFullText">
+    <a class="file" href="/jour/article/download/335/341">PDF</a></div></body></html>
+    """
+
+    with pytest.raises(WebHtmlPolishError):
+        polish_web_html_document(researchgate_html, source_url="https://www.researchgate.net/publication/example")
+    with pytest.raises(WebHtmlPolishError):
+        polish_web_html_document(sciendo_html, source_url="https://content.sciendo.com/article/example")
+    with pytest.raises(WebHtmlPolishError):
+        polish_web_html_document(ojs_html, source_url="https://www.almclinmed.ru/jour/article/view/335")
+
+
+def test_sciendo_abstract_page_wins_over_article_body_css_noise() -> None:
+    html = """
+    <html><head><style>.article-body { display: block; }</style></head>
+    <body><div id="content-tabs"><button id="tab-button-article"></button>
+    <div id="abstract-content">Abstract only</div><script>self.__next_f.push([])</script></div></body></html>
+    """
+
+    assert (
+        detect_web_html_kind(html, source_url="https://content.sciendo.com/article/example")
+        == WebHtmlKind.SCIENDO_ABSTRACT_PAGE
+    )
+
+
+def test_researchgate_detector_does_not_reject_plain_mentions() -> None:
+    html = f"""
+    <html><body><article>
+      <h1>Article</h1>
+      <p>{" ".join([LONG_PARAGRAPH] * 20)}</p>
+      <p>Dataset mirrored on ResearchGate for visibility.</p>
+    </article></body></html>
+    """
+
+    assert detect_web_html_kind(html) == WebHtmlKind.GENERIC_ARTICLE
+
+
 def test_polish_web_html_file_inlines_local_images_without_marker_polish(tmp_path) -> None:
     image_path = tmp_path / "figure.png"
     image_path.write_bytes(PNG_BYTES)
@@ -254,6 +339,29 @@ def test_polish_web_html_file_inlines_local_images_without_marker_polish(tmp_pat
     assert result.inlined_images == 1
     assert 'data-z2m-src="figure.png?download=1"' in result.html
     assert 'src="data:image/png;base64,' in result.html
+
+
+def test_polish_web_html_file_inlines_local_srcset_images(tmp_path) -> None:
+    image_path = tmp_path / "figure.png"
+    image_path.write_bytes(PNG_BYTES)
+    html_path = tmp_path / "article.html"
+    html_path.write_text(
+        f"""
+        <html><body>
+          <article>
+            <h1>Article</h1>
+            <p>{" ".join([LONG_PARAGRAPH] * 20)}</p>
+            <picture><source srcset="figure.png 1x"></picture>
+          </article>
+        </body></html>
+        """,
+        encoding="utf-8",
+    )
+
+    result = polish_web_html_file(html_path)
+
+    assert result.inlined_images == 1
+    assert 'srcset="data:image/png;base64,' in result.html
 
 
 def test_generic_canonicalizer_infers_repeated_non_arxiv_self_links() -> None:
