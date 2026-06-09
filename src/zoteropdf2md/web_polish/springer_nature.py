@@ -7,8 +7,8 @@ from html import unescape
 import re
 import urllib.parse
 
-from ..html_links import _ATTR_HREF_RE
-from ..web_html_polish import (
+from ..html_links import ATTR_HREF_RE
+from .core import (
     _attr_value,
     WebArticleExtraction,
     WebHtmlKind,
@@ -89,7 +89,7 @@ def _retarget_float_label_links_to_containers(html: str) -> str:
         local_href = html_escape(f"#{container_id}", quote=True)
         return f"{match.group('prefix')}{quote}{local_href}{quote}"
 
-    return _ATTR_HREF_RE.sub(replace_href, html)
+    return ATTR_HREF_RE.sub(replace_href, html)
 
 
 def _springer_float_label_target_map(html: str) -> dict[str, str]:

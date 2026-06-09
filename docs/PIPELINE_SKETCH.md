@@ -25,12 +25,12 @@ Current production path in this extraction:
    - merges matching Zotero/pdf.js `*.overlays.json` data when supplied through
      `--zotero-overlay-dir`
 
-6. `zoteropdf2md.single_file_html.inline_images_from_html_file()`
+6. `zoteropdf2md.single_file_html.polish_and_inline_html_file()`
    - inlines image assets
    - calls `polish_html_document(citation_profile=...)`
    - saves `02.en.polish.html` through `html_stages.save_html_stage()`
 
-7. `experiments/lmstudio_instruct_translation/run_html_probe.py`
+7. `pdf-html-translate` / `zoteropdf2md.translation`
    - finds `02.en.polish.html`
    - calls `zoteropdf2md.gemma_html.translate_html_text_nodes()`
    - writes `03.ru.translate.html`

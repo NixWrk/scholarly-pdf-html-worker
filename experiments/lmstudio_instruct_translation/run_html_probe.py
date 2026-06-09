@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.translation.html_probe import main
+from zoteropdf2md.translation import main
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Any, Callable, Pattern
 
+from zoteropdf2md.html_stages import article_name_from_html_stage
 from zoteropdf2md.quality_loop.audit_blocks import normalize_ws
 
 
@@ -18,7 +19,7 @@ def source_pdf_path(raw_path: Path, *, pdf_source_stage: str) -> Path:
 
 
 def article_name_from_stage(stage_path: Path) -> str:
-    return stage_path.parent.parent.name if stage_path.parent.name == "_z2m_stages" else stage_path.parent.name
+    return article_name_from_html_stage(stage_path)
 
 
 def first_path_value(value: Any) -> str | None:

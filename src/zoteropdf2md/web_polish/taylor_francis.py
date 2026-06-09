@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-from ..html_links import _html_fragment_targets
-from ..web_html_polish import (
+from ..html_links import extract_html_fragment_targets
+from .core import (
     WebArticleExtraction,
     WebHtmlKind,
     _attr_value,
@@ -57,7 +57,7 @@ def normalize_article_fragment(
             "metrics",
         ),
     )
-    ids = _html_fragment_targets(html)
+    ids = extract_html_fragment_targets(html)
     html = _rewrite_data_behaviour_ref_links(html)
     html = _rewrite_data_rid_links(html)
     html = _rewrite_data_id_links(html, ids)

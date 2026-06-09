@@ -8,7 +8,6 @@ need source-aware normalization.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from html import escape as html_escape
 from html import unescape
 from pathlib import Path
@@ -22,36 +21,29 @@ from .html_images import (
     validate_data_url,
 )
 from .html_links import (
-    SameDocumentLinkCanonicalization,
     _ATTR_HREF_RE,
     _arxiv_abs_parts,
     _arxiv_html_parts,
-    _html_fragment_targets,
     _is_root_relative_url,
     _urlsplit_or_none,
     canonicalize_same_document_links,
     count_same_document_absolute_fragment_links,
     declared_document_urls as _declared_document_urls,
 )
-
-
-class WebHtmlKind(str, Enum):
-    """Known web HTML source kinds."""
-
-    ARXIV_ABS_PAGE = "arxiv_abs_page"
-    ARXIV_LATEXML = "arxiv_latexml"
-    PMC_ARTICLE = "pmc_article"
-    TAYLOR_FRANCIS_ARTICLE = "taylor_francis_article"
-    SPRINGER_NATURE_ARTICLE = "springer_nature_article"
-    RESEARCHGATE_PAGE = "researchgate_page"
-    SCIENDO_ABSTRACT_PAGE = "sciendo_abstract_page"
-    OJS_ABSTRACT_PAGE = "ojs_abstract_page"
-    GENERIC_ARTICLE = "generic_article"
-    UNKNOWN = "unknown"
-
-
-class WebHtmlPolishError(ValueError):
-    """Raised when a web HTML attachment cannot be polished as an article."""
+from .web_polish.core import (
+    WebArticleExtraction,
+    WebHtmlKind,
+    WebHtmlPolishError,
+    _attr_value,
+    _balanced_element_from_match,
+    _extract_fragment_by_attr_tokens,
+    _remove_elements_by_attr_tokens,
+    _set_attr_value,
+    _strip_non_article_payloads,
+    _visible_text,
+    _visible_text_length,
+    extract_generic_web_article_fragment,
+)
 
 
 @dataclass(frozen=True)
@@ -75,24 +67,6 @@ class WebHtmlFilePolishResult:
     inlined_images: int
 
 
-@dataclass(frozen=True)
-class WebArticleExtraction:
-    html: str
-    extracted: bool
-    selector: str | None
-    text_length: int
-
-
-@dataclass(frozen=True)
-class _ArticleCandidate:
-    html: str
-    tag: str
-    attrs: str
-    score: int
-    selector: str
-    text_length: int
-
-
 _IMG_SRC_RE = re.compile(
     r"(?P<prefix><img\b[^>]*?\ssrc\s*=\s*)(?P<quote>['\"])(?P<src>.*?)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
@@ -107,34 +81,6 @@ _ROOT_RELATIVE_URL_ATTR_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TITLE_RE = re.compile(r"<title\b[^>]*>(?P<title>[\s\S]*?)</title>", re.IGNORECASE)
-_BODY_RE = re.compile(r"<body\b[^>]*>(?P<body>[\s\S]*?)</body>", re.IGNORECASE)
-_ARTICLE_START_RE = re.compile(
-    r"<(?P<tag>article|main|section|div)\b(?P<attrs>[^<>]*)>",
-    re.IGNORECASE,
-)
-_HTML_TAG_RE = re.compile(r"</?(?P<tag>[A-Za-z][A-Za-z0-9:-]*)(?P<attrs>[^<>]*)?>", re.IGNORECASE)
-_TAG_RE = re.compile(r"<[^>]+>")
-_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
-_NON_ARTICLE_BLOCK_RE = re.compile(
-    r"<(?:script|style|noscript|template)\b[\s\S]*?</(?:script|style|noscript|template)>",
-    re.IGNORECASE,
-)
-_VOID_TAGS = {
-    "area",
-    "base",
-    "br",
-    "col",
-    "embed",
-    "hr",
-    "img",
-    "input",
-    "link",
-    "meta",
-    "param",
-    "source",
-    "track",
-    "wbr",
-}
 _WEB_READABILITY_STYLE = """<style data-z2m-style="web-html-polish">
 :root { color-scheme: light; }
 body {
@@ -582,43 +528,6 @@ def extract_web_article_fragment(html: str, *, kind: WebHtmlKind | None = None) 
     return extract_generic_web_article_fragment(html, kind=kind)
 
 
-def extract_generic_web_article_fragment(html: str, *, kind: WebHtmlKind | None = None) -> WebArticleExtraction:
-    """Extract an article-like fragment without publisher-specific rules."""
-
-    cleaned = _strip_non_article_payloads(html)
-    candidates: list[_ArticleCandidate] = []
-    for match in _ARTICLE_START_RE.finditer(cleaned):
-        tag = match.group("tag")
-        attrs = match.group("attrs")
-        if not _promising_article_start(tag, attrs, kind=kind):
-            continue
-        fragment = _balanced_element_from_match(cleaned, match)
-        if fragment is None:
-            continue
-        candidate = _score_article_candidate(fragment, tag, attrs, kind=kind)
-        if candidate is not None:
-            candidates.append(candidate)
-
-    if candidates:
-        best = max(candidates, key=lambda candidate: (candidate.score, candidate.text_length))
-        if best.score >= 1_500 and best.text_length >= 1_000:
-            return WebArticleExtraction(
-                html=best.html.strip(),
-                extracted=True,
-                selector=best.selector,
-                text_length=best.text_length,
-            )
-
-    body = _body_inner(cleaned) or cleaned
-    text_length = _visible_text_length(body)
-    return WebArticleExtraction(
-        html=body.strip(),
-        extracted=False,
-        selector="body" if body != cleaned else None,
-        text_length=text_length,
-    )
-
-
 def normalize_web_article_fragment(
     html: str,
     *,
@@ -669,110 +578,6 @@ def _extract_source_specific_article_fragment(
 
         return springer_nature.extract_article_fragment(html)
     return None
-
-
-def _extract_fragment_by_attr_tokens(
-    html: str,
-    *,
-    kind: WebHtmlKind,
-    token_selectors: tuple[tuple[str, str], ...],
-    min_text_length: int = 500,
-) -> WebArticleExtraction | None:
-    """Extract the best balanced element whose opening attrs match known tokens."""
-
-    cleaned = _strip_non_article_payloads(html)
-    candidates: list[_ArticleCandidate] = []
-    for token, selector in token_selectors:
-        token_lower = token.lower()
-        for match in _ARTICLE_START_RE.finditer(cleaned):
-            tag = match.group("tag")
-            attrs = match.group("attrs")
-            attrs_lower = unescape(attrs).lower()
-            if token_lower not in attrs_lower:
-                continue
-            fragment = _balanced_element_from_match(cleaned, match)
-            if fragment is None:
-                continue
-            candidate = _score_article_candidate(fragment, tag, attrs, kind=kind)
-            if candidate is None:
-                continue
-            candidates.append(
-                _ArticleCandidate(
-                    html=candidate.html,
-                    tag=candidate.tag,
-                    attrs=candidate.attrs,
-                    score=candidate.score + 50_000 - len(candidates),
-                    selector=selector,
-                    text_length=candidate.text_length,
-                )
-            )
-
-    if not candidates:
-        return None
-    best = max(candidates, key=lambda candidate: (candidate.score, candidate.text_length))
-    if best.text_length < min_text_length:
-        return None
-    return WebArticleExtraction(
-        html=best.html.strip(),
-        extracted=True,
-        selector=best.selector,
-        text_length=best.text_length,
-    )
-
-
-def _remove_elements_by_attr_tokens(
-    html: str,
-    tokens: tuple[str, ...],
-    *,
-    tags: tuple[str, ...] = ("aside", "div", "footer", "header", "nav", "section"),
-) -> str:
-    """Remove balanced elements whose opening tag attributes contain any token."""
-
-    lowered_tokens = tuple(token.lower() for token in tokens)
-    allowed_tags = {tag.lower() for tag in tags}
-    previous = None
-    cleaned = html
-    while previous != cleaned:
-        previous = cleaned
-        for match in list(_HTML_TAG_RE.finditer(cleaned)):
-            tag = match.group("tag").lower()
-            if tag not in allowed_tags or match.group(0).startswith("</"):
-                continue
-            attrs = unescape(match.group("attrs") or "").lower()
-            if not any(token in attrs for token in lowered_tokens):
-                continue
-            fragment = _balanced_element_from_match(cleaned, match)
-            if fragment is None:
-                continue
-            cleaned = cleaned[: match.start()] + " " + cleaned[match.start() + len(fragment) :]
-            break
-    return cleaned
-
-
-def _attr_value(attrs: str, name: str) -> str | None:
-    match = re.search(
-        rf"(?<![\w:-]){re.escape(name)}\s*=\s*(['\"])(?P<value>.*?)\1",
-        attrs,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if match is None:
-        return None
-    return unescape(match.group("value")).strip()
-
-
-def _set_attr_value(open_tag: str, name: str, value: str) -> str:
-    escaped_value = html_escape(value, quote=True)
-    attr_re = re.compile(
-        rf"(?P<prefix>(?<![\w:-]){re.escape(name)}\s*=\s*)(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
-        re.IGNORECASE | re.DOTALL,
-    )
-    if attr_re.search(open_tag):
-        return attr_re.sub(
-            lambda match: f"{match.group('prefix')}{match.group('quote')}{escaped_value}{match.group('quote')}",
-            open_tag,
-            count=1,
-        )
-    return re.sub(r">\s*$", f' {name}="{escaped_value}">', open_tag, count=1)
 
 
 def _looks_like_arxiv_abs_page(sample: str) -> bool:
@@ -862,170 +667,12 @@ def _looks_like_ojs_abstract_page(
     return "citation_pdf_url" in sample or "/article/download/" in sample or "class=\"file\"" in sample
 
 
-def _strip_non_article_payloads(html: str) -> str:
-    cleaned = _COMMENT_RE.sub(" ", html)
-    previous = None
-    while cleaned != previous:
-        previous = cleaned
-        cleaned = _NON_ARTICLE_BLOCK_RE.sub(" ", cleaned)
-    return cleaned
-
-
 def _document_title(html: str) -> str:
     match = _TITLE_RE.search(html)
     if match is None:
         return "Web Article"
     title = _visible_text(match.group("title"))
     return title or "Web Article"
-
-
-def _body_inner(html: str) -> str | None:
-    match = _BODY_RE.search(html)
-    if match is None:
-        return None
-    return match.group("body")
-
-
-def _balanced_element_from_match(html: str, start_match: re.Match[str]) -> str | None:
-    tag = start_match.group("tag").lower()
-    depth = 0
-    for match in _HTML_TAG_RE.finditer(html, start_match.start()):
-        token_tag = match.group("tag").lower()
-        if token_tag != tag:
-            continue
-        raw = match.group(0)
-        if raw.startswith("</"):
-            depth -= 1
-            if depth == 0:
-                return html[start_match.start() : match.end()]
-            continue
-        if raw.endswith("/>") or token_tag in _VOID_TAGS:
-            continue
-        depth += 1
-    return None
-
-
-def _score_article_candidate(
-    fragment: str,
-    tag: str,
-    attrs: str,
-    *,
-    kind: WebHtmlKind | None,
-) -> _ArticleCandidate | None:
-    text_length = _visible_text_length(fragment)
-    if text_length < 500:
-        return None
-
-    tag = tag.lower()
-    attrs_lower = unescape(attrs).lower()
-    fragment_probe = fragment[:300_000].lower()
-    score = min(text_length // 75, 3_000)
-    selector = tag
-
-    if "ltx_page_main" in attrs_lower:
-        score += 8_000
-        selector = ".ltx_page_main"
-    if "pmc-article" in attrs_lower:
-        score += 7_000
-        selector = ".pmc-article"
-    if "nlm_article" in attrs_lower:
-        score += 6_500
-        selector = ".NLM_article"
-    if "c-article-body" in attrs_lower:
-        score += 5_800
-        selector = ".c-article-body"
-    elif "article__body" in attrs_lower or "article-body" in attrs_lower:
-        score += 5_500
-        selector = ".article-body"
-    if "article-content" in attrs_lower or "article__content" in attrs_lower:
-        score += 5_000
-        selector = ".article-content"
-    if "hlfld-fulltext" in attrs_lower:
-        score += 3_200
-        selector = ".hlFld-Fulltext"
-    if 'id="main-content"' in attrs_lower or "'main-content'" in attrs_lower:
-        score += 3_000
-        selector = "#main-content"
-
-    if tag == "article":
-        score += 3_000
-        selector = "article" if selector == tag else selector
-    elif tag == "main":
-        score += 1_800
-        selector = "main" if selector == tag else selector
-
-    if tag == "article" and "pmc-article" in fragment_probe:
-        score += 3_000
-        selector = "article .pmc-article"
-    if tag == "article" and "c-article-body" in fragment_probe:
-        score += 2_500
-        selector = "article .c-article-body"
-    if tag == "article" and "nlm_article" in fragment_probe:
-        score += 2_500
-        selector = "article .NLM_article"
-    if "ltx_bibliography" in fragment_probe or "references" in fragment_probe or "bibliography" in fragment_probe:
-        score += 600
-
-    if "abstract" in attrs_lower and "fulltext" not in attrs_lower and text_length < 8_000:
-        score -= 2_500
-    if any(word in attrs_lower for word in ("navbar", "navigation", "footer", "header", "sidebar", "cookie")):
-        score -= 3_000
-
-    if kind == WebHtmlKind.ARXIV_LATEXML and "ltx_page_main" not in attrs_lower:
-        score -= 1_000
-    if kind == WebHtmlKind.RESEARCHGATE_PAGE and text_length < 12_000:
-        score -= 1_500
-
-    return _ArticleCandidate(
-        html=fragment,
-        tag=tag,
-        attrs=attrs,
-        score=score,
-        selector=selector,
-        text_length=text_length,
-    )
-
-
-def _promising_article_start(tag: str, attrs: str, *, kind: WebHtmlKind | None) -> bool:
-    tag = tag.lower()
-    if tag in {"article", "main"}:
-        return True
-
-    attrs_lower = unescape(attrs).lower()
-    if not attrs_lower:
-        return False
-
-    strong_tokens = (
-        "ltx_page_main",
-        "pmc-article",
-        "nlm_article",
-        "c-article-body",
-        "article__body",
-        "article-body",
-        "article__content",
-        "article-content",
-        "hlfld-fulltext",
-        "main-content",
-        "fulltext-view",
-        "article-section",
-    )
-    if any(token in attrs_lower for token in strong_tokens):
-        return True
-
-    if kind == WebHtmlKind.ARXIV_LATEXML and "ltx_" in attrs_lower:
-        return True
-    if tag == "section" and "jats" in attrs_lower and "article" in attrs_lower:
-        return True
-    return False
-
-
-def _visible_text_length(html: str) -> int:
-    return len(_visible_text(html))
-
-
-def _visible_text(html: str) -> str:
-    text = _TAG_RE.sub(" ", html)
-    return " ".join(unescape(text).split())
 
 
 def _wrap_web_article_html(

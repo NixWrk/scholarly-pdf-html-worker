@@ -33,12 +33,18 @@ if str(SRC) not in sys.path:
 
 from zoteropdf2md.html_images import to_data_url as _to_data_url  # noqa: E402
 from zoteropdf2md.html_images import validate_data_url as _validate_data_url  # noqa: E402
+from zoteropdf2md.html_stages import (  # noqa: E402
+    HTML_STAGE_DIR_NAME,
+    POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
+    article_dir_from_html_stage,
+)
 from zoteropdf2md.single_file_html import polish_html_document  # noqa: E402
 from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
 
 
-RAW_STAGE = "01.en.raw.html"
-POLISH_STAGE = "02.en.polish.html"
+RAW_STAGE = RAW_STAGE_NAME
+POLISH_STAGE = POLISH_STAGE_NAME
 IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
 
 
@@ -86,7 +92,7 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
         return [candidate]
 
     search_dirs = [html_path.parent]
-    if html_path.parent.name == "_z2m_stages":
+    if html_path.parent.name == HTML_STAGE_DIR_NAME:
         search_dirs.append(html_path.parent.parent)
     return [(base / decoded).resolve(strict=False) for base in search_dirs]
 
@@ -191,7 +197,7 @@ def repolish_file(
     )
     language_fields = language_decision.to_flat_report_fields()
     polish_path = raw_path.parent / POLISH_STAGE
-    article_dir = raw_path.parent.parent if raw_path.parent.name == "_z2m_stages" else raw_path.parent
+    article_dir = article_dir_from_html_stage(raw_path)
     if language_decision.should_skip:
         return RepolishResult(
             article=article_dir.name,

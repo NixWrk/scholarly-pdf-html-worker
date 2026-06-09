@@ -2,4 +2,10 @@
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from .core import WebArticleExtraction, WebHtmlKind, WebHtmlPolishError
+
+__all__ = [
+    "WebArticleExtraction",
+    "WebHtmlKind",
+    "WebHtmlPolishError",
+]

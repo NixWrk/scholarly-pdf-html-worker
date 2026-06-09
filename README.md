@@ -122,7 +122,8 @@ For LM Studio from a container, use a reachable host URL such as `http://host.do
 
 ## Source Layout
 
-- `src/zoteropdf2md/` - extracted pipeline and translation modules.
+- `src/zoteropdf2md/` - extracted conversion, polish, web-polish, quality-loop, and translation modules.
 - `src/pdf_html_translator/cli/` - small CLI wrappers for the extracted pipeline.
-- `experiments/lmstudio_instruct_translation/` - maintained Gemma/LM Studio translation runner.
+- `src/zoteropdf2md/translation/` - packaged Gemma/LM Studio translation runner used by `pdf-html-translate`.
+- `experiments/lmstudio_instruct_translation/` - compatibility and benchmark wrappers around the packaged translation runner.
 - `docs/` - decision/playbook documents kept with the extraction.

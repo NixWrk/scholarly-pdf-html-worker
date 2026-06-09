@@ -16,7 +16,15 @@ from typing import Any, Iterable
 from urllib.parse import unquote, urlsplit
 
 
-STAGE_NAME = "01.en.raw.html"
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from zoteropdf2md.html_stages import RAW_STAGE_NAME, article_name_from_html_stage  # noqa: E402
+
+
+STAGE_NAME = RAW_STAGE_NAME
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 BLOCK_TAGS = {
     "address",
@@ -607,7 +615,7 @@ def analyze_file(path: Path) -> dict[str, Any]:
     }
 
     return {
-        "article": path.parent.parent.name if path.parent.name == "_z2m_stages" else path.parent.name,
+        "article": article_name_from_html_stage(path),
         "stage_path": str(path),
         "run_log": str(path.with_suffix(".log")) if path.with_suffix(".log").exists() else None,
         "en_raw_summary": summary,

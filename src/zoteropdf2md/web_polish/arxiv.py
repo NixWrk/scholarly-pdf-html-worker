@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..web_html_polish import (
+from .core import (
     WebArticleExtraction,
     WebHtmlKind,
     _extract_fragment_by_attr_tokens,

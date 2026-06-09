@@ -12,7 +12,7 @@ from .attachments import resolve_pdf_attachments
 from .citation_profile import build_citation_profile_from_pdf
 from .export_modes import ExportMode, get_export_mode_spec, parse_export_mode
 from .history import append_history
-from .html_stages import html_stage_dir_for_html, save_html_stage
+from .html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME, html_stage_dir_for_html, save_html_stage
 from .llm_bundle import LlmBundleResult, create_llm_bundle
 from .marker_runner import MarkerRunner
 from .models import AttachmentRecord, PipelineSummary, ResolvedAttachment, StagedFile
@@ -72,6 +72,7 @@ class PipelineOptions:
     # Comma-separated export modes, e.g. "classic" or "classic,llm_bundle".
     # Multiple modes sharing the same marker_output_format run with one Marker call.
     export_mode: str = ExportMode.CLASSIC.value
+    # Legacy GUI flag. Package automation should run pdf-html-translate after conversion.
     translate_html_with_gemma: bool = False
     translation_target_language_code: str = "ru"
     translation_source_language: str = "English"
@@ -904,7 +905,7 @@ def run_pipeline(
                         raw_html = html_path.read_text(encoding="utf-8", errors="replace")
                         raw_stage = save_html_stage(
                             stage_dir,
-                            "01.en.raw.html",
+                            RAW_STAGE_NAME,
                             raw_html,
                             "en.raw.marker",
                             source_path=html_path,
@@ -943,7 +944,7 @@ def run_pipeline(
                         html_path.write_text(result.html, encoding="utf-8")
                         polish_stage = save_html_stage(
                             stage_dir,
-                            "02.en.polish.html",
+                            POLISH_STAGE_NAME,
                             result.html,
                             "en.polish.inline_images",
                             source_path=html_path,
@@ -974,12 +975,10 @@ def run_pipeline(
                 translated_html_language_name = language_name_for_code(
                     translated_html_language_code
                 )
-                translated_html_failed_total += len(converted_staged_files)
                 log(
-                    "Gemma HTML translation is handled by the LM Studio runner, "
-                    "not by the GUI pipeline. Use "
-                    "experiments/lmstudio_instruct_translation/run_html_probe.py "
-                    "for Gemma translation output."
+                    "Gemma HTML translation is handled by the package translation runner, "
+                    "not by the PDF conversion pipeline. Use pdf-html-translate "
+                    "for 03.ru.translate.html output."
                 )
                 _log_elapsed(log, "pipeline.gemma_html", started_at)
             elif options.translate_html_with_gemma and marker_output_format != "html":

@@ -7,6 +7,9 @@ from pathlib import Path
 
 HTML_STAGE_DIR_NAME = "_z2m_stages"
 HTML_STAGE_LOG_NAME = "stage.log"
+RAW_STAGE_NAME = "01.en.raw.html"
+POLISH_STAGE_NAME = "02.en.polish.html"
+TRANSLATE_STAGE_NAME = "03.ru.translate.html"
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,18 @@ def html_stage_dir_for_html(html_path: Path) -> Path:
 
 def html_stage_log_path(stage_dir: Path) -> Path:
     return stage_dir / HTML_STAGE_LOG_NAME
+
+
+def is_html_stage_path(path: Path) -> bool:
+    return path.parent.name == HTML_STAGE_DIR_NAME
+
+
+def article_dir_from_html_stage(stage_path: Path) -> Path:
+    return stage_path.parent.parent if is_html_stage_path(stage_path) else stage_path.parent
+
+
+def article_name_from_html_stage(stage_path: Path) -> str:
+    return article_dir_from_html_stage(stage_path).name
 
 
 def append_html_stage_log(stage_dir: Path, message: str) -> Path:

@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 import urllib.parse
 
-from ..html_links import _html_fragment_targets
-from ..web_html_polish import (
+from ..html_links import extract_html_fragment_targets
+from .core import (
     WebArticleExtraction,
     WebHtmlKind,
     _attr_value,
@@ -64,7 +64,7 @@ def normalize_article_fragment(
 
 
 def _rewrite_float_path_links(html: str) -> str:
-    ids = _html_fragment_targets(html)
+    ids = extract_html_fragment_targets(html)
     if not ids:
         return html
 

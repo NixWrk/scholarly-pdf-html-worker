@@ -6,7 +6,7 @@ stable full-text article HTML, so the web polish route rejects them by design.
 
 from __future__ import annotations
 
-from ..web_html_polish import WebHtmlPolishError
+from .core import WebHtmlPolishError
 
 
 def raise_not_full_text() -> None:

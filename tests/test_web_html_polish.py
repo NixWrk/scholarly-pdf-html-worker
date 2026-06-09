@@ -4,6 +4,10 @@ from zoteropdf2md.html_links import (
     canonicalize_same_document_links as canonicalize_links_from_shared_module,
     count_same_document_absolute_fragment_links as count_links_from_shared_module,
 )
+from zoteropdf2md.web_polish.core import (
+    WebHtmlKind as CoreWebHtmlKind,
+    WebHtmlPolishError as CoreWebHtmlPolishError,
+)
 from zoteropdf2md.web_html_polish import (
     WebHtmlKind,
     WebHtmlPolishError,
@@ -48,6 +52,11 @@ LONG_PARAGRAPH = (
 )
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nz2m-test-image"
+
+
+def test_web_html_polish_reexports_core_types() -> None:
+    assert WebHtmlKind is CoreWebHtmlKind
+    assert WebHtmlPolishError is CoreWebHtmlPolishError
 
 
 def test_detect_web_html_kind_distinguishes_arxiv_latexml_from_abs_page() -> None:

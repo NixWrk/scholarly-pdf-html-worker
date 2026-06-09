@@ -18,10 +18,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from zoteropdf2md.html_stages import RAW_STAGE_NAME, article_name_from_html_stage
 from zoteropdf2md.language_detect import detect_language_from_html, language_gate_decision
 
 
-RAW_STAGE = "01.en.raw.html"
+RAW_STAGE = RAW_STAGE_NAME
 RUN_DATE = datetime.now().strftime("%Y-%m-%d")
 
 
@@ -71,7 +72,7 @@ def _load_alias_maps(roots: Iterable[Path]) -> dict[str, dict[str, Any]]:
 
 
 def _article_alias(raw_path: Path) -> str:
-    return raw_path.parent.parent.name if raw_path.parent.name == "_z2m_stages" else raw_path.parent.name
+    return article_name_from_html_stage(raw_path)
 
 
 def analyze_raw_stage(

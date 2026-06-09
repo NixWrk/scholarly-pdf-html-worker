@@ -6,7 +6,8 @@ from pathlib import Path
 import argparse
 import sys
 
-from ..web_html_polish import WebHtmlKind, WebHtmlPolishError, detect_web_html_kind, polish_web_html_file
+from .core import WebHtmlKind, WebHtmlPolishError
+from ..web_html_polish import detect_web_html_kind, polish_web_html_file
 
 
 def run_web_polish_cli(expected_kind: WebHtmlKind | None = None) -> int:

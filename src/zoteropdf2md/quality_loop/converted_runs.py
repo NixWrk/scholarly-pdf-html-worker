@@ -12,6 +12,7 @@ from typing import Any, Iterable
 
 from zoteropdf2md.citation_profile import infer_citation_style_from_text
 from zoteropdf2md.html_links import count_same_document_absolute_fragment_links
+from zoteropdf2md.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
 
 from .run_utils import (
     article_dir_from_stage,
@@ -26,8 +27,8 @@ from .run_utils import (
 )
 
 
-RAW_STAGE = "01.en.raw.html"
-POLISH_STAGE = "02.en.polish.html"
+RAW_STAGE = RAW_STAGE_NAME
+POLISH_STAGE = POLISH_STAGE_NAME
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)

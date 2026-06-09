@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..web_html_polish import WebHtmlPolishError
+from .core import WebHtmlPolishError
 
 
 def raise_not_full_text() -> None:

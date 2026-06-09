@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from zoteropdf2md.html_stages import article_dir_from_html_stage
+
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -62,7 +64,7 @@ def profile_value(profile: dict[str, Any], key: str, default: str = "") -> str:
 
 
 def article_dir_from_stage(stage_path: Path) -> Path:
-    return stage_path.parent.parent if stage_path.parent.name == "_z2m_stages" else stage_path.parent
+    return article_dir_from_html_stage(stage_path)
 
 
 def article_name_from_stage(stage_path: Path) -> str:

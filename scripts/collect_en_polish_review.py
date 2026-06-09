@@ -22,9 +22,14 @@ if str(SRC) not in sys.path:
 
 from zoteropdf2md.html_images import to_data_url as _to_data_url  # noqa: E402
 from zoteropdf2md.html_images import validate_data_url as _validate_data_url  # noqa: E402
+from zoteropdf2md.html_stages import (  # noqa: E402
+    HTML_STAGE_DIR_NAME,
+    POLISH_STAGE_NAME,
+    article_dir_from_html_stage,
+)
 
 
-POLISH_STAGE = "02.en.polish.html"
+POLISH_STAGE = POLISH_STAGE_NAME
 IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\bsrc\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
 
 
@@ -68,7 +73,7 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
         return [candidate]
 
     search_dirs = [html_path.parent]
-    if html_path.parent.name == "_z2m_stages":
+    if html_path.parent.name == HTML_STAGE_DIR_NAME:
         search_dirs.append(html_path.parent.parent)
     return [(base / decoded).resolve(strict=False) for base in search_dirs]
 
@@ -102,7 +107,7 @@ def _add_src_hint(prefix: str, hint_path: str) -> str:
 
 
 def _inline_image_assets(polish_path: Path, target_dir: Path) -> ReviewCopy:
-    article_dir = polish_path.parent.parent if polish_path.parent.name == "_z2m_stages" else polish_path.parent
+    article_dir = article_dir_from_html_stage(polish_path)
     article = article_dir.name
     html = polish_path.read_text(encoding="utf-8", errors="replace")
     inlined_images: list[str] = []
@@ -169,7 +174,7 @@ def collect_review_set(roots: list[Path], out_dir: Path) -> dict[str, object]:
     out_dir.mkdir(parents=True, exist_ok=True)
     copies: list[ReviewCopy] = []
     for index, polish_path in enumerate(polish_files, start=1):
-        article_dir = polish_path.parent.parent if polish_path.parent.name == "_z2m_stages" else polish_path.parent
+        article_dir = article_dir_from_html_stage(polish_path)
         target_dir = out_dir / f"{index:02d}_{_slug(article_dir.name)}"
         copies.append(_inline_image_assets(polish_path, target_dir))
 

@@ -22,6 +22,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from zoteropdf2md.html_stages import HTML_STAGE_DIR_NAME, POLISH_STAGE_NAME, RAW_STAGE_NAME
 from zoteropdf2md.quality_loop.audit_blocks import (
     Block,
     Defect,
@@ -98,8 +99,8 @@ from zoteropdf2md.quality_loop.audit_p62 import (
 )
 
 
-RAW_STAGE = "01.en.raw.html"
-POLISH_STAGE = "02.en.polish.html"
+RAW_STAGE = RAW_STAGE_NAME
+POLISH_STAGE = POLISH_STAGE_NAME
 PDF_SOURCE_STAGE = "00.source.pdf"
 
 REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
@@ -997,7 +998,7 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
         return [candidate]
 
     search_dirs = [html_path.parent]
-    if html_path.parent.name == "_z2m_stages":
+    if html_path.parent.name == HTML_STAGE_DIR_NAME:
         search_dirs.append(html_path.parent.parent)
     return [(base / decoded).resolve(strict=False) for base in search_dirs]
 

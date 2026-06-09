@@ -27,10 +27,16 @@ from zoteropdf2md.gemma_html import (
     _mark_author_line_notranslate,
     translate_html_text_nodes,
 )
+from zoteropdf2md.html_stages import (
+    HTML_STAGE_DIR_NAME,
+    POLISH_STAGE_NAME,
+    TRANSLATE_STAGE_NAME,
+    article_dir_from_html_stage,
+)
 
 
-STAGE_INPUT_NAME = "02.en.polish.html"
-TRANSLATE_OUTPUT_NAME = "03.ru.translate.html"
+STAGE_INPUT_NAME = POLISH_STAGE_NAME
+TRANSLATE_OUTPUT_NAME = TRANSLATE_STAGE_NAME
 
 HIDDEN_TEXT_TAGS = {"script", "style", "svg", "math"}
 SENTINEL_PATTERN = re.compile(r"@@Z2M|<z2m|zz2m", re.IGNORECASE)
@@ -100,8 +106,8 @@ def safe_name(value: str, *, max_len: int = 120) -> str:
 
 
 def article_label(source_path: Path) -> str:
-    if source_path.name == STAGE_INPUT_NAME and source_path.parent.name == "_z2m_stages":
-        return source_path.parent.parent.name
+    if source_path.name == STAGE_INPUT_NAME and source_path.parent.name == HTML_STAGE_DIR_NAME:
+        return article_dir_from_html_stage(source_path).name
     if source_path.name == STAGE_INPUT_NAME:
         return source_path.parent.name
     return source_path.stem
@@ -458,7 +464,7 @@ def run(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the old marker/window HTML translation protocol through LM Studio instruct models."
+        description="Translate polished EN HTML stages through LM Studio instruct models."
     )
     parser.add_argument("--input-dir", default="manual_review_en_polish_inlined_2026-04-27_round6")
     parser.add_argument("--output-dir", default="bench_lmstudio_instruct")

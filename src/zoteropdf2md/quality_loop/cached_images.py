@@ -9,6 +9,7 @@ import re
 import urllib.parse
 
 from zoteropdf2md.html_images import to_data_url, validate_data_url
+from zoteropdf2md.html_stages import HTML_STAGE_DIR_NAME
 
 from .converted_runs import POLISH_STAGE, RAW_STAGE
 from .run_utils import article_dir_from_stage, load_json
@@ -149,7 +150,7 @@ def article_source_image_dirs(source_run_dir: Path, article: str) -> list[Path]:
         if not value:
             return
         stage_path = Path(str(value)).resolve(strict=False)
-        if stage_path.name in {RAW_STAGE, POLISH_STAGE} or stage_path.parent.name == "_z2m_stages":
+        if stage_path.name in {RAW_STAGE, POLISH_STAGE} or stage_path.parent.name == HTML_STAGE_DIR_NAME:
             article_dir = article_dir_from_stage(stage_path)
         else:
             article_dir = stage_path.parent

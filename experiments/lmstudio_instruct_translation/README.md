@@ -1,9 +1,11 @@
 # LM Studio instruct translation experiments
 
-This folder is an isolated probe for testing the old marker/window HTML
-translation protocol with a real instruct model served by LM Studio.
+This folder keeps benchmark and compatibility wrappers for the packaged
+LM Studio HTML translation runner.
 
-It is the only maintained Gemma HTML translation path in this project.
+The maintained production path is `pdf-html-translate`, backed by
+`zoteropdf2md.translation`.  The scripts here delegate to that package code
+where they need the production runner/client.
 
 ## What it tests
 

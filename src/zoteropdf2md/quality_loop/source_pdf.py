@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from zoteropdf2md.html_stages import HTML_STAGE_DIR_NAME, article_dir_from_html_stage
+
 
 def _load_json(path: Path, default: Any | None = None) -> Any:
     if not path.is_file():
@@ -49,7 +51,7 @@ def manifest_article_for(manifest: dict[str, Any], article: str) -> dict[str, An
 
 
 def article_dir_from_stage(stage_path: Path) -> Path:
-    return stage_path.parent.parent if stage_path.parent.name == "_z2m_stages" else stage_path.parent
+    return article_dir_from_html_stage(stage_path)
 
 
 def configured_path_prefix_pairs(repo_root: Path) -> list[tuple[str, str]]:
@@ -120,7 +122,7 @@ def source_export_dirs_from_stage_related_path(
     if not value:
         return []
     path = Path(str(value)).resolve(strict=False)
-    if path.name in {raw_stage, polish_stage} or path.parent.name == "_z2m_stages":
+    if path.name in {raw_stage, polish_stage} or path.parent.name == HTML_STAGE_DIR_NAME:
         article_dir = article_dir_from_stage(path)
     else:
         article_dir = path

@@ -4,10 +4,17 @@ import argparse
 import atexit
 import json
 import re
+import sys
 from pathlib import Path
 from time import perf_counter
 
-from lmstudio_client import (
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from zoteropdf2md.translation.lmstudio_client import (  # noqa: E402
     DEFAULT_CONTEXT_LENGTH,
     DEFAULT_MODEL,
     LMStudioConfig,

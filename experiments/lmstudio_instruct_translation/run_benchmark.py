@@ -7,10 +7,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from lmstudio_client import unload_lms_model
-
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from zoteropdf2md.translation.lmstudio_client import unload_lms_model  # noqa: E402
 
 
 @dataclass(frozen=True)

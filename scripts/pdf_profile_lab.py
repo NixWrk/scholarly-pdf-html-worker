@@ -36,13 +36,14 @@ from zoteropdf2md.citation_profile import (  # noqa: E402
     build_citation_profile_from_pdf,
     merge_citation_profile_with_zotero_overlays,
 )
+from zoteropdf2md.html_stages import RAW_STAGE_NAME, article_dir_from_html_stage  # noqa: E402
 from zoteropdf2md.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
 )
 
 
-RAW_STAGE = "01.en.raw.html"
+RAW_STAGE = RAW_STAGE_NAME
 SOURCE_MAP = "_source_filename_map.csv"
 SUFFIX_RE = re.compile(r"_([0-9a-f]{8})(?:\.pdf)?$", re.IGNORECASE)
 
@@ -167,7 +168,7 @@ def run_lab(
     pdf_by_suffix = _load_pdf_map(source_root)
     articles: list[LabArticle] = []
     for raw_stage in find_raw_files(source_root):
-        article_dir = raw_stage.parent.parent if raw_stage.parent.name == "_z2m_stages" else raw_stage.parent
+        article_dir = article_dir_from_html_stage(raw_stage)
         suffix = _article_suffix(article_dir.name)
         if suffixes is not None and suffix not in suffixes:
             continue
