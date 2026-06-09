@@ -43,7 +43,14 @@ from .html_references import (
     REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN,
 )
 from .polish_language import PolishLanguagePolicy, resolve_polish_language_policy
-from .raw_html_polish import default_polish_phase_names
+from .raw_html_polish import (
+    DEFAULT_POLISH_PHASES,
+    ExecutablePolishPhase,
+    RawPolishContext,
+    RawPolishState,
+    default_polish_phase_names,
+    run_polish_phases,
+)
 from .semantic_labels import (
     figure_key_from_visible_number as _figure_key_from_visible_number,
     normalize_table_key as _normalize_table_key,
@@ -21697,26 +21704,16 @@ def _split_table_units_before_section_headings(html: str) -> str:
     return current
 
 
-def polish_html_phase_names() -> tuple[str, ...]:
-    """Return the documented raw HTML polish phase order."""
+def _raw_polish_context_language_policy(context: RawPolishContext) -> PolishLanguagePolicy:
+    if context.language_policy is None:
+        raise ValueError("Raw polish context has no language policy")
+    return context.language_policy
 
-    return default_polish_phase_names()
 
-
-def polish_html_document(
-    html: str,
-    *,
-    table_caption_language: str = "ru",
-    enable_citation_linkify: bool = True,
-    citation_profile: Any | None = None,
-    image_cache: Mapping[str, str] | None = None,
-    polish_language: str | None = None,
-) -> str:
-    language_policy = resolve_polish_language_policy(
-        polish_language,
-        table_caption_language=table_caption_language,
-    )
-    polished = _unwrap_spurious_math_captions(html)  # before all else: free captions from <math>
+def _polish_phase_pre_cleanup(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    del context
+    polished = state.html
+    polished = _unwrap_spurious_math_captions(polished)
     polished = _unwrap_nested_fig_links(polished)
     polished = _drop_page_header_footer_paragraphs(polished)
     polished = _drop_repeated_page_furniture(polished)
@@ -21741,7 +21738,13 @@ def polish_html_document(
     polished = _BYTE_TOKEN_ARTIFACT_PATTERN.sub("", polished)
     polished = _cleanup_marker_escape_artifacts(polished)
     polished = _strip_protocol_sentinel_leaks(polished)
-    polished = _convert_latex_sup_citations(polished)   # \(^{N}\) → <sup>N</sup>
+    return state.with_html(polished)
+
+
+def _polish_phase_math_and_units(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    del context
+    polished = state.html
+    polished = _convert_latex_sup_citations(polished)
     polished = _move_trailing_bracket_citations_out_of_inline_tex(polished)
     polished = _normalize_scientific_units(polished)
     polished = _mark_unit_exponent_superscripts(polished)
@@ -21762,6 +21765,12 @@ def polish_html_document(
     polished, _ = _reorder_table_block_away_from_formula_context(polished)
     polished, _ = _split_table_note_body_continuations(polished)
     polished, _ = _merge_split_table_note_continuation_paragraphs(polished)
+    return state.with_html(polished)
+
+
+def _polish_phase_frontmatter_and_footnotes(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    del context
+    polished = state.html
     polished = _mark_footnote_paragraphs_and_refs(polished)
     polished = _split_url_footnote_prose_tails(polished)
     polished = _repair_page_footnote_ref_links(polished)
@@ -21782,6 +21791,12 @@ def polish_html_document(
     polished, _ = _repair_known_float_body_intrusions(polished)
     polished, _ = _repair_sentence_breaks_around_metadata_blocks(polished)
     polished = _repair_known_sentence_boundary_artifacts(polished)
+    return state.with_html(polished)
+
+
+def _polish_phase_semantic_targets(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    del context
+    polished = state.html
     polished = _strip_reference_links_in_protected_blocks(polished)
     polished = _strip_pdf_line_number_artifacts(polished)
     polished = _strip_leading_reference_line_number_pairs_in_list_items(polished)
@@ -21794,7 +21809,24 @@ def polish_html_document(
     found_figures.update(recovered_figures)
     polished, found_boxes = _add_box_anchors(polished)
     polished, _ = _repair_known_float_body_intrusions(polished)
-    if enable_citation_linkify:
+    return state.with_updates(
+        html=polished,
+        found_sections=found_sections,
+        found_figures=found_figures,
+        found_tables=found_tables,
+        found_boxes=found_boxes,
+    )
+
+
+def _polish_phase_references_and_links(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    language_policy = _raw_polish_context_language_policy(context)
+    polished = state.html
+    citation_profile = context.citation_profile
+    found_sections = state.found_sections
+    found_figures = state.found_figures
+    found_tables = state.found_tables
+    found_boxes = state.found_boxes
+    if context.enable_citation_linkify:
         polished = _add_reference_ids_and_citation_links(polished, citation_profile=citation_profile)
         polished = _retarget_mismatched_ref_link_labels(polished)
         polished = _repair_ref_links_with_leading_closing_punctuation(polished)
@@ -21859,16 +21891,24 @@ def polish_html_document(
         polished = _link_table_refs(polished, found_tables)
         polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
         polished = _unwrap_nested_same_href_internal_links(polished)
+    return state.with_html(polished)
+
+
+def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    language_policy = _raw_polish_context_language_policy(context)
+    polished = state.html
+    table_caption_language = context.table_caption_language
+    citation_profile = context.citation_profile
     polished = _unwrap_leading_caption_page_anchors(polished)
     polished = _normalize_table_caption_style(polished, table_caption_language=table_caption_language)
     polished = _normalize_figure_caption_style(polished, figure_caption_language=table_caption_language)
     polished = _absorb_external_figure_captions_into_units(polished)
     polished, _ = _merge_biorender_caption_fragments(polished)
     polished, _ = _repair_caption_suffix_left_body_tail_right(polished)
-    polished, _ = _refresh_inlined_data_urls_by_cache(polished, image_cache=image_cache)
+    polished, _ = _refresh_inlined_data_urls_by_cache(polished, image_cache=context.image_cache)
     ru_caption_context = (
         table_caption_language == "ru"
-        and (not enable_citation_linkify or _looks_like_ru_html_content(polished))
+        and (not context.enable_citation_linkify or _looks_like_ru_html_content(polished))
     )
     polished, _ = _insert_missing_figure_warnings(
         polished,
@@ -21927,7 +21967,7 @@ def polish_html_document(
     polished, _ = _merge_biorender_caption_fragments(polished)
     if ru_caption_context:
         polished = _normalize_ru_reference_lexemes(polished)
-    if table_caption_language == "ru" and not enable_citation_linkify:
+    if table_caption_language == "ru" and not context.enable_citation_linkify:
         polished = _strip_english_heading_prefix_in_ru(polished)
         polished = _strip_long_english_runs_in_ru_text(polished)
     polished = _normalize_spacing_after_z2m_links(polished)
@@ -22002,15 +22042,26 @@ def polish_html_document(
     polished = _fix_false_sup_citations_in_decimals_and_figure_labels(polished)
     if language_policy.code == "en":
         polished = _repair_english_ocr_text_artifacts(polished)
+    return state.with_html(polished)
+
+
+def _polish_phase_presentation(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    del context
+    polished = state.html
     polished = _mark_wide_table_layout(polished)
     polished = _inject_utf8_charset(polished)
     polished = _inject_default_styles(polished)
     polished = _wrap_body_in_container(polished)
     polished = _cleanup_empty_html_blocks(polished)
-    polished = _fix_heading_translation_breaks(polished)  # ". <i>LC</i>" → " <i>LC</i>"
+    polished = _fix_heading_translation_breaks(polished)
     polished = _restore_abbreviations(polished)
-    # Static math LAST: KaTeX emits real HTML (incl. empty layout struts) that
-    # earlier DOM-cleanup passes would otherwise corrupt.
+    return state.with_html(polished)
+
+
+def _polish_phase_katex_and_final_repairs(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
+    language_policy = _raw_polish_context_language_policy(context)
+    polished = state.html
+    citation_profile = context.citation_profile
     polished = _render_katex_html(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     if not _should_suppress_numeric_ref_links_for_author_year(polished, citation_profile):
@@ -22029,7 +22080,60 @@ def polish_html_document(
     polished = _repair_confirmed_front_matter_artifacts(polished)
     polished = _normalize_double_escaped_url_anchor_text(polished)
     polished = _unwrap_broken_internal_semantic_links(polished)
-    return polished
+    return state.with_html(polished)
+
+
+_RAW_POLISH_PHASE_RUNNERS = {
+    "pre_cleanup": _polish_phase_pre_cleanup,
+    "math_and_units": _polish_phase_math_and_units,
+    "frontmatter_and_footnotes": _polish_phase_frontmatter_and_footnotes,
+    "semantic_targets": _polish_phase_semantic_targets,
+    "references_and_links": _polish_phase_references_and_links,
+    "float_units": _polish_phase_float_units,
+    "presentation": _polish_phase_presentation,
+    "katex_and_final_repairs": _polish_phase_katex_and_final_repairs,
+}
+
+
+def _raw_html_polish_phases() -> tuple[ExecutablePolishPhase, ...]:
+    phases: list[ExecutablePolishPhase] = []
+    for phase in DEFAULT_POLISH_PHASES:
+        runner = _RAW_POLISH_PHASE_RUNNERS[phase.name]
+        phases.append(ExecutablePolishPhase(name=phase.name, purpose=phase.purpose, run=runner))
+    return tuple(phases)
+
+
+def polish_html_phase_names() -> tuple[str, ...]:
+    """Return the documented raw HTML polish phase order."""
+
+    return default_polish_phase_names()
+
+
+def polish_html_document(
+    html: str,
+    *,
+    table_caption_language: str = "ru",
+    enable_citation_linkify: bool = True,
+    citation_profile: Any | None = None,
+    image_cache: Mapping[str, str] | None = None,
+    polish_language: str | None = None,
+) -> str:
+    language_policy = resolve_polish_language_policy(
+        polish_language,
+        table_caption_language=table_caption_language,
+    )
+    context = RawPolishContext(
+        table_caption_language=table_caption_language,
+        enable_citation_linkify=enable_citation_linkify,
+        citation_profile=citation_profile,
+        image_cache=image_cache,
+        language_policy=language_policy,
+    )
+    return run_polish_phases(
+        html,
+        context=context,
+        phases=_raw_html_polish_phases(),
+    ).html
 
 
 def _restore_abbreviations(html: str) -> str:
