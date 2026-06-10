@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any
 
 from zoteropdf2md.quality_loop.audit_pdf import PdfDiagnosticsCache
+from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
+from zoteropdf2md.quality_loop.audit_pdf import pdf_text_layer_defects
 
 
 def test_pdf_diagnostics_cache_caches_text_and_link_summaries(tmp_path: Path) -> None:
@@ -72,3 +74,21 @@ def test_pdf_diagnostics_cache_marks_override_without_storing(tmp_path: Path) ->
     assert text == "override text"
     assert summary["pdf_text_status"] == "override"
     assert summary["pdf_text_cache_status"] == "override"
+
+
+def test_pdf_text_layer_defects_reports_interleaved_terminal_sections() -> None:
+    pdf_text = "Funding\nSupplementary material\nReferences"
+    polish_html = "<h2>Funding</h2><h2>References</h2><h2>Supplementary material</h2>"
+    polish_blocks = parse_blocks(polish_html)
+
+    defects = pdf_text_layer_defects(
+        pdf_text,
+        polish_html,
+        polish_blocks,
+        references_heading_re=re.compile(r"^references$", re.IGNORECASE),
+        stage="02.en.polish.html",
+    )
+
+    assert [defect.id for defect in defects] == ["P24"]
+    assert defects[0].first_broken_stage == "02.en.polish.html"
+    assert defects[0].extra["pdf_positions"]["funding"] < defects[0].extra["pdf_positions"]["references"]

@@ -10,10 +10,12 @@ import threading
 from typing import Any, Callable, Pattern
 
 from zoteropdf2md.html_stages import article_name_from_html_stage
-from zoteropdf2md.quality_loop.audit_blocks import normalize_ws
+from zoteropdf2md.quality_loop.audit_blocks import Block, Defect, diagnostic_text, normalize_ws
+from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
 
 
 PDF_CITATION_DEST_RE = re.compile(r"^(?:cite|citation|bib)[.:]", re.IGNORECASE)
+PDF_DIAG_SECTION_SEQUENCE = ("funding", "supplementary material", "references")
 
 
 def source_pdf_path(raw_path: Path, *, pdf_source_stage: str) -> Path:
@@ -208,6 +210,75 @@ def load_pdf_diagnostic_text(
         "pdf_text_chars": len(text),
         "pdf_text_error": error,
     }
+
+
+def phrase_positions(text: str, phrases: tuple[str, ...]) -> dict[str, int]:
+    return {phrase: text.find(phrase) for phrase in phrases}
+
+
+def section_order_pdf_defects(
+    pdf_text: str,
+    polish_html: str,
+    polish_blocks: list[Block],
+    *,
+    references_heading_re: Pattern[str],
+    stage: str,
+) -> list[Defect]:
+    pdf_norm = diagnostic_text(pdf_text)
+    polish_norm = diagnostic_text(polish_html)
+    pdf_pos = phrase_positions(pdf_norm, PDF_DIAG_SECTION_SEQUENCE)
+    polish_pos = phrase_positions(polish_norm, PDF_DIAG_SECTION_SEQUENCE)
+
+    pdf_has_expected_order = (
+        pdf_pos["funding"] != -1
+        and pdf_pos["supplementary material"] != -1
+        and pdf_pos["references"] != -1
+        and pdf_pos["funding"] < pdf_pos["supplementary material"] < pdf_pos["references"]
+    )
+    polish_has_interleaved_refs = (
+        polish_pos["funding"] != -1
+        and polish_pos["supplementary material"] != -1
+        and polish_pos["references"] != -1
+        and polish_pos["funding"] < polish_pos["references"] < polish_pos["supplementary material"]
+    )
+    if not (pdf_has_expected_order and polish_has_interleaved_refs):
+        return []
+
+    ref_block = next((block for block in polish_blocks if references_heading_re.match(block.text)), None)
+    return [
+        make_defect(
+            defect_id="P24",
+            cc_class="CC-13/CC-14",
+            check="PDF text layer suggests end-section order differs from polish",
+            severity="warning",
+            block=ref_block,
+            snippet="PDF order: FUNDING -> SUPPLEMENTARY MATERIAL -> REFERENCES; polish order: FUNDING -> REFERENCES -> SUPPLEMENTARY MATERIAL",
+            stage=stage,
+            hypothesis="Marker or post-processing interleaved a two-column terminal section with the bibliography.",
+            proposed_fix_layer="PDF-aware EN polish diagnostics and end-section ordering repair",
+            regression_test="When PDF text has funding/supplementary material before references, audit warns if polish places references between them.",
+            extra={"pdf_positions": pdf_pos, "polish_positions": polish_pos},
+        )
+    ]
+
+
+def pdf_text_layer_defects(
+    pdf_text: str,
+    polish_html: str,
+    polish_blocks: list[Block],
+    *,
+    references_heading_re: Pattern[str],
+    stage: str,
+) -> list[Defect]:
+    if not pdf_text.strip():
+        return []
+    return section_order_pdf_defects(
+        pdf_text,
+        polish_html,
+        polish_blocks,
+        references_heading_re=references_heading_re,
+        stage=stage,
+    )
 
 
 class PdfDiagnosticsCache:

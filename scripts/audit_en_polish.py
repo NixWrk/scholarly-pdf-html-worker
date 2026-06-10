@@ -68,7 +68,9 @@ from zoteropdf2md.quality_loop.audit_pdf import (
     load_pdf_map as _load_pdf_map,
     PdfDiagnosticsCache as _PackagePdfDiagnosticsCache,
     pdf_citation_link_summary,
+    pdf_text_layer_defects as _pdf_text_layer_defects_impl,
     pdf_path_from_map_record as _pdf_path_from_map_record,
+    section_order_pdf_defects as _section_order_pdf_defects_impl,
     source_pdf_path,
 )
 from zoteropdf2md.quality_loop.audit_p04 import (
@@ -205,7 +207,6 @@ CAPTION_INTRUSION_RE = re.compile(
     r"human input\s*\(required\)\s+image-modeling task",
     re.IGNORECASE,
 )
-PDF_DIAG_SECTION_SEQUENCE = ("funding", "supplementary material", "references")
 INLINE_TEX_RE = re.compile(r"\\\(([\s\S]{0,800}?)\\\)")
 MATH_TAG_WITH_CITATION_RE = re.compile(r"<math\b[\s\S]{0,800}?\[\d+\][\s\S]{0,800}?</math>", re.IGNORECASE)
 EQUATION_ABSORB_RE = re.compile(
@@ -967,10 +968,6 @@ def _source_pdf_text_confirms_float_gap(left_text: str, right_text: str, pdf_tex
             re.IGNORECASE,
         )
     )
-
-
-def _phrase_positions(text: str, phrases: Iterable[str]) -> dict[str, int]:
-    return {phrase: text.find(phrase) for phrase in phrases}
 
 
 def _is_inline_or_remote_src(src: str) -> bool:
@@ -4694,42 +4691,13 @@ def _section_order_pdf_defects(
     polish_html: str,
     polish_blocks: list[Block],
 ) -> list[Defect]:
-    pdf_norm = _diagnostic_text(pdf_text)
-    polish_norm = _diagnostic_text(polish_html)
-    pdf_pos = _phrase_positions(pdf_norm, PDF_DIAG_SECTION_SEQUENCE)
-    polish_pos = _phrase_positions(polish_norm, PDF_DIAG_SECTION_SEQUENCE)
-
-    pdf_has_expected_order = (
-        pdf_pos["funding"] != -1
-        and pdf_pos["supplementary material"] != -1
-        and pdf_pos["references"] != -1
-        and pdf_pos["funding"] < pdf_pos["supplementary material"] < pdf_pos["references"]
+    return _section_order_pdf_defects_impl(
+        pdf_text,
+        polish_html,
+        polish_blocks,
+        references_heading_re=REFERENCES_HEADING_RE,
+        stage=POLISH_STAGE,
     )
-    polish_has_interleaved_refs = (
-        polish_pos["funding"] != -1
-        and polish_pos["supplementary material"] != -1
-        and polish_pos["references"] != -1
-        and polish_pos["funding"] < polish_pos["references"] < polish_pos["supplementary material"]
-    )
-    if not (pdf_has_expected_order and polish_has_interleaved_refs):
-        return []
-
-    ref_block = next((block for block in polish_blocks if REFERENCES_HEADING_RE.match(block.text)), None)
-    return [
-        _defect(
-            defect_id="P24",
-            cc_class="CC-13/CC-14",
-            check="PDF text layer suggests end-section order differs from polish",
-            severity="warning",
-            block=ref_block,
-            snippet="PDF order: FUNDING -> SUPPLEMENTARY MATERIAL -> REFERENCES; polish order: FUNDING -> REFERENCES -> SUPPLEMENTARY MATERIAL",
-            stage=POLISH_STAGE,
-            hypothesis="Marker or post-processing interleaved a two-column terminal section with the bibliography.",
-            proposed_fix_layer="PDF-aware EN polish diagnostics and end-section ordering repair",
-            regression_test="When PDF text has funding/supplementary material before references, audit warns if polish places references between them.",
-            extra={"pdf_positions": pdf_pos, "polish_positions": polish_pos},
-        )
-    ]
 
 
 def _pdf_text_layer_defects(
@@ -4737,9 +4705,13 @@ def _pdf_text_layer_defects(
     polish_html: str,
     polish_blocks: list[Block],
 ) -> list[Defect]:
-    if not pdf_text.strip():
-        return []
-    return _section_order_pdf_defects(pdf_text, polish_html, polish_blocks)
+    return _pdf_text_layer_defects_impl(
+        pdf_text,
+        polish_html,
+        polish_blocks,
+        references_heading_re=REFERENCES_HEADING_RE,
+        stage=POLISH_STAGE,
+    )
 
 
 def analyze_pair(
