@@ -7,6 +7,17 @@ import html as html_lib
 from typing import Callable
 
 from .html_references import REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN
+from .translation.batch_protocol import (
+    BATCH_ITEM_PATTERN as _BATCH_ITEM_PATTERN,
+    INTERNAL_MARKER_LEAK_PATTERN as _INTERNAL_MARKER_LEAK_PATTERN,
+    MAX_BATCH_CHARS as _MAX_BATCH_CHARS,
+    MAX_WINDOW_BATCH_CHARS as _MAX_WINDOW_BATCH_CHARS,
+    WINDOW_BATCH_OVERLAP_SEGMENTS as _WINDOW_BATCH_OVERLAP_SEGMENTS,
+    WINDOW_BATCH_TARGET_SEGMENTS as _WINDOW_BATCH_TARGET_SEGMENTS,
+    build_batch_text as _build_batch_text,
+    format_int_list as _format_int_list,
+    parse_batch_items as _parse_batch_items,
+)
 from .translation.languages import (
     DEFAULT_GEMMA_MODEL,
     DEFAULT_GEMMA_TARGET_LANGUAGE,
@@ -289,29 +300,6 @@ def _normalize_ws(text: str) -> str:
 # Batch translation helpers
 # ---------------------------------------------------------------------------
 
-# ID-addressed markers injected before each segment in batch mode.
-# Example payload:
-#   <z2m-i1/>First segment text...
-#   <z2m-i2/>Second segment text...
-_BATCH_ITEM_PATTERN = re.compile(
-    r"<z2m-i(\d+)\s*/>([\s\S]*?)(?=<z2m-i\d+\s*/>|\Z)",
-    re.IGNORECASE,
-)
-
-# Any internal protocol marker leaking into the final translated text means the
-# reconstructed batch output is not trustworthy and the segment should be
-# recovered locally through single-segment translation.
-_INTERNAL_MARKER_LEAK_PATTERN = re.compile(
-    r"<\s*z2m-[^>]*>|@@Z2M(?:\\?_)?[A-Z0-9_]+@{0,2}",
-    re.IGNORECASE,
-)
-
-# Safety limit: skip batch mode if the combined text exceeds this many characters
-# (rough estimate 4 chars в‰€ 1 token, limit в‰€ 50k tokens input).
-_MAX_BATCH_CHARS = 80_000
-_WINDOW_BATCH_TARGET_SEGMENTS = 8
-_WINDOW_BATCH_OVERLAP_SEGMENTS = 1
-_MAX_WINDOW_BATCH_CHARS = 40_000
 _HEADING_MERGE_SEPARATOR = "@@Z2M_HSEP@@"
 _HEADING_INLINE_MARKUP_TAGS = {"i", "em", "b", "strong"}
 _HEADING_PREFIX_TOKEN_PATTERN = re.compile(r"^\s*([A-Z]|[IVXLCM]{1,8})\.\s+", re.IGNORECASE)
@@ -536,15 +524,6 @@ def _sanitize_generation_config_for_greedy(generation_config: object | None) -> 
     _set("top_k", 50)
     _set("temperature", 1.0)
     _set("typical_p", 1.0)
-
-
-def _format_int_list(values: list[int], *, max_items: int = 8) -> str:
-    if not values:
-        return "[]"
-    if len(values) <= max_items:
-        return "[" + ",".join(str(v) for v in values) + "]"
-    head = ",".join(str(v) for v in values[:max_items])
-    return f"[{head},...+{len(values) - max_items}]"
 
 
 def _split_outer_ws(text: str) -> tuple[str, str, str]:
@@ -2982,10 +2961,7 @@ def _try_batch_translate_with_reason(
         fmaps.append(fmap)
         amaps.append(amap)
 
-    batch_text = "".join(
-        f"<z2m-i{idx}/>{seg}"
-        for idx, seg in enumerate(masked_segs, start=1)
-    )
+    batch_text = _build_batch_text(masked_segs)
     if len(batch_text) > max_batch_chars:
         return None, f"batch_too_long chars={len(batch_text)} max={max_batch_chars}"
     if max_batch_tokens > 0 and count_text_tokens is not None:
@@ -3004,25 +2980,18 @@ def _try_batch_translate_with_reason(
     translated_batch = _BYTE_TOKEN_CITATION_PATTERN.sub(r'<sup>\1</sup>', translated_batch)
     translated_batch = _BYTE_TOKEN_ARTIFACT_PATTERN.sub("", translated_batch)
 
-    matches = list(_BATCH_ITEM_PATTERN.finditer(translated_batch))
-    if not matches:
+    parsed_batch = _parse_batch_items(translated_batch)
+    if parsed_batch.block_count == 0:
         return None, "structured_parse_failed blocks=0"
 
-    parsed_by_id: dict[int, str] = {}
-    duplicate_ids: set[int] = set()
-    for match in matches:
-        item_id = int(match.group(1))
-        item_text = match.group(2)
-        if item_id in parsed_by_id:
-            duplicate_ids.add(item_id)
-            continue
-        parsed_by_id[item_id] = item_text
+    parsed_by_id = parsed_batch.parsed_by_id
+    duplicate_ids = parsed_batch.duplicate_ids
 
     if duplicate_ids:
-        _cascade_debug(f"batch_fail reason=duplicate_ids ids={_format_int_list(sorted(duplicate_ids))}")
+        _cascade_debug(f"batch_fail reason=duplicate_ids ids={_format_int_list(duplicate_ids)}")
         return None, (
             "duplicate_ids "
-            f"ids={_format_int_list(sorted(duplicate_ids))}"
+            f"ids={_format_int_list(duplicate_ids)}"
         )
 
     expected_ids = list(range(1, len(segments) + 1))
