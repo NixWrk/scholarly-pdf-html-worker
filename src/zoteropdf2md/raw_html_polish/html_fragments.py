@@ -10,6 +10,11 @@ TAG_SPLIT_PATTERN = re.compile(r"(<[^>]+>)")
 OPEN_TAG_PATTERN = re.compile(r"^<\s*([a-zA-Z0-9:_-]+)")
 CLOSE_TAG_PATTERN = re.compile(r"^<\s*/\s*([a-zA-Z0-9:_-]+)")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+# Splits on real HTML tags only. Unlike TAG_SPLIT_PATTERN, this never mistakes a
+# bare "<" from math text ("a < b", "x < 0") for a tag.
+MATH_TAG_SPLIT_PATTERN = re.compile(
+    r"(<!--[\s\S]*?-->|<![^<>]*>|</?[A-Za-z][^<>]*>)"
+)
 FLOAT_NODE_PATTERN = re.compile(
     r'^(?P<open><(?P<tag>p|h[1-6]|table)\b[^>]*>)(?P<body>[\s\S]*)(?P<close></(?P=tag)>)$',
     re.IGNORECASE,
@@ -25,6 +30,35 @@ def visible_text(fragment: str) -> str:
         .replace("\u00a0", " ")
     )
     return re.sub(r"\s+", " ", text).strip()
+
+
+def update_skip_stack_for_tags(
+    tag_fragment: str,
+    skip_stack: list[str],
+    skip_tags: set[str],
+) -> None:
+    raw = tag_fragment[:256].lstrip()
+    if not raw.startswith("<") or raw.startswith("<!--") or raw.startswith("<!"):
+        return
+
+    close_match = CLOSE_TAG_PATTERN.match(raw)
+    if close_match is not None:
+        tag_name = close_match.group(1).lower()
+        for idx in range(len(skip_stack) - 1, -1, -1):
+            if skip_stack[idx] == tag_name:
+                del skip_stack[idx]
+                break
+        return
+
+    if raw.endswith("/>"):
+        return
+
+    open_match = OPEN_TAG_PATTERN.match(raw)
+    if open_match is None:
+        return
+    tag_name = open_match.group(1).lower()
+    if tag_name in skip_tags:
+        skip_stack.append(tag_name)
 
 
 def append_class_to_attrs(attrs: str, class_name: str) -> str:

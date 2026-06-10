@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import functools
 import hashlib
 import html as html_lib
@@ -64,6 +63,7 @@ from .raw_html_polish.html_fragments import (
     DIV_TAG_PATTERN as _DIV_TAG_PATTERN,
     FLOAT_NODE_PATTERN as _FLOAT_NODE_PATTERN,
     HTML_TAG_PATTERN as _HTML_TAG_PATTERN,
+    MATH_TAG_SPLIT_PATTERN as _MATH_TAG_SPLIT_PATTERN,
     OPEN_TAG_PATTERN as _OPEN_TAG_PATTERN,
     TAG_SPLIT_PATTERN as _TAG_SPLIT_PATTERN,
     add_body_class as _add_body_class,
@@ -79,7 +79,25 @@ from .raw_html_polish.html_fragments import (
     remove_id_attr as _remove_id_attr,
     strip_node_id_and_add_class as _strip_node_id_and_add_class,
     transform_node_open as _transform_node_open,
+    update_skip_stack_for_tags as _update_skip_stack_for_tags,
     visible_text as _visible_text,
+)
+from .raw_html_polish.katex import (
+    KATEX_ASSET_DIR as _KATEX_ASSET_DIR,
+    KATEX_PLACEHOLDER_PATTERN as _KATEX_PLACEHOLDER_PATTERN,
+    KATEX_STYLE_MARKER as _KATEX_STYLE_MARKER,
+    MATHJAX_CONFIG_TAG_PATTERN as _MATHJAX_CONFIG_TAG_PATTERN,
+    MATHJAX_SCRIPT as _MATHJAX_SCRIPT,
+    MATHJAX_SCRIPT_TAG_PATTERN as _MATHJAX_SCRIPT_TAG_PATTERN,
+    STATIC_DISPLAY_TEX_PATTERN as _STATIC_DISPLAY_TEX_PATTERN,
+    STATIC_INLINE_TEX_PATTERN as _STATIC_INLINE_TEX_PATTERN,
+    close_katex_v8_context,
+    inject_katex_css as _inject_katex_css_impl,
+    inject_mathjax as _inject_mathjax_impl,
+    katex_inlined_css as _katex_inlined_css,
+    katex_v8_context as _katex_v8_context,
+    render_katex_html as _render_katex_html_impl,
+    strip_mathjax_scripts as _strip_mathjax_scripts,
 )
 from .raw_html_polish.presentation import (
     cleanup_empty_html_blocks as _cleanup_empty_html_blocks,
@@ -2822,17 +2840,6 @@ _REPEATED_PHRASE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_MATHJAX_SCRIPT = (
-    '<script>'
-    'MathJax={'
-    'tex:{inlineMath:[["$","$"],["\\\\(","\\\\)"]],displayMath:[["$$","$$"],["\\\\[","\\\\]"]]},'
-    'svg:{fontCache:"global"}'
-    '};'
-    '</script>\n'
-    '<script id="MathJax-script" async '
-    'src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>'
-)
-
 _DEFAULT_READABILITY_STYLE = """
 <style data-z2m-style="readable">
   :root { color-scheme: light; }
@@ -3348,183 +3355,15 @@ def _fix_latex_text_commands(html: str) -> str:
 
 
 def _inject_mathjax(html: str) -> str:
-    if 'MathJax-script' in html:
-        # Replace whatever MathJax was injected (e.g. by Marker with wrong delimiters)
-        # with our correctly-configured version.
-        html = re.sub(
-            r'<script[^>]*id="MathJax-script"[^>]*/?>.*?(?:</script>)?',
-            "",
-            html,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        html = re.sub(
-            r'<script[^>]*>[^<]*MathJax\s*=[^<]*</script>',
-            "",
-            html,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-    if not _HEAD_CLOSE_PATTERN.search(html):
-        html = _inject_default_styles(html)
-    # Use a lambda so re.sub does NOT process backslashes in the replacement string.
-    return _HEAD_CLOSE_PATTERN.sub(lambda _: f"{_MATHJAX_SCRIPT}\n</head>", html, count=1)
-
-
-_KATEX_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "katex"
-_KATEX_STYLE_MARKER = 'data-z2m-style="katex"'
-_STATIC_DISPLAY_TEX_PATTERN = re.compile(r"\\\[(?P<body>[\s\S]*?)\\\]")
-_STATIC_INLINE_TEX_PATTERN = re.compile(r"\\\((?P<body>[\s\S]*?)\\\)")
-_KATEX_PLACEHOLDER_PATTERN = re.compile("Z2MK([0-9]+)")
-# Splits on REAL HTML tags only. Unlike the generic _TAG_SPLIT_PATTERN
-# (``<[^>]+>``), this never mistakes a bare ``<`` from math text (``a < b``,
-# ``x < 0``) for a tag: a tag must start with a name/``/``/``!``/``?`` and a
-# real tag never contains ``<`` before its closing ``>`` (``[^<>]``). Our own
-# emitted tags stay safe because _escape_html_attr escapes ``<`` in attributes.
-_MATH_TAG_SPLIT_PATTERN = re.compile(
-    r"(<!--[\s\S]*?-->|<![^<>]*>|</?[A-Za-z][^<>]*>)"
-)
-_MATHJAX_SCRIPT_TAG_PATTERN = re.compile(
-    r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*>[\s\S]*?</script>|'
-    r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*/?>',
-    re.IGNORECASE,
-)
-_MATHJAX_CONFIG_TAG_PATTERN = re.compile(
-    r"<script\b[^>]*>[\s\S]*?\bMathJax\s*=[\s\S]*?</script>",
-    re.IGNORECASE,
-)
-
-
-@functools.lru_cache(maxsize=1)
-def _katex_inlined_css() -> str:
-    return (_KATEX_ASSET_DIR / "katex.inlined.css").read_text(encoding="utf-8")
-
-
-@functools.lru_cache(maxsize=1)
-def _katex_v8_context() -> Any:
-    """Embedded-V8 KaTeX context. Built once per process.
-
-    Raises ImportError if the optional ``mini-racer`` dependency is absent;
-    callers fall back to MathJax injection in that case.
-    """
-    from py_mini_racer import MiniRacer
-
-    ctx = MiniRacer()
-    ctx.eval((_KATEX_ASSET_DIR / "katex.min.js").read_text(encoding="utf-8"))
-    ctx.eval(
-        "globalThis.__z2m_katex=function(items){return items.map(function(it){"
-        "try{return katex.renderToString(it.t,{displayMode:!!it.d,"
-        "throwOnError:false,output:'html'});}"
-        "catch(e){return '<span class=\"z2m-math-error\">'"
-        "+String(e&&e.message||e)+'</span>';}});};"
-    )
-    return ctx
-
-
-def close_katex_v8_context() -> None:
-    """Close the cached MiniRacer context so CLI processes can exit cleanly."""
-    if _katex_v8_context.cache_info().currsize == 0:
-        return
-
-    try:
-        ctx = _katex_v8_context()
-    except Exception:
-        _katex_v8_context.cache_clear()
-        return
-
-    try:
-        close = getattr(ctx, "close", None)
-        if callable(close):
-            close()
-    finally:
-        _katex_v8_context.cache_clear()
-
-
-atexit.register(close_katex_v8_context)
-
-
-def _strip_mathjax_scripts(html: str) -> str:
-    html = _MATHJAX_SCRIPT_TAG_PATTERN.sub("", html)
-    return _MATHJAX_CONFIG_TAG_PATTERN.sub("", html)
+    return _inject_mathjax_impl(html, ensure_head=_inject_default_styles)
 
 
 def _inject_katex_css(html: str) -> str:
-    if _KATEX_STYLE_MARKER in html:
-        return html
-    style = f"<style {_KATEX_STYLE_MARKER}>\n{_katex_inlined_css()}\n</style>"
-    if not _HEAD_CLOSE_PATTERN.search(html):
-        html = _inject_default_styles(html)
-    # Lambda replacement so re.sub does not interpret backslashes in the CSS.
-    return _HEAD_CLOSE_PATTERN.sub(lambda _: f"{style}\n</head>", html, count=1)
+    return _inject_katex_css_impl(html, ensure_head=_inject_default_styles)
 
 
 def _render_katex_html(html: str) -> str:
-    r"""Replace ``\(...\)`` / ``\[...\]`` TeX with static KaTeX HTML so formulas
-    render in viewers that do not run JavaScript (e.g. Zotero's HTML reader).
-
-    The output is text (HTML+CSS), never a rasterised image, and the original
-    LaTeX is preserved verbatim in a ``data-z2m-tex`` attribute so a later
-    HTML→Markdown step can recover ``$...$`` for LLM consumption.
-
-    Idempotent: re-running leaves already-rendered spans untouched. If the
-    optional ``mini-racer`` dependency is missing it falls back to MathJax
-    script injection (browser-only rendering, previous behaviour).
-    """
-    original = html
-    html = _strip_mathjax_scripts(html)
-    if "\\(" not in html and "\\[" not in html:
-        return html
-
-    jobs: list[tuple[str, bool]] = []
-
-    def _mask_segment(text: str) -> str:
-        def _collect(match: re.Match[str], display: bool) -> str:
-            jobs.append((html_lib.unescape(match.group("body")), display))
-            return f"Z2MK{len(jobs) - 1}"
-
-        text = _STATIC_DISPLAY_TEX_PATTERN.sub(lambda m: _collect(m, True), text)
-        return _STATIC_INLINE_TEX_PATTERN.sub(lambda m: _collect(m, False), text)
-
-    parts = _MATH_TAG_SPLIT_PATTERN.split(html)
-    skip_stack: list[str] = []
-    for idx, part in enumerate(parts):
-        if not part:
-            continue
-        if _MATH_TAG_SPLIT_PATTERN.fullmatch(part):
-            _update_skip_stack(part, skip_stack)
-            continue
-        if skip_stack:
-            continue
-        if "\\(" in part or "\\[" in part:
-            parts[idx] = _mask_segment(part)
-
-    if not jobs:
-        # All TeX delimiters live inside skip regions (e.g. <code>): leave as-is.
-        return original
-
-    try:
-        ctx = _katex_v8_context()
-    except ImportError:
-        return _inject_mathjax(original)
-
-    rendered = ctx.call(
-        "__z2m_katex", [{"t": tex, "d": display} for tex, display in jobs]
-    )
-
-    def _expand(match: re.Match[str]) -> str:
-        job_index = int(match.group(1))
-        tex, display = jobs[job_index]
-        body = rendered[job_index] if job_index < len(rendered) else ""
-        css_class = (
-            "z2m-math z2m-math-display" if display else "z2m-math z2m-math-inline"
-        )
-        delimited = f"\\[{tex}\\]" if display else f"\\({tex}\\)"
-        attr = _escape_html_attr(delimited)
-        return (
-            f'<span class="{css_class}" role="math" '
-            f'data-z2m-tex="{attr}">{body}</span>'
-        )
-
-    out = _KATEX_PLACEHOLDER_PATTERN.sub(_expand, "".join(parts))
-    return _inject_katex_css(out)
+    return _render_katex_html_impl(html, ensure_head=_inject_default_styles)
 
 
 def _unescape_inline_sup_sub(html: str) -> str:
@@ -3642,35 +3481,6 @@ def _strip_protocol_sentinel_leaks(html: str) -> str:
     cleaned_html = re.sub(r"\s+\]", "]", cleaned_html)
     cleaned_html = re.sub(r"(?<=\s)-(?=[A-Z]{2,6}\b)", "", cleaned_html)
     return cleaned_html
-
-
-def _update_skip_stack_for_tags(
-    tag_fragment: str,
-    skip_stack: list[str],
-    skip_tags: set[str],
-) -> None:
-    raw = tag_fragment[:256].lstrip()
-    if not raw.startswith("<") or raw.startswith("<!--") or raw.startswith("<!"):
-        return
-
-    close_match = _CLOSE_TAG_PATTERN.match(raw)
-    if close_match is not None:
-        tag_name = close_match.group(1).lower()
-        for idx in range(len(skip_stack) - 1, -1, -1):
-            if skip_stack[idx] == tag_name:
-                del skip_stack[idx]
-                break
-        return
-
-    if raw.endswith("/>"):
-        return
-
-    open_match = _OPEN_TAG_PATTERN.match(raw)
-    if open_match is None:
-        return
-    tag_name = open_match.group(1).lower()
-    if tag_name in skip_tags:
-        skip_stack.append(tag_name)
 
 
 def _update_skip_stack(tag_fragment: str, skip_stack: list[str]) -> None:
