@@ -171,6 +171,13 @@ from zoteropdf2md.quality_loop.p62_matching import (  # noqa: E402
     pdf_page_visual_summaries as _p62_pdf_page_visual_summaries,
     tokenize_evidence_text as _tokenize_evidence_text,
 )
+from zoteropdf2md.quality_loop.p62_context import (  # noqa: E402
+    P62_MISSING_WARNING_TEXT_RE,
+    clean_context_fragment as _clean_p62_context_fragment_impl,
+    context_fragment as _p62_context_fragment_impl,
+    recovery_snippets as _p62_recovery_snippets_impl,
+    warning_context_from_html as _p62_warning_context_from_html_impl,
+)
 
 
 DEFAULT_GATE_CONFIG = ROOT / "configs" / "llm_quality_gates.json"
@@ -184,10 +191,6 @@ DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
 DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME = "p62_image_recovery_report.json"
 DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME = "polish_auto_repair_report.json"
 
-P62_MISSING_WARNING_TEXT_RE = re.compile(
-    r"\bFigure\s+(?P<label>[\w.-]+)\s+image\s+was\s+not\s+extracted\b",
-    re.IGNORECASE,
-)
 P62_LOW_FIDELITY_RECOVERY_SOURCES = {"pdf_page_render"}
 P62_PDF_DERIVED_RECOVERY_SOURCES = {
     "pdf_page_render",
@@ -526,33 +529,11 @@ def _find_polish_stage_path_for_article(
 
 
 def _clean_p62_context_fragment(fragment: str, *, max_len: int = 1400) -> str:
-    fragment = re.sub(r"(?is)<script\b[^>]*>.*?</script>", " ", fragment)
-    fragment = re.sub(r"(?is)<style\b[^>]*>.*?</style>", " ", fragment)
-    fragment = re.sub(r"(?is)<img\b[^>]*>", " [image] ", fragment)
-    text = _visible_html_text(fragment)
-    text = re.sub(r"[A-Za-z0-9+/]{120,}={0,2}", " ", text)
-    text = re.sub(
-        r"\bFigure\s+[\w.-]+\s+image\s+was\s+not\s+extracted\s+into\s+this\s+HTML\.\s+"
-        r"Please\s+check\s+the\s+original\s+PDF\s+for\s+the\s+missing\s+visual\s+content\.?",
-        " ",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = P62_MISSING_WARNING_TEXT_RE.sub(" ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return _compact_observation_text(text, max_len=max_len)
+    return _clean_p62_context_fragment_impl(fragment, max_len=max_len)
 
 
 def _p62_context_fragment(html: str, position: int, *, radius: int) -> str:
-    div_start = html.rfind("<div", 0, position)
-    div_end = html.find("</div>", position)
-    if div_start >= 0 and div_end >= 0 and div_end - position <= max(radius * 2, 20000):
-        candidate = html[div_start : div_end + len("</div>")]
-        if "z2m-missing" in candidate[: min(len(candidate), position - div_start + 2000)].casefold():
-            return candidate
-
-    before = min(600, max(200, radius // 5))
-    return html[max(0, position - before) : min(len(html), position + radius)]
+    return _p62_context_fragment_impl(html, position, radius=radius)
 
 
 def _p62_warning_context_from_html(
@@ -561,55 +542,7 @@ def _p62_warning_context_from_html(
     *,
     radius: int,
 ) -> tuple[str, str]:
-    if not html:
-        return "", "html_unavailable"
-    extra = _defect_extra(defect)
-    figure_label = str(extra.get("figure_label") or "").strip()
-    warning_index = int(extra.get("warning_index") or 0)
-    label_key = figure_label.casefold()
-
-    regex_matches: list[tuple[int, str]] = []
-    for match in P62_MISSING_WARNING_TEXT_RE.finditer(html):
-        match_label = str(match.group("label") or "").casefold()
-        if label_key and match_label != label_key:
-            continue
-        regex_matches.append((match.start(), "warning_text_regex"))
-    if regex_matches:
-        if warning_index > 0 and warning_index <= len(regex_matches):
-            position, source = regex_matches[warning_index - 1]
-        else:
-            position, source = regex_matches[0]
-        fragment = _p62_context_fragment(html, position, radius=radius)
-        return _clean_p62_context_fragment(fragment), source
-
-    snippet = str(defect.get("snippet") or "").strip()
-    needles = [snippet]
-    if figure_label:
-        needles.append(f"Figure {figure_label} image was not extracted")
-    html_lower = html.casefold()
-    for needle in needles:
-        if not needle:
-            continue
-        position = html.find(needle)
-        if position < 0:
-            position = html_lower.find(needle.casefold())
-        if position >= 0:
-            fragment = _p62_context_fragment(html, position, radius=radius)
-            return _clean_p62_context_fragment(fragment), "snippet_match"
-
-    missing_blocks = re.finditer(
-        r"(?is)<(?P<tag>[a-z0-9]+)\b[^>]*\bz2m-missing[^>]*>.*?</(?P=tag)>",
-        html,
-    )
-    for match in missing_blocks:
-        visible = _visible_html_text(match.group(0))
-        if figure_label and f"figure {figure_label}" not in visible.casefold():
-            continue
-        position = match.start()
-        fragment = _p62_context_fragment(html, position, radius=radius)
-        return _clean_p62_context_fragment(fragment), "missing_block_match"
-
-    return "", "warning_not_found"
+    return _p62_warning_context_from_html_impl(html, defect, radius=radius)
 
 
 def _p62_recovery_snippets(
@@ -618,22 +551,7 @@ def _p62_recovery_snippets(
     *,
     context_chars: int,
 ) -> tuple[list[str], str, str]:
-    context, context_source = _p62_warning_context_from_html(
-        html,
-        defect,
-        radius=max(800, context_chars),
-    )
-    snippets: list[str] = []
-    if context:
-        snippets.append(context)
-    snippet = _compact_observation_text(defect.get("snippet"), max_len=400)
-    if snippet and not context:
-        snippets.append(snippet)
-    extra = _defect_extra(defect)
-    figure_label = str(extra.get("figure_label") or "").strip()
-    if figure_label and context:
-        snippets.append(f"Fig. {figure_label}")
-    return snippets, context, context_source
+    return _p62_recovery_snippets_impl(html, defect, context_chars=context_chars)
 
 
 def _selected_pdf_candidate(
