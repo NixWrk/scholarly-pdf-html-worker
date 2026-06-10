@@ -16,6 +16,20 @@ from .translation.languages import (
     normalize_language_code,
     translated_html_output_path,
 )
+from .translation.prompt_guards import (
+    ORIGINAL_SECTION_PATTERN as _ORIGINAL_SECTION_PATTERN,
+    PROMPT_LEAK_PROTECTION_PATTERNS as _PROMPT_LEAK_PROTECTION_PATTERNS,
+    PROMPT_LEAK_SIGNATURE as _PROMPT_LEAK_SIGNATURE,
+    TRANSLATION_PREFIX_PATTERN as _TRANSLATION_PREFIX_PATTERN,
+    TRANSLATOR_REFUSAL_PATTERNS as _TRANSLATOR_REFUSAL_PATTERNS,
+    VISIBLE_PROMPT_LEAK_PATTERN as _VISIBLE_PROMPT_LEAK_PATTERN,
+    apply_prompt_leak_mask as _apply_prompt_leak_mask,
+    has_visible_prompt_leak as _has_visible_prompt_leak,
+    is_translator_refusal as _is_translator_refusal,
+    sanitize_prompt_leak_segment as _sanitize_prompt_leak_segment,
+    strip_prompt_leak_echo as _strip_prompt_leak_echo,
+    strip_source_echo as _strip_source_echo,
+)
 
 
 _TAG_SPLIT_PATTERN = re.compile(r"(<[^>]+>)")
@@ -67,105 +81,6 @@ _TAG_TOKEN_PATTERN = re.compile(r"@@Z2M\\?_T(\d+)(?:@@|@(?!@))", re.IGNORECASE)
 # Additional patterns for protecting specific abbreviations from translation
 _LATIN_ABBREV_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in LATIN_ABBREV_TO_RU.keys()]
 _RU_ABBREV_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in RU_ABBREV_TO_LATIN.keys()]
-
-# Patterns that mask meta-commentary prefixes the model sometimes emits before
-# the actual translation.  Abbreviations are no longer listed here: since commit 3b
-# the prompt already contains an abstract rule ("keep every 2+ uppercase Latin
-# letters"), masking them with <z2m-p> tokens causes them to be LOST when the
-# model drops the unfamiliar XML token.  Rely on the prompt rule instead.
-_PROMPT_LEAK_PROTECTION_PATTERNS = [
-    r'\b(?:translation|translated text)\s*:\s*',
-    r'\boriginal(?:\s+text)?\s*:\s*',
-    r'\b(?:source|исходн)(?:\s+текст)?\s*:\s*',
-]
-
-# Patterns that indicate the model produced a meta-commentary / refusal instead of a
-# translation.  When any of these match the translated output we fall back to the
-# original source text so that no garbage leaks into the HTML.
-_TRANSLATOR_REFUSAL_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"невозможно перевести", re.IGNORECASE),
-    re.compile(r"не могу перевести", re.IGNORECASE),
-    re.compile(r"не могу точно перевести", re.IGNORECASE),
-    re.compile(r"не удаётся перевести", re.IGNORECASE),
-    re.compile(r"пожалуйста.{0,40}предоставьте", re.IGNORECASE | re.DOTALL),
-    re.compile(r"без дополнительного контекста", re.IGNORECASE),
-    re.compile(r"нет достаточного контекста", re.IGNORECASE),
-    re.compile(r"i cannot translate", re.IGNORECASE),
-    re.compile(r"i(?:'m| am) unable to translate", re.IGNORECASE),
-    re.compile(r"please provide.{0,60}context", re.IGNORECASE | re.DOTALL),
-    re.compile(r"more context.{0,60}(?:to translate|for translation)", re.IGNORECASE | re.DOTALL),
-)
-
-_TRANSLATION_PREFIX_PATTERN = re.compile(
-    r"^\s*(?:translation|translated text|перевод)\s*:\s*",
-    re.IGNORECASE,
-)
-_ORIGINAL_SECTION_PATTERN = re.compile(
-    r"(?:\r?\n){1,2}\s*(?:original(?: text)?|source(?: text)?|исходн(?:ый|ого)\s+текст)\s*:\s*",
-    re.IGNORECASE,
-)
-
-# Guard against prompt-leak: if the model echoes back a comma-separated list of
-# uppercase Latin acronyms followed by wording that references translation/language
-# (the tail of our abbreviation instruction), strip the fragment so it never
-# reaches the rendered HTML.
-_PROMPT_LEAK_SIGNATURE = re.compile(
-    r'[A-Z]{2,},\s*[A-Z]{2,},\s*[A-Z]{2,}.*?(?:перевод|translation|язык|language).*?[\.\n]',
-    re.IGNORECASE | re.DOTALL,
-)
-_PROMPT_RULE_LEAK_PHRASES: tuple[str, ...] = (
-    "Rules:",
-    "Keep every sequence of 2 or more uppercase Latin letters",
-    "never transliterate them into Cyrillic",
-    "Do not translate or modify proper names",
-    "Output only the translation, nothing else",
-    "Translate the following text",
-    "\u0412 \u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u0438 \u0441 \u043f\u0440\u0430\u0432\u0438\u043b\u0430\u043c\u0438",
-    "\u041f\u0440\u0430\u0432\u0438\u043b\u0430:",
-    "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0439\u0442\u0435 \u043a\u0430\u0436\u0434\u0443\u044e \u043f\u043e\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c",
-    "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0442\u044c \u043a\u0430\u0436\u0434\u0443\u044e \u043f\u043e\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u043d\u043e\u0441\u0442\u044c",
-    "\u043d\u0438\u043a\u043e\u0433\u0434\u0430 \u043d\u0435 \u0442\u0440\u0430\u043d\u0441\u043b\u0438\u0442\u0435\u0440\u0438\u0440\u0443\u0439\u0442\u0435",
-    "\u041d\u0435 \u043f\u0435\u0440\u0435\u0432\u043e\u0434\u0438\u0442\u0435 \u0438 \u043d\u0435 \u0438\u0437\u043c\u0435\u043d\u044f\u0439\u0442\u0435",
-    "\u041e\u0441\u0442\u0430\u0432\u043b\u044f\u0439\u0442\u0435 \u043d\u0435\u0438\u0437\u043c\u0435\u043d\u043d\u044b\u043c\u0438",
-    "\u0412\u044b\u0432\u043e\u0434 \u0434\u043e\u043b\u0436\u0435\u043d \u0441\u043e\u0434\u0435\u0440\u0436\u0430\u0442\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u0435\u0440\u0435\u0432\u043e\u0434",
-    "\u0412\u044b\u0432\u0435\u0441\u0442\u0438 \u0442\u043e\u043b\u044c\u043a\u043e \u043f\u0435\u0440\u0435\u0432\u043e\u0434",
-    "\u0412\u043e\u0442 \u043f\u0435\u0440\u0435\u0432\u043e\u0434 \u0442\u0435\u043a\u0441\u0442\u0430",
-    "\u0441 \u0443\u0447\u0435\u0442\u043e\u043c \u0443\u043a\u0430\u0437\u0430\u043d\u043d\u044b\u0445 \u043f\u0440\u0430\u0432\u0438\u043b",
-    "\u041f\u0435\u0440\u0435\u0434\u0430\u0439\u0442\u0435 \u0442\u0435\u043a\u0441\u0442 \u0434\u043b\u044f \u043f\u0435\u0440\u0435\u0432\u043e\u0434\u0430",
-    "\u042f \u043f\u043e\u043d\u0438\u043c\u0430\u044e",
-)
-_VISIBLE_PROMPT_LEAK_PATTERN = re.compile(
-    "|".join(re.escape(phrase) for phrase in _PROMPT_RULE_LEAK_PHRASES),
-    re.IGNORECASE,
-)
-_PROMPT_RULE_ECHO_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"Rules:\s*\(1\).*?\(4\)\s*Output only the translation,\s*nothing else\.?",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"(?:"
-        r"\u0412\s+\u0441\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u0438\s+"
-        r"\u0441\s+\u043f\u0440\u0430\u0432\u0438\u043b\u0430\u043c\u0438"
-        r"|\u041f\u0440\u0430\u0432\u0438\u043b\u0430"
-        r")\s*:\s*\(1\).*?\(4\)\s*"
-        r"(?:\u0412\u044b\u0432\u043e\u0434|\u0412\u044b\u0432\u0435\u0441\u0442\u0438)"
-        r".*?(?:\.\s*|$)",
-        re.IGNORECASE | re.DOTALL,
-    ),
-)
-_PROMPT_META_ECHO_PATTERN = re.compile(
-    r"(?:"
-    r"\u042f\s+\u043f\u043e\u043d\u0438\u043c\u0430\u044e\.?\s*"
-    r"|\u041f\u0435\u0440\u0435\u0434\u0430\u0439\u0442\u0435\s+"
-    r"\u0442\u0435\u043a\u0441\u0442\s+\u0434\u043b\u044f\s+"
-    r"\u043f\u0435\u0440\u0435\u0432\u043e\u0434\u0430\.?\s*"
-    r"|\u0412\u043e\u0442\s+\u043f\u0435\u0440\u0435\u0432\u043e\u0434\s+"
-    r"\u0442\u0435\u043a\u0441\u0442\u0430[^:]{0,140}:\s*"
-    r"|Here\s+is\s+(?:the\s+)?translation[^:]{0,140}:\s*"
-    r")",
-    re.IGNORECASE,
-)
 
 _FORMULA_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Internal tag placeholders used during recovery must survive intact.
@@ -403,95 +318,8 @@ def _update_heading_stack(
     heading_stack.append(heading_counter[0])
 
 
-def _is_translator_refusal(text: str) -> bool:
-    """Return True when *text* looks like a model refusal or meta-commentary."""
-    return any(p.search(text) for p in _TRANSLATOR_REFUSAL_PATTERNS)
-
-
 def _normalize_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
-
-
-def _strip_source_echo(translated: str, source: str) -> str:
-    """Trim common "translation + original source" echoes from model output."""
-    cleaned = translated.strip()
-    if not cleaned:
-        return translated
-
-    cleaned = _TRANSLATION_PREFIX_PATTERN.sub("", cleaned)
-
-    source_clean = source.strip()
-    if not source_clean:
-        return cleaned
-
-    labeled_original = _ORIGINAL_SECTION_PATTERN.search(cleaned)
-    if labeled_original is not None:
-        head = cleaned[:labeled_original.start()].rstrip()
-        if head:
-            return head
-
-    exact_pos = cleaned.rfind(source_clean)
-    if exact_pos > 0:
-        prefix = cleaned[:exact_pos].rstrip()
-        suffix = cleaned[exact_pos + len(source_clean):].strip()
-        if prefix and (not suffix or len(suffix) <= 12):
-            return prefix
-
-    source_norm = _normalize_ws(source_clean).lower()
-    if not source_norm:
-        return cleaned
-
-    blocks = [block.strip() for block in re.split(r"(?:\r?\n){2,}", cleaned) if block.strip()]
-    if len(blocks) > 1:
-        kept: list[str] = []
-        removed = False
-        for block in blocks:
-            block_norm = _normalize_ws(block).lower()
-            if block_norm == source_norm:
-                removed = True
-                continue
-            kept.append(block)
-        if removed and kept:
-            return "\n\n".join(kept)
-
-    return cleaned
-
-
-def _has_visible_prompt_leak(text: str) -> bool:
-    """Return True when text visibly contains translated prompt instructions."""
-    return bool(text and _VISIBLE_PROMPT_LEAK_PATTERN.search(text))
-
-
-def _strip_prompt_leak_echo(text: str) -> str:
-    """Remove known prompt-rule echoes while preserving any real translation tail."""
-    if not text:
-        return text
-
-    cleaned = text.strip()
-    previous = None
-    while previous != cleaned:
-        previous = cleaned
-        for pattern in _PROMPT_RULE_ECHO_BLOCK_PATTERNS:
-            cleaned = pattern.sub(" ", cleaned)
-        cleaned = _PROMPT_META_ECHO_PATTERN.sub(" ", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-    return cleaned.strip(" \t\r\n\"'«»")
-
-
-def _sanitize_prompt_leak_segment(
-    source_seg: str,
-    translated_seg: str,
-) -> tuple[str, bool]:
-    """Strip prompt-rule echoes from a translated segment or fall back safely."""
-    if not _has_visible_prompt_leak(translated_seg):
-        return translated_seg, False
-
-    lead, core, tail = _split_outer_ws(translated_seg)
-    cleaned_core = _strip_prompt_leak_echo(core)
-    if cleaned_core and not _has_visible_prompt_leak(cleaned_core):
-        return f"{lead}{cleaned_core}{tail}", True
-    return source_seg, True
 
 
 def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -886,25 +714,6 @@ def _restore_formula_mask(text: str, fmap: dict[str, str]) -> str:
         for variant in _sentinel_token_variants(token):
             restored = restored.replace(variant, formula)
     return restored
-
-
-def _apply_prompt_leak_mask(text: str) -> tuple[str, dict[str, str]]:
-    """Protect against prompt leakage by masking specific patterns."""
-    amap: dict[str, str] = {}
-    masked = text
-
-    # Apply patterns that should not leak from prompts
-    for pattern in _PROMPT_LEAK_PROTECTION_PATTERNS:
-        compiled_pattern = re.compile(pattern, re.IGNORECASE)
-        def replace_match(match):
-            original = match.group(0)
-            token = f'<z2m-p id="{len(amap)}"/>'
-            amap[token] = original
-            return token
-
-        masked = compiled_pattern.sub(replace_match, masked)
-
-    return masked, amap
 
 
 def _apply_custom_abbrev_mask(text: str) -> tuple[str, dict[str, str]]:
