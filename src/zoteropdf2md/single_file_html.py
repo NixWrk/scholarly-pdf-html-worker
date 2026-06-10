@@ -59,6 +59,28 @@ from .raw_html_polish import (
     default_polish_phase_names,
     run_polish_phases,
 )
+from .raw_html_polish.html_fragments import (
+    CLOSE_TAG_PATTERN as _CLOSE_TAG_PATTERN,
+    DIV_TAG_PATTERN as _DIV_TAG_PATTERN,
+    FLOAT_NODE_PATTERN as _FLOAT_NODE_PATTERN,
+    HTML_TAG_PATTERN as _HTML_TAG_PATTERN,
+    OPEN_TAG_PATTERN as _OPEN_TAG_PATTERN,
+    TAG_SPLIT_PATTERN as _TAG_SPLIT_PATTERN,
+    add_body_class as _add_body_class,
+    add_class_attr as _add_class_attr,
+    add_id_attr as _add_id_attr,
+    append_class_to_attrs as _append_class_to_attrs,
+    has_id_attr as _has_id_attr,
+    matching_div_close_span as _matching_div_close_span,
+    node_close_end as _node_close_end,
+    node_has_class as _node_has_class,
+    node_id_value as _node_id_value,
+    node_open_id_value as _node_open_id_value,
+    remove_id_attr as _remove_id_attr,
+    strip_node_id_and_add_class as _strip_node_id_and_add_class,
+    transform_node_open as _transform_node_open,
+    visible_text as _visible_text,
+)
 from .raw_html_polish.presentation import (
     cleanup_empty_html_blocks as _cleanup_empty_html_blocks,
     fix_heading_translation_breaks as _fix_heading_translation_breaks,
@@ -97,9 +119,6 @@ _IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
 )
 _HEAD_CLOSE_PATTERN = re.compile(r"</head>", re.IGNORECASE)
 _BODY_PATTERN = re.compile(r"(<body\b[^>]*>)(.*?)(</body>)", re.IGNORECASE | re.DOTALL)
-_TAG_SPLIT_PATTERN = re.compile(r"(<[^>]+>)")
-_OPEN_TAG_PATTERN = re.compile(r"^<\s*([a-zA-Z0-9:_-]+)")
-_CLOSE_TAG_PATTERN = re.compile(r"^<\s*/\s*([a-zA-Z0-9:_-]+)")
 _ESCAPED_INLINE_TAG_PATTERN = re.compile(r"&lt;(/?)(sup|sub)&gt;", re.IGNORECASE)
 _SPACED_ESCAPED_INLINE_TAG_PATTERN = re.compile(
     r"(?:&amp;|&)\s+lt;\s*(/?)\s*(sup|sub)\s*(?:&gt;|>)",
@@ -645,7 +664,6 @@ _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN = re.compile(
     r'(?P<trail>[\)\]\.,;:]*)\s*</a>',
     re.IGNORECASE,
 )
-_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _FIGURE_GAP_PARA_PATTERN = (
     r"<p\b[^>]*>\s*"
     r"(?:(?:<img\b)|(?:<(?:strong|em|b|i)\b[^>]*>\s*)*(?:Fig(?:ure)?|FIG)\.?\s*\d\b)"
@@ -3235,13 +3253,6 @@ def _refresh_inlined_data_urls_by_cache(
     return _IMG_SRC_PATTERN.sub(replace, html), refreshed
 
 
-def _add_body_class(html: str, class_name: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        return f"<body{_append_class_to_attrs(match.group(1), class_name)}>"
-
-    return re.sub(r"<body(?P<attrs>[^>]*)>", lambda m: replace(m), html, count=1, flags=re.IGNORECASE)
-
-
 def drop_repeated_phrases(text: str) -> str:
     """Collapse runs where a phrase of 3–8 words repeats 3+ times consecutively.
 
@@ -3703,17 +3714,6 @@ def _update_citation_skip_stack(tag_fragment: str, skip_stack: list[str]) -> Non
     tag_name = open_match.group(1).lower()
     if _citation_tag_is_protected(raw):
         skip_stack.append(tag_name)
-
-
-def _append_class_to_attrs(attrs: str, class_name: str) -> str:
-    class_match = re.search(r'(\bclass\s*=\s*["\'])([^"\']*)(["\'])', attrs, re.IGNORECASE)
-    if class_match is None:
-        return f'{attrs} class="{class_name}"'
-    classes = class_match.group(2).split()
-    if class_name in classes:
-        return attrs
-    merged = " ".join(classes + [class_name]).strip()
-    return attrs[: class_match.start(2)] + merged + attrs[class_match.end(2) :]
 
 
 def _unicode_capitalized_name_pair_count(text: str) -> int:
@@ -15482,16 +15482,6 @@ def _mark_wide_table_layout(html: str) -> str:
     return _add_body_class(marked, "z2m-has-wide-table")
 
 
-def _visible_text(fragment: str) -> str:
-    text = _HTML_TAG_PATTERN.sub(" ", fragment)
-    text = (
-        text.replace("&nbsp;", " ")
-        .replace("&#160;", " ")
-        .replace("\u00a0", " ")
-    )
-    return re.sub(r"\s+", " ", text).strip()
-
-
 def _html_gap_is_ignorable(segment: str) -> bool:
     """Return true for whitespace plus standalone page anchors/wrapper tags."""
     cleaned = re.sub(
@@ -15502,29 +15492,6 @@ def _html_gap_is_ignorable(segment: str) -> bool:
     )
     cleaned = re.sub(r"</?blockquote\b[^>]*>", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip() == ""
-
-
-def _has_id_attr(open_tag: str) -> bool:
-    return bool(re.search(r"\bid\s*=", open_tag, re.IGNORECASE))
-
-
-def _add_id_attr(open_tag: str, value: str) -> str:
-    if _has_id_attr(open_tag):
-        return open_tag
-    if open_tag.endswith(">"):
-        return f'{open_tag[:-1]} id="{value}">'
-    return f'{open_tag} id="{value}">'
-
-
-def _add_class_attr(open_tag: str, class_name: str) -> str:
-    match = re.match(r"^(<[\w:-]+)(?P<attrs>[\s\S]*?)(>)$", open_tag)
-    if match is None:
-        return open_tag
-    return f"{match.group(1)}{_append_class_to_attrs(match.group('attrs'), class_name)}>"
-
-
-def _remove_id_attr(open_tag: str) -> str:
-    return re.sub(r'\s+\bid\s*=\s*(["\'])[^"\']*\1', "", open_tag, count=1, flags=re.IGNORECASE)
 
 
 def _caption_tail_opens_caption(tail: str) -> bool:
@@ -19149,51 +19116,6 @@ def _repair_caption_suffix_left_body_tail_right(html: str) -> tuple[str, int]:
     return "".join(out_parts), repairs
 
 
-_FLOAT_NODE_PATTERN = re.compile(
-    r'^(?P<open><(?P<tag>p|h[1-6]|table)\b[^>]*>)(?P<body>[\s\S]*)(?P<close></(?P=tag)>)$',
-    re.IGNORECASE,
-)
-
-
-def _node_id_value(raw: str) -> str | None:
-    match = re.search(r'\bid\s*=\s*(["\'])([^"\']+)\1', raw, re.IGNORECASE)
-    return match.group(2) if match is not None else None
-
-
-def _node_open_id_value(raw: str) -> str | None:
-    match = _FLOAT_NODE_PATTERN.match(raw)
-    if match is None:
-        return _node_id_value(raw)
-    id_match = re.search(r'\bid\s*=\s*(["\'])([^"\']+)\1', match.group("open"), re.IGNORECASE)
-    return id_match.group(2) if id_match is not None else None
-
-
-def _node_has_class(raw: str, class_name: str) -> bool:
-    open_end = raw.find(">")
-    attrs = raw[: open_end + 1] if open_end >= 0 else raw
-    class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', attrs, re.IGNORECASE)
-    if class_match is None:
-        return False
-    return class_name in class_match.group(2).split()
-
-
-def _transform_node_open(raw: str, transform: Callable[[str], str]) -> str:
-    match = _FLOAT_NODE_PATTERN.match(raw)
-    if match is None:
-        return raw
-    return f"{transform(match.group('open'))}{match.group('body')}{match.group('close')}"
-
-
-def _strip_node_id_and_add_class(raw: str, class_name: str | None = None) -> str:
-    def _transform(open_tag: str) -> str:
-        open_tag = _remove_id_attr(open_tag)
-        if class_name is not None:
-            open_tag = _add_class_attr(open_tag, class_name)
-        return open_tag
-
-    return _transform_node_open(raw, _transform)
-
-
 def _is_same_figure_caption(raw: str, fig_num: str) -> bool:
     if re.search(r"<img\b", raw, re.IGNORECASE):
         return False
@@ -19940,7 +19862,6 @@ _FIGURE_UNIT_OPEN_TAG_PATTERN = re.compile(
     r'(?=[^>]*\bid\s*=\s*(["\'])(?P<id>fig-[^"\']+)\1)[^>]*>',
     re.IGNORECASE,
 )
-_DIV_TAG_PATTERN = re.compile(r"</?div\b[^>]*>", re.IGNORECASE)
 _FIGURE_BODY_NEXT_NODE_OPEN_PATTERN = re.compile(
     r'\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)*'
     r"(?P<open><(?P<tag>p|h[1-6]|div)\b[^>]*>)",
@@ -19965,25 +19886,6 @@ def _collapse_duplicate_nested_float_units(html: str) -> str:
         previous = current
         current = _DUPLICATE_NESTED_FLOAT_UNIT_PATTERN.sub(_replace, current)
     return current
-
-
-def _matching_div_close_span(html: str, open_end: int) -> tuple[int, int] | None:
-    depth = 1
-    for match in _DIV_TAG_PATTERN.finditer(html, open_end):
-        if match.group(0).lower().startswith("</div"):
-            depth -= 1
-            if depth == 0:
-                return match.start(), match.end()
-        else:
-            depth += 1
-    return None
-
-
-def _node_close_end(fragment: str, tag: str, open_end: int) -> int | None:
-    close_match = re.search(rf"</{re.escape(tag)}\s*>", fragment[open_end:], re.IGNORECASE)
-    if close_match is None:
-        return None
-    return open_end + close_match.end()
 
 
 def _figure_body_tail_split_offset(body: str, figure_id: str) -> int | None:
