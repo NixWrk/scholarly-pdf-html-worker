@@ -37,6 +37,10 @@ from .html_images import (
     to_data_url as _to_data_url,
     validate_data_url as _validate_data_url,
 )
+from .html_links import (
+    href_attr_literal as _extract_href_attr,
+    replace_href_attr_literal as _replace_href_attr_literal,
+)
 from .html_references import (
     NOTES_AND_REFERENCES_HEADING_PATTERN as _NOTES_AND_REFERENCES_HEADING_PATTERN,
     REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN,
@@ -2763,8 +2767,6 @@ _ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
     r'(?P<next_body>[\s\S]{0,160}?)</a>',
     re.IGNORECASE,
 )
-_DOUBLE_QUOTED_HREF_ATTR_PATTERN = re.compile(r'\bhref\s*=\s*"(?P<href>[^"]+)"', re.IGNORECASE)
-_SINGLE_QUOTED_HREF_ATTR_PATTERN = re.compile(r"\bhref\s*=\s*'(?P<href>[^']+)'", re.IGNORECASE)
 _SPACED_PROTOCOL_HREF_ATTR_PATTERN = re.compile(
     r'(?P<prefix>\bhref\s*=\s*)(?P<quote>["\'])(?P<scheme>https?:)\s+//(?P<rest>[^"\']+)(?P=quote)',
     re.IGNORECASE,
@@ -6785,24 +6787,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
         out.append(_ESCAPED_ANCHOR_SNIPPET_PATTERN.sub(replace, part))
 
     return "".join(out)
-
-
-def _extract_href_attr(attrs: str) -> str | None:
-    for pattern in (_DOUBLE_QUOTED_HREF_ATTR_PATTERN, _SINGLE_QUOTED_HREF_ATTR_PATTERN):
-        match = pattern.search(attrs)
-        if match is not None:
-            return match.group("href")
-    return None
-
-
-def _replace_href_attr_literal(attrs: str, href: str) -> str:
-    return re.sub(
-        r'(\bhref\s*=\s*)(["\'])(.*?)\2',
-        lambda match: f'{match.group(1)}"{_escape_html_attr(href)}"',
-        attrs,
-        count=1,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
 
 
 def _escape_html_text(value: str) -> str:

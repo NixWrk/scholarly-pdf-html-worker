@@ -31,6 +31,8 @@ HREF_VALUE_RE = re.compile(
     r"<a\b[^>]*(?<![\w:-])href\s*=\s*(['\"])(?P<href>.*?)\1",
     re.IGNORECASE | re.DOTALL,
 )
+DOUBLE_QUOTED_HREF_ATTR_LITERAL_RE = re.compile(r'\bhref\s*=\s*"(?P<href>[^"]+)"', re.IGNORECASE)
+SINGLE_QUOTED_HREF_ATTR_LITERAL_RE = re.compile(r"\bhref\s*=\s*'(?P<href>[^']+)'", re.IGNORECASE)
 DECLARED_URL_RE = re.compile(
     r"<(?:link|meta)\b(?P<attrs>[^>]*)>",
     re.IGNORECASE | re.DOTALL,
@@ -239,6 +241,33 @@ def attr_value(attrs: str, name: str) -> str | None:
     if match is None:
         return None
     return unescape(match.group("value")).strip()
+
+
+def href_attr_literal(attrs: str) -> str | None:
+    for pattern in (DOUBLE_QUOTED_HREF_ATTR_LITERAL_RE, SINGLE_QUOTED_HREF_ATTR_LITERAL_RE):
+        match = pattern.search(attrs)
+        if match is not None:
+            return match.group("href")
+    return None
+
+
+def escape_html_attr_literal(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def replace_href_attr_literal(attrs: str, href: str) -> str:
+    return re.sub(
+        r"(\bhref\s*=\s*)(['\"])(.*?)\2",
+        lambda match: f'{match.group(1)}"{escape_html_attr_literal(href)}"',
+        attrs,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
 
 def is_same_document(
