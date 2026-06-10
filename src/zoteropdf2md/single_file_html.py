@@ -89,8 +89,6 @@ from .raw_html_polish.katex import (
     MATHJAX_CONFIG_TAG_PATTERN as _MATHJAX_CONFIG_TAG_PATTERN,
     MATHJAX_SCRIPT as _MATHJAX_SCRIPT,
     MATHJAX_SCRIPT_TAG_PATTERN as _MATHJAX_SCRIPT_TAG_PATTERN,
-    STATIC_DISPLAY_TEX_PATTERN as _STATIC_DISPLAY_TEX_PATTERN,
-    STATIC_INLINE_TEX_PATTERN as _STATIC_INLINE_TEX_PATTERN,
     close_katex_v8_context,
     inject_katex_css as _inject_katex_css_impl,
     inject_mathjax as _inject_mathjax_impl,
@@ -98,6 +96,15 @@ from .raw_html_polish.katex import (
     katex_v8_context as _katex_v8_context,
     render_katex_html as _render_katex_html_impl,
     strip_mathjax_scripts as _strip_mathjax_scripts,
+)
+from .raw_html_polish.math_units import (
+    convert_latex_sup_citations as _convert_latex_sup_citations,
+    convert_math_tags_to_tex as _convert_math_tags_to_tex,
+    fix_latex_text_commands as _fix_latex_text_commands,
+    fix_subscript_equation_spill as _fix_subscript_equation_spill,
+    move_trailing_bracket_citations_out_of_inline_tex as _move_trailing_bracket_citations_out_of_inline_tex,
+    repair_common_math_ocr_substitutions as _repair_common_math_ocr_substitutions,
+    repair_sqrt_subscript_brace_spill as _repair_sqrt_subscript_brace_spill,
 )
 from .raw_html_polish.presentation import (
     cleanup_empty_html_blocks as _cleanup_empty_html_blocks,
@@ -354,7 +361,6 @@ _UL_OPEN_PATTERN = re.compile(r"<ul\b([^>]*)>", re.IGNORECASE)
 _UL_TAG_PATTERN = re.compile(r"</?ul\b[^>]*>", re.IGNORECASE)
 _LI_TAG_PATTERN = re.compile(r"</?li\b[^>]*>", re.IGNORECASE)
 _REFERENCE_PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
-_MATH_TAG_PATTERN = re.compile(r"<math(\b[^>]*)>(.*?)</math>", re.IGNORECASE | re.DOTALL)
 _EQUATION_PARA_PATTERN = re.compile(
     r'(<p\b[^>]*block-type="Equation"[^>]*>)(.*?)(</p>)',
     re.IGNORECASE | re.DOTALL,
@@ -363,15 +369,6 @@ _DISPLAY_MATH_IN_PARA_PATTERN = re.compile(r'\\\[(.*?)\\\]', re.DOTALL)
 _TRAILING_EQ_NUM_PATTERN = re.compile(r'\(\d+\)\s*$')
 _TEXT_TRAILING_EQ_NUM_PATTERN = re.compile(r'\s*(?P<num>\(\d{1,3}\))\s*$')
 _LATEX_TAG_PATTERN = re.compile(r'\\tag\{(\d+)\}')
-# Marker sometimes emits citation superscripts as MathJax inline math:
-# \(^{157}\) or \(^{153-156}\) instead of <sup>157</sup>.
-# Capture the content inside \(^{...}\) so it can be promoted to <sup>.
-_LATEX_SUP_CITATION_PATTERN = re.compile(
-    r'\\\(\^\{([\d,\s\-\u2013\u2014]+)\}\\\)',
-)
-_LATEX_SUP_CITATION_BARE_PATTERN = re.compile(
-    r'\\\(\^([\d,\s\-\u2013\u2014]+)\\\)',
-)
 _UNICODE_SUP_CITATION_PATTERN = re.compile(
     r'(?P<left>\b[A-Za-z][A-Za-z-]{2,})'
     r'(?P<sup>[\u00b9\u00b2\u00b3\u2070\u2074-\u2079]+'
@@ -2684,15 +2681,11 @@ _ANESTHESIA_DOSE_INLINE_TEX_PATTERN = re.compile(
     r"and\\\s*(?P<percent>\d+(?:\.\d+)?(?:[-\u2013\u2014]\d+(?:\.\d+)?)?)\\%,\\\s*respectively\.\\\)",
     re.IGNORECASE,
 )
-_INLINE_TEX_TRAILING_BRACKET_CITATION_PATTERN = re.compile(
-    r"(?P<core>[\s\S]*?)\s*(?P<cite>\[\s*\d{1,3}(?:\s*(?:,|[-\u2013\u2014])\s*\d{1,3})*\s*\])\s*$"
-)
 _CITATION_PREFIX_BODY_PATTERN = re.compile(
     r"^\s*(?P<cite><a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+['\"][^>]*>"
     r"\s*\[?\d+\]?\s*</a>)\s*\.\s*(?P<tail>[A-Z][\s\S]{10,})$",
     re.IGNORECASE,
 )
-_OMEGA_ZERO_RATIO_OCR_PATTERN = re.compile(r"\\frac\{\\omega\}\{2m\}(?=\s*=\s*1)")
 _ESCAPED_ANCHOR_SNIPPET_PATTERN = re.compile(
     r'&lt;a\s+href=(["\'])(?P<href>https?://[^"\']+)\1&gt;(?P<label>https?://[^<]+)&lt;/a&gt;',
     re.IGNORECASE,
@@ -2817,22 +2810,6 @@ _SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
-# Quick-scan trigger: only run the subscript-spill fix when this substring exists.
-_SUBSCRIPT_OPEN = re.compile(r'[_^]\{')
-# Detect an = followed immediately by a "large" LaTeX command inside a subscript/
-# superscript brace — this is the Marker OCR artefact where the equation continuation
-# (e.g. =\frac{…}{…}) was accidentally included in the sub/superscript.
-_SUBSCRIPT_SPILL_RE = re.compile(
-    r'=\s*\\(?:frac|sqrt|sum|int|oint|prod|lim|sup|inf|max|min|sin|cos|tan|'
-    r'exp|log|ln|left|right|bigl|bigr|Big|Bigl|Bigr|begin|end)\b'
-)
-
-_LATEX_LABEL_PATTERN = re.compile(r"\\label\{[^{}]*\}")
-_LATEX_TEXTBF_PATTERN = re.compile(r"\\textbf\{([^{}]*)\}")
-_LATEX_ITALIC_PATTERN = re.compile(r"\\(?:textit|emph)\{([^{}]*)\}")
-_LATEX_TEXTRM_PATTERN = re.compile(r"\\textrm\{([^{}]*)\}")
-_LATEX_TEXT_PATTERN = re.compile(r"\\text\{([^{}]*)\}")
-
 # Matches a phrase of 2-7 words repeated 2+ additional times back-to-back.
 # Example: "the property of the property of the property of" → "the property of"
 _REPEATED_PHRASE_PATTERN = re.compile(
@@ -3273,85 +3250,6 @@ def drop_repeated_phrases(text: str) -> str:
         prev = result
         result = _REPEATED_PHRASE_PATTERN.sub(r"\1", result)
     return result
-
-
-def _fix_subscript_equation_spill(html: str) -> str:
-    """Fix Marker OCR artefact where ``=\\frac{…}`` ends up inside a subscript/
-    superscript brace, causing the fraction to render at sub/superscript size.
-
-    Example::
-
-        \\gamma_{ij=\\frac{2a_ib_j}{a_i^2+b_j^2}}
-        →  \\gamma_{ij}=\\frac{2a_ib_j}{a_i^2+b_j^2}
-
-    The fix is applied to ``_{…}`` and ``^{…}`` blocks whose content contains
-    ``=\\frac`` (or another "large" LaTeX command) after the first identifier
-    characters.  The closing brace is located by balanced-brace counting so
-    deeply nested fractions are handled correctly.
-    """
-    if not _SUBSCRIPT_OPEN.search(html):
-        return html
-
-    out: list[str] = []
-    i = 0
-    n = len(html)
-
-    while i < n:
-        ch = html[i]
-        # Look for _{ or ^{ only
-        if ch not in ('_', '^') or i + 1 >= n or html[i + 1] != '{':
-            out.append(ch)
-            i += 1
-            continue
-
-        # Locate matching closing brace via brace-depth counting.
-        brace_open = i + 1          # position of '{'
-        content_start = i + 2       # first char inside braces
-        depth = 0
-        close_pos = -1
-        for k in range(brace_open, n):
-            if html[k] == '{':
-                depth += 1
-            elif html[k] == '}':
-                depth -= 1
-                if depth == 0:
-                    close_pos = k
-                    break
-
-        if close_pos == -1:
-            # Unmatched brace — copy as-is
-            out.append(html[i])
-            i += 1
-            continue
-
-        content = html[content_start:close_pos]
-
-        spill = _SUBSCRIPT_SPILL_RE.search(content)
-        if spill is None:
-            # Normal subscript — copy verbatim
-            out.append(html[i: close_pos + 1])
-            i = close_pos + 1
-            continue
-
-        # Split: keep everything before '=' in the brace, move '=...' outside.
-        eq_pos = spill.start()
-        before_eq = content[:eq_pos]
-        after_eq = content[eq_pos + 1:]   # skip the '='
-        out.append(f'{ch}{{{before_eq}}}={after_eq}')
-        i = close_pos + 1
-
-    return "".join(out)
-
-
-def _fix_latex_text_commands(html: str) -> str:
-    html = _LATEX_LABEL_PATTERN.sub("", html)
-    html = _LATEX_TEXTBF_PATTERN.sub(r"<strong>\1</strong>", html)
-    html = _LATEX_ITALIC_PATTERN.sub(r"<em>\1</em>", html)
-    html = _LATEX_TEXTRM_PATTERN.sub(r"\1", html)
-    html = _LATEX_TEXT_PATTERN.sub(r"\1", html)
-    html = re.sub(r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*\.\s*</i>", r"\1 µm.", html, flags=re.IGNORECASE)
-    html = re.sub(r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*</i>", r"\1 µm", html, flags=re.IGNORECASE)
-    return html
 
 
 def _inject_mathjax(html: str) -> str:
@@ -4994,174 +4892,6 @@ def _recover_citations_leaked_into_tex_units(html: str, ref_count: int) -> str:
         out.append(_INLINE_TEX_PATTERN.sub(_fix_inline_tex, part))
 
     return "".join(out)
-
-
-def _move_trailing_bracket_citations_out_of_inline_tex(html: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        expr = match.group(1)
-        cite_match = _INLINE_TEX_TRAILING_BRACKET_CITATION_PATTERN.match(expr)
-        if cite_match is None:
-            return match.group(0)
-        core = cite_match.group("core").rstrip()
-        cite = cite_match.group("cite")
-        if not core:
-            return match.group(0)
-        return f"\\({core}\\) {cite}"
-
-    return _INLINE_TEX_PATTERN.sub(replace, html)
-
-
-def _latex_group_end(text: str, open_pos: int) -> int:
-    if open_pos < 0 or open_pos >= len(text) or text[open_pos] != "{":
-        return -1
-    depth = 0
-    escaped = False
-    for pos in range(open_pos, len(text)):
-        ch = text[pos]
-        if escaped:
-            escaped = False
-            continue
-        if ch == "\\":
-            escaped = True
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return pos
-    return -1
-
-
-def _latex_brace_balance(text: str) -> int:
-    balance = 0
-    escaped = False
-    for ch in text:
-        if escaped:
-            escaped = False
-            continue
-        if ch == "\\":
-            escaped = True
-            continue
-        if ch == "{":
-            balance += 1
-        elif ch == "}":
-            balance -= 1
-    return balance
-
-
-def _skip_latex_spaces(text: str, pos: int) -> int:
-    while pos < len(text) and text[pos].isspace():
-        pos += 1
-    return pos
-
-
-def _repair_sqrt_subscript_brace_spill(tex: str) -> str:
-    r"""Repair OCR that closes a ``\frac`` denominator before a sqrt subscript.
-
-    Marker occasionally emits a root-mean-square denominator as::
-
-        \frac{A}{\sqrt{B}}}_{mn}}
-
-    The first brace after ``\sqrt{B}`` prematurely closes the denominator, and
-    the actual ``mn`` denominator is OCR'd as a subscript.  If the TeX segment
-    already has balanced braces, leave it alone; otherwise, restore the intended
-    denominator inside the radical::
-
-        \frac{A}{\sqrt{\frac{B}{mn}}}
-    """
-    if "\\frac" not in tex or "\\sqrt" not in tex or "_{" not in tex:
-        return tex
-    if _latex_brace_balance(tex) >= 0:
-        return tex
-
-    replacements: list[tuple[int, int, str]] = []
-    search_from = 0
-    while True:
-        frac_pos = tex.find(r"\frac", search_from)
-        if frac_pos < 0:
-            break
-        pos = _skip_latex_spaces(tex, frac_pos + len(r"\frac"))
-        if pos >= len(tex) or tex[pos] != "{":
-            search_from = frac_pos + len(r"\frac")
-            continue
-
-        numerator_end = _latex_group_end(tex, pos)
-        if numerator_end < 0:
-            break
-        denom_open = _skip_latex_spaces(tex, numerator_end + 1)
-        if denom_open >= len(tex) or tex[denom_open] != "{":
-            search_from = numerator_end + 1
-            continue
-
-        denom_body = _skip_latex_spaces(tex, denom_open + 1)
-        if not tex.startswith(r"\sqrt", denom_body):
-            search_from = denom_open + 1
-            continue
-        sqrt_group_open = _skip_latex_spaces(tex, denom_body + len(r"\sqrt"))
-        if sqrt_group_open >= len(tex) or tex[sqrt_group_open] != "{":
-            search_from = denom_body + len(r"\sqrt")
-            continue
-
-        sqrt_group_end = _latex_group_end(tex, sqrt_group_open)
-        if sqrt_group_end < 0:
-            break
-        premature_denom_close = _skip_latex_spaces(tex, sqrt_group_end + 1)
-        if premature_denom_close >= len(tex) or tex[premature_denom_close] != "}":
-            search_from = sqrt_group_end + 1
-            continue
-        if _latex_group_end(tex, denom_open) != premature_denom_close:
-            search_from = premature_denom_close + 1
-            continue
-
-        subscript_marker = _skip_latex_spaces(tex, premature_denom_close + 1)
-        if subscript_marker >= len(tex) or tex[subscript_marker] != "_":
-            search_from = premature_denom_close + 1
-            continue
-        subscript_open = _skip_latex_spaces(tex, subscript_marker + 1)
-        if subscript_open >= len(tex) or tex[subscript_open] != "{":
-            search_from = subscript_marker + 1
-            continue
-        subscript_end = _latex_group_end(tex, subscript_open)
-        if subscript_end < 0:
-            break
-        subscript_body = tex[subscript_open + 1:subscript_end]
-        if not re.fullmatch(r"[A-Za-z0-9,\s]+", subscript_body) or len(subscript_body) > 24:
-            search_from = subscript_end + 1
-            continue
-
-        delayed_denom_close = _skip_latex_spaces(tex, subscript_end + 1)
-        if delayed_denom_close >= len(tex) or tex[delayed_denom_close] != "}":
-            search_from = subscript_end + 1
-            continue
-
-        sqrt_body = tex[sqrt_group_open + 1:sqrt_group_end]
-        replacement = r"{\sqrt{\frac{" + sqrt_body + "}{" + subscript_body.strip() + r"}}}"
-        replacements.append((denom_open, delayed_denom_close + 1, replacement))
-        search_from = delayed_denom_close + 1
-
-    if not replacements:
-        return tex
-    repaired = tex
-    for start, end, replacement in sorted(replacements, reverse=True):
-        repaired = repaired[:start] + replacement + repaired[end:]
-    return repaired
-
-
-def _repair_latex_parse_artifacts(tex: str) -> str:
-    return _repair_sqrt_subscript_brace_spill(tex)
-
-
-def _repair_common_math_ocr_substitutions(html: str) -> str:
-    html = _OMEGA_ZERO_RATIO_OCR_PATTERN.sub(r"\\frac{\\omega}{\\omega_0}", html)
-    html = _STATIC_DISPLAY_TEX_PATTERN.sub(
-        lambda m: f"\\[{_repair_latex_parse_artifacts(m.group('body'))}\\]",
-        html,
-    )
-    return _STATIC_INLINE_TEX_PATTERN.sub(
-        lambda m: f"\\({_repair_latex_parse_artifacts(m.group('body'))}\\)",
-        html,
-    )
 
 
 def _restore_inline_tex_sentence_punctuation(html: str) -> str:
@@ -10963,31 +10693,6 @@ def _fix_equation_display(html: str) -> str:
     return _P_BLOCK_PATTERN.sub(fix_text_para, fixed)
 
 
-def _convert_math_tags_to_tex(html: str) -> str:
-    """Convert <math> HTML elements that contain raw LaTeX into MathJax-renderable
-    delimiters: ``\\[...\\]`` for block and ``\\(...\\)`` for inline math.
-
-    Real MathML (content with child XML elements) is left untouched.
-    """
-
-    def replace_math(match: re.Match[str]) -> str:
-        attrs = match.group(1)
-        content = match.group(2).strip()
-        if not content:
-            return ""  # empty math element — drop it
-        # Content that contains XML child tags is real MathML — leave as-is.
-        if re.search(r"<[a-zA-Z]", content):
-            return match.group(0)
-        is_block = bool(
-            re.search(r'\bdisplay\s*=\s*["\']block["\']', attrs, re.IGNORECASE)
-        )
-        if is_block:
-            return f"\\[{content}\\]"
-        return f"\\({content}\\)"
-
-    return _MATH_TAG_PATTERN.sub(replace_math, html)
-
-
 def _fix_orphaned_sup_tags(html: str) -> str:
     """Remove broken ``<sup>`` openers whose direct content starts with a period.
 
@@ -14181,18 +13886,6 @@ def _link_table_refs(html: str, found_tables: set[str]) -> str:
         out.append(_TABLE_REF_PATTERN.sub(_replace, linked))
 
     return "".join(out)
-
-
-def _convert_latex_sup_citations(html: str) -> str:
-    r"""Convert Marker's LaTeX superscript citations to ``<sup>`` tags.
-
-    Marker sometimes emits citation numbers as MathJax inline math:
-    ``\(^{157}\)`` or ``\(^{153-156}\)`` instead of ``<sup>157</sup>``.
-    These are not caught by ``_add_reference_ids_and_citation_links`` because
-    they look like math.  Promote them to ``<sup>`` before citation linking.
-    """
-    html = _LATEX_SUP_CITATION_PATTERN.sub(r'<sup>\1</sup>', html)
-    return _LATEX_SUP_CITATION_BARE_PATTERN.sub(r'<sup>\1</sup>', html)
 
 
 def _normalize_numeric_section_heading_levels(html: str) -> str:
