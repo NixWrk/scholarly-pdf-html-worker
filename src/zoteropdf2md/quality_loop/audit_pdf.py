@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
+import threading
 from typing import Any, Callable, Pattern
 
 from zoteropdf2md.html_stages import article_name_from_html_stage
@@ -206,3 +208,145 @@ def load_pdf_diagnostic_text(
         "pdf_text_chars": len(text),
         "pdf_text_error": error,
     }
+
+
+class PdfDiagnosticsCache:
+    """Small filesystem cache for expensive PDF audit diagnostics."""
+
+    def __init__(
+        self,
+        cache_dir: Path,
+        *,
+        pdf_source_stage: str,
+        author_year_text_re: Pattern[str],
+        extract_pdf_text_func: Callable[[Path], tuple[str, str, str | None]] = extract_pdf_text,
+        pdf_citation_link_summary_func: Callable[..., dict[str, Any]] = pdf_citation_link_summary,
+        author_year_cache_key: str = "AUTHOR_YEAR_TEXT_RE:v1",
+    ) -> None:
+        self.cache_dir = cache_dir
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.pdf_source_stage = pdf_source_stage
+        self.extract_pdf_text_func = extract_pdf_text_func
+        self.pdf_citation_link_summary_func = pdf_citation_link_summary_func
+        self.author_year_text_re = author_year_text_re
+        self.author_year_cache_key = author_year_cache_key
+        self._lock = threading.Lock()
+
+    def _key(self, pdf_path: Path, *, kind: str, extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        if not pdf_path.is_file():
+            return None
+        stat = pdf_path.stat()
+        return {
+            "version": 1,
+            "kind": kind,
+            "path": str(pdf_path.resolve(strict=False)),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "extra": extra or {},
+        }
+
+    def _path_for_key(self, key: dict[str, Any]) -> Path:
+        digest = hashlib.sha256(json.dumps(key, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        return self.cache_dir / f"{digest}.json"
+
+    def _load(self, key: dict[str, Any]) -> Any | None:
+        path = self._path_for_key(key)
+        with self._lock:
+            if not path.is_file():
+                return None
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+        if data.get("key") != key:
+            return None
+        return data.get("value")
+
+    def _store(self, key: dict[str, Any], value: Any) -> None:
+        path = self._path_for_key(key)
+        payload = {"key": key, "value": value}
+        tmp_path = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        with self._lock:
+            try:
+                tmp_path.write_text(text, encoding="utf-8")
+                tmp_path.replace(path)
+            except OSError:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+
+    def load_text(
+        self,
+        raw_path: Path,
+        pdf_text_override: str | None,
+        pdf_path_override: Path | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        if pdf_text_override is not None:
+            text, summary = load_pdf_diagnostic_text(
+                raw_path,
+                pdf_text_override,
+                pdf_source_stage=self.pdf_source_stage,
+                pdf_path_override=pdf_path_override,
+                extract_pdf_text_func=self.extract_pdf_text_func,
+            )
+            summary["pdf_text_cache_status"] = "override"
+            return text, summary
+        pdf_path = pdf_path_override or source_pdf_path(raw_path, pdf_source_stage=self.pdf_source_stage)
+        key = self._key(pdf_path, kind="text", extra={"extractor": "extract_pdf_text:v1"})
+        if key is None:
+            text, summary = load_pdf_diagnostic_text(
+                raw_path,
+                pdf_text_override,
+                pdf_source_stage=self.pdf_source_stage,
+                pdf_path_override=pdf_path_override,
+                extract_pdf_text_func=self.extract_pdf_text_func,
+            )
+            summary["pdf_text_cache_status"] = "disabled"
+            return text, summary
+        cached = self._load(key)
+        if isinstance(cached, dict):
+            summary = dict(cached.get("summary") or {})
+            summary["pdf_text_cache_status"] = "hit"
+            return str(cached.get("text") or ""), summary
+        text, summary = load_pdf_diagnostic_text(
+            raw_path,
+            pdf_text_override,
+            pdf_source_stage=self.pdf_source_stage,
+            pdf_path_override=pdf_path_override,
+            extract_pdf_text_func=self.extract_pdf_text_func,
+        )
+        summary = dict(summary)
+        summary["pdf_text_cache_status"] = "miss"
+        self._store(key, {"text": text, "summary": summary})
+        return text, summary
+
+    def link_summary(self, pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
+        key = self._key(
+            pdf_path,
+            kind="links",
+            extra={"sample_limit": sample_limit, "author_year_text_re": self.author_year_cache_key},
+        )
+        if key is None:
+            summary = self.pdf_citation_link_summary_func(
+                pdf_path,
+                author_year_text_re=self.author_year_text_re,
+                sample_limit=sample_limit,
+            )
+            summary["pdf_link_cache_status"] = "disabled"
+            return summary
+        cached = self._load(key)
+        if isinstance(cached, dict):
+            summary = dict(cached)
+            summary["pdf_link_cache_status"] = "hit"
+            return summary
+        summary = self.pdf_citation_link_summary_func(
+            pdf_path,
+            author_year_text_re=self.author_year_text_re,
+            sample_limit=sample_limit,
+        )
+        summary = dict(summary)
+        summary["pdf_link_cache_status"] = "miss"
+        self._store(key, summary)
+        return summary

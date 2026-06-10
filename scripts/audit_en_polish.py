@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 import re
 import sys
-import threading
 import urllib.parse
 from typing import Any, Iterable
 
@@ -67,6 +66,7 @@ from zoteropdf2md.quality_loop.audit_pdf import (
     first_path_value as _first_path_value,
     load_pdf_diagnostic_text,
     load_pdf_map as _load_pdf_map,
+    PdfDiagnosticsCache as _PackagePdfDiagnosticsCache,
     pdf_citation_link_summary,
     pdf_path_from_map_record as _pdf_path_from_map_record,
     source_pdf_path,
@@ -1072,104 +1072,25 @@ def _load_pdf_diagnostic_text(
     )
 
 
-class PdfDiagnosticsCache:
+class PdfDiagnosticsCache(_PackagePdfDiagnosticsCache):
     def __init__(self, cache_dir: Path) -> None:
-        self.cache_dir = cache_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        def link_summary_adapter(
+            pdf_path: Path,
+            *,
+            author_year_text_re: re.Pattern[str],
+            sample_limit: int,
+        ) -> dict[str, Any]:
+            del author_year_text_re
+            return _pdf_citation_link_summary(pdf_path, sample_limit=sample_limit)
 
-    def _key(self, pdf_path: Path, *, kind: str, extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        if not pdf_path.is_file():
-            return None
-        stat = pdf_path.stat()
-        return {
-            "version": 1,
-            "kind": kind,
-            "path": str(pdf_path.resolve(strict=False)),
-            "size": int(stat.st_size),
-            "mtime_ns": int(stat.st_mtime_ns),
-            "extra": extra or {},
-        }
-
-    def _path_for_key(self, key: dict[str, Any]) -> Path:
-        digest = hashlib.sha256(json.dumps(key, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-        return self.cache_dir / f"{digest}.json"
-
-    def _load(self, key: dict[str, Any]) -> Any | None:
-        path = self._path_for_key(key)
-        with self._lock:
-            if not path.is_file():
-                return None
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                return None
-        if data.get("key") != key:
-            return None
-        return data.get("value")
-
-    def _store(self, key: dict[str, Any], value: Any) -> None:
-        path = self._path_for_key(key)
-        payload = {"key": key, "value": value}
-        tmp_path = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
-        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-        with self._lock:
-            try:
-                tmp_path.write_text(text, encoding="utf-8")
-                tmp_path.replace(path)
-            except OSError:
-                try:
-                    tmp_path.unlink()
-                except OSError:
-                    pass
-
-    def load_text(
-        self,
-        raw_path: Path,
-        pdf_text_override: str | None,
-        pdf_path_override: Path | None = None,
-    ) -> tuple[str, dict[str, Any]]:
-        if pdf_text_override is not None:
-            text, summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
-            summary["pdf_text_cache_status"] = "override"
-            return text, summary
-        pdf_path = pdf_path_override or _source_pdf_path(raw_path)
-        key = self._key(pdf_path, kind="text", extra={"extractor": "extract_pdf_text:v1"})
-        if key is None:
-            text, summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
-            summary["pdf_text_cache_status"] = "disabled"
-            return text, summary
-        cached = self._load(key)
-        if isinstance(cached, dict):
-            summary = dict(cached.get("summary") or {})
-            summary["pdf_text_cache_status"] = "hit"
-            return str(cached.get("text") or ""), summary
-        text, summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
-        summary = dict(summary)
-        summary["pdf_text_cache_status"] = "miss"
-        self._store(key, {"text": text, "summary": summary})
-        return text, summary
-
-    def link_summary(self, pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
-        key = self._key(
-            pdf_path,
-            kind="links",
-            extra={"sample_limit": sample_limit, "author_year_text_re": "AUTHOR_YEAR_TEXT_RE:v1"},
+        super().__init__(
+            cache_dir,
+            pdf_source_stage=PDF_SOURCE_STAGE,
+            extract_pdf_text_func=_extract_pdf_text,
+            pdf_citation_link_summary_func=link_summary_adapter,
+            author_year_text_re=AUTHOR_YEAR_TEXT_RE,
+            author_year_cache_key="AUTHOR_YEAR_TEXT_RE:v1",
         )
-        if key is None:
-            summary = _pdf_citation_link_summary(pdf_path, sample_limit=sample_limit)
-            summary["pdf_link_cache_status"] = "disabled"
-            return summary
-        cached = self._load(key)
-        if isinstance(cached, dict):
-            summary = dict(cached)
-            summary["pdf_link_cache_status"] = "hit"
-            return summary
-        summary = _pdf_citation_link_summary(pdf_path, sample_limit=sample_limit)
-        summary = dict(summary)
-        summary["pdf_link_cache_status"] = "miss"
-        self._store(key, summary)
-        return summary
 
 
 def _defect(
