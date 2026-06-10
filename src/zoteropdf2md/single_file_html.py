@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-import base64
 import functools
 import hashlib
 import html as html_lib
@@ -31,8 +30,13 @@ from .citation_profile_recovery import (
 from .email_repair import repair_split_visible_emails as _repair_split_visible_emails
 from .html_images import (
     InlineHtmlResult,
+    data_image_src_looks_renderable as _data_image_src_looks_renderable,
+    decode_data_image_payload as _decode_data_image_payload,
     detect_image_signature as _detect_image_signature,
     detect_jpeg_colorspace as _detect_jpeg_colorspace,
+    html_node_has_broken_data_image as _node_has_broken_data_image,
+    html_node_has_renderable_image as _node_has_renderable_image,
+    html_node_image_srcs as _node_image_srcs,
     is_inline_or_remote as _is_inline_or_remote,
     to_data_url as _to_data_url,
     validate_data_url as _validate_data_url,
@@ -16732,73 +16736,6 @@ def _is_equation_like_node(raw: str) -> bool:
     if _node_has_class(raw, "z2m-equation") or _node_has_class(raw, "z2m-equation-row"):
         return True
     return "z2m-math-display" in raw and len(_visible_text(raw)) < 1200
-
-
-def _decode_data_image_payload(src_value: str) -> tuple[str, bytes] | None:
-    src_value = src_value.strip()
-    if src_value.lower().startswith("data:image/"):
-        comma_idx = src_value.find(",")
-        if comma_idx < 0:
-            return None
-        meta = src_value[:comma_idx].lower()
-        if ";base64" not in meta:
-            return None
-        mime = meta.removeprefix("data:").split(";", 1)[0]
-        payload = re.sub(r"\s+", "", src_value[comma_idx + 1 :])
-    else:
-        payload = re.sub(r"\s+", "", src_value)
-        if not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", payload):
-            return None
-        if payload.startswith("/9j/"):
-            mime = "image/jpeg"
-        elif payload.startswith("iVBOR"):
-            mime = "image/png"
-        elif payload.startswith(("R0lGODlh", "R0lGODdh")):
-            mime = "image/gif"
-        elif payload.startswith("UklGR"):
-            mime = "image/webp"
-        else:
-            return None
-    if len(payload) % 4 == 1:
-        return mime, b""
-    padded = payload + ("=" * ((4 - len(payload) % 4) % 4))
-    try:
-        return mime, base64.b64decode(padded)
-    except Exception:
-        return mime, b""
-
-
-def _data_image_src_looks_renderable(src_value: str) -> bool:
-    decoded = _decode_data_image_payload(src_value)
-    if decoded is None:
-        return True
-    mime, blob = decoded
-    if not blob:
-        return False
-    if mime == "image/jpeg":
-        return blob.startswith(b"\xff\xd8") and blob.endswith(b"\xff\xd9")
-    if mime == "image/png":
-        return blob.startswith(b"\x89PNG\r\n\x1a\n") and blob.endswith(b"IEND\xaeB`\x82")
-    if mime == "image/gif":
-        return blob.startswith((b"GIF87a", b"GIF89a")) and blob.endswith(b";")
-    if mime == "image/webp":
-        return len(blob) >= 12 and blob.startswith(b"RIFF") and blob[8:12] == b"WEBP"
-    return True
-
-
-def _node_image_srcs(raw: str) -> list[str]:
-    return [match.group(3).strip() for match in _IMG_SRC_PATTERN.finditer(raw)]
-
-
-def _node_has_renderable_image(raw: str) -> bool:
-    return any(_data_image_src_looks_renderable(src) for src in _node_image_srcs(raw))
-
-
-def _node_has_broken_data_image(raw: str) -> bool:
-    return any(
-        _decode_data_image_payload(src) is not None and not _data_image_src_looks_renderable(src)
-        for src in _node_image_srcs(raw)
-    )
 
 
 def _node_is_empty_spacer_paragraph(raw: str) -> bool:

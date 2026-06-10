@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import mimetypes
 from pathlib import Path
+import re
 from typing import Callable
 
 
@@ -32,6 +33,7 @@ IMAGE_SIGNATURES: dict[bytes, str] = {
     b"\x4d\x4d\x00\x2a": "image/tiff",
     b"\x42\x4d": "image/bmp",
 }
+IMG_SRC_PATTERN = re.compile(r'(<img\b[^>]*?\ssrc\s*=\s*)(["\'])([^"\']+)(\2)', re.IGNORECASE)
 
 
 def is_inline_or_remote(value: str) -> bool:
@@ -167,3 +169,70 @@ def validate_data_url(data_url: str, original_file: Path) -> bool:
         return decoded == original
     except Exception:
         return False
+
+
+def decode_data_image_payload(src_value: str) -> tuple[str, bytes] | None:
+    src_value = src_value.strip()
+    if src_value.lower().startswith("data:image/"):
+        comma_idx = src_value.find(",")
+        if comma_idx < 0:
+            return None
+        meta = src_value[:comma_idx].lower()
+        if ";base64" not in meta:
+            return None
+        mime = meta.removeprefix("data:").split(";", 1)[0]
+        payload = re.sub(r"\s+", "", src_value[comma_idx + 1 :])
+    else:
+        payload = re.sub(r"\s+", "", src_value)
+        if not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", payload):
+            return None
+        if payload.startswith("/9j/"):
+            mime = "image/jpeg"
+        elif payload.startswith("iVBOR"):
+            mime = "image/png"
+        elif payload.startswith(("R0lGODlh", "R0lGODdh")):
+            mime = "image/gif"
+        elif payload.startswith("UklGR"):
+            mime = "image/webp"
+        else:
+            return None
+    if len(payload) % 4 == 1:
+        return mime, b""
+    padded = payload + ("=" * ((4 - len(payload) % 4) % 4))
+    try:
+        return mime, base64.b64decode(padded)
+    except Exception:
+        return mime, b""
+
+
+def data_image_src_looks_renderable(src_value: str) -> bool:
+    decoded = decode_data_image_payload(src_value)
+    if decoded is None:
+        return True
+    mime, blob = decoded
+    if not blob:
+        return False
+    if mime == "image/jpeg":
+        return blob.startswith(b"\xff\xd8") and blob.endswith(b"\xff\xd9")
+    if mime == "image/png":
+        return blob.startswith(b"\x89PNG\r\n\x1a\n") and blob.endswith(b"IEND\xaeB`\x82")
+    if mime == "image/gif":
+        return blob.startswith((b"GIF87a", b"GIF89a")) and blob.endswith(b";")
+    if mime == "image/webp":
+        return len(blob) >= 12 and blob.startswith(b"RIFF") and blob[8:12] == b"WEBP"
+    return True
+
+
+def html_node_image_srcs(raw: str) -> list[str]:
+    return [match.group(3).strip() for match in IMG_SRC_PATTERN.finditer(raw)]
+
+
+def html_node_has_renderable_image(raw: str) -> bool:
+    return any(data_image_src_looks_renderable(src) for src in html_node_image_srcs(raw))
+
+
+def html_node_has_broken_data_image(raw: str) -> bool:
+    return any(
+        decode_data_image_payload(src) is not None and not data_image_src_looks_renderable(src)
+        for src in html_node_image_srcs(raw)
+    )
