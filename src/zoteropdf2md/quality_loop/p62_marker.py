@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from zoteropdf2md.quality_loop.converted_runs import visible_html_text
+from zoteropdf2md.quality_loop.p62_matching import figure_label_present_in_text
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -128,3 +131,48 @@ def execute_marker_command(
     if marker_output_dir:
         _write_json(marker_output_dir / "marker_execution_report.json", report)
     return report
+
+
+def validate_marker_output(marker_output_dir: Path, figure_label: str) -> dict[str, Any]:
+    if not marker_output_dir.exists():
+        return {
+            "status": "not_run",
+            "html_count": 0,
+            "image_count": 0,
+            "label_present": False,
+            "html_paths": [],
+            "image_paths": [],
+        }
+
+    html_paths = sorted(path for path in marker_output_dir.rglob("*.html") if path.is_file())
+    image_paths = sorted(
+        path
+        for path in marker_output_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    )
+    label_present = False
+    for html_path in html_paths:
+        try:
+            text = visible_html_text(html_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if figure_label_present_in_text(text, figure_label):
+            label_present = True
+            break
+
+    if label_present and image_paths:
+        status = "recovered_image"
+    elif label_present:
+        status = "caption_only"
+    elif image_paths:
+        status = "image_without_label"
+    else:
+        status = "empty_or_unmatched"
+    return {
+        "status": status,
+        "html_count": len(html_paths),
+        "image_count": len(image_paths),
+        "label_present": label_present,
+        "html_paths": [str(path) for path in html_paths[:8]],
+        "image_paths": [str(path) for path in image_paths[:8]],
+    }

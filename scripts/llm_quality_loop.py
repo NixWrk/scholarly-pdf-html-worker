@@ -143,7 +143,10 @@ from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     replace_recovery_with_missing_warning as _replace_p62_recovery_with_missing_warning,
     replace_stale_recovery_with_image as _replace_p62_stale_recovery_with_image,
 )
-from zoteropdf2md.quality_loop.p62_marker import execute_marker_command as _execute_p62_marker_command_impl  # noqa: E402
+from zoteropdf2md.quality_loop.p62_marker import (  # noqa: E402
+    execute_marker_command as _execute_p62_marker_command_impl,
+    validate_marker_output as _validate_p62_marker_output_impl,
+)
 from zoteropdf2md.quality_loop.p62_pdf_assets import (  # noqa: E402
     external_pdf_tool_inventory as _p62_external_pdf_tool_inventory_impl,
     false_match_hint_blocks_asset_recovery as _p62_false_match_hint_blocks_asset_recovery_impl,
@@ -567,48 +570,7 @@ def _selected_pdf_candidate(
 
 
 def _validate_p62_marker_output(marker_output_dir: Path, figure_label: str) -> dict[str, Any]:
-    if not marker_output_dir.exists():
-        return {
-            "status": "not_run",
-            "html_count": 0,
-            "image_count": 0,
-            "label_present": False,
-            "html_paths": [],
-            "image_paths": [],
-        }
-
-    html_paths = sorted(path for path in marker_output_dir.rglob("*.html") if path.is_file())
-    image_paths = sorted(
-        path
-        for path in marker_output_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-    )
-    label_present = False
-    for html_path in html_paths:
-        try:
-            text = _visible_html_text(html_path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-        if _figure_label_present_in_text(text, figure_label):
-            label_present = True
-            break
-
-    if label_present and image_paths:
-        status = "recovered_image"
-    elif label_present:
-        status = "caption_only"
-    elif image_paths:
-        status = "image_without_label"
-    else:
-        status = "empty_or_unmatched"
-    return {
-        "status": status,
-        "html_count": len(html_paths),
-        "image_count": len(image_paths),
-        "label_present": label_present,
-        "html_paths": [str(path) for path in html_paths[:8]],
-        "image_paths": [str(path) for path in image_paths[:8]],
-    }
+    return _validate_p62_marker_output_impl(marker_output_dir, figure_label)
 
 
 def write_p62_marker_recovery_plan(
