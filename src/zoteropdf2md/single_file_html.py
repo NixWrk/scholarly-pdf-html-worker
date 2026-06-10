@@ -106,6 +106,29 @@ from .raw_html_polish.math_units import (
     repair_common_math_ocr_substitutions as _repair_common_math_ocr_substitutions,
     repair_sqrt_subscript_brace_spill as _repair_sqrt_subscript_brace_spill,
 )
+from .raw_html_polish.float_units import (
+    FIG_CAPTION_PANEL_SUFFIX_TOKEN as _FIG_CAPTION_PANEL_SUFFIX_TOKEN,
+    FIG_COMPOUND_KEY_TOKEN as _FIG_COMPOUND_KEY_TOKEN,
+    FIG_KEY_TOKEN as _FIG_KEY_TOKEN,
+    FIG_PANEL_SUFFIX_TOKEN as _FIG_PANEL_SUFFIX_TOKEN,
+    FIG_REF_LABEL_TOKEN as _FIG_REF_LABEL_TOKEN,
+    FIG_RELAXED_KEY_TOKEN as _FIG_RELAXED_KEY_TOKEN,
+    SUPPLEMENTARY_FIG_KEY_TOKEN as _SUPPLEMENTARY_FIG_KEY_TOKEN,
+    SUPPLEMENTARY_FIG_PREFIX_TOKEN as _SUPPLEMENTARY_FIG_PREFIX_TOKEN,
+    SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN as _SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN,
+    TABLE_KEY_TOKEN as _TABLE_KEY_TOKEN,
+    TABLE_REF_WORD_TOKEN as _TABLE_REF_WORD_TOKEN,
+    caption_tail_opens_caption as _caption_tail_opens_caption,
+    embedded_table_caption_key_from_visible as _embedded_table_caption_key_from_visible,
+    figure_caption_num_from_visible as _figure_caption_num_from_visible,
+    is_caption_node as _is_caption_node,
+    is_figure_caption_node as _is_figure_caption_node,
+    is_table_caption_node as _is_table_caption_node,
+    is_table_note_node as _is_table_note_node,
+    looks_table_note_text as _looks_table_note_text,
+    raw_has_class as _raw_has_class,
+    table_caption_key_from_visible as _table_caption_key_from_visible,
+)
 from .raw_html_polish.references_links import (
     LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN as _LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN,
     PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN as _PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN,
@@ -465,16 +488,6 @@ _EQUATION_REF_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-_FIG_KEY_TOKEN = r"\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*"
-_FIG_COMPOUND_KEY_TOKEN = r"\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)+"
-_FIG_RELAXED_KEY_TOKEN = (
-    r"\d+(?:\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*\d+"
-    r"(?!\s*[A-Za-z])"
-    r"(?!\s*[.\-\u2010\u2011\u2012\u2013\u2014]\s*\d+[A-Za-z]))*"
-    r"(?!\d)"
-)
-_FIG_PANEL_SUFFIX_TOKEN = r"[a-z]"
-_FIG_CAPTION_PANEL_SUFFIX_TOKEN = rf"(?:{_FIG_PANEL_SUFFIX_TOKEN}|\s+[A-Za-z](?=\s|[).:|,\-\u2010-\u2014]))"
 # In-text figure references: "Fig. 3" / "рис. 3" / "фиг. 3" NOT followed by ". <text>"
 # (that would be a figure caption).  We distinguish "Fig. 3. Caption..." from "...Fig. 3."
 # (end of sentence) by requiring whitespace after the dot, i.e. ".\s" → caption lookahead.
@@ -492,14 +505,6 @@ _EXT_FIG_REF_PATTERN = re.compile(
     rf'\s*({_FIG_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?\b(?!\s*(?:\.\s|\|))',
     re.IGNORECASE,
 )
-_FIG_REF_LABEL_TOKEN = (
-    r"(?:Figs?|Figures?|FIGS?|FIGURES?"
-    r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
-    r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-)
-_SUPPLEMENTARY_FIG_PREFIX_TOKEN = r"(?:Supplementary|Supplemental|Suppl\.?)"
-_SUPPLEMENTARY_FIG_KEY_TOKEN = rf"(?:S\s*)?{_FIG_KEY_TOKEN}"
-_SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN = rf"(?:S\s*)?{_FIG_RELAXED_KEY_TOKEN}"
 _SUPPLEMENTARY_FIG_REF_PATTERN = re.compile(
     rf"\b(?P<prefix>{_SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s+{_FIG_REF_LABEL_TOKEN}\.?)"
     rf"\s*(?P<num>{_SUPPLEMENTARY_FIG_KEY_TOKEN})(?P<suffix>{_FIG_PANEL_SUFFIX_TOKEN})?"
@@ -532,7 +537,6 @@ _SPLIT_PAGE_FIG_LINK_PATTERN = re.compile(
     rf'\s*(?P<num>{_SUPPLEMENTARY_FIG_KEY_TOKEN})(?P<suffix>{_FIG_PANEL_SUFFIX_TOKEN}?[\)\]\.,;:]*)',
     re.IGNORECASE,
 )
-_TABLE_KEY_TOKEN = r"(?:[A-Z]\d+|[IVXLCM]+|\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*)"
 _SPLIT_PAGE_TABLE_LINK_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
     r'(?P<body>\s*[\(\[]?\s*(?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s*)</a>'
@@ -583,10 +587,6 @@ _STAT_FALSE_REF_STRONG_CONTEXT_PATTERN = re.compile(
     r"statistical\s+power|power\s+analysis|Cohen|SD|SEM|Z\s+values?|"
     r"range\s+from\s+about|logMAR|within\s+\d+\s+or\s+\d+\s+s)\b",
     re.IGNORECASE,
-)
-_TABLE_REF_WORD_TOKEN = (
-    r"(?:TABLES?|Tables?|"
-    r"\u0422\u0430\u0431\u043b\u0438\u0446(?:\u0430|\u044b|\u0435|\u0430\u0445|\u0443)?)"
 )
 _TABLE_REF_PATTERN = re.compile(
     rf'\b({_TABLE_REF_WORD_TOKEN}\.?)'
@@ -14744,344 +14744,6 @@ def _html_gap_is_ignorable(segment: str) -> bool:
     return cleaned.strip() == ""
 
 
-def _caption_tail_opens_caption(tail: str) -> bool:
-    tail = tail.lstrip()
-    if not tail:
-        return False
-    if re.match(
-        r"^[\-\u2010\u2011\u2012\u2013\u2014]\s*(?:\d+\s*)?[A-Za-z]\s+"
-        r"(?:show|shows|showed|showcase|showcases|depict|depicts|illustrate|illustrates|"
-        r"present|presents|represent|represents|plot|plots|display|displays|examine|examines|"
-        r"suggest|suggests|indicate|indicates|validate|validates|detail|details|exemplify|exemplifies)\b",
-        tail,
-        re.IGNORECASE,
-    ):
-        return False
-    if re.match(
-        r"^[.:]\s*\d+\s+"
-        r"(?:show|shows|showed|showcase|showcases|depict|depicts|illustrate|illustrates|"
-        r"present|presents|represent|represents|plot|plots|display|displays|examine|examines|"
-        r"suggest|suggests|indicate|indicates|validate|validates|detail|details|exemplify|exemplifies|"
-        r"provide|provides|demonstrate|demonstrates|compare|compares|reveal|reveals)\b",
-        tail,
-        re.IGNORECASE,
-    ):
-        return False
-    if tail[:1] in ".|:-\u2010\u2011\u2012\u2013\u2014":
-        return True
-    if tail[:1] in "([{":
-        if re.match(
-            r"^\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
-            r"same|both|all|main|inset|side|front|back|first|second|third)"
-            r"(?:\s+(?:and|or|/)?\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
-            r"same|both|all|main|inset|side|front|back|first|second|third|panels?|panel|plots?|plot|images?|image))*"
-            r"\s*\)\s*"
-            r"(?:show|shows|showed|showcase|showcases|depict|depicts|illustrate|illustrates|"
-            r"present|presents|represent|represents|plot|plots|display|displays|examine|examines|"
-            r"suggest|suggests|indicate|indicates)\b",
-            tail,
-            re.IGNORECASE,
-        ):
-            return False
-        subfigure_ref = re.match(r"^\([A-Za-z]\)\s*([^\W\d_]+)", tail, re.IGNORECASE)
-        if subfigure_ref is not None and subfigure_ref.group(1).lower() in {
-            "show",
-            "shows",
-            "showed",
-            "shown",
-            "showcase",
-            "showcases",
-            "showcased",
-            "demonstrate",
-            "demonstrates",
-            "demonstrated",
-            "depict",
-            "depicts",
-            "depicted",
-            "illustrate",
-            "illustrates",
-            "illustrated",
-            "present",
-            "presents",
-            "presented",
-            "represent",
-            "represents",
-            "represented",
-            "plot",
-            "plots",
-            "plotted",
-            "visualize",
-            "visualizes",
-            "visualized",
-            "visualise",
-            "visualises",
-            "visualised",
-            "display",
-            "displays",
-            "displayed",
-            "map",
-            "maps",
-            "mapped",
-            "describe",
-            "describes",
-            "described",
-            "is",
-            "are",
-            "was",
-            "were",
-            "can",
-            "will",
-        }:
-            return False
-        return True
-    if re.match(
-        r"^(?:and|or|,|&)\s+[A-Za-z]\s+"
-        r"(?:show|shows|showed|showcase|showcases|depict|depicts|illustrate|illustrates|"
-        r"present|presents|represent|represents|plot|plots|display|displays|examine|examines|"
-        r"suggest|suggests|indicate|indicates)\b",
-        tail,
-        re.IGNORECASE,
-    ):
-        return False
-    if re.match(
-        rf"^(?:and|or)\s+(?:Fig(?:ure)?\.?|Figure)\s*{_FIG_KEY_TOKEN}(?:\s*\([A-Za-z]\)|[A-Za-z]|\s+[A-Za-z](?=\s))?\s+"
-        r"(?:show|shows|showed|showcase|showcases|depict|depicts|illustrate|illustrates|"
-        r"present|presents|represent|represents|plot|plots|display|displays|examine|examines|"
-        r"suggest|suggests|indicate|indicates|validate|validates|detail|details|exemplify|exemplifies)\b",
-        tail,
-        re.IGNORECASE,
-    ):
-        return False
-    if tail[:1].isdigit():
-        return True
-    if tail[:1].isupper():
-        return True
-
-    word_match = re.match(r"([^\W\d_]+)", tail, re.IGNORECASE)
-    if word_match is None:
-        return False
-    word = word_match.group(1).lower()
-    if len(word) <= 1:
-        return False
-    prose_verbs = {
-        "show",
-        "shows",
-        "shown",
-        "showed",
-        "showcase",
-        "showcases",
-        "showcased",
-        "demonstrate",
-        "demonstrates",
-        "demonstrated",
-        "depict",
-        "depicts",
-        "depicted",
-        "illustrate",
-        "illustrates",
-        "illustrated",
-        "present",
-        "presents",
-        "presented",
-        "represent",
-        "represents",
-        "represented",
-        "plot",
-        "plots",
-        "plotted",
-        "visualize",
-        "visualizes",
-        "visualized",
-        "visualise",
-        "visualises",
-        "visualised",
-        "display",
-        "displays",
-        "displayed",
-        "map",
-        "maps",
-        "mapped",
-        "describe",
-        "describes",
-        "described",
-        "examine",
-        "examines",
-        "examined",
-        "suggest",
-        "suggests",
-        "suggested",
-        "summarize",
-        "summarizes",
-        "summarized",
-        "summarise",
-        "summarises",
-        "summarised",
-        "list",
-        "lists",
-        "listed",
-        "compare",
-        "compares",
-        "compared",
-        "report",
-        "reports",
-        "reported",
-        "indicate",
-        "indicates",
-        "indicated",
-        "validate",
-        "validates",
-        "validated",
-        "detail",
-        "details",
-        "detailed",
-        "exemplify",
-        "exemplifies",
-        "exemplified",
-        "provide",
-        "provides",
-        "provided",
-        "contain",
-        "contains",
-        "contained",
-        "reveal",
-        "reveals",
-        "revealed",
-        "highlight",
-        "highlights",
-        "highlighted",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "has",
-        "have",
-        "had",
-        "can",
-        "could",
-        "will",
-        "would",
-        "may",
-        "might",
-        "should",
-        "\u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442",
-        "\u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0438\u0440\u0443\u0435\u0442",
-        "\u0438\u043b\u043b\u044e\u0441\u0442\u0440\u0438\u0440\u0443\u0435\u0442",
-        "\u043f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442",
-        "\u0441\u043e\u0434\u0435\u0440\u0436\u0438\u0442",
-        "\u0441\u0440\u0430\u0432\u043d\u0438\u0432\u0430\u0435\u0442",
-    }
-    return word not in prose_verbs
-
-
-def _figure_caption_num_from_visible(visible: str) -> str | None:
-    supplementary_match = re.match(
-        rf"^\s*{_SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s+"
-        r"(?:FIG(?:URE)?|Fig(?:ure)?"
-        r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
-        r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-        rf"\.?\s*({_SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN})({_FIG_CAPTION_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
-        visible,
-        re.IGNORECASE,
-    )
-    if supplementary_match is not None:
-        tail = supplementary_match.group(3)
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
-            return None
-        if not _caption_tail_opens_caption(tail):
-            return None
-        return _supplementary_figure_key_from_visible_number(supplementary_match.group(1))
-
-    compound_match = re.match(
-        r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
-        r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
-        r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-        rf"\.?\s*({_FIG_COMPOUND_KEY_TOKEN})({_FIG_CAPTION_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
-        visible,
-        re.IGNORECASE,
-    )
-    if compound_match is not None:
-        tail = compound_match.group(3)
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
-            return None
-        if not _caption_tail_opens_caption(tail):
-            return None
-        return _figure_key_from_visible_number(compound_match.group(1))
-
-    spaced_decimal_match = re.match(
-        r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
-        r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
-        r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-        r"\.?\s*(\d+)\s*\.\s*(\d+)([\s\S]*)$",
-        visible,
-        re.IGNORECASE,
-    )
-    if spaced_decimal_match is not None:
-        tail = spaced_decimal_match.group(3)
-        if re.match(r"^\s*\.\s*\d", tail):
-            full_tail = f". {spaced_decimal_match.group(2)}{tail}"
-            if _caption_tail_opens_caption(full_tail):
-                return _figure_key_from_visible_number(spaced_decimal_match.group(1))
-            return None
-        if tail and not tail[:1].isspace() and tail[:1] not in ".|:-\u2010\u2011\u2012\u2013\u2014([{":
-            full_tail = f". {spaced_decimal_match.group(2)}{tail}"
-            if _caption_tail_opens_caption(full_tail):
-                return _figure_key_from_visible_number(spaced_decimal_match.group(1))
-            return None
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
-            return None
-        if not _caption_tail_opens_caption(tail):
-            return None
-        return _figure_key_from_visible_number(
-            f"{spaced_decimal_match.group(1)}-{spaced_decimal_match.group(2)}"
-        )
-
-    match = re.match(
-        r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
-        r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
-        r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
-        rf"\.?\s*({_FIG_RELAXED_KEY_TOKEN})({_FIG_CAPTION_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
-        visible,
-        re.IGNORECASE,
-    )
-    if match is None:
-        return None
-    tail = match.group(3)
-    if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
-        return None
-    if not _caption_tail_opens_caption(tail):
-        return None
-    return _figure_key_from_visible_number(match.group(1))
-
-
-def _table_caption_key_from_visible(visible: str) -> str | None:
-    match = re.match(
-        r"^\s*(?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)"
-        rf"\.?\s+({_TABLE_KEY_TOKEN})([\s\S]*)$",
-        visible,
-        re.IGNORECASE,
-    )
-    if match is None:
-        return None
-    if not _caption_tail_opens_caption(match.group(2)):
-        return None
-    return _normalize_table_key(match.group(1))
-
-
-def _embedded_table_caption_key_from_visible(visible: str) -> str | None:
-    match = re.search(
-        rf"\b(?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s+({_TABLE_KEY_TOKEN})"
-        r"(?=\s|[.\-:;]|$)",
-        visible[:4000],
-        re.IGNORECASE,
-    )
-    if match is None:
-        return None
-    return _normalize_table_key(match.group(1))
-
-
 def _looks_inline_figure_block(block_html: str) -> bool:
     stripped = block_html.strip()
     if stripped.lower().startswith("<figure"):
@@ -15095,77 +14757,6 @@ def _looks_inline_figure_block(block_html: str) -> bool:
         return False
     # For image-only gaps, allow merge only when no visible caption text exists.
     return len(visible) <= 2
-
-
-def _raw_has_class(raw: str, class_name: str) -> bool:
-    class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', raw, re.IGNORECASE | re.DOTALL)
-    if class_match is None:
-        return False
-    return class_name in class_match.group(2).split()
-
-
-def _looks_table_note_text(visible: str) -> bool:
-    text = visible.strip()
-    if not text:
-        return False
-    lower = text.lower()
-    if re.match(r"^(?:notes?|table\s+notes?)\b", lower):
-        return True
-    if lower.startswith(("\ufffd", "пїЅ")):
-        return True
-    if lower.startswith(("*", "†", "‡")):
-        return True
-    if re.match(r"^\?\s*:\s*statistically\s+significant\b", lower):
-        return True
-    if re.match(r"^(?:(?:median\s+value|values?\s+represent)\b|positive\s+value\s*=)", lower):
-        return True
-    if re.match("^(?:delta|\u03b4)\\s*pvr\\b", lower):
-        return True
-    if re.match(r"^abbreviations?\b", lower):
-        return True
-    if re.match(r"^[A-Z][A-Za-z0-9 /\-]{0,35}:\s+", text) and re.search(
-        r"\b(?:score|index|rate|volume|stage|specific|residual|quality|robot|uroflow|prostate|symptom)\b",
-        lower,
-    ):
-        return True
-    if ":" in text and re.search(r"\b(?:odds ratio|confidence interval|perioperative change)\b", lower):
-        return True
-    if re.match(r"^https?://doi\.org/10\.\d{4,9}/\S+\.t\d+\b", lower):
-        return True
-    if lower.startswith("this list includes") or "not exhaustive" in lower:
-        return True
-    if re.match(r"^\\[\(\[]", text) and re.search(
-        r"\b(?:is|are)\s+(?:the\s+)?(?:function|value|parameter|term)\b|\bdescribes?\b",
-        lower,
-    ):
-        return True
-    if re.match(
-        r"^[a-z]\s*(?:body\s+mass\s+index|tumor\s+in\s+situ|triple-negative\s+breast\s+cancer|"
-        r"sentinel\s+lymph\s+node\s+biopsy|axillary\s+lymph\s+node\s+dissection|"
-        r"indocyanine\s+green|methylene\s+blue|radioisotope|positivity\s+was\s+defined|"
-        r"significant,\s*p\s*(?:<|&lt;|\u2264|<=)\s*0\.05)\b",
-        lower,
-    ):
-        return True
-    return False
-
-
-def _is_table_note_node(raw: str) -> bool:
-    if not raw.lstrip().lower().startswith("<p"):
-        return False
-    if _raw_has_class(raw, "z2m-table-note"):
-        return True
-    visible = _visible_text(raw)
-    if len(visible) > 800:
-        return False
-    if re.match(
-        r"^\s*<p\b[^>]*>\s*(?:<span\b[^>]*\bid\s*=\s*[\"']page-[^\"']+[\"'][^>]*>\s*</span>\s*)*"
-        r"<sup\b[^>]*>\s*[a-z]\s*</sup>\s*[A-Z]",
-        raw,
-        re.IGNORECASE,
-    ):
-        return True
-    return _looks_table_note_text(visible)
 
 
 def _looks_running_header_line(visible: str) -> bool:
@@ -15867,13 +15458,6 @@ def _merge_sentence_parts(left_body: str, right_body: str) -> str:
     return merged_left
 
 
-def _is_figure_caption_node(raw: str) -> bool:
-    low = raw.lstrip().lower()
-    if not (low.startswith("<p") or re.match(r"<h[1-6]\b", low)):
-        return False
-    return _figure_caption_num_from_visible(_visible_text(raw)) is not None
-
-
 def _looks_like_in_text_figure_reference_sentence(raw: str) -> bool:
     text = _visible_text(raw)
     return re.match(
@@ -15932,17 +15516,6 @@ def _split_caption_continuation_with_body_tail(
             continue
         return caption_tail, body_tail
     return None
-
-
-def _is_table_caption_node(raw: str) -> bool:
-    low = raw.lstrip().lower()
-    if not (low.startswith("<p") or re.match(r"<h[1-6]\b", low)):
-        return False
-    return _table_caption_key_from_visible(_visible_text(raw)) is not None
-
-
-def _is_caption_node(raw: str) -> bool:
-    return _is_figure_caption_node(raw) or _is_table_caption_node(raw)
 
 
 def _is_equation_like_node(raw: str) -> bool:
