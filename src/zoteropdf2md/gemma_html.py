@@ -6,7 +6,6 @@ import os
 import html as html_lib
 from typing import Callable
 
-from .abbreviations import LATIN_ABBREV_TO_RU, RU_ABBREV_TO_LATIN
 from .html_references import REFERENCES_HEADING_PATTERN as _REFERENCES_HEADING_PATTERN
 from .translation.languages import (
     DEFAULT_GEMMA_MODEL,
@@ -29,6 +28,32 @@ from .translation.prompt_guards import (
     sanitize_prompt_leak_segment as _sanitize_prompt_leak_segment,
     strip_prompt_leak_echo as _strip_prompt_leak_echo,
     strip_source_echo as _strip_source_echo,
+)
+from .translation.masks import (
+    ABBREV_PATTERN as _ABBREV_PATTERN,
+    ABBREV_TOKEN_PATTERN as _ABBREV_TOKEN_PATTERN,
+    FORMULA_PATTERNS as _FORMULA_PATTERNS,
+    FORMULA_TOKEN_PATTERN as _FORMULA_TOKEN_PATTERN,
+    LATIN_ABBREV_PATTERNS as _LATIN_ABBREV_PATTERNS,
+    PROTECTED_SCIENCE_TERM_PATTERN as _PROTECTED_SCIENCE_TERM_PATTERN,
+    RU_ABBREV_PATTERNS as _RU_ABBREV_PATTERNS,
+    TAG_TOKEN_PATTERN as _TAG_TOKEN_PATTERN,
+    UNRESOLVED_SENTINEL_PATTERN as _UNRESOLVED_SENTINEL_PATTERN,
+    apply_abbrev_mask as _apply_abbrev_mask,
+    apply_custom_abbrev_mask as _apply_custom_abbrev_mask,
+    apply_formula_mask as _apply_formula_mask,
+    apply_tag_mask as _apply_tag_mask,
+    clean_final_part_fragment as _clean_final_part_fragment,
+    clean_final_text_fragment as _clean_final_text_fragment,
+    formula_spans as _formula_spans,
+    merge_spans as _merge_spans,
+    normalize_sentinel_escapes as _normalize_sentinel_escapes,
+    restore_abbrev_mask as _restore_abbrev_mask,
+    restore_formula_mask as _restore_formula_mask,
+    restore_tag_mask as _restore_tag_mask,
+    sentinel_token_variants as _sentinel_token_variants,
+    strip_protocol_sentinels as _strip_protocol_sentinels,
+    strip_stray_abbrev_at_signs as _strip_stray_abbrev_at_signs,
 )
 
 
@@ -56,68 +81,6 @@ def _has_translatable_visible_text(text: str) -> bool:
 _BYTE_TOKEN_ARTIFACT_PATTERN = re.compile(r'(?:<0x[0-9A-Fa-f]{2}>)+')
 _BYTE_TOKEN_CITATION_PATTERN = re.compile(
     r'(?:<0x[0-9A-Fa-f]{2}>)+(\d[\d,\u2013\u2014\-]*)'
-)
-
-# Uppercase Latin abbreviations that must survive translation unchanged.
-# Restricted to SHORT sequences (2вЂ“5 letters) so that all-caps section titles
-# such as INTRODUCTION, CONCLUSION, RESULTS (в‰Ґ6 letters) are NOT masked and
-# can still be translated normally.  Real abbreviations (IEEE, MEMS, GAI, LC,
-# ADC, VNA, RF) are typically в‰¤5 characters and will be protected.
-_ABBREV_PATTERN = re.compile(r'\b[A-Z]{2,5}\d*\b')
-_PROTECTED_SCIENCE_TERM_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9])("
-    r"(?:i|micro|u|\u00b5)?ECoG|"
-    r"TiN|PtIr|IrOx|RuOx|AIROF|EIROF|SIROF|"
-    r"Parylene(?:[-\s]?C)?|PDMS|SU-8|ZIF|"
-    r"Steeltrodes?|steeltrodes?"
-    r")(?![A-Za-z0-9])",
-    re.IGNORECASE,
-)
-# Placeholder tokens used to protect abbreviations during model calls.
-# ASCII sentinel is more robust than XML-style tags in free-form generation.
-_ABBREV_TOKEN_PATTERN = re.compile(r"@@Z2M\\?_A(\d+)(?:@@|@(?!@))", re.IGNORECASE)
-_TAG_TOKEN_PATTERN = re.compile(r"@@Z2M\\?_T(\d+)(?:@@|@(?!@))", re.IGNORECASE)
-
-# Additional patterns for protecting specific abbreviations from translation
-_LATIN_ABBREV_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in LATIN_ABBREV_TO_RU.keys()]
-_RU_ABBREV_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in RU_ABBREV_TO_LATIN.keys()]
-
-_FORMULA_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Internal tag placeholders used during recovery must survive intact.
-    re.compile(r"@@Z2M\\?_T\d+@@", re.IGNORECASE),
-    # Escaped HTML-like snippets and URLs must not be rewritten into real tags.
-    re.compile(r"&lt;/?[A-Za-z][^&<>]{0,300}?&gt;", re.IGNORECASE),
-    re.compile(r"https?://[^\s<>()\"']+", re.IGNORECASE),
-    re.compile(r"\bdoi:\s*10\.\d{4,9}/[^\s<>()\"']+", re.IGNORECASE),
-    # Unit spans around micro symbols are atomic; otherwise "\(\mu\) m" can
-    # become "мм \(\mu\) м" when the adjacent "m" is translated separately.
-    re.compile(r"\\\(\s*\\mu\s*\\\)\s*m\b", re.IGNORECASE),
-    re.compile(r"\\mu\s*m\b", re.IGNORECASE),
-    re.compile(r"\u00b5\s*m\b", re.IGNORECASE),
-    re.compile(
-        r"\d+(?:\s*(?:\\\(\s*\\mu\s*\\\)|\\mu|\u00b5)\s*m)?"
-        r"(?:\s*[x\u00d7]\s*\d+(?:\s*(?:\\\(\s*\\mu\s*\\\)|\\mu|\u00b5)\s*m)?){1,4}",
-        re.IGNORECASE,
-    ),
-    # Inline math delimiters.
-    re.compile(r"\$[^$\n]{1,600}\$"),
-    re.compile(r"\\\([^\n]{1,600}?\\\)"),
-    re.compile(r"\\\[[\s\S]{1,600}?\\\]"),
-    # LaTeX commands with optional brace arguments.
-    re.compile(r"\\[A-Za-z]+(?:\s*\{[^{}]{0,160}\}){0,3}"),
-    # Subscript / superscript expressions (e.g., I_1, L_{m}^{2}).
-    re.compile(
-        r"[A-Za-z](?:\s*_\{[^{}]{1,80}\}|\s*_[A-Za-z0-9]{1,20}|\s*\^\{[^{}]{1,80}\}|\s*\^[A-Za-z0-9]{1,20})+"
-    ),
-    # Single-letter coefficient directly before a LaTeX symbol (e.g., j\omega).
-    re.compile(r"(?<!\w)[A-Za-z]\s*(?=\\[A-Za-z])"),
-    # Dense equation chunks carrying operators with LaTeX/subscript markers.
-    re.compile(
-        r"(?<!\w)(?=[^,\n]{0,240}[=+\-*/])(?=[^,\n]{0,240}(?:\\|_|\^))"
-        r"[A-Za-z0-9\\{}_^().]+(?:\s+[A-Za-z0-9\\{}_^().]+){0,40}(?!\w)"
-    ),
-    # Compact dimension style (e.g., 72 \times 48 \times 20 mm).
-    re.compile(r"(?<!\w)\d+(?:\s*\\times\s*\d+){1,4}(?:\s*[A-Za-z]{1,8})?(?!\w)", re.IGNORECASE),
 )
 
 # Helpers for author-line detection.
@@ -322,30 +285,6 @@ def _normalize_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    if not spans:
-        return []
-    spans.sort(key=lambda item: (item[0], item[1]))
-    merged: list[tuple[int, int]] = [spans[0]]
-    for start, end in spans[1:]:
-        last_start, last_end = merged[-1]
-        if start <= last_end:
-            merged[-1] = (last_start, max(last_end, end))
-        else:
-            merged.append((start, end))
-    return merged
-
-
-def _formula_spans(text: str) -> list[tuple[int, int]]:
-    spans: list[tuple[int, int]] = []
-    for pattern in _FORMULA_PATTERNS:
-        for match in pattern.finditer(text):
-            start, end = match.span()
-            if end > start:
-                spans.append((start, end))
-    return _merge_spans(spans)
-
-
 # ---------------------------------------------------------------------------
 # Batch translation helpers
 # ---------------------------------------------------------------------------
@@ -359,12 +298,6 @@ _BATCH_ITEM_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Formula placeholder tokens (ASCII sentinel) kept unchanged by the model.
-_FORMULA_TOKEN_PATTERN = re.compile(r"@@Z2M(?:\\?_)?F(\d+)(?:@@|@(?!@))", re.IGNORECASE)
-_UNRESOLVED_SENTINEL_PATTERN = re.compile(
-    r"@{1,2}Z2M(?:\\?_)?[A-Z0-9_]+(?:@{0,2}|(?:\\?_)+)?",
-    re.IGNORECASE,
-)
 # Any internal protocol marker leaking into the final translated text means the
 # reconstructed batch output is not trustworthy and the segment should be
 # recovered locally through single-segment translation.
@@ -381,19 +314,6 @@ _WINDOW_BATCH_OVERLAP_SEGMENTS = 1
 _MAX_WINDOW_BATCH_CHARS = 40_000
 _HEADING_MERGE_SEPARATOR = "@@Z2M_HSEP@@"
 _HEADING_INLINE_MARKUP_TAGS = {"i", "em", "b", "strong"}
-_HEADING_MERGE_SEPARATOR_LEAK_PATTERN = re.compile(
-    r"@{1,2}Z2M(?:\\?_)?HSEP@{0,2}",
-    re.IGNORECASE,
-)
-_AUX_PROTOCOL_SENTINEL_LEAK_PATTERN = re.compile(
-    r"(?:@{1,2}Z2M(?:\\?_)?[ATF]\d+(?:@{1,3}|(?:\\?_)+)?|"
-    r"Z2M(?:\\?_)?[ATF]\d+(?:@{1,3}|(?:\\?_)+)?)",
-    re.IGNORECASE,
-)
-_STRAY_ABBREV_AT_PATTERN = re.compile(
-    r"\b((?:i|micro|u|\u00b5)?ECoG|SNR|BMI|SEP|MEMS|COG|ERP|NHP|"
-    r"VNA|ADC|LC|IEEE)@(?!@)(?=$|[^A-Za-z0-9])"
-)
 _HEADING_PREFIX_TOKEN_PATTERN = re.compile(r"^\s*([A-Z]|[IVXLCM]{1,8})\.\s+", re.IGNORECASE)
 _HEADING_GLOSSARY_RU: dict[str, str] = {
     "MEASUREMENT": "ИЗМЕРЕНИЕ",
@@ -625,215 +545,6 @@ def _format_int_list(values: list[int], *, max_items: int = 8) -> str:
         return "[" + ",".join(str(v) for v in values) + "]"
     head = ",".join(str(v) for v in values[:max_items])
     return f"[{head},...+{len(values) - max_items}]"
-
-
-def _apply_formula_mask(text: str) -> tuple[str, dict[str, str]]:
-    """Replace formula spans with ``@@Z2MF{N}@@`` tokens.
-
-    Returns ``(masked_text, token_map)`` where *token_map* maps each token
-    back to the original formula string so it can be restored after translation.
-    """
-    spans = _formula_spans(text)
-    if not spans:
-        return text, {}
-    fmap: dict[str, str] = {}
-    masked = text
-    # Replace right-to-left so positions stay valid.
-    for j, (start, end) in enumerate(reversed(spans)):
-        real_j = len(spans) - 1 - j
-        token = f"@@Z2MF{real_j}@@"
-        fmap[token] = text[start:end]
-        masked = masked[:start] + token + masked[end:]
-    return masked, fmap
-
-
-def _normalize_sentinel_escapes(text: str) -> str:
-    """Normalize markdown-escaped protocol sentinels returned by LLMs.
-
-    Some models emit escaped variants such as ``@@Z2M\\_A0@@``.  Those must be
-    canonicalized before token-restore logic runs.
-    """
-    if "@@Z2M" not in text and "@@z2m" not in text:
-        return text
-    normalized = re.sub(r"@@([zZ]2[mM])\\+(?=[A-Za-z_])", r"@@\1", text)
-    return normalized
-
-
-def _sentinel_token_variants(token: str) -> set[str]:
-    variants = {token}
-    if "_" in token:
-        variants.add(token.replace("_", r"\_"))
-    if token.endswith("@@"):
-        short = token[:-1]
-        variants.add(short)
-        if "_" in short:
-            variants.add(short.replace("_", r"\_"))
-    return {v for v in variants if v}
-
-
-def _strip_protocol_sentinels(text: str) -> str:
-    """Remove leaked internal protocol sentinels from final text fragments."""
-    if "z2m" not in text.lower():
-        return text
-    cleaned = _normalize_sentinel_escapes(text)
-    cleaned = _HEADING_MERGE_SEPARATOR_LEAK_PATTERN.sub(" ", cleaned)
-    cleaned = _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN.sub("", cleaned)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    return cleaned
-
-
-def _strip_stray_abbrev_at_signs(text: str) -> str:
-    """Remove a leaked sentinel tail after protected abbreviations."""
-    if "@" not in text:
-        return text
-    return _STRAY_ABBREV_AT_PATTERN.sub(r"\1", text)
-
-
-def _clean_final_text_fragment(text: str) -> str:
-    return _strip_stray_abbrev_at_signs(_strip_protocol_sentinels(text))
-
-
-def _clean_final_part_fragment(part: str) -> str:
-    if part.startswith("<"):
-        return _strip_protocol_sentinels(part)
-    return _clean_final_text_fragment(part)
-
-
-def _restore_formula_mask(text: str, fmap: dict[str, str]) -> str:
-    """Substitute formula placeholder tokens back with their original strings."""
-    if not fmap:
-        return text
-    text = _normalize_sentinel_escapes(text)
-
-    def _replace(match: re.Match[str]) -> str:
-        token = f"@@Z2MF{int(match.group(1))}@@"
-        return fmap.get(token, match.group(0))
-
-    restored = _FORMULA_TOKEN_PATTERN.sub(_replace, text)
-    for token, formula in fmap.items():
-        for variant in _sentinel_token_variants(token):
-            restored = restored.replace(variant, formula)
-    return restored
-
-
-def _apply_custom_abbrev_mask(text: str) -> tuple[str, dict[str, str]]:
-    """Apply custom masking for specific Latin abbreviations using our dictionary."""
-    amap: dict[str, str] = {}
-    masked = text
-
-    # Apply patterns from our custom dictionary
-    for pattern in _LATIN_ABBREV_PATTERNS:
-        def replace_match(match):
-            original = match.group(0)
-            # Get the replacement from our mapping
-            for key_pattern, replacement in LATIN_ABBREV_TO_RU.items():
-                if re.match(key_pattern, original, re.IGNORECASE):
-                    token = f"@@Z2M_A{len(amap)}@@"
-                    amap[token] = original
-                    return token
-            return original
-
-        masked = pattern.sub(replace_match, masked)
-
-    return masked, amap
-
-
-def _apply_abbrev_mask(text: str) -> tuple[str, dict[str, str]]:
-    """Replace uppercase abbreviations with ``@@Z2M_A{N}@@`` tokens.
-
-    Protects sequences such as ``IEEE``, ``GAI``, ``LC``, ``ADC`` from being
-    transliterated or "translated" by the model (e.g. GAI -> Cyrillic). Also
-    protects unstable mixed-case scientific terms such as ``ECoG`` and material
-    names such as ``TiN``/``Parylene C``.
-    """
-    preferred_spans = [
-        (m.start(), m.end())
-        for m in _PROTECTED_SCIENCE_TERM_PATTERN.finditer(text)
-    ]
-    spans = list(preferred_spans)
-    for match in _ABBREV_PATTERN.finditer(text):
-        start, end = match.span()
-        if any(not (end <= s or start >= e) for s, e in preferred_spans):
-            continue
-        spans.append((start, end))
-    spans = sorted(set(spans), key=lambda span: span[0])
-    if not spans:
-        return text, {}
-    amap: dict[str, str] = {}
-    masked = text
-    for j, (start, end) in enumerate(reversed(spans)):
-        real_j = len(spans) - 1 - j
-        token = f"@@Z2M_A{real_j}@@"
-        amap[token] = text[start:end]
-        masked = masked[:start] + token + masked[end:]
-    return masked, amap
-
-
-def _restore_abbrev_mask(text: str, amap: dict[str, str]) -> str:
-    """Substitute abbreviation placeholder tokens back with their original strings.
-
-    Returns the original *text* unchanged if any placeholder token could not be
-    restored (which would indicate the model dropped part of the masked text).
-    """
-    if not amap:
-        return text
-    text = _normalize_sentinel_escapes(text)
-
-    def _replace(match: re.Match[str]) -> str:
-        token = f"@@Z2M_A{int(match.group(1))}@@"
-        return amap.get(token, match.group(0))
-
-    restored = _ABBREV_TOKEN_PATTERN.sub(_replace, text)
-    for token, original in amap.items():
-        for variant in _sentinel_token_variants(token):
-            restored = restored.replace(variant, original)
-    for original in sorted(set(amap.values()), key=len, reverse=True):
-        if len(original) < 2:
-            continue
-        restored = re.sub(
-            rf"{re.escape(original)}@(?!@)(?=$|[^A-Za-z0-9])",
-            original,
-            restored,
-        )
-    return restored
-
-
-def _apply_tag_mask(text: str) -> tuple[str, dict[str, str]]:
-    """Mask inline HTML tags inside a text segment to keep recovery stable.
-
-    This is used only for single-segment recovery paths where the model may
-    hallucinate punctuation around missing inline anchors/tags.
-    """
-    tags = list(re.finditer(r"<[^>]+>", text))
-    if not tags:
-        return text, {}
-
-    masked = text
-    tmap: dict[str, str] = {}
-    for j, match in enumerate(reversed(tags)):
-        real_j = len(tags) - 1 - j
-        token = f"@@Z2M_T{real_j}@@"
-        tmap[token] = match.group(0)
-        start, end = match.span()
-        masked = masked[:start] + token + masked[end:]
-    return masked, tmap
-
-
-def _restore_tag_mask(text: str, tmap: dict[str, str]) -> str:
-    """Restore inline tag tokens after recovery translation."""
-    if not tmap:
-        return text
-    text = _normalize_sentinel_escapes(text)
-
-    def _replace(match: re.Match[str]) -> str:
-        token = f"@@Z2M_T{int(match.group(1))}@@"
-        return tmap.get(token, match.group(0))
-
-    restored = _TAG_TOKEN_PATTERN.sub(_replace, text)
-    for token, original in tmap.items():
-        for variant in _sentinel_token_variants(token):
-            restored = restored.replace(variant, original)
-    return restored
 
 
 def _split_outer_ws(text: str) -> tuple[str, str, str]:
