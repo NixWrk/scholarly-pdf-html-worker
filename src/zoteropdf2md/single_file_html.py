@@ -38,6 +38,7 @@ from .html_images import (
     validate_data_url as _validate_data_url,
 )
 from .html_links import (
+    escape_html_attr_literal as _escape_html_attr,
     href_attr_literal as _extract_href_attr,
     replace_href_attr_literal as _replace_href_attr_literal,
 )
@@ -3228,15 +3229,6 @@ def _refresh_inlined_data_urls_by_cache(
         return f"{prefix}{quote}{cached_data_url}{suffix}"
 
     return _IMG_SRC_PATTERN.sub(replace, html), refreshed
-
-
-def _escape_html_attr(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
 
 
 def _add_body_class(html: str, class_name: str) -> str:

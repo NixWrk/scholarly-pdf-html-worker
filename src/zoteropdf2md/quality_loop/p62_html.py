@@ -8,6 +8,7 @@ from html import escape, unescape
 import re
 from typing import Any
 
+from zoteropdf2md.html_links import escape_html_attr_literal as _escape_html_attr
 from zoteropdf2md.quality_loop.p62_matching import figure_label_present_in_text
 
 
@@ -44,15 +45,6 @@ def _visible_html_text(fragment: str) -> str:
     text = re.sub(r"(?i)<br\s*/?>", " ", fragment)
     text = TAG_RE.sub(" ", text)
     return unescape(re.sub(r"\s+", " ", text)).strip()
-
-
-def _escape_html_attr(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
 
 
 def _remove_class_from_open_tag(open_tag: str, class_name: str) -> str:
