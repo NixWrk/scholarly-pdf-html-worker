@@ -69,8 +69,15 @@ from .semantic_labels import (
 )
 from .url_repair import (
     BROKEN_PLAIN_URL_PROTOCOL_PATTERN as _BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
+    compact_visible_url_fragment as _compact_visible_url_fragment,
     repair_broken_visible_url_text as _repair_broken_visible_url_text,
+    split_url_fragment_text_prose_tail as _split_url_fragment_text_prose_tail,
     split_url_and_trailing_punct as _split_url_and_trailing_punct,
+    starts_like_visible_url_fragment as _starts_like_visible_url_fragment,
+    strip_url_fragment_edge_quotes as _strip_url_fragment_edge_quotes,
+    strip_wrapping_url_quotes as _strip_wrapping_url_quotes,
+    url_fragment_compare_key as _url_fragment_compare_key,
+    url_fragment_keys_match_allowing_lost_hyphens as _url_fragment_keys_match_allowing_lost_hyphens,
 )
 
 
@@ -2691,12 +2698,6 @@ _SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN = re.compile(
 )
 _URL_FRAGMENT_TEXT_CHUNK_PATTERN = re.compile(
     r'\s*(?P<text>[/#?&=._~:;,%A-Za-z0-9!$\'()*+\[\]{}-]+(?:\s+[/#?&=._~:;,%A-Za-z0-9!$\'()*+\[\]{}-]+){0,4})',
-    re.IGNORECASE,
-)
-_URL_FRAGMENT_TEXT_PROSE_TAIL_PATTERN = re.compile(
-    r"\s+(?=(?:\((?:accessed|retrieved|viewed|visited)\b|"
-    r"\[(?:accessed|retrieved|viewed|visited)\b|"
-    r"(?:last\s+)?(?:accessed|retrieved|viewed|visited)\b))",
     re.IGNORECASE,
 )
 _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN = re.compile(
@@ -6786,34 +6787,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
     return "".join(out)
 
 
-def _compact_visible_url_fragment(text: str) -> str:
-    return re.sub(r"\s+", "", text).replace("&amp;", "&")
-
-
-def _url_fragment_compare_key(text: str) -> str:
-    compact = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(text)).strip("()[]")
-    compact = compact.rstrip(".,;:")
-    compact = re.sub(r"^https?://", "", compact, flags=re.IGNORECASE)
-    return compact.lower().rstrip("/")
-
-
-def _url_fragment_keys_match_allowing_lost_hyphens(left: str, right: str) -> bool:
-    if left == right:
-        return True
-    return bool(left and right and left.replace("-", "") == right.replace("-", ""))
-
-
-def _split_url_fragment_text_prose_tail(text: str) -> tuple[str, int]:
-    match = _URL_FRAGMENT_TEXT_PROSE_TAIL_PATTERN.search(text)
-    if match is None:
-        return text, len(text)
-    return text[: match.start()], match.start()
-
-
-def _starts_like_visible_url_fragment(text: str) -> bool:
-    return bool(re.match(r"\s*(?:https?://|www\.|doi\.org/|10\.\d{4,9}/)", text, re.IGNORECASE))
-
-
 def _extract_href_attr(attrs: str) -> str | None:
     for pattern in (_DOUBLE_QUOTED_HREF_ATTR_PATTERN, _SINGLE_QUOTED_HREF_ATTR_PATTERN):
         match = pattern.search(attrs)
@@ -6830,17 +6803,6 @@ def _replace_href_attr_literal(attrs: str, href: str) -> str:
         count=1,
         flags=re.IGNORECASE | re.DOTALL,
     )
-
-
-def _strip_wrapping_url_quotes(value: str) -> str:
-    stripped = value.strip()
-    while len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in "\"'":
-        stripped = stripped[1:-1].strip()
-    return stripped
-
-
-def _strip_url_fragment_edge_quotes(value: str) -> str:
-    return value.strip().strip("\"'")
 
 
 def _escape_html_text(value: str) -> str:

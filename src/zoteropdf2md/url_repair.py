@@ -54,6 +54,12 @@ BROKEN_PLAIN_URL_TLD_SPACE_PATTERN = re.compile(
     r"(?P<tail>[A-Za-z]{2,63})(?=[/:?#)\s]|$)",
     re.IGNORECASE,
 )
+URL_FRAGMENT_TEXT_PROSE_TAIL_PATTERN = re.compile(
+    r"\s+(?=(?:\((?:accessed|retrieved|viewed|visited)\b|"
+    r"\[(?:accessed|retrieved|viewed|visited)\b|"
+    r"(?:last\s+)?(?:accessed|retrieved|viewed|visited)\b))",
+    re.IGNORECASE,
+)
 
 
 def split_url_and_trailing_punct(url: str) -> tuple[str, str]:
@@ -73,6 +79,45 @@ def split_url_and_trailing_punct(url: str) -> tuple[str, str]:
         core = core[:-1]
 
     return core, trailing
+
+
+def compact_visible_url_fragment(text: str) -> str:
+    return re.sub(r"\s+", "", text).replace("&amp;", "&")
+
+
+def strip_url_fragment_edge_quotes(value: str) -> str:
+    return value.strip().strip("\"'")
+
+
+def url_fragment_compare_key(text: str) -> str:
+    compact = strip_url_fragment_edge_quotes(compact_visible_url_fragment(text)).strip("()[]")
+    compact = compact.rstrip(".,;:")
+    compact = re.sub(r"^https?://", "", compact, flags=re.IGNORECASE)
+    return compact.lower().rstrip("/")
+
+
+def url_fragment_keys_match_allowing_lost_hyphens(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    return bool(left and right and left.replace("-", "") == right.replace("-", ""))
+
+
+def split_url_fragment_text_prose_tail(text: str) -> tuple[str, int]:
+    match = URL_FRAGMENT_TEXT_PROSE_TAIL_PATTERN.search(text)
+    if match is None:
+        return text, len(text)
+    return text[: match.start()], match.start()
+
+
+def starts_like_visible_url_fragment(text: str) -> bool:
+    return bool(re.match(r"\s*(?:https?://|www\.|doi\.org/|10\.\d{4,9}/)", text, re.IGNORECASE))
+
+
+def strip_wrapping_url_quotes(value: str) -> str:
+    stripped = value.strip()
+    while len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in "\"'":
+        stripped = stripped[1:-1].strip()
+    return stripped
 
 
 def repair_broken_visible_url_text(text: str) -> str:
