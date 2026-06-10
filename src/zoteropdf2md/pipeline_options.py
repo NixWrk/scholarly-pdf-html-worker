@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .export_modes import ExportMode, parse_export_mode
-from .gemma_html import DEFAULT_GEMMA_MODEL
+from .translation.languages import DEFAULT_GEMMA_MODEL
 from .models import ResolvedAttachment
 from .staging import DEFAULT_MAX_BASE_LEN
 

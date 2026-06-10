@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .gemma_html import language_name_for_code, normalize_language_code
 from .pipeline_options import PipelineOptions
+from .translation.languages import language_name_for_code, normalize_language_code
 
 
 @dataclass(frozen=True)
