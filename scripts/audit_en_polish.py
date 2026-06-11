@@ -81,7 +81,9 @@ from zoteropdf2md.quality_loop.audit_manual_patterns import (
 )
 from zoteropdf2md.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
+    MeineRecentLinkDeps,
     manual_blind_spot_defects as _manual_blind_spot_defects_base,
+    meine_recent_link_structure_defects as _meine_recent_link_structure_defects_base,
 )
 from zoteropdf2md.quality_loop.audit_math_units import (
     DEGREE_DEFECT_RE,
@@ -2091,6 +2093,53 @@ def _manual_blind_spot_defects(
     )
 
 
+def _meine_recent_link_structure_deps() -> MeineRecentLinkDeps:
+    return MeineRecentLinkDeps(
+        ref_anchor_body_re=REF_ANCHOR_BODY_RE,
+        author_year_text_re=AUTHOR_YEAR_TEXT_RE,
+        page_link_re=PAGE_LINK_RE,
+        mixedcase_var_footnote_re=MIXEDCASE_VAR_FOOTNOTE_RE,
+        table_caption_id_re=TABLE_CAPTION_ID_RE,
+        table_wrapper_id_re=TABLE_WRAPPER_ID_RE,
+        table_ref_partial_link_re=TABLE_REF_PARTIAL_LINK_RE,
+        flattened_sup_citation_re=FLATTENED_SUP_CITATION_RE,
+        math_or_measurement_range_context_re=MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
+        doi_split_plain_re=DOI_SPLIT_PLAIN_RE,
+        german_source_hint_re=GERMAN_SOURCE_HINT_RE,
+        word_footnote_split_re=WORD_FOOTNOTE_SPLIT_RE,
+        suspicious_footnote_word_merges=SUSPICIOUS_FOOTNOTE_WORD_MERGES,
+        figure_unit_re=FIGURE_UNIT_RE,
+        figure_caption_node_re=FIGURE_CAPTION_NODE_RE,
+        figs_ref_false_ref_re=FIGS_REF_FALSE_REF_RE,
+        comma_decimal_ref_re=COMMA_DECIMAL_REF_RE,
+        single_stat_ref_re=SINGLE_STAT_REF_RE,
+        references_heading_re=REFERENCES_HEADING_RE,
+        reference_target_numbers=_reference_target_numbers,
+        figure_target_keys=_figure_target_keys,
+        non_reference_body_blocks=_non_reference_body_blocks,
+        ref_anchor_visible_number=_ref_anchor_visible_number,
+        roman_word_split_defects=_roman_word_split_defects,
+        is_references_block=_is_references_block,
+        looks_like_affiliation_label_roman_boundary=_looks_like_affiliation_label_roman_boundary,
+        block_is_float_or_table_context=_block_is_float_or_table_context,
+        flattened_sup_match_is_joined_figure_label=_flattened_sup_match_is_joined_figure_label,
+        flattened_sup_match_is_doi_or_url_fragment=_flattened_sup_match_is_doi_or_url_fragment,
+        block_looks_like_math_or_measurement_range_context=_block_looks_like_math_or_measurement_range_context,
+        looks_like_table_flattened_citation_context=_looks_like_table_flattened_citation_context,
+        page_link_semantic_kind=_page_link_semantic_kind,
+        figure_caption_number_from_caption_node=_figure_caption_number_from_caption_node,
+        figure_unit_allows_shared_image_alias=_figure_unit_allows_shared_image_alias,
+        ref_match_inside_bracketed_numeric_citation=_ref_match_inside_bracketed_numeric_citation,
+        looks_like_comma_decimal_stat_ref=_looks_like_comma_decimal_stat_ref,
+        looks_like_sample_size_value_ref=_looks_like_sample_size_value_ref,
+        visible_figure_target_defects=_visible_figure_target_defects,
+        looks_like_float_or_caption=_looks_like_float_or_caption,
+        parse_overlapping_blocks=_parse_overlapping_blocks,
+        missing_figure_warning_blocks=_missing_figure_warning_blocks,
+        classify_missing_figure_warning=_classify_missing_figure_warning,
+    )
+
+
 def _meine_recent_manual_defects(
     polish_html: str,
     polish_blocks: list[Block],
@@ -2100,598 +2149,17 @@ def _meine_recent_manual_defects(
     defects: list[Defect] = []
     slim_html = _structure_html(polish_html)
     plain = _plain_text(slim_html)
-    ref_targets = _reference_target_numbers(slim_html)
-    fig_targets = _figure_target_keys(slim_html)
     body_blocks = list(_non_reference_body_blocks(polish_blocks))
-
-    for block in body_blocks:
-        for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
-            label = _strip_tags(match.group("body"))
-            if AUTHOR_YEAR_TEXT_RE.search(label) is not None:
-                continue
-            visible_number = _ref_anchor_visible_number(label)
-            target_number = int(match.group("num"))
-            if visible_number is None or visible_number == target_number:
-                continue
-            if 1800 <= visible_number <= 2099:
-                continue
-            defects.append(
-                _defect(
-                    defect_id="P42",
-                    cc_class="CC-02/CC-13",
-                    check="Visible citation label points to a different bibliography target",
-                    severity="error",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Bibliography continuation drift or ordinal reassignment changed #ref targets without preserving visible citation identity.",
-                    proposed_fix_layer="EN polish bibliography identity audit before citation linkification",
-                    regression_test="Visible citation labels such as ',9' must link to #ref-9, not shifted continuation targets.",
-                    extra={"visible_number": visible_number, "ref_target": target_number, "label": label},
-                )
-            )
-            break
-        if defects and defects[-1].id == "P42":
-            break
-
-    for match in PAGE_LINK_RE.finditer(slim_html):
-        label = _strip_tags(match.group("body"))
-        left = _strip_tags(slim_html[max(0, match.start() - 100) : match.start()])
-        if not (
-            re.fullmatch(r"\d+\.\d+\)?\.?", label)
-            and re.search(r"\b(?:Eqn?\.?|Equation)\s*$", left, re.IGNORECASE)
-        ):
-            continue
-        defects.append(
-            _defect(
-                defect_id="P43",
-                cc_class="CC-03/CC-06/CC-10",
-                check="Decimal equation reference remains a PDF page link",
-                severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Equation-reference retargeting handles simple integers but misses decimal equation labels such as Eqn. 2.1.",
-                proposed_fix_layer="EN polish equation-reference parser",
-                regression_test="Eqn. 2.1 and Eqn. 2.4 page anchors retarget to equation IDs or unwrap if no reliable target exists.",
-                extra={"page_target": match.group("target"), "label": label},
-            )
-        )
-        break
-
-    for block in polish_blocks[:25]:
-        for match in PAGE_LINK_RE.finditer(block.raw):
-            label = _strip_tags(match.group("body"))
-            if re.fullmatch(r"i\s*\d+\s*,?", label, re.IGNORECASE) is None:
-                continue
-            defects.append(
-                _defect(
-                    defect_id="P44",
-                    cc_class="CC-01/CC-03",
-                    check="Front-matter affiliation marker remains as page-anchor glue",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Superscript affiliation labels in the front matter were OCR-glued into page-anchor links.",
-                    proposed_fix_layer="EN polish front-matter marker repair before page-link preservation",
-                    regression_test="Author/affiliation fragments like 'i1,' and 'i3,' do not remain linked to #page anchors.",
-                    extra={"page_target": match.group("target"), "label": label},
-                )
-            )
-            break
-        if defects and defects[-1].id == "P44":
-            break
-
     defects.extend(
-        _roman_word_split_defects(
+        _meine_recent_link_structure_defects_base(
+            polish_html,
             polish_blocks,
-            references_heading_re=REFERENCES_HEADING_RE,
-            is_references_block=_is_references_block,
-            looks_like_affiliation_label_roman_boundary=_looks_like_affiliation_label_roman_boundary,
-            stage=POLISH_STAGE,
+            deps=_meine_recent_link_structure_deps(),
+            pdf_text=pdf_text,
+            polish_stage=POLISH_STAGE,
+            raw_stage=RAW_STAGE,
         )
     )
-
-    mixed_var_match = MIXEDCASE_VAR_FOOTNOTE_RE.search(slim_html)
-    if mixed_var_match is not None:
-        defects.append(
-            _defect(
-                defect_id="P46",
-                cc_class="CC-04/CC-11",
-                check="Mixed-case scientific variable was split as a table footnote",
-                severity="error",
-                block=None,
-                snippet=_snippet(slim_html, mixed_var_match.start(), mixed_var_match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Table footnote detection treats terminal x/i/v as a footnote marker even when it is part of a variable such as Qmax.",
-                proposed_fix_layer="EN polish table-footnote parser with variable/name guards",
-                regression_test="Qmax/Qave/Qmn-style variables stay plain text in table cells and captions.",
-            )
-        )
-
-    for caption_match in TABLE_CAPTION_ID_RE.finditer(slim_html):
-        tail = slim_html[caption_match.end() : caption_match.end() + 4000]
-        wrapper_match = TABLE_WRAPPER_ID_RE.search(tail)
-        if wrapper_match is None:
-            continue
-        caption_num = caption_match.group("num")
-        wrapper_num = wrapper_match.group("num")
-        if caption_num == wrapper_num:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P47",
-                cc_class="CC-07/CC-11/CC-13",
-                check="Table caption target drifts to a different table wrapper",
-                severity="error",
-                block=None,
-                snippet=_snippet(slim_html, caption_match.start(), caption_match.end() + wrapper_match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Caption/table assembly assigned a caption ID by visible label but wrapped the following table under a different ordinal.",
-                proposed_fix_layer="EN polish table-unit assembly and caption-table adjacency validation",
-                regression_test="A caption with id=table-4 is followed by or wrapped with table-4, never table-5.",
-                extra={"caption_table": caption_num, "wrapper_table": wrapper_num},
-            )
-        )
-        break
-
-    for caption_match in TABLE_CAPTION_ID_RE.finditer(slim_html):
-        tail = slim_html[caption_match.end() : caption_match.end() + 1600]
-        first_table = re.search(r"<table\b", tail, re.IGNORECASE)
-        first_wrapper = TABLE_WRAPPER_ID_RE.search(tail)
-        if first_table is None or (first_wrapper is not None and first_wrapper.start() < first_table.start()):
-            continue
-        defects.append(
-            _defect(
-                defect_id="P48",
-                cc_class="CC-07/CC-11",
-                check="Table caption is followed by an unwrapped table",
-                severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, caption_match.start(), caption_match.end() + first_table.end()),
-                stage=POLISH_STAGE,
-                hypothesis="A visible table caption was given a target ID, but the adjacent table body was not included in the semantic wrapper.",
-                proposed_fix_layer="EN polish table-unit wrapping",
-                regression_test="Captions above tables wrap the following table body into the same z2m-table-unit.",
-                extra={"caption_table": caption_match.group("num")},
-            )
-        )
-        break
-
-    for block in body_blocks:
-        partial_table_match = TABLE_REF_PARTIAL_LINK_RE.search(block.raw)
-        if partial_table_match is None:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P49",
-                cc_class="CC-03/CC-10",
-                check="Only the digit of a table reference is linked",
-                severity="warning",
-                block=block,
-                snippet=block.text,
-                stage=POLISH_STAGE,
-                hypothesis="Cross-reference linkification wrapped only the number and left the semantic label outside the anchor.",
-                proposed_fix_layer="EN polish table-reference parser",
-                regression_test="'Table 4', 'Tables 4 and 5', and similar labels are linked as whole semantic references.",
-                extra=partial_table_match.groupdict(),
-            )
-        )
-        break
-
-    for block in body_blocks:
-        if _block_is_float_or_table_context(block):
-            continue
-        linkless_raw = re.sub(r"<a\b[^>]*>.*?</a>", " ", block.raw, flags=re.IGNORECASE | re.DOTALL)
-        linkless_text = _strip_tags(linkless_raw)
-        flattened_match = FLATTENED_SUP_CITATION_RE.search(linkless_text)
-        if flattened_match is None:
-            continue
-        if _flattened_sup_match_is_joined_figure_label(flattened_match):
-            continue
-        if _flattened_sup_match_is_doi_or_url_fragment(linkless_text, flattened_match):
-            continue
-        if (
-            re.search(r"https?://(?:dx\.)?doi\.org/10\.\d{4,9}/", block.raw, re.IGNORECASE)
-            and re.search(r"[A-Za-z]{3,}\.\d", flattened_match.group(0))
-        ):
-            continue
-        number = int(flattened_match.group("num"))
-        if number not in ref_targets:
-            continue
-        window = linkless_text[max(0, flattened_match.start() - 120) : flattened_match.end() + 160]
-        if not re.search(r"\bet\s+al\.?\s*\d", flattened_match.group(0), re.IGNORECASE):
-            if (
-                MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(window)
-                or _block_looks_like_math_or_measurement_range_context(block)
-            ):
-                continue
-        if _looks_like_table_flattened_citation_context(linkless_text):
-            continue
-        defects.append(
-            _defect(
-                defect_id="P50",
-                cc_class="CC-02/CC-13",
-                check="Flattened superscript citation remains unlinked",
-                severity="warning",
-                block=block,
-                snippet=block.text,
-                stage=POLISH_STAGE,
-                hypothesis="Superscript citation OCR was flattened into prose, so the citation parser did not see a bracket/sup marker.",
-                proposed_fix_layer="EN polish citation OCR recovery",
-                regression_test="Patterns like 'Agarwal et al3' and 'voiders.3' recover to reference links when ref-3 exists.",
-                extra={"visible_number": number, "match": flattened_match.group(0)},
-            )
-        )
-        break
-
-    for match in PAGE_LINK_RE.finditer(slim_html):
-        if _page_link_semantic_kind(slim_html, match) is not None:
-            continue
-        label = _strip_tags(match.group("body"))
-        if len(re.findall(r"[A-Za-z]{2,}", label)) < 3:
-            continue
-        if AUTHOR_YEAR_TEXT_RE.search(label) is not None:
-            continue
-        if re.search(r"\b(?:copyright|creative commons|doi|https?)\b", label, re.IGNORECASE):
-            continue
-        defects.append(
-            _defect(
-                defect_id="P51",
-                cc_class="CC-03/CC-07/CC-13",
-                check="Prose fragment remains wrapped as a PDF page link",
-                severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Page-anchor preservation kept an OCR/page-break prose fragment linked instead of unwrapping it into body text.",
-                proposed_fix_layer="EN polish page-link cleanup",
-                regression_test="Plain prose fragments such as 'that formulas that use the total' are unwrapped from #page anchors.",
-                extra={"page_target": match.group("target"), "label": label},
-            )
-        )
-        break
-
-    doi_split_match = DOI_SPLIT_PLAIN_RE.search(plain)
-    if doi_split_match is not None:
-        defects.append(
-            _defect(
-                defect_id="P52",
-                cc_class="CC-03/CC-13",
-                check="Plain DOI label is split after slash",
-                severity="warning",
-                block=None,
-                snippet=_snippet(plain, doi_split_match.start(), doi_split_match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Line wrapping split a DOI suffix and the URL/DOI repair pass did not join the visible label.",
-                proposed_fix_layer="EN polish DOI normalization",
-                regression_test="Labels like 'doi: 10.1002/ nau.22813' become one clickable DOI without changing the DOI text.",
-            )
-        )
-
-    german_probe = plain[:20000]
-    german_hits = GERMAN_SOURCE_HINT_RE.findall(german_probe)
-    german_keys = {hit.upper() for hit in german_hits}
-    german_anchor_hints = {
-        "DEUTSCHE",
-        "DRESDEN",
-        "KLINIK",
-        "KOLLODIUM",
-        "KOLLODIUMVERFAHREN",
-        "LEITTHEMA",
-        "LEITLINIEN",
-        "PHOTOGRAPHIE",
-        "PROSTATASYNDROMS",
-        "UROLOGE",
-        "ZUSAMMENFASSUNG",
-    }
-    if len(german_hits) >= 8 and german_keys & german_anchor_hints:
-        defects.append(
-            _defect(
-                defect_id="P53",
-                cc_class="CC-00/CC-14",
-                check="Likely non-English source reached the English polish audit",
-                severity="error",
-                block=None,
-                snippet=_snippet(plain, 0, min(len(plain), 600)),
-                stage=RAW_STAGE,
-                hypothesis="Source-language gating did not exclude a German document before the English marker/polish profile.",
-                proposed_fix_layer="Pre-marker source-language detection and run routing",
-                regression_test="German sources are tagged as source_language=de before marker and are not sent through the EN polish profile.",
-                extra={"german_hint_count": len(german_hits), "german_hints": sorted(german_keys)[:12]},
-            )
-        )
-
-    for word_match in WORD_FOOTNOTE_SPLIT_RE.finditer(slim_html):
-        prefix = word_match.group("prefix")
-        combined = f"{prefix}{word_match.group('suffix')}".lower()
-        if combined not in SUSPICIOUS_FOOTNOTE_WORD_MERGES:
-            continue
-        if prefix.lower() in {"qma", "qa", "qav", "qmn"}:
-            continue
-        if prefix.isupper() and len(prefix) >= 2:
-            continue
-        if prefix.lower() in {"pdms", "polyimide", "parylene"}:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P54",
-                cc_class="CC-04/CC-11/CC-13",
-                check="Ordinary word was split as a table footnote",
-                severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, word_match.start(), word_match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Table-footnote roman suffix repair is too broad and can split ordinary words, especially in non-English sources.",
-                proposed_fix_layer="EN polish table-footnote parser with lexical and language-aware guards",
-                regression_test="Words such as Mastix/Borax/Kupfervitriol and author surnames are not split into z2m-table-fn spans.",
-                extra={"prefix": prefix, "suffix": word_match.group("suffix")},
-            )
-        )
-        break
-
-    for block in body_blocks:
-        for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
-            label = _strip_tags(match.group("body"))
-            right_text = _strip_tags(block.raw[match.end() : match.end() + 100])
-            surname_author_year_fragment = (
-                re.fullmatch(r"[A-Z][A-Za-z'’.-]{3,}", label) is not None
-                and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE) is not None
-            )
-            if AUTHOR_YEAR_TEXT_RE.search(label) is None and not surname_author_year_fragment:
-                continue
-            defects.append(
-                _defect(
-                    defect_id="P55",
-                    cc_class="CC-02/CC-13",
-                    check="Author-year citation is linked to a numeric bibliography target",
-                    severity="error",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Article-level citation strategy confused author-year citations with numeric reference targets.",
-                    proposed_fix_layer="EN polish article-level citation-style detection",
-                    regression_test="Author-year citations match bibliography by surname/year or remain plain when confidence is low; they never map to arbitrary #ref-N.",
-                    extra={"ref_target": match.group("num"), "label": label},
-                )
-            )
-            break
-        if defects and defects[-1].id == "P55":
-            break
-
-    for match in PAGE_LINK_RE.finditer(slim_html):
-        label = _strip_tags(match.group("body"))
-        if AUTHOR_YEAR_TEXT_RE.search(label) is None:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P56",
-                cc_class="CC-02/CC-03/CC-13",
-                check="Author-year citation remains a PDF page link",
-                severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Author-year citation retargeting is missing or low-confidence, leaving stale #page anchors in body prose.",
-                proposed_fix_layer="EN polish author-year citation parser",
-                regression_test="Author-year page anchors either link by surname/year or unwrap to plain text without #page targets.",
-                extra={"page_target": match.group("target"), "label": label},
-            )
-        )
-        break
-
-    for match in FIGURE_UNIT_RE.finditer(slim_html):
-        wrapper_num_match = re.search(r"\d+", match.group("id"))
-        if wrapper_num_match is None:
-            continue
-        wrapper_num = int(wrapper_num_match.group(0))
-        body = match.group("body")
-        alias_nums = {
-            int(number)
-            for number in re.findall(r"\bid\s*=\s*['\"]fig-(\d+)['\"]", body, re.IGNORECASE)
-        }
-        caption_nums = {
-            number
-            for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
-            for number in [_figure_caption_number_from_caption_node(caption_match.group("body"))]
-            if number is not None
-        }
-        unrelated = sorted((alias_nums | caption_nums) - {wrapper_num})
-        if not unrelated:
-            continue
-        if _figure_unit_allows_shared_image_alias(body, wrapper_num, unrelated):
-            continue
-        defects.append(
-            _defect(
-                defect_id="P57",
-                cc_class="CC-08/CC-10/CC-13",
-                check="Figure wrapper contains an unrelated figure alias or caption number",
-                severity="error",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Figure assembly merged captions/aliases for distinct figures into one wrapper.",
-                proposed_fix_layer="EN polish figure-unit assembly and alias validation",
-                regression_test="fig-1 wrappers do not contain fig-4 aliases or visible Fig. 4 captions unless the PDF proves a shared compound figure.",
-                extra={"wrapper_figure": wrapper_num, "unrelated_figures": unrelated[:10]},
-            )
-        )
-        break
-
-    for block in body_blocks:
-        for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
-            label_number = _ref_anchor_visible_number(_strip_tags(match.group("body")))
-            if label_number is None:
-                continue
-            left_tail = _strip_tags(block.raw[max(0, match.start() - 100) : match.start()])
-            if FIGS_REF_FALSE_REF_RE.search(left_tail) is None:
-                continue
-            defects.append(
-                _defect(
-                    defect_id="P58",
-                    cc_class="CC-02/CC-03/CC-10",
-                    check="Figure list/range number links to bibliography reference",
-                    severity="error",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Figure-reference grammar failed, and the remaining number was picked up by bibliography citation linkification.",
-                    proposed_fix_layer="EN polish figure-reference parser before citation linkification",
-                    regression_test="Patterns like '(Figs. 3 and 5)' link to figure targets, not #ref-5.",
-                    extra={"visible_number": label_number, "ref_target": match.group("num")},
-                )
-            )
-            break
-        if defects and defects[-1].id == "P58":
-            break
-
-    body_text = " ".join(block.text for block in body_blocks)
-    bracket_citation_count = len(re.findall(r"\[\s*\d", body_text))
-    author_year_count = len(AUTHOR_YEAR_TEXT_RE.findall(body_text))
-    numeric_ref_link_count = sum(
-        1
-        for block in body_blocks
-        for match in REF_ANCHOR_BODY_RE.finditer(block.raw)
-        if _ref_anchor_visible_number(_strip_tags(match.group("body"))) is not None
-    )
-    numeric_sup_ref_link_count = sum(
-        1
-        for block in body_blocks
-        for match in REF_ANCHOR_BODY_RE.finditer(block.raw)
-        if _ref_anchor_visible_number(_strip_tags(match.group("body"))) is not None
-        and "<sup" in block.raw[max(0, match.start() - 40) : match.start()].lower()
-    )
-    numeric_citation_dominant = (
-        numeric_ref_link_count >= 5
-        and numeric_sup_ref_link_count >= 5
-    ) or (
-        numeric_ref_link_count >= 10
-        and numeric_sup_ref_link_count >= 3
-    )
-    if author_year_count >= 4 and bracket_citation_count < 4 and not numeric_citation_dominant:
-        for block in body_blocks:
-            for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
-                label = _strip_tags(match.group("body"))
-                if re.fullmatch(r"\d{1,3}", label) is None or int(label) > 3:
-                    continue
-                raw_window = block.raw[max(0, match.start() - 80) : match.end() + 80].lower()
-                text_window = _strip_tags(block.raw[max(0, match.start() - 160) : match.end() + 160])
-                if re.search(r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b", text_window, re.IGNORECASE):
-                    continue
-                if "<sup" not in raw_window and re.search(r"\b(?:source|web|github|facebook|living|data)\b", text_window, re.IGNORECASE) is None:
-                    continue
-                defects.append(
-                    _defect(
-                        defect_id="P59",
-                        cc_class="CC-02/CC-13",
-                        check="Numeric footnote marker links to bibliography in author-year article",
-                        severity="error",
-                        block=block,
-                        snippet=block.text,
-                        stage=POLISH_STAGE,
-                        hypothesis="Mixed footnote/bibliography strategy treated source/web footnotes as numbered bibliography citations.",
-                        proposed_fix_layer="EN polish citation-style and footnote-style separation",
-                        regression_test="Frontiers-style source footnotes 1/2/3 link to footnotes or remain footnotes, not #ref-1/#ref-2/#ref-3.",
-                        extra={"ref_target": match.group("num"), "label": label},
-                    )
-                )
-                break
-            if defects and defects[-1].id == "P59":
-                break
-
-    for block in body_blocks:
-        comma_match = COMMA_DECIMAL_REF_RE.search(block.raw)
-        single_stat_match = SINGLE_STAT_REF_RE.search(block.raw)
-        if comma_match is not None and _ref_match_inside_bracketed_numeric_citation(
-            block.raw,
-            comma_match.start(),
-            comma_match.end(),
-        ):
-            comma_match = None
-        if single_stat_match is not None and _ref_match_inside_bracketed_numeric_citation(
-            block.raw,
-            single_stat_match.start(),
-            single_stat_match.end(),
-        ):
-            single_stat_match = None
-        if comma_match is not None:
-            if not _looks_like_comma_decimal_stat_ref(block.raw, comma_match):
-                comma_match = None
-        if single_stat_match is not None and not _looks_like_sample_size_value_ref(block.raw, single_stat_match):
-            single_stat_match = None
-        if comma_match is None and single_stat_match is None:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P60",
-                cc_class="CC-02/CC-04/CC-13",
-                check="Statistical or comma-decimal value was linked as bibliography references",
-                severity="error",
-                block=block,
-                snippet=block.text,
-                stage=POLISH_STAGE,
-                hypothesis="Comma-decimal/statistical notation was mistaken for a reference list.",
-                proposed_fix_layer="EN polish citation false-positive guards for statistical contexts",
-                regression_test="Values like effect size 1,5, allocation ratio 3,1, and sample-size values remain numeric text.",
-                extra=(comma_match or single_stat_match).groupdict(),
-            )
-        )
-        break
-
-    defects.extend(
-        _visible_figure_target_defects(
-            body_blocks,
-            fig_targets,
-            looks_like_float_or_caption=_looks_like_float_or_caption,
-            stage=POLISH_STAGE,
-        )
-    )
-
-    warning_context_blocks = _parse_overlapping_blocks(polish_html)
-    for warning_index, block in enumerate(_missing_figure_warning_blocks(polish_html)):
-        classification = _classify_missing_figure_warning(block, warning_context_blocks)
-        extra = {"warning_index": warning_index + 1, **classification["extra"]}
-        defects.append(
-            _defect(
-                defect_id=classification["defect_id"],
-                cc_class="CC-08/CC-13",
-                check=classification["check"],
-                severity="warning",
-                block=block,
-                snippet=block.text,
-                stage=RAW_STAGE,
-                hypothesis=classification["hypothesis"],
-                proposed_fix_layer=classification["proposed_fix_layer"],
-                regression_test=(
-                    "Visible z2m-missing-figure-warning blocks are counted and split into "
-                    "same-label, ambiguous-nearby-image, and no-nearby-image subtypes."
-                ),
-                extra=extra,
-            )
-        )
-
-    for match in PAGE_LINK_RE.finditer(slim_html):
-        label = _strip_tags(match.group("body"))
-        if re.match(r"^\[\s*\d", label) is None:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P63",
-                cc_class="CC-02/CC-03/CC-10",
-                check="Bracket citation remains a PDF page link",
-                severity="error",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Bracket citation grammar missed page-anchor citation forms, including no-space lists and ranges.",
-                proposed_fix_layer="EN polish bracket citation retargeting",
-                regression_test="Citations like [1], [17,18], [20-23], [30], and [33] link to #ref targets instead of #page anchors.",
-                extra={"page_target": match.group("target"), "label": label},
-            )
-        )
-        break
-
     split_email_match = SPLIT_EMAIL_TEXT_RE.search(plain)
     if split_email_match is not None:
         defects.append(

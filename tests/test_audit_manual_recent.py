@@ -27,6 +27,11 @@ def _manual_ids(html: str) -> list[str]:
     return [defect.id for defect in audit._manual_blind_spot_defects(html, parse_blocks(html))]
 
 
+def _recent_ids(html: str) -> list[str]:
+    audit = _load_audit_module()
+    return [defect.id for defect in audit._meine_recent_manual_defects(html, parse_blocks(html))]
+
+
 def test_manual_blind_spot_reports_malformed_anchor() -> None:
     ids = _manual_ids('<p><a href="#ref-1">1</a></a></p>')
 
@@ -55,8 +60,27 @@ def test_manual_blind_spot_reports_float_sentence_split() -> None:
     assert "P40" in ids
 
 
+def test_meine_recent_link_structure_reports_shifted_visible_ref_label() -> None:
+    ids = _recent_ids('<p>See <a href="#ref-2">1</a> for details.</p>')
+
+    assert "P42" in ids
+
+
+def test_meine_recent_link_structure_reports_decimal_equation_page_link() -> None:
+    ids = _recent_ids('<p>Eqn. <a href="#page-4">2.1</a> describes the model.</p>')
+
+    assert "P43" in ids
+
+
+def test_meine_recent_link_structure_reports_bracket_citation_page_link() -> None:
+    ids = _recent_ids('<p>Prior work <a href="#page-10">[1]</a> was cited.</p>')
+
+    assert "P63" in ids
+
+
 def test_audit_script_keeps_legacy_manual_blind_spot_aliases() -> None:
     audit = _load_audit_module()
 
     assert audit._manual_blind_spot_defects_base is manual_blind_spot_defects
     assert isinstance(audit._manual_blind_spot_deps(), ManualBlindSpotDeps)
+    assert isinstance(audit._meine_recent_link_structure_deps(), audit.MeineRecentLinkDeps)
