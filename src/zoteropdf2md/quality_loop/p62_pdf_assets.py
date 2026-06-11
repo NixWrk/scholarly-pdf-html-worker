@@ -336,6 +336,7 @@ def recover_pdf_figure_asset(
             region = expand_rect(region, page.rect, margin=max(4.0, min(page.rect.width, page.rect.height) * 0.01))
             region = include_nearby_text_blocks(page, region, caption_rect)
             region = expand_rect(region, page.rect, margin=max(3.0, min(page.rect.width, page.rect.height) * 0.006))
+            region = trim_region_away_from_caption(region, page.rect, caption_rect)
             if fitz_rect_area(region) <= page_area * 0.001:
                 return {
                     "status": "figure_region_too_small",
@@ -561,6 +562,15 @@ def graphic_rect_is_page_rule(page_rect: Any, rect: Any) -> bool:
     page_height = max(1.0, float(page_rect.height))
     rect_width = max(0.0, float(rect.width))
     rect_height = max(0.0, float(rect.height))
+    if (
+        rect_height >= page_height * 0.72
+        and rect_width <= max(2.0, page_width * 0.01)
+        and (
+            max(0.0, float(rect.x0) - float(page_rect.x0)) <= page_width * 0.12
+            or max(0.0, float(page_rect.x1) - float(rect.x1)) <= page_width * 0.12
+        )
+    ):
+        return True
     if rect_width < page_width * 0.72 or rect_height > max(2.0, page_height * 0.01):
         return False
     top_distance = max(0.0, float(rect.y0) - float(page_rect.y0))
@@ -725,8 +735,36 @@ def include_nearby_text_blocks(page: Any, region: Any, caption_rect: Any | None)
         if caption_rect is not None and fitz_rects_intersect(rect, caption_rect):
             continue
         if fitz_rects_intersect(rect, expanded):
+            if not fitz_rects_intersect(rect, region) and fitz_x_overlap_ratio(rect, region) < 0.25:
+                continue
             rects.append(rect)
     return fitz_union_rect(rects)
+
+
+def trim_region_away_from_caption(region: Any, page_rect: Any, caption_rect: Any | None) -> Any:
+    if caption_rect is None:
+        return region
+    try:
+        import fitz  # type: ignore[import-not-found]
+
+        x0 = float(region.x0)
+        y0 = float(region.y0)
+        x1 = float(region.x1)
+        y1 = float(region.y1)
+        caption_y0 = float(caption_rect.y0)
+        caption_y1 = float(caption_rect.y1)
+        margin = max(2.0, min(float(page_rect.width), float(page_rect.height)) * 0.003)
+        if y0 < caption_y0 < y1:
+            trimmed_y1 = max(y0 + 1.0, caption_y0 - margin)
+            if trimmed_y1 < y1:
+                y1 = trimmed_y1
+        elif y0 < caption_y1 < y1:
+            trimmed_y0 = min(y1 - 1.0, caption_y1 + margin)
+            if trimmed_y0 > y0:
+                y0 = trimmed_y0
+        return fitz.Rect(x0, y0, x1, y1)
+    except Exception:
+        return region
 
 
 def fitz_rect_area(rect: Any) -> float:

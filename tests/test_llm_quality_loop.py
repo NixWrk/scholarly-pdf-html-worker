@@ -1444,6 +1444,61 @@ def test_p62_pdf_figure_asset_ignores_page_header_rule_for_caption_region(tmp_pa
     assert Path(asset["path"]).is_file()
 
 
+def test_p62_pdf_figure_asset_ignores_vertical_page_rule_for_caption_region(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "vertical_rule_and_figure.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.draw_line((580, 0), (580, 792))
+    page.insert_image(fitz.Rect(72, 490, 380, 700), stream=_valid_tiny_png_bytes())
+    page.insert_text((72, 724), "Fig. 1 Overview of virtual brainy chair.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "1",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "native_image_extracted"
+    assert asset["source"] == "pdf_native_image"
+    assert Path(asset["path"]).is_file()
+
+
+def test_p62_pdf_figure_asset_does_not_absorb_adjacent_body_column(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "figure_near_body_column.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(fitz.Rect(50, 500, 380, 690), stream=_valid_tiny_png_bytes())
+    page.draw_rect(fitz.Rect(40, 490, 390, 700))
+    page.insert_textbox(
+        fitz.Rect(406, 490, 560, 720),
+        "This prose column describes the surrounding method and should not be "
+        "absorbed into the recovered figure crop. " * 4,
+        fontsize=9,
+    )
+    page.insert_text((50, 724), "Fig. 1 Overview of virtual brainy chair.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "1",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "region_rendered"
+    assert asset["source"] == "pdf_figure_region_render"
+    assert asset["selected_rect"][2] < 405
+    assert Path(asset["path"]).is_file()
+
+
 def test_p62_pdf_figure_asset_prefers_side_aligned_graphics_over_lower_image(tmp_path: Path) -> None:
     fitz = pytest.importorskip("fitz")
     pdf_path = tmp_path / "side_aligned_flowchart.pdf"
