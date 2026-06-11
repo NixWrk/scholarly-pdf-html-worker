@@ -4,6 +4,7 @@ from typing import Any
 from zoteropdf2md.quality_loop.p62_recovery_stage import (
     P62PatchTargetDependencies,
     apply_html_patch_to_targets,
+    build_p62_image_recovery_report,
     patch_targets_for_record,
     resolve_p62_image_recovery_stage_config,
 )
@@ -197,3 +198,79 @@ def test_apply_html_patch_to_targets_records_file_errors(tmp_path: Path) -> None
     assert result.patched_paths == ()
     assert result.errors
     assert result.errors[0]["path"] == str(missing_path)
+
+
+def test_build_p62_image_recovery_report_summarizes_partial_recovery(tmp_path: Path) -> None:
+    config = resolve_p62_image_recovery_stage_config(
+        {"p62_image_recovery_execute_marker": False},
+        apply_patches=True,
+    )
+
+    report = build_p62_image_recovery_report(
+        generated_at="2026-01-02T03:04:05Z",
+        run_dir=tmp_path / "run",
+        out_path=tmp_path / "report.json",
+        plan_path=tmp_path / "plan.json",
+        recovery_root=tmp_path / "recovery",
+        plan_candidate_count=2,
+        selected_count=2,
+        recovered_records=[
+            {
+                "status": "patched",
+                "asset_status": "ready",
+                "recovery_source": "marker_image",
+                "patch_replacement_count": 2,
+                "existing_page_render_upgrade": True,
+                "duplicate_visual_repair_count": 1,
+                "source_visual_probe_status": "not_run",
+            },
+            {
+                "status": "unresolved",
+                "asset_status": "not_ready",
+                "recovery_source": "",
+                "page_render_recovery_removed": True,
+                "false_match_recovery_removed": True,
+                "source_visual_probe_status": "failed",
+            },
+        ],
+        patched_article_ids={"A1"},
+        stage_config=config,
+        allow_external_paths=True,
+    )
+
+    assert report["status"] == "partial"
+    assert report["candidate_count"] == 2
+    assert report["selected_count"] == 2
+    assert report["asset_ready_count"] == 1
+    assert report["patched_warning_count"] == 2
+    assert report["patched_articles"] == ["A1"]
+    assert report["page_render_upgrade_count"] == 1
+    assert report["page_render_recovery_removed_count"] == 1
+    assert report["false_match_recovery_removed_count"] == 1
+    assert report["duplicate_visual_repair_count"] == 1
+    assert report["execute_marker"] is False
+    assert report["apply_patches"] is True
+    assert report["allow_external_paths"] is True
+    assert report["status_counts"] == {"patched": 1, "unresolved": 1}
+    assert report["recovery_source_counts"] == {"marker_image": 1, "unresolved": 1}
+    assert report["source_visual_probe_status_counts"] == {"failed": 1, "not_run": 1}
+
+
+def test_build_p62_image_recovery_report_marks_empty_plan_not_required(tmp_path: Path) -> None:
+    report = build_p62_image_recovery_report(
+        generated_at="2026-01-02T03:04:05Z",
+        run_dir=tmp_path / "run",
+        out_path=tmp_path / "report.json",
+        plan_path=tmp_path / "plan.json",
+        recovery_root=tmp_path / "recovery",
+        plan_candidate_count=0,
+        selected_count=0,
+        recovered_records=[],
+        patched_article_ids=[],
+        stage_config=resolve_p62_image_recovery_stage_config({}),
+        allow_external_paths=False,
+    )
+
+    assert report["status"] == "not_required"
+    assert report["candidate_count"] == 0
+    assert report["unresolved_count"] == 0

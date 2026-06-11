@@ -153,6 +153,7 @@ from zoteropdf2md.quality_loop.p62_plan import (  # noqa: E402
 )
 from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
     apply_html_patch_to_targets as _apply_p62_html_patch_to_targets,
+    build_p62_image_recovery_report as _build_p62_image_recovery_report,
     P62PatchTargetDependencies,
     patch_targets_for_record as _p62_patch_targets_for_record_impl,
     resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
@@ -1904,77 +1905,19 @@ def write_p62_image_recovery_stage(
     if patched_article_ids:
         _refresh_assessment_for_articles(run_dir, patched_article_ids)
 
-    status_counts = Counter(str(item.get("status") or "unknown") for item in recovered_records)
-    source_counts = Counter(str(item.get("recovery_source") or "unresolved") for item in recovered_records)
-    asset_ready_count = sum(1 for item in recovered_records if item.get("asset_status") == "ready")
-    patched_warning_count = sum(int(item.get("patch_replacement_count") or 0) for item in recovered_records)
-    page_render_upgrade_count = sum(1 for item in recovered_records if item.get("existing_page_render_upgrade"))
-    page_render_recovery_removed_count = sum(
-        1 for item in recovered_records if item.get("page_render_recovery_removed")
+    report = _build_p62_image_recovery_report(
+        generated_at=_now(),
+        run_dir=run_dir,
+        out_path=out_path,
+        plan_path=plan_path,
+        recovery_root=recovery_root,
+        plan_candidate_count=int(plan.get("candidate_count") or 0),
+        selected_count=len(records),
+        recovered_records=recovered_records,
+        patched_article_ids=patched_article_ids,
+        stage_config=stage_config,
+        allow_external_paths=allow_external_paths,
     )
-    false_match_recovery_removed_count = sum(
-        1 for item in recovered_records if item.get("false_match_recovery_removed")
-    )
-    duplicate_visual_repair_count = sum(
-        int(item.get("duplicate_visual_repair_count") or 0) for item in recovered_records
-    )
-    patch_missed_count = int(status_counts.get("asset_ready_patch_missed", 0))
-    unresolved_count = len(recovered_records) - asset_ready_count
-    if not records and int(plan.get("candidate_count") or 0) == 0:
-        status = "not_required"
-    elif unresolved_count == 0 and patch_missed_count == 0:
-        status = "ready"
-    elif asset_ready_count:
-        status = "partial"
-    else:
-        status = "unresolved"
-    report = {
-        "generated_at": _now(),
-        "run_dir": str(run_dir),
-        "path": str(out_path),
-        "plan_path": str(plan_path),
-        "output_root": str(recovery_root),
-        "status": status,
-        "required_checks": [
-            "marker_single_page_image",
-            "source_visual_unavailable_probe",
-            "pdf_detached_plate_region_render",
-            "pdf_native_or_region_figure_asset",
-            "false_match_recovery_cleanup",
-            "pdf_page_render_upgrade",
-            "pdf_page_render_fallback",
-            "duplicate_figure_visual_repair",
-            "html_missing_warning_patch",
-        ],
-        "candidate_count": int(plan.get("candidate_count") or len(records)),
-        "selected_count": len(records),
-        "asset_ready_count": asset_ready_count,
-        "patched_warning_count": patched_warning_count,
-        "patched_articles": sorted(patched_article_ids),
-        "page_render_upgrade_count": page_render_upgrade_count,
-        "page_render_recovery_removed_count": page_render_recovery_removed_count,
-        "false_match_recovery_removed_count": false_match_recovery_removed_count,
-        "duplicate_visual_repair_count": duplicate_visual_repair_count,
-        "patch_missed_count": patch_missed_count,
-        "unresolved_count": unresolved_count,
-        "execute_marker": execute_marker,
-        "apply_patches": apply_patches,
-        "allow_external_paths": allow_external_paths,
-        "replace_page_render": replace_page_render,
-        "remove_false_match_recovery": remove_false_match_recovery,
-        "repair_duplicate_figure_images": repair_duplicate_figure_images,
-        "render_zoom": render_zoom,
-        "marker_timeout_seconds": marker_timeout,
-        "probe_source_visual_unavailable": probe_source_visual_unavailable,
-        "probe_marker_for_unavailable": probe_marker_for_unavailable,
-        "source_visual_probe_marker_timeout_seconds": probe_marker_timeout,
-        "status_counts": dict(sorted(status_counts.items())),
-        "recovery_source_counts": dict(sorted(source_counts.items())),
-        "source_visual_probe_status_counts": dict(
-            sorted(Counter(str(item.get("source_visual_probe_status") or "not_run") for item in recovered_records).items())
-        ),
-        "articles": recovered_records,
-    }
     _write_json(out_path, report)
     return report
 

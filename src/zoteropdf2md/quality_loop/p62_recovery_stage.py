@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,19 @@ class P62HtmlPatchResult:
     replacement_count: int
     patched_paths: tuple[str, ...]
     errors: tuple[dict[str, str], ...]
+
+
+P62_REQUIRED_RECOVERY_CHECKS = (
+    "marker_single_page_image",
+    "source_visual_unavailable_probe",
+    "pdf_detached_plate_region_render",
+    "pdf_native_or_region_figure_asset",
+    "false_match_recovery_cleanup",
+    "pdf_page_render_upgrade",
+    "pdf_page_render_fallback",
+    "duplicate_figure_visual_repair",
+    "html_missing_warning_patch",
+)
 
 
 def resolve_p62_image_recovery_stage_config(
@@ -160,3 +174,82 @@ def apply_html_patch_to_targets(
         patched_paths=tuple(patched_path_list),
         errors=tuple(errors),
     )
+
+
+def build_p62_image_recovery_report(
+    *,
+    generated_at: str,
+    run_dir: Path,
+    out_path: Path,
+    plan_path: Path,
+    recovery_root: Path,
+    plan_candidate_count: int,
+    selected_count: int,
+    recovered_records: list[dict[str, Any]],
+    patched_article_ids: Iterable[str],
+    stage_config: P62ImageRecoveryStageConfig,
+    allow_external_paths: bool,
+) -> dict[str, Any]:
+    status_counts = Counter(str(item.get("status") or "unknown") for item in recovered_records)
+    source_counts = Counter(str(item.get("recovery_source") or "unresolved") for item in recovered_records)
+    source_visual_probe_status_counts = Counter(
+        str(item.get("source_visual_probe_status") or "not_run") for item in recovered_records
+    )
+    asset_ready_count = sum(1 for item in recovered_records if item.get("asset_status") == "ready")
+    patched_warning_count = sum(int(item.get("patch_replacement_count") or 0) for item in recovered_records)
+    page_render_upgrade_count = sum(1 for item in recovered_records if item.get("existing_page_render_upgrade"))
+    page_render_recovery_removed_count = sum(
+        1 for item in recovered_records if item.get("page_render_recovery_removed")
+    )
+    false_match_recovery_removed_count = sum(
+        1 for item in recovered_records if item.get("false_match_recovery_removed")
+    )
+    duplicate_visual_repair_count = sum(
+        int(item.get("duplicate_visual_repair_count") or 0) for item in recovered_records
+    )
+    patch_missed_count = int(status_counts.get("asset_ready_patch_missed", 0))
+    unresolved_count = len(recovered_records) - asset_ready_count
+    if selected_count == 0 and plan_candidate_count == 0:
+        status = "not_required"
+    elif unresolved_count == 0 and patch_missed_count == 0:
+        status = "ready"
+    elif asset_ready_count:
+        status = "partial"
+    else:
+        status = "unresolved"
+
+    return {
+        "generated_at": generated_at,
+        "run_dir": str(run_dir),
+        "path": str(out_path),
+        "plan_path": str(plan_path),
+        "output_root": str(recovery_root),
+        "status": status,
+        "required_checks": list(P62_REQUIRED_RECOVERY_CHECKS),
+        "candidate_count": int(plan_candidate_count or selected_count),
+        "selected_count": selected_count,
+        "asset_ready_count": asset_ready_count,
+        "patched_warning_count": patched_warning_count,
+        "patched_articles": sorted(patched_article_ids),
+        "page_render_upgrade_count": page_render_upgrade_count,
+        "page_render_recovery_removed_count": page_render_recovery_removed_count,
+        "false_match_recovery_removed_count": false_match_recovery_removed_count,
+        "duplicate_visual_repair_count": duplicate_visual_repair_count,
+        "patch_missed_count": patch_missed_count,
+        "unresolved_count": unresolved_count,
+        "execute_marker": stage_config.execute_marker,
+        "apply_patches": stage_config.apply_patches,
+        "allow_external_paths": allow_external_paths,
+        "replace_page_render": stage_config.replace_page_render,
+        "remove_false_match_recovery": stage_config.remove_false_match_recovery,
+        "repair_duplicate_figure_images": stage_config.repair_duplicate_figure_images,
+        "render_zoom": stage_config.render_zoom,
+        "marker_timeout_seconds": stage_config.marker_timeout,
+        "probe_source_visual_unavailable": stage_config.probe_source_visual_unavailable,
+        "probe_marker_for_unavailable": stage_config.probe_marker_for_unavailable,
+        "source_visual_probe_marker_timeout_seconds": stage_config.probe_marker_timeout,
+        "status_counts": dict(sorted(status_counts.items())),
+        "recovery_source_counts": dict(sorted(source_counts.items())),
+        "source_visual_probe_status_counts": dict(sorted(source_visual_probe_status_counts.items())),
+        "articles": recovered_records,
+    }
