@@ -6,6 +6,7 @@ from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
 from zoteropdf2md.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
     manual_blind_spot_defects,
+    meine_recent_text_ocr_defects,
 )
 
 
@@ -78,9 +79,23 @@ def test_meine_recent_link_structure_reports_bracket_citation_page_link() -> Non
     assert "P63" in ids
 
 
+def test_meine_recent_text_ocr_reports_split_email_local_part() -> None:
+    ids = _recent_ids("<p>simono v@example.com</p>")
+
+    assert "P64" in ids
+
+
+def test_meine_recent_text_ocr_reports_runaway_repeated_text() -> None:
+    ids = _recent_ids("<p>slow, slow, slow, slow, slow, slow, slow.</p>")
+
+    assert "P65" in ids
+
+
 def test_audit_script_keeps_legacy_manual_blind_spot_aliases() -> None:
     audit = _load_audit_module()
 
     assert audit._manual_blind_spot_defects_base is manual_blind_spot_defects
+    assert audit._meine_recent_text_ocr_defects_base is meine_recent_text_ocr_defects
     assert isinstance(audit._manual_blind_spot_deps(), ManualBlindSpotDeps)
     assert isinstance(audit._meine_recent_link_structure_deps(), audit.MeineRecentLinkDeps)
+    assert isinstance(audit._meine_recent_text_ocr_deps(), audit.MeineRecentTextDeps)
