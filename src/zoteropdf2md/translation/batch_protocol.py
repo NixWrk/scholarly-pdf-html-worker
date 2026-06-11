@@ -30,6 +30,20 @@ class ParsedBatchItems:
     block_count: int
 
 
+@dataclass(frozen=True)
+class BatchIdReconciliation:
+    parsed_by_id: dict[int, str]
+    expected_ids: list[int]
+    lenient_missing_id: int | None
+    lenient_trailing_eos_k: int
+    error_reason: str
+    debug_message: str
+
+    @property
+    def ok(self) -> bool:
+        return not self.error_reason
+
+
 def build_batch_text(masked_segments: Sequence[str]) -> str:
     return "".join(f"<z2m-i{i}/>{segment}" for i, segment in enumerate(masked_segments, start=1))
 
@@ -58,4 +72,86 @@ def parse_batch_items(translated_batch: str) -> ParsedBatchItems:
         parsed_by_id=parsed_by_id,
         duplicate_ids=sorted(duplicate_ids),
         block_count=len(matches),
+    )
+
+
+def reconcile_batch_ids(
+    parsed_by_id: dict[int, str],
+    source_segments: Sequence[str],
+) -> BatchIdReconciliation:
+    segment_count = len(source_segments)
+    parsed_by_id = dict(parsed_by_id)
+    expected_ids = list(range(1, segment_count + 1))
+    expected_ids_set = set(expected_ids)
+    found_ids_set = set(parsed_by_id.keys())
+    missing_ids = sorted(expected_ids_set - found_ids_set)
+    extra_ids = sorted(found_ids_set - expected_ids_set)
+    lenient_missing_id: int | None = None
+    lenient_trailing_eos_k = 0
+
+    if not missing_ids and not extra_ids:
+        return BatchIdReconciliation(
+            parsed_by_id=parsed_by_id,
+            expected_ids=expected_ids,
+            lenient_missing_id=None,
+            lenient_trailing_eos_k=0,
+            error_reason="",
+            debug_message="",
+        )
+
+    lenient_missing_limit = segment_count // 10
+    if (
+        lenient_missing_limit >= 1
+        and not extra_ids
+        and len(missing_ids) == 1
+        and len(parsed_by_id) == segment_count - 1
+    ):
+        lenient_missing_id = missing_ids[0]
+        parsed_by_id[lenient_missing_id] = source_segments[lenient_missing_id - 1]
+        return BatchIdReconciliation(
+            parsed_by_id=parsed_by_id,
+            expected_ids=expected_ids,
+            lenient_missing_id=lenient_missing_id,
+            lenient_trailing_eos_k=0,
+            error_reason="",
+            debug_message="",
+        )
+
+    if not extra_ids:
+        trailing_limit = max(1, segment_count // 3)
+        trailing_suffix = list(range(segment_count - len(missing_ids) + 1, segment_count + 1))
+        if (
+            missing_ids == trailing_suffix
+            and len(missing_ids) <= trailing_limit
+            and len(parsed_by_id) == segment_count - len(missing_ids)
+        ):
+            lenient_trailing_eos_k = len(missing_ids)
+            for missing_id in missing_ids:
+                parsed_by_id[missing_id] = source_segments[missing_id - 1]
+            return BatchIdReconciliation(
+                parsed_by_id=parsed_by_id,
+                expected_ids=expected_ids,
+                lenient_missing_id=None,
+                lenient_trailing_eos_k=lenient_trailing_eos_k,
+                error_reason="",
+                debug_message="",
+            )
+
+    debug_message = (
+        "batch_fail reason=id_mismatch "
+        f"missing={format_int_list(missing_ids)} "
+        f"extra={format_int_list(extra_ids)}"
+    )
+    error_reason = (
+        "id_mismatch "
+        f"missing={format_int_list(missing_ids)} "
+        f"extra={format_int_list(extra_ids)}"
+    )
+    return BatchIdReconciliation(
+        parsed_by_id=parsed_by_id,
+        expected_ids=expected_ids,
+        lenient_missing_id=None,
+        lenient_trailing_eos_k=0,
+        error_reason=error_reason,
+        debug_message=debug_message,
     )

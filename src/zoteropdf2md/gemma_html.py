@@ -17,6 +17,7 @@ from .translation.batch_protocol import (
     build_batch_text as _build_batch_text,
     format_int_list as _format_int_list,
     parse_batch_items as _parse_batch_items,
+    reconcile_batch_ids as _reconcile_batch_ids,
 )
 from .translation.languages import (
     DEFAULT_GEMMA_MODEL,
@@ -2853,60 +2854,15 @@ def _try_batch_translate_with_reason(
             f"ids={_format_int_list(duplicate_ids)}"
         )
 
-    expected_ids = list(range(1, len(segments) + 1))
-    expected_ids_set = set(expected_ids)
-    found_ids_set = set(parsed_by_id.keys())
-    missing_ids = sorted(expected_ids_set - found_ids_set)
-    extra_ids = sorted(found_ids_set - expected_ids_set)
+    reconciled_ids = _reconcile_batch_ids(parsed_by_id, segments)
+    if not reconciled_ids.ok:
+        _cascade_debug(reconciled_ids.debug_message)
+        return None, reconciled_ids.error_reason
 
-    lenient_missing_id: int | None = None
-    lenient_trailing_eos_k = 0
-    lenient_missing_limit = len(segments) // 10
-    if missing_ids or extra_ids:
-        if (
-            lenient_missing_limit >= 1
-            and not extra_ids
-            and len(missing_ids) == 1
-            and len(parsed_by_id) == len(segments) - 1
-        ):
-            lenient_missing_id = missing_ids[0]
-            parsed_by_id[lenient_missing_id] = segments[lenient_missing_id - 1]
-        elif not extra_ids:
-            trailing_limit = max(1, len(segments) // 3)
-            trailing_suffix = list(
-                range(len(segments) - len(missing_ids) + 1, len(segments) + 1)
-            )
-            if (
-                missing_ids == trailing_suffix
-                and len(missing_ids) <= trailing_limit
-                and len(parsed_by_id) == len(segments) - len(missing_ids)
-            ):
-                lenient_trailing_eos_k = len(missing_ids)
-                for missing_id in missing_ids:
-                    parsed_by_id[missing_id] = segments[missing_id - 1]
-            else:
-                _cascade_debug(
-                    "batch_fail reason=id_mismatch "
-                    f"missing={_format_int_list(missing_ids)} "
-                    f"extra={_format_int_list(extra_ids)}"
-                )
-                return None, (
-                    "id_mismatch "
-                    f"missing={_format_int_list(missing_ids)} "
-                    f"extra={_format_int_list(extra_ids)}"
-                )
-        else:
-            _cascade_debug(
-                "batch_fail reason=id_mismatch "
-                f"missing={_format_int_list(missing_ids)} "
-                f"extra={_format_int_list(extra_ids)}"
-            )
-            return None, (
-                "id_mismatch "
-                f"missing={_format_int_list(missing_ids)} "
-                f"extra={_format_int_list(extra_ids)}"
-            )
-
+    parsed_by_id = reconciled_ids.parsed_by_id
+    expected_ids = reconciled_ids.expected_ids
+    lenient_missing_id = reconciled_ids.lenient_missing_id
+    lenient_trailing_eos_k = reconciled_ids.lenient_trailing_eos_k
     translated_parts = [parsed_by_id[item_id] for item_id in expected_ids]
     result: list[str] = []
     lenient_abbrev_recovered = 0
