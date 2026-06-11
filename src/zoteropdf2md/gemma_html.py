@@ -45,6 +45,10 @@ from .translation.quality_gates import (
     build_neighbor_context as _build_quality_gate_neighbor_context,
     safe_quality_gate_call as _safe_quality_gate_call,
 )
+from .translation.post_reassembly import (
+    PostReassemblyGuardDependencies,
+    apply_post_reassembly_guards as _apply_post_reassembly_guards_impl,
+)
 from .translation.recovery_ladders import (
     recover_segment_sentencewise as _recover_segment_sentencewise_impl,
     recover_segment_with_context_markers as _recover_segment_with_context_markers_impl,
@@ -1513,290 +1517,88 @@ def _apply_post_reassembly_guards(
     enable_identity_residual_guard: bool = True,
     enable_identity_context_recovery: bool = True,
 ) -> tuple[list[str], dict[str, int]]:
-    if len(source_segments) != len(translated_segments):
-        return translated_segments, {}
+    def recover_single(source_seg: str, label: str, seg_index: int) -> str:
+        return _recover_single_segment_with_tag_mask(
+            source_seg,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=label,
+            seg_index=seg_index,
+        )
 
-    snapshot = list(translated_segments)
-    result = list(translated_segments)
-    recovery_counts: dict[str, int] = {}
-    paragraph_identity_runs: dict[int, list[tuple[int, int]]] = {}
-    paragraph_identity_indices: set[int] = set()
-    grouped_indices: dict[int, list[int]] = {}
-    context_recovered_segments: set[int] = set()
+    def recover_context(source_seg: str, context_text: str, label: str, seg_index: int) -> str:
+        return _recover_segment_with_context_markers(
+            source_seg,
+            context_text=context_text,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=label,
+            seg_index=seg_index,
+        )
 
-    if segment_groups is not None and len(segment_groups) == len(source_segments):
-        for seg_idx, group_id in enumerate(segment_groups):
-            if group_id is None:
-                continue
-            grouped_indices.setdefault(group_id, []).append(seg_idx)
-        if enable_identity_residual_guard and enable_paragraph_identity_guard:
-            for group_id, indices in grouped_indices.items():
-                if len(indices) < 2:
-                    continue
-                runs = _find_contiguous_identity_runs(
-                    indices,
-                    source_segments=source_segments,
-                    translated_segments=snapshot,
-                    min_total_chars=80,
-                )
-                if not runs:
-                    continue
-                paragraph_identity_runs[group_id] = runs
-                for run_start, run_end in runs:
-                    paragraph_identity_indices.update(range(run_start, run_end + 1))
+    def recover_forced(source_seg: str, label: str, seg_index: int) -> str:
+        return _recover_segment_with_forced_markers(
+            source_seg,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=label,
+            seg_index=seg_index,
+        )
 
-    def _build_neighbor_context_text(seg_idx: int) -> str:
-        return _build_quality_gate_neighbor_context(
+    def recover_sentencewise(source_seg: str, label: str, seg_index: int) -> str:
+        return _recover_segment_sentencewise(
+            source_seg,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=label,
+            seg_index=seg_index,
+        )
+
+    def try_batch_translate(context_sources: list[str], **kwargs: object) -> tuple[list[str] | None, str]:
+        return _try_batch_translate_with_reason(
+            context_sources,
+            translate_text,
+            **kwargs,
+        )
+
+    dependencies = PostReassemblyGuardDependencies(
+        post_guard_reason=_post_reassembly_guard_reason,
+        find_contiguous_identity_runs=_find_contiguous_identity_runs,
+        build_neighbor_context=lambda seg_idx, grouped_indices: _build_quality_gate_neighbor_context(
             source_segments,
             seg_idx,
             segment_groups=segment_groups,
             grouped_indices=grouped_indices,
             segment_core_text=_segment_core_text,
             normalize_ws=_normalize_ws,
-        )
-
-    def _try_context_recovery_for_index(seg_idx: int) -> bool:
-        if not enable_identity_context_recovery:
-            return False
-        if seg_idx in context_recovered_segments:
-            return False
-
-        context_text = _build_neighbor_context_text(seg_idx)
-        if not context_text:
-            return False
-
-        recovered = _recover_segment_with_context_markers(
-            source_segments[seg_idx],
-            context_text=context_text,
-            translate_text=translate_text,
-            cache=cache,
-            max_chunk_chars=max_chunk_chars,
-            context_label=f"{context_label}_context",
-            seg_index=seg_idx + 1,
-        )
-        context_recovered_segments.add(seg_idx)
-        if _is_identity_residual(source_segments[seg_idx], recovered):
-            _cascade_debug(
-                f"{context_label}_lenient reason=identity_context_failed "
-                f"seg={seg_idx + 1} detail=still_identity"
-            )
-            return False
-
-        result[seg_idx] = recovered
-        recovery_counts["identity_context_recovery"] = (
-            recovery_counts.get("identity_context_recovery", 0) + 1
-        )
-        _cascade_debug(
-            f"{context_label}_lenient reason=identity_context_recovery seg={seg_idx + 1}"
-        )
-        return True
-
-    for idx, (source_seg, translated_seg) in enumerate(
-        zip(source_segments, snapshot),
-        start=1,
-    ):
-        prev_seg = snapshot[idx - 2] if idx > 1 else None
-        next_seg = snapshot[idx] if idx < len(snapshot) else None
-        reason = _post_reassembly_guard_reason(
-            source_segments=source_segments,
-            source_index=idx - 1,
-            source_seg=source_seg,
-            translated_seg=translated_seg,
-            prev_translated=prev_seg,
-            next_translated=next_seg,
-        )
-        if reason is None:
-            continue
-        if reason == "identity_residual" and not enable_identity_residual_guard:
-            continue
-        if reason == "identity_residual" and (idx - 1) in paragraph_identity_indices:
-            # Handle full-paragraph identity in one call below.
-            continue
-
-        result[idx - 1] = _recover_single_segment_with_tag_mask(
-            source_seg,
-            translate_text=translate_text,
-            cache=cache,
-            max_chunk_chars=max_chunk_chars,
-            context_label=context_label,
-            seg_index=idx,
-        )
-        if reason == "prompt_leak":
-            result[idx - 1], _ = _sanitize_prompt_leak_segment(
-                source_seg,
-                result[idx - 1],
-            )
-        if reason == "trailing_ellipsis_artifact":
-            stripped_seg, stripped = _strip_unexpected_trailing_ellipsis(
-                source_seg,
-                result[idx - 1],
-            )
-            if stripped:
-                result[idx - 1] = stripped_seg
-                recovery_counts["trailing_ellipsis_stripped"] = (
-                    recovery_counts.get("trailing_ellipsis_stripped", 0) + 1
-                )
-                _cascade_debug(
-                    f"{context_label}_lenient reason=trailing_ellipsis_stripped "
-                    f"seg={idx} action=post_hoc_strip"
-                )
-        recovery_counts[reason] = recovery_counts.get(reason, 0) + 1
-        _cascade_debug(
-            f"{context_label}_lenient "
-            f"reason={reason} seg={idx} action=local_segment_recovery"
-        )
-        if reason == "identity_residual" and _is_identity_residual(source_seg, result[idx - 1]):
-            _try_context_recovery_for_index(idx - 1)
-        if reason == "identity_residual" and _is_identity_residual(source_seg, result[idx - 1]):
-            forced = _recover_segment_with_forced_markers(
-                source_seg,
-                translate_text=translate_text,
-                cache=cache,
-                max_chunk_chars=max_chunk_chars,
-                context_label=f"{context_label}_forced",
-                seg_index=idx,
-            )
-            result[idx - 1] = forced
-            if not _is_identity_residual(source_seg, result[idx - 1]):
-                recovery_counts["identity_forced_recovery"] = (
-                    recovery_counts.get("identity_forced_recovery", 0) + 1
-                )
-                _cascade_debug(
-                    f"{context_label}_lenient reason=identity_forced_recovery seg={idx}"
-                )
-        if reason == "identity_residual" and _is_identity_residual(source_seg, result[idx - 1]):
-            sent_recovered = _recover_segment_sentencewise(
-                source_seg,
-                translate_text=translate_text,
-                cache=cache,
-                max_chunk_chars=max_chunk_chars,
-                context_label=f"{context_label}_sent",
-                seg_index=idx,
-            )
-            result[idx - 1] = sent_recovered
-            if not _is_identity_residual(source_seg, result[idx - 1]):
-                recovery_counts["identity_sentence_recovery"] = (
-                    recovery_counts.get("identity_sentence_recovery", 0) + 1
-                )
-                _cascade_debug(
-                    f"{context_label}_lenient reason=identity_sentence_recovery seg={idx}"
-                )
-        if _is_identity_residual(source_seg, result[idx - 1]):
-            recovery_counts["identity_terminal"] = recovery_counts.get("identity_terminal", 0) + 1
-            _cascade_debug(
-                f"{context_label}_lenient reason=identity_terminal seg={idx} action=keep_recovered"
-            )
-
-    if paragraph_identity_runs:
-        for group_id, runs in sorted(paragraph_identity_runs.items()):
-            group_indices = grouped_indices.get(group_id, [])
-            for run_start, run_end in runs:
-                run_indices = list(range(run_start, run_end + 1))
-                context_indices = list(run_indices)
-                if len(run_indices) == 1 and len(group_indices) > 1:
-                    try:
-                        local_pos = group_indices.index(run_indices[0])
-                    except ValueError:
-                        local_pos = -1
-                    if local_pos >= 0:
-                        c_start = max(0, local_pos - 1)
-                        c_end = min(len(group_indices), local_pos + 2)
-                        expanded = group_indices[c_start:c_end]
-                        if len(expanded) > 1:
-                            context_indices = expanded
-
-                context_sources = [source_segments[i] for i in context_indices]
-                context_result, run_reason = _try_batch_translate_with_reason(
-                    context_sources,
-                    translate_text,
-                    max_batch_chars=max(_MAX_BATCH_CHARS, max_chunk_chars * 8),
-                    segment_groups=[1] * len(context_sources),
-                    enable_paragraph_identity_guard=False,
-                    enable_identity_context_recovery=False,
-                )
-                if context_result is None:
-                    run_result = [
-                        _recover_single_segment_with_tag_mask(
-                            source_segments[i],
-                            translate_text=translate_text,
-                            cache=cache,
-                            max_chunk_chars=max_chunk_chars,
-                            context_label=context_label,
-                            seg_index=i + 1,
-                        )
-                        for i in run_indices
-                    ]
-                    _cascade_debug(
-                        f"{context_label}_lenient reason=identity_residual_paragraph "
-                        f"group={group_id} segs={_format_int_list([i + 1 for i in run_indices])} "
-                        f"action=local_segment_recovery reason_detail={run_reason}"
-                    )
-                else:
-                    run_result = []
-                    for seg_idx in run_indices:
-                        try:
-                            mapped_pos = context_indices.index(seg_idx)
-                        except ValueError:
-                            mapped_pos = -1
-                        if mapped_pos < 0:
-                            run_result.append(source_segments[seg_idx])
-                        else:
-                            run_result.append(context_result[mapped_pos])
-                    _cascade_debug(
-                        f"{context_label}_lenient reason=identity_residual_paragraph "
-                        f"group={group_id} segs={_format_int_list([i + 1 for i in run_indices])} "
-                        "action=paragraph_recovery"
-                    )
-
-                for local_idx, seg_idx in enumerate(run_indices):
-                    result[seg_idx] = run_result[local_idx]
-                    if _is_identity_residual(source_segments[seg_idx], result[seg_idx]):
-                        _try_context_recovery_for_index(seg_idx)
-                    if _is_identity_residual(source_segments[seg_idx], result[seg_idx]):
-                        forced = _recover_segment_with_forced_markers(
-                            source_segments[seg_idx],
-                            translate_text=translate_text,
-                            cache=cache,
-                            max_chunk_chars=max_chunk_chars,
-                            context_label=f"{context_label}_forced",
-                            seg_index=seg_idx + 1,
-                        )
-                        result[seg_idx] = forced
-                        if not _is_identity_residual(source_segments[seg_idx], result[seg_idx]):
-                            recovery_counts["identity_forced_recovery"] = (
-                                recovery_counts.get("identity_forced_recovery", 0) + 1
-                            )
-                            _cascade_debug(
-                                f"{context_label}_lenient reason=identity_forced_recovery seg={seg_idx + 1}"
-                            )
-                    if _is_identity_residual(source_segments[seg_idx], result[seg_idx]):
-                        sent_recovered = _recover_segment_sentencewise(
-                            source_segments[seg_idx],
-                            translate_text=translate_text,
-                            cache=cache,
-                            max_chunk_chars=max_chunk_chars,
-                            context_label=f"{context_label}_sent",
-                            seg_index=seg_idx + 1,
-                        )
-                        result[seg_idx] = sent_recovered
-                        if not _is_identity_residual(source_segments[seg_idx], result[seg_idx]):
-                            recovery_counts["identity_sentence_recovery"] = (
-                                recovery_counts.get("identity_sentence_recovery", 0) + 1
-                            )
-                            _cascade_debug(
-                                f"{context_label}_lenient reason=identity_sentence_recovery seg={seg_idx + 1}"
-                            )
-                    if _is_identity_residual(source_segments[seg_idx], result[seg_idx]):
-                        recovery_counts["identity_terminal"] = recovery_counts.get("identity_terminal", 0) + 1
-                        _cascade_debug(
-                            f"{context_label}_lenient reason=identity_terminal seg={seg_idx + 1} "
-                            "action=keep_recovered"
-                        )
-                recovery_counts["identity_residual_paragraph"] = (
-                    recovery_counts.get("identity_residual_paragraph", 0) + 1
-                )
-
-    return result, recovery_counts
+        ),
+        recover_context=recover_context,
+        recover_single=recover_single,
+        recover_forced=recover_forced,
+        recover_sentencewise=recover_sentencewise,
+        try_batch_translate=try_batch_translate,
+        is_identity_residual=_is_identity_residual,
+        sanitize_prompt_leak=_sanitize_prompt_leak_segment,
+        strip_unexpected_trailing_ellipsis=_strip_unexpected_trailing_ellipsis,
+        format_int_list=_format_int_list,
+        debug=_cascade_debug,
+    )
+    return _apply_post_reassembly_guards_impl(
+        source_segments=source_segments,
+        translated_segments=translated_segments,
+        max_chunk_chars=max_chunk_chars,
+        max_batch_chars_floor=_MAX_BATCH_CHARS,
+        context_label=context_label,
+        dependencies=dependencies,
+        segment_groups=segment_groups,
+        enable_paragraph_identity_guard=enable_paragraph_identity_guard,
+        enable_identity_residual_guard=enable_identity_residual_guard,
+        enable_identity_context_recovery=enable_identity_context_recovery,
+    )
 
 
 def _apply_wide_paragraph_recovery(
