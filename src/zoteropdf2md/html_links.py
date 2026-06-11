@@ -65,14 +65,6 @@ def canonicalize_same_document_links(
         source_url=source_url,
         canonical_url=canonical_url,
     )
-    if not candidates:
-        return SameDocumentLinkCanonicalization(
-            html=html,
-            rewritten_count=0,
-            unresolved_count=0,
-            candidate_document_urls=(),
-        )
-
     rewritten_count = 0
     unresolved_count = 0
 
@@ -83,6 +75,11 @@ def canonicalize_same_document_links(
         if parsed is None or not parsed.fragment:
             return match.group(0)
         if is_plain_local_fragment(parsed):
+            target = urllib.parse.unquote(parsed.fragment)
+            if require_fragment_target and ids and target not in ids:
+                unresolved_count += 1
+            return match.group(0)
+        if not candidates:
             return match.group(0)
         if not is_same_document(parsed, candidates):
             return match.group(0)

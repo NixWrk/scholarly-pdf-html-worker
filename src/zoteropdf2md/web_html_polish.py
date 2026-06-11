@@ -7,15 +7,20 @@ need source-aware normalization.
 
 from __future__ import annotations
 
+import base64
+from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape as html_escape
 from html import unescape
+import mimetypes
 from pathlib import Path
 import re
 import urllib.parse
+import urllib.request
 
 from .html_theme import web_readability_style
 from .html_images import (
+    IMAGE_SIGNATURES,
     InlineHtmlResult,
     is_inline_or_remote,
     to_data_url,
@@ -219,14 +224,18 @@ def polish_web_html_file(
         canonical_url=canonical_url,
     )
     inlined = inline_local_images_from_web_html_document(document.html, base_dir=html_path.parent)
+    remote_inlined = inline_remote_images_from_web_html_document(
+        inlined.html,
+        allowed_hosts=_remote_image_hosts_for_kind(document.kind),
+    )
     return WebHtmlFilePolishResult(
-        html=inlined.html,
+        html=remote_inlined.html,
         kind=document.kind,
         article_extracted=document.article_extracted,
         article_selector=document.article_selector,
         same_document_links_rewritten=document.same_document_links_rewritten,
         unresolved_same_document_links=document.unresolved_same_document_links,
-        inlined_images=inlined.inlined_images,
+        inlined_images=inlined.inlined_images + remote_inlined.inlined_images,
     )
 
 
@@ -291,6 +300,126 @@ def inline_local_images_from_web_html_document(html: str, *, base_dir: Path) -> 
     html = _IMG_SRC_RE.sub(replace_src, html)
     html = _SRCSET_RE.sub(replace_srcset, html)
     return InlineHtmlResult(html=html, inlined_images=inlined_count)
+
+
+RemoteImageFetcher = Callable[[str], tuple[bytes, str | None]]
+
+
+def inline_remote_images_from_web_html_document(
+    html: str,
+    *,
+    allowed_hosts: frozenset[str] = frozenset(),
+    fetch_bytes: RemoteImageFetcher | None = None,
+) -> InlineHtmlResult:
+    """Inline allowed remote image URLs for Zotero-friendly source HTML."""
+
+    if not allowed_hosts:
+        return InlineHtmlResult(html=html, inlined_images=0)
+
+    fetcher = fetch_bytes or _fetch_remote_image
+    cache: dict[str, str | None] = {}
+    inlined_count = 0
+
+    def inline_src_value(src_value: str) -> str | None:
+        nonlocal inlined_count
+        url = unescape(src_value).strip()
+        if not _is_allowed_remote_image_url(url, allowed_hosts=allowed_hosts):
+            return None
+        if url not in cache:
+            try:
+                blob, content_type = fetcher(url)
+                cache[url] = _remote_image_data_url(url, blob, content_type)
+            except Exception:
+                cache[url] = None
+        data_url = cache[url]
+        if data_url is None:
+            return None
+        inlined_count += 1
+        return data_url
+
+    def replace_src(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        quote = match.group("quote")
+        src_value = unescape(match.group("src")).strip()
+        data_url = inline_src_value(src_value)
+        if data_url is None:
+            return match.group(0)
+        prefix = _add_src_hint(prefix, src_value)
+        return f"{prefix}{quote}{data_url}{quote}"
+
+    def replace_srcset(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        quote = match.group("quote")
+        srcset = unescape(match.group("srcset")).strip()
+        next_entries: list[str] = []
+        changed = False
+        for raw_entry in srcset.split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            parts = entry.split()
+            src_value = parts[0]
+            descriptor = " ".join(parts[1:])
+            data_url = inline_src_value(src_value)
+            if data_url is None:
+                next_entries.append(entry)
+                continue
+            changed = True
+            next_entries.append(f"{data_url} {descriptor}".strip())
+        if not changed:
+            return match.group(0)
+        escaped_srcset = html_escape(", ".join(next_entries), quote=True)
+        return f"{prefix}{quote}{escaped_srcset}{quote}"
+
+    html = _IMG_SRC_RE.sub(replace_src, html)
+    html = _SRCSET_RE.sub(replace_srcset, html)
+    return InlineHtmlResult(html=html, inlined_images=inlined_count)
+
+
+def _remote_image_hosts_for_kind(kind: WebHtmlKind) -> frozenset[str]:
+    if kind == WebHtmlKind.IOP_ARTICLE:
+        return frozenset({"content.cld.iop.org"})
+    return frozenset()
+
+
+def _is_allowed_remote_image_url(url: str, *, allowed_hosts: frozenset[str]) -> bool:
+    parsed = _urlsplit_or_none(url)
+    if parsed is None or parsed.scheme.lower() not in {"http", "https"}:
+        return False
+    return parsed.netloc.lower().split(":", 1)[0] in allowed_hosts
+
+
+def _fetch_remote_image(url: str) -> tuple[bytes, str | None]:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 z2m-web-polish"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        content_type = response.headers.get("Content-Type")
+        return response.read(), content_type
+
+
+def _remote_image_data_url(url: str, blob: bytes, content_type: str | None) -> str | None:
+    mime = _remote_image_mime(url, blob, content_type)
+    if mime is None:
+        return None
+    encoded = base64.b64encode(blob).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def _remote_image_mime(url: str, blob: bytes, content_type: str | None) -> str | None:
+    header_mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if header_mime.startswith("image/"):
+        return header_mime
+    for signature, mime in IMAGE_SIGNATURES.items():
+        if blob.startswith(signature) and mime.startswith("image/"):
+            return mime
+    parsed = _urlsplit_or_none(url)
+    path = parsed.path if parsed is not None else url
+    guessed, _ = mimetypes.guess_type(path)
+    if guessed and guessed.startswith("image/"):
+        return guessed
+    return None
 
 
 def absolutize_root_relative_urls(html: str, *, base_url: str | None) -> str:

@@ -20,6 +20,7 @@ from zoteropdf2md.web_html_polish import (
     canonicalize_same_document_links,
     count_same_document_absolute_fragment_links,
     detect_web_html_kind,
+    inline_remote_images_from_web_html_document,
     polish_web_html_file,
     polish_web_html_document,
     require_web_article_html,
@@ -575,6 +576,73 @@ def test_polish_web_html_document_extracts_iop_article_content() -> None:
     assert 'src="https://content.cld.iop.org/journals/example/fig1_lr.jpg"' in result.html
     assert 'data-z2m-src-placeholder="data:image/png;base64,placeholder"' in result.html
     assert 'src="data:image/png;base64,placeholder"' not in result.html
+
+
+def test_polish_web_html_document_builds_iop_references_from_metadata() -> None:
+    html = f"""
+    <html>
+      <head>
+        <title>IOP Article</title>
+        <link rel="canonical" href="https://iopscience.iop.org/article/10.1088/example">
+        <meta name="citation_publisher" content="IOP Publishing">
+        <meta name="citation_reference" content="citation_journal_title=Journal One; citation_title=First reference; citation_author=A Author; citation_publication_date=2024; citation_firstpage=1; citation_lastpage=2; citation_doi=10.1000/one;">
+        <meta name="citation_reference" content="citation_journal_title=Journal Two; citation_title=Second reference; citation_author=B Author; citation_publication_date=2025;">
+      </head>
+      <body>
+        <div class="article-content">
+          <div itemprop="articleBody" class="wd-jnl-art-full-text article-text">
+            <h2 id="iops1">1. Introduction</h2>
+            <p>{" ".join([LONG_PARAGRAPH] * 20)}
+              <a class="cite" href="#iopbib1" id="fnref-iopbib1">Author 2024</a>
+              <a class="cite" href="#iopbib2" id="fnref-iopbib2">Author 2025</a>
+            </p>
+          </div>
+          <div class="reveal-container references">
+            <h2><button class="reveal-trigger article-references" id="references">Show References</button></h2>
+            <div id="references-wrapper"><div class="loading-icon">Please wait references are loading.</div></div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    result = polish_web_html_document(html, source_url="https://iopscience.iop.org/article/10.1088/example")
+
+    assert result.unresolved_same_document_links == 0
+    assert 'id="iopbib1"' in result.html
+    assert 'id="iopbib2"' in result.html
+    assert "First reference" in result.html
+    assert "Second reference" in result.html
+    assert 'href="#iopbib1"' in result.html
+    assert 'href="https://doi.org/10.1000/one"' in result.html
+    assert "Please wait references are loading" not in result.html
+
+
+def test_canonicalize_same_document_links_counts_broken_local_fragments() -> None:
+    html = '<html><body><section id="sec1"></section><a href="#missing">missing</a><a href="#">noop</a></body></html>'
+
+    result = canonicalize_same_document_links(html)
+
+    assert result.rewritten_count == 0
+    assert result.unresolved_count == 1
+
+
+def test_inline_remote_images_from_web_html_document_allows_scoped_hosts() -> None:
+    html = (
+        '<html><body><img src="https://content.cld.iop.org/journals/example/fig1.gif">'
+        '<img src="https://example.org/other.png"></body></html>'
+    )
+
+    result = inline_remote_images_from_web_html_document(
+        html,
+        allowed_hosts=frozenset({"content.cld.iop.org"}),
+        fetch_bytes=lambda url: (b"GIF89afig;", "image/gif"),
+    )
+
+    assert result.inlined_images == 1
+    assert 'data-z2m-src="https://content.cld.iop.org/journals/example/fig1.gif"' in result.html
+    assert 'src="data:image/gif;base64,' in result.html
+    assert 'src="https://example.org/other.png"' in result.html
 
 
 def test_polish_web_html_document_rejects_known_non_full_text_web_pages() -> None:
