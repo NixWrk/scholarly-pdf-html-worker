@@ -151,6 +151,9 @@ from zoteropdf2md.quality_loop.p62_plan import (  # noqa: E402
     P62MarkerRecoveryPlanDependencies,
     write_marker_recovery_plan as _write_p62_marker_recovery_plan_impl,
 )
+from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
+    resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
+)
 from zoteropdf2md.quality_loop.p62_pdf_assets import (  # noqa: E402
     external_pdf_tool_inventory as _p62_external_pdf_tool_inventory_impl,
     false_match_hint_blocks_asset_recovery as _p62_false_match_hint_blocks_asset_recovery_impl,
@@ -1269,38 +1272,26 @@ def write_p62_image_recovery_stage(
         write_p62_marker_recovery_plan(run_dir, gate_config=gate_config, out_path=plan_path)
     plan = _load_json(plan_path, default={"articles": []})
     records = [item for item in plan.get("articles") or [] if isinstance(item, dict)]
-    if max_items is None:
-        max_items = int(gate_config.get("p62_image_recovery_max_articles") or 0)
+    stage_config = _resolve_p62_image_recovery_stage_config(
+        gate_config,
+        execute_marker=execute_marker,
+        apply_patches=apply_patches,
+        max_items=max_items,
+    )
+    max_items = stage_config.max_items
     if max_items and max_items > 0:
         records = records[:max_items]
 
-    if execute_marker is None:
-        execute_marker = bool(gate_config.get("p62_image_recovery_execute_marker", True))
-    if apply_patches is None:
-        apply_patches = bool(gate_config.get("p62_image_recovery_apply_patches", True))
-    render_zoom = float(
-        gate_config.get("p62_image_recovery_render_zoom")
-        or gate_config.get("pdf_problem_evidence_render_zoom")
-        or 1.5
-    )
-    marker_timeout = int(gate_config.get("p62_image_recovery_marker_timeout_seconds") or 300)
-    probe_source_visual_unavailable = bool(
-        gate_config.get("p62_image_recovery_probe_source_visual_unavailable", True)
-    )
-    probe_marker_for_unavailable = bool(
-        gate_config.get("p62_image_recovery_probe_marker_for_unavailable", execute_marker)
-    )
-    probe_marker_timeout = int(
-        gate_config.get("p62_image_recovery_source_visual_probe_marker_timeout_seconds")
-        or marker_timeout
-    )
-    replace_page_render = bool(gate_config.get("p62_image_recovery_replace_page_render", True))
-    remove_false_match_recovery = bool(
-        gate_config.get("p62_image_recovery_remove_false_match_recovery", True)
-    )
-    repair_duplicate_figure_images = bool(
-        gate_config.get("p62_image_recovery_repair_duplicate_figure_images", True)
-    )
+    execute_marker = stage_config.execute_marker
+    apply_patches = stage_config.apply_patches
+    render_zoom = stage_config.render_zoom
+    marker_timeout = stage_config.marker_timeout
+    probe_source_visual_unavailable = stage_config.probe_source_visual_unavailable
+    probe_marker_for_unavailable = stage_config.probe_marker_for_unavailable
+    probe_marker_timeout = stage_config.probe_marker_timeout
+    replace_page_render = stage_config.replace_page_render
+    remove_false_match_recovery = stage_config.remove_false_match_recovery
+    repair_duplicate_figure_images = stage_config.repair_duplicate_figure_images
 
     manifest = _load_json(run_dir / "manifest.json", default={})
     manifest_by_article = _manifest_article_by_id(manifest)
