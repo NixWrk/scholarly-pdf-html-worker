@@ -73,6 +73,11 @@ _HANDLERS: dict[WebHtmlKind, WebPolishHandler] = {
         module_name="springer_nature",
         default_origin="https://link.springer.com/",
     ),
+    WebHtmlKind.IOP_ARTICLE: WebPolishHandler(
+        WebHtmlKind.IOP_ARTICLE,
+        module_name="iop",
+        default_origin="https://iopscience.iop.org/",
+    ),
     WebHtmlKind.RESEARCHGATE_PAGE: WebPolishHandler(
         WebHtmlKind.RESEARCHGATE_PAGE,
         rejection_message="ResearchGate pages are landing/PDF pages, not stable article HTML; use the PDF attachment when available.",

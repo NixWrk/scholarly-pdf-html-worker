@@ -77,6 +77,10 @@ def main_springer_nature() -> int:
     return run_web_polish_cli(WebHtmlKind.SPRINGER_NATURE_ARTICLE)
 
 
+def main_iop() -> int:
+    return run_web_polish_cli(WebHtmlKind.IOP_ARTICLE)
+
+
 def main_researchgate() -> int:
     return run_web_polish_cli(WebHtmlKind.RESEARCHGATE_PAGE)
 

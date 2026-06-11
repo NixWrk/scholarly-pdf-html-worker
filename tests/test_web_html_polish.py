@@ -71,7 +71,9 @@ def test_web_polish_registry_covers_publisher_handlers() -> None:
 
     assert WebHtmlKind.ARXIV_LATEXML in registered_kinds
     assert WebHtmlKind.PMC_ARTICLE in registered_kinds
+    assert WebHtmlKind.IOP_ARTICLE in registered_kinds
     assert default_origin_for_kind(WebHtmlKind.SPRINGER_NATURE_ARTICLE) == "https://link.springer.com/"
+    assert default_origin_for_kind(WebHtmlKind.IOP_ARTICLE) == "https://iopscience.iop.org/"
 
     arxiv_handler = handler_for_kind(WebHtmlKind.ARXIV_LATEXML)
     assert arxiv_handler is not None
@@ -101,6 +103,26 @@ def test_detect_web_html_kind_distinguishes_arxiv_latexml_from_abs_page() -> Non
         detect_web_html_kind("<html></html>", source_url="https://arxiv.org/abs/2511.02824")
         == WebHtmlKind.ARXIV_ABS_PAGE
     )
+
+
+def test_detect_web_html_kind_accepts_iop_full_article_not_iop_assets() -> None:
+    assert (
+        detect_web_html_kind("<html></html>", source_url="https://iopscience.iop.org/article/10.1088/1741-2552/ade918")
+        == WebHtmlKind.IOP_ARTICLE
+    )
+    assert (
+        detect_web_html_kind("<html></html>", source_url="https://iopscience.iop.org/article/10.1088/1741-2552/ade918/meta")
+        == WebHtmlKind.UNKNOWN
+    )
+
+    html = f"""
+    <html>
+      <head><meta name="citation_publisher" content="IOP Publishing"></head>
+      <body><div class="article-content"><div class="wd-jnl-art-full-text"><p>{" ".join([LONG_PARAGRAPH] * 20)}</p></div></div></body>
+    </html>
+    """
+
+    assert detect_web_html_kind(html) == WebHtmlKind.IOP_ARTICLE
 
 
 def test_polish_web_html_document_rejects_arxiv_abs_page() -> None:
@@ -451,6 +473,108 @@ def test_polish_web_html_document_extracts_springer_nature_body() -> None:
     assert 'href="#Fig1"' not in result.html
     assert 'href="https://link.springer.com/article/10.1007/example#Tab1"' not in result.html
     assert 'href="https://link.springer.com/article/10.1007/example/figures/1"' in result.html
+
+
+def test_polish_web_html_document_extracts_iop_article_content() -> None:
+    html = f"""
+    <html>
+      <head>
+        <title>IOP Article</title>
+        <link rel="canonical" href="https://iopscience.iop.org/article/10.1088/example">
+        <meta name="citation_publisher" content="IOP Publishing">
+      </head>
+      <body>
+        <header>IOP publisher navigation</header>
+        <main id="skip-to-content-link-target">
+          <div class="da1-da2" id="page-content" itemscope itemtype="http://schema.org/ScholarlyArticle">
+            <div class="article-head">
+              <div class="eyebrow">PAPER - OPEN ACCESS</div>
+              <p>To cite this article: journal citation text.</p>
+            </div>
+            <div class="article-content">
+              <div class="article-abstract">
+                <h2 id="artAbst">Abstract</h2>
+                <div class="article-text wd-jnl-art-abstract" itemprop="description">
+                  <p>{" ".join([LONG_PARAGRAPH] * 8)}</p>
+                </div>
+              </div>
+              <div class="col-no-break wd-jnl-art-license media">license boilerplate</div>
+              <p><small>Export citation and abstract</small></p>
+              <div class="linked-articles linked-articles--issue-nav">Previous and next issue articles</div>
+              <section class="leaderboard-ad"><div class="ad-iframe-wrap">advertising slot</div></section>
+              <div itemprop="articleBody" class="wd-jnl-art-full-text article-text">
+                <h2 class="header-anchor" id="iops1">
+                  <svg aria-hidden="true" class="fa-icon"><path></path></svg>1. Introduction
+                </h2>
+                <div class="article-text">
+                  <p>
+                    {" ".join([LONG_PARAGRAPH] * 20)}
+                    <a href="https://iopscience.iop.org/article/10.1088/example#iops1">same document</a>
+                    <a href="/article/10.1088/example/pdf">PDF</a>
+                    <a href="#iopfn1">note</a>
+                  </p>
+                </div>
+                <figure id="iopf1" data-toolbar-img="https://content.cld.iop.org/journals/example/fig1_lr.jpg">
+                  <figure>
+                    <div class="panzoom-container">
+                      <div class="panzoom-parent">
+                        <img class="panzoom" alt="Figure 1." src="data:image/png;base64,placeholder" data-src="https://content.cld.iop.org/journals/example/fig1_lr.jpg">
+                      </div>
+                      <div class="buttons zoom-tools"><button class="zoom-in">Zoom In</button></div>
+                    </div>
+                    <figcaption>
+                      <p><strong id="iopf1-label">Figure 1.</strong> Figure caption text.</p>
+                      <p class="mb-05 print-hide">Download figure:</p>
+                      <span class="btn-multi-block print-hide"><a class="btn fig-dwnld-std-img" href="/journals/example/fig1_lr.jpg">Standard image</a></span>
+                    </figcaption>
+                  </figure>
+                </figure>
+              </div>
+              <h2 id="footnotes"><svg aria-hidden="true" class="fa-icon"><path></path></svg>Footnotes</h2>
+              <div data-mobile-collapse><ul><li id="iopfn1">Footnote one.</li></ul></div>
+              <div class="reveal-container references">
+                <h2 id="references">References</h2>
+                <div><ol><li id="iopbib1">Reference one.</li></ol></div>
+              </div>
+              <section class="boxout related wd-related-articles">
+                <h2>You may also like</h2>
+                <p>ChArUco-based 3D scanner</p>
+              </section>
+            </div>
+          </div>
+        </main>
+      </body>
+    </html>
+    """
+
+    result = polish_web_html_document(html, source_url="https://iopscience.iop.org/article/10.1088/example")
+
+    assert result.kind == WebHtmlKind.IOP_ARTICLE
+    assert result.article_extracted is True
+    assert result.article_selector == ".article-content"
+    assert 'data-z2m-source-kind="iop_article"' in result.html
+    assert "Abstract" in result.html
+    assert "1. Introduction" in result.html
+    assert "Footnote one." in result.html
+    assert "Reference one." in result.html
+    assert "IOP publisher navigation" not in result.html
+    assert "PAPER - OPEN ACCESS" not in result.html
+    assert "To cite this article" not in result.html
+    assert "license boilerplate" not in result.html
+    assert "Export citation and abstract" not in result.html
+    assert "Previous and next issue articles" not in result.html
+    assert "advertising slot" not in result.html
+    assert "You may also like" not in result.html
+    assert "ChArUco-based 3D scanner" not in result.html
+    assert "Download figure" not in result.html
+    assert "Standard image" not in result.html
+    assert "Zoom In" not in result.html
+    assert "fa-icon" not in result.html
+    assert 'href="#iops1"' in result.html
+    assert 'href="https://iopscience.iop.org/article/10.1088/example/pdf"' in result.html
+    assert 'src="https://content.cld.iop.org/journals/example/fig1_lr.jpg"' in result.html
+    assert 'data-z2m-src-placeholder="data:image/png;base64,placeholder"' in result.html
+    assert 'src="data:image/png;base64,placeholder"' not in result.html
 
 
 def test_polish_web_html_document_rejects_known_non_full_text_web_pages() -> None:

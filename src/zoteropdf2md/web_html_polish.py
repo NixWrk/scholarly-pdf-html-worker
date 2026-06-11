@@ -112,6 +112,8 @@ def detect_web_html_kind(html: str, *, source_url: str | None = None) -> WebHtml
         return WebHtmlKind.TAYLOR_FRANCIS_ARTICLE
     if _looks_like_springer_nature_article(sample, parsed_source):
         return WebHtmlKind.SPRINGER_NATURE_ARTICLE
+    if _looks_like_iop_article(sample, parsed_source):
+        return WebHtmlKind.IOP_ARTICLE
     if _looks_like_researchgate_page(sample, parsed_source):
         return WebHtmlKind.RESEARCHGATE_PAGE
     full_sample = html.lower()
@@ -130,6 +132,8 @@ def detect_web_html_kind(html: str, *, source_url: str | None = None) -> WebHtml
             return WebHtmlKind.TAYLOR_FRANCIS_ARTICLE
         if _looks_like_springer_nature_article(full_sample, parsed_source):
             return WebHtmlKind.SPRINGER_NATURE_ARTICLE
+        if _looks_like_iop_article(full_sample, parsed_source):
+            return WebHtmlKind.IOP_ARTICLE
         if _looks_like_researchgate_page(full_sample, parsed_source):
             return WebHtmlKind.RESEARCHGATE_PAGE
     if "<article" in sample:
@@ -432,6 +436,29 @@ def _looks_like_springer_nature_article(sample: str, parsed_source: urllib.parse
     if host in {"link.springer.com", "www.nature.com"}:
         return True
     return "c-article-body" in sample or "article__body" in sample
+
+
+def _looks_like_iop_article(sample: str, parsed_source: urllib.parse.SplitResult | None) -> bool:
+    host = (parsed_source.netloc.lower() if parsed_source is not None else "")
+    path = (parsed_source.path.lower() if parsed_source is not None else "")
+    has_full_text_markers = _has_iop_full_text_markers(sample)
+    if host.endswith("iopscience.iop.org") and path.startswith("/article/"):
+        if path.endswith(("/meta", "/pdf", "/xml")):
+            return has_full_text_markers
+        return True
+    if "citation_publisher\" content=\"iop publishing" in sample or "citation_publisher' content='iop publishing" in sample:
+        return has_full_text_markers
+    return "iopscience.iop.org/article/" in sample and has_full_text_markers
+
+
+def _has_iop_full_text_markers(sample: str) -> bool:
+    return (
+        "wd-jnl-art-full-text" in sample
+        or "itemprop=\"articlebody\"" in sample
+        or "itemprop='articlebody'" in sample
+        or "class=\"article-content\"" in sample
+        or "class='article-content'" in sample
+    )
 
 
 def _looks_like_researchgate_page(sample: str, parsed_source: urllib.parse.SplitResult | None) -> bool:

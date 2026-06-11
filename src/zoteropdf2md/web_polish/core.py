@@ -17,6 +17,7 @@ class WebHtmlKind(str, Enum):
     PMC_ARTICLE = "pmc_article"
     TAYLOR_FRANCIS_ARTICLE = "taylor_francis_article"
     SPRINGER_NATURE_ARTICLE = "springer_nature_article"
+    IOP_ARTICLE = "iop_article"
     RESEARCHGATE_PAGE = "researchgate_page"
     SCIENDO_ABSTRACT_PAGE = "sciendo_abstract_page"
     OJS_ABSTRACT_PAGE = "ojs_abstract_page"
@@ -287,6 +288,12 @@ def score_article_candidate(
     if "article-content" in attrs_lower or "article__content" in attrs_lower:
         score += 5_000
         selector = ".article-content"
+    if "wd-jnl-art-full-text" in attrs_lower:
+        score += 5_800
+        selector = ".wd-jnl-art-full-text"
+    if 'itemprop="articlebody"' in attrs_lower or "itemprop='articlebody'" in attrs_lower:
+        score += 5_000
+        selector = '[itemprop="articleBody"]'
     if "hlfld-fulltext" in attrs_lower:
         score += 3_200
         selector = ".hlFld-Fulltext"
@@ -351,6 +358,8 @@ def promising_article_start(tag: str, attrs: str, *, kind: WebHtmlKind | None) -
         "article-body",
         "article__content",
         "article-content",
+        "wd-jnl-art-full-text",
+        "articlebody",
         "hlfld-fulltext",
         "main-content",
         "fulltext-view",
