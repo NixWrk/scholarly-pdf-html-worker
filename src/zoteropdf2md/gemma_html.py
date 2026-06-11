@@ -44,6 +44,11 @@ from .translation.quality_gates import (
     build_neighbor_context as _build_quality_gate_neighbor_context,
     safe_quality_gate_call as _safe_quality_gate_call,
 )
+from .translation.recovery_ladders import (
+    recover_segment_sentencewise as _recover_segment_sentencewise_impl,
+    recover_segment_with_context_markers as _recover_segment_with_context_markers_impl,
+    recover_segment_with_forced_markers as _recover_segment_with_forced_markers_impl,
+)
 from .translation.masks import (
     ABBREV_PATTERN as _ABBREV_PATTERN,
     ABBREV_TOKEN_PATTERN as _ABBREV_TOKEN_PATTERN,
@@ -1256,43 +1261,17 @@ def _recover_segment_with_context_markers(
     context_label: str,
     seg_index: int,
 ) -> str:
-    if not context_text:
-        return _recover_single_segment_with_tag_mask(
-            source_seg,
+    return _recover_segment_with_context_markers_impl(
+        source_seg,
+        context_text=context_text,
+        recover_single_segment=lambda segment: _recover_single_segment_with_tag_mask(
+            segment,
             translate_text=translate_text,
             cache=cache,
             max_chunk_chars=max_chunk_chars,
             context_label=context_label,
             seg_index=seg_index,
-        )
-
-    marker_start = "zz2mtargetstartzz"
-    marker_end = "zz2mtargetendzz"
-    wrapped = f"{marker_start}{source_seg}{marker_end}\n{context_text}"
-    recovered = _recover_single_segment_with_tag_mask(
-        wrapped,
-        translate_text=translate_text,
-        cache=cache,
-        max_chunk_chars=max_chunk_chars,
-        context_label=context_label,
-        seg_index=seg_index,
-    )
-    match = re.search(
-        rf"{re.escape(marker_start)}(.*?){re.escape(marker_end)}",
-        recovered,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    if match is not None:
-        candidate = match.group(1).strip()
-        if candidate:
-            return candidate
-    return _recover_single_segment_with_tag_mask(
-        source_seg,
-        translate_text=translate_text,
-        cache=cache,
-        max_chunk_chars=max_chunk_chars,
-        context_label=context_label,
-        seg_index=seg_index,
+        ),
     )
 
 
@@ -1305,38 +1284,22 @@ def _recover_segment_with_forced_markers(
     context_label: str,
     seg_index: int,
 ) -> str:
-    marker_start = "zz2mforcestartzz"
-    marker_end = "zz2mforceendzz"
-    wrapped = (
+    forced_instruction = (
         "РїРµСЂРµРІРµРґРё С‚РµРєСЃС‚ РјРµР¶РґСѓ РјР°СЂРєРµСЂР°РјРё РЅР° С†РµР»РµРІРѕР№ СЏР·С‹Рє РїРѕР»РЅРѕСЃС‚СЊСЋ. "
         "РЅРµ РѕСЃС‚Р°РІР»СЏР№ Р°РЅРіР»РёР№СЃРєРёРµ СЃР»РѕРІР° Р±РµР· РїРµСЂРµРІРѕРґР°, РєСЂРѕРјРµ С‚РµС…РЅРёС‡РµСЃРєРёС… Р°Р±Р±СЂРµРІРёР°С‚СѓСЂ "
         "Рё РёРјРµРЅ СЃРѕР±СЃС‚РІРµРЅРЅС‹С….\n"
-        f"{marker_start}{source_seg}{marker_end}"
     )
-    recovered = _recover_single_segment_with_tag_mask(
-        wrapped,
-        translate_text=translate_text,
-        cache=cache,
-        max_chunk_chars=max_chunk_chars,
-        context_label=context_label,
-        seg_index=seg_index,
-    )
-    match = re.search(
-        rf"{re.escape(marker_start)}(.*?){re.escape(marker_end)}",
-        recovered,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    if match is not None:
-        candidate = match.group(1).strip()
-        if candidate:
-            return candidate
-    return _recover_single_segment_with_tag_mask(
+    return _recover_segment_with_forced_markers_impl(
         source_seg,
-        translate_text=translate_text,
-        cache=cache,
-        max_chunk_chars=max_chunk_chars,
-        context_label=context_label,
-        seg_index=seg_index,
+        forced_instruction=forced_instruction,
+        recover_single_segment=lambda segment: _recover_single_segment_with_tag_mask(
+            segment,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        ),
     )
 
 
@@ -1349,45 +1312,29 @@ def _recover_segment_sentencewise(
     context_label: str,
     seg_index: int,
 ) -> str:
-    lead, core, tail = _split_outer_ws(source_seg)
-    core_text = core.strip()
-    if not core_text:
-        return source_seg
-    sentences = [chunk.strip() for chunk in re.split(r"(?<=[.!?])\s+", core_text) if chunk.strip()]
-    if len(sentences) < 2:
-        return source_seg
-
-    translated_sentences: list[str] = []
-    for sent in sentences:
-        try:
-            translated = _recover_single_segment_with_tag_mask(
-                sent,
-                translate_text=translate_text,
-                cache=cache,
-                max_chunk_chars=max_chunk_chars,
-                context_label=context_label,
-                seg_index=seg_index,
-            )
-        except Exception:
-            translated = sent
-        if _is_identity_residual(sent, translated):
-            try:
-                translated = _recover_segment_with_forced_markers(
-                    sent,
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label=context_label,
-                    seg_index=seg_index,
-                )
-            except Exception:
-                pass
-        translated_sentences.append(_normalize_ws(_segment_core_text(translated)))
-
-    joined = " ".join(chunk for chunk in translated_sentences if chunk).strip()
-    if not joined:
-        return source_seg
-    return f"{lead}{joined}{tail}"
+    return _recover_segment_sentencewise_impl(
+        source_seg,
+        split_outer_ws=_split_outer_ws,
+        normalize_ws=_normalize_ws,
+        segment_core_text=_segment_core_text,
+        is_identity_residual=_is_identity_residual,
+        recover_single_segment=lambda segment: _recover_single_segment_with_tag_mask(
+            segment,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        ),
+        recover_forced_segment=lambda segment: _recover_segment_with_forced_markers(
+            segment,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        ),
+    )
 
 
 def _recover_single_segment_with_tag_mask(
