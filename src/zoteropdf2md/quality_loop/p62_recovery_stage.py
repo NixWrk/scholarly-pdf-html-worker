@@ -30,6 +30,13 @@ class P62PatchTargetDependencies:
     polish_stage: str
 
 
+@dataclass(frozen=True)
+class P62HtmlPatchResult:
+    replacement_count: int
+    patched_paths: tuple[str, ...]
+    errors: tuple[dict[str, str], ...]
+
+
 def resolve_p62_image_recovery_stage_config(
     gate_config: dict[str, Any],
     *,
@@ -126,3 +133,30 @@ def patch_targets_for_record(
         seen.add(key)
         deduped.append(candidate)
     return deduped
+
+
+def apply_html_patch_to_targets(
+    targets: Iterable[Path],
+    patch_html: Callable[[str], tuple[str, int]],
+    *,
+    patched_paths: Iterable[str] = (),
+    replacement_count: int = 0,
+) -> P62HtmlPatchResult:
+    patched_path_list = list(patched_paths)
+    errors: list[dict[str, str]] = []
+    total_replacements = replacement_count
+    for target_path in targets:
+        try:
+            html = target_path.read_text(encoding="utf-8", errors="replace")
+            patched, replacements = patch_html(html)
+            if replacements:
+                target_path.write_text(patched, encoding="utf-8")
+                patched_path_list.append(str(target_path))
+                total_replacements += replacements
+        except OSError as exc:
+            errors.append({"path": str(target_path), "error": str(exc)})
+    return P62HtmlPatchResult(
+        replacement_count=total_replacements,
+        patched_paths=tuple(patched_path_list),
+        errors=tuple(errors),
+    )

@@ -3,6 +3,7 @@ from typing import Any
 
 from zoteropdf2md.quality_loop.p62_recovery_stage import (
     P62PatchTargetDependencies,
+    apply_html_patch_to_targets,
     patch_targets_for_record,
     resolve_p62_image_recovery_stage_config,
 )
@@ -152,3 +153,47 @@ def test_patch_targets_for_record_deduplicates_equivalent_paths(tmp_path: Path) 
     )
 
     assert targets == [record_path]
+
+
+def test_apply_html_patch_to_targets_writes_replacements(tmp_path: Path) -> None:
+    target_path = tmp_path / "article.html"
+    target_path.write_text("before", encoding="utf-8")
+
+    result = apply_html_patch_to_targets(
+        [target_path],
+        lambda html: (html.replace("before", "after"), 1),
+    )
+
+    assert target_path.read_text(encoding="utf-8") == "after"
+    assert result.replacement_count == 1
+    assert result.patched_paths == (str(target_path),)
+    assert result.errors == ()
+
+
+def test_apply_html_patch_to_targets_preserves_existing_patch_state(tmp_path: Path) -> None:
+    target_path = tmp_path / "article.html"
+    target_path.write_text("before", encoding="utf-8")
+
+    result = apply_html_patch_to_targets(
+        [target_path],
+        lambda html: (html.replace("before", "after"), 2),
+        patched_paths=("seed.html",),
+        replacement_count=3,
+    )
+
+    assert result.replacement_count == 5
+    assert result.patched_paths == ("seed.html", str(target_path))
+
+
+def test_apply_html_patch_to_targets_records_file_errors(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing.html"
+
+    result = apply_html_patch_to_targets(
+        [missing_path],
+        lambda html: (html, 1),
+    )
+
+    assert result.replacement_count == 0
+    assert result.patched_paths == ()
+    assert result.errors
+    assert result.errors[0]["path"] == str(missing_path)

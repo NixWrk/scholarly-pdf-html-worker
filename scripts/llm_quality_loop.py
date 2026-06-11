@@ -152,6 +152,7 @@ from zoteropdf2md.quality_loop.p62_plan import (  # noqa: E402
     write_marker_recovery_plan as _write_p62_marker_recovery_plan_impl,
 )
 from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
+    apply_html_patch_to_targets as _apply_p62_html_patch_to_targets,
     P62PatchTargetDependencies,
     patch_targets_for_record as _p62_patch_targets_for_record_impl,
     resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
@@ -957,6 +958,13 @@ def _p62_patch_targets_for_record(
     )
 
 
+def _merge_p62_html_patch_result(item: dict[str, Any], result: Any) -> None:
+    item["patch_replacement_count"] = int(result.replacement_count)
+    item["patched_paths"] = list(result.patched_paths)
+    if result.errors:
+        item.setdefault("patch_errors", []).extend(result.errors)
+
+
 def _profile_for_assessment(manifest_article: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
     for candidate in _existing_path_candidates(manifest_article.get("profile_path")):
         if candidate.is_file():
@@ -1574,70 +1582,47 @@ def write_p62_image_recovery_stage(
                 )
             if not data_url:
                 if item.get("existing_false_match_recovery") and apply_patches:
-                    patched_paths: list[str] = []
-                    replacement_count = 0
-                    for target_path in targets:
-                        try:
-                            html = target_path.read_text(encoding="utf-8", errors="replace")
-                            patched, replacements = _replace_p62_recovery_with_missing_warning(
-                                html,
-                                figure_label=figure_label or resolved_figure_label,
-                                reason="source_visual_unavailable",
-                            )
-                            if replacements:
-                                target_path.write_text(patched, encoding="utf-8")
-                                patched_paths.append(str(target_path))
-                                replacement_count += replacements
-                        except OSError as exc:
-                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
-                    item["patch_replacement_count"] = replacement_count
-                    item["patched_paths"] = patched_paths
-                    item["false_match_recovery_removed"] = bool(replacement_count)
-                    if replacement_count:
+                    result = _apply_p62_html_patch_to_targets(
+                        targets,
+                        lambda html: _replace_p62_recovery_with_missing_warning(
+                            html,
+                            figure_label=figure_label or resolved_figure_label,
+                            reason="source_visual_unavailable",
+                        ),
+                    )
+                    _merge_p62_html_patch_result(item, result)
+                    item["false_match_recovery_removed"] = bool(result.replacement_count)
+                    if result.replacement_count:
                         patched_article_ids.add(article_id)
                 if item.get("existing_page_render_recovery") and apply_patches:
-                    patched_paths = list(item.get("patched_paths") or [])
-                    replacement_count = int(item.get("patch_replacement_count") or 0)
-                    for target_path in targets:
-                        try:
-                            html = target_path.read_text(encoding="utf-8", errors="replace")
-                            patched, replacements = _replace_p62_recovery_with_missing_warning(
-                                html,
-                                figure_label=figure_label or resolved_figure_label,
-                                reason="source_visual_unavailable",
-                                replace_sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
-                            )
-                            if replacements:
-                                target_path.write_text(patched, encoding="utf-8")
-                                patched_paths.append(str(target_path))
-                                replacement_count += replacements
-                        except OSError as exc:
-                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
-                    item["patch_replacement_count"] = replacement_count
-                    item["patched_paths"] = patched_paths
-                    item["page_render_recovery_removed"] = bool(replacement_count)
-                    if replacement_count:
+                    result = _apply_p62_html_patch_to_targets(
+                        targets,
+                        lambda html: _replace_p62_recovery_with_missing_warning(
+                            html,
+                            figure_label=figure_label or resolved_figure_label,
+                            reason="source_visual_unavailable",
+                            replace_sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
+                        ),
+                        patched_paths=item.get("patched_paths") or [],
+                        replacement_count=int(item.get("patch_replacement_count") or 0),
+                    )
+                    _merge_p62_html_patch_result(item, result)
+                    item["page_render_recovery_removed"] = bool(result.replacement_count)
+                    if result.replacement_count:
                         patched_article_ids.add(article_id)
                 if source_page_is_false_match and apply_patches:
-                    patched_paths = list(item.get("patched_paths") or [])
-                    replacement_count = int(item.get("patch_replacement_count") or 0)
-                    for target_path in targets:
-                        try:
-                            html = target_path.read_text(encoding="utf-8", errors="replace")
-                            patched, replacements = _replace_p62_figure_unit_target_with_missing_warning(
-                                html,
-                                figure_label=figure_label or resolved_figure_label,
-                                reason="source_visual_unavailable",
-                            )
-                            if replacements:
-                                target_path.write_text(patched, encoding="utf-8")
-                                patched_paths.append(str(target_path))
-                                replacement_count += replacements
-                        except OSError as exc:
-                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
-                    item["patch_replacement_count"] = replacement_count
-                    item["patched_paths"] = patched_paths
-                    if replacement_count:
+                    result = _apply_p62_html_patch_to_targets(
+                        targets,
+                        lambda html: _replace_p62_figure_unit_target_with_missing_warning(
+                            html,
+                            figure_label=figure_label or resolved_figure_label,
+                            reason="source_visual_unavailable",
+                        ),
+                        patched_paths=item.get("patched_paths") or [],
+                        replacement_count=int(item.get("patch_replacement_count") or 0),
+                    )
+                    _merge_p62_html_patch_result(item, result)
+                    if result.replacement_count:
                         patched_article_ids.add(article_id)
                 if item.get("existing_false_match_recovery"):
                     item["unresolved_reason"] = (
@@ -1772,27 +1757,20 @@ def write_p62_image_recovery_stage(
                 continue
             if item.get("existing_page_render_recovery"):
                 if apply_patches:
-                    patched_paths = list(item.get("patched_paths") or [])
-                    replacement_count = int(item.get("patch_replacement_count") or 0)
-                    for target_path in targets:
-                        try:
-                            html = target_path.read_text(encoding="utf-8", errors="replace")
-                            patched, replacements = _replace_p62_recovery_with_missing_warning(
-                                html,
-                                figure_label=figure_label or resolved_figure_label,
-                                reason="source_visual_unavailable",
-                                replace_sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
-                            )
-                            if replacements:
-                                target_path.write_text(patched, encoding="utf-8")
-                                patched_paths.append(str(target_path))
-                                replacement_count += replacements
-                        except OSError as exc:
-                            item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
-                    item["patch_replacement_count"] = replacement_count
-                    item["patched_paths"] = patched_paths
-                    item["page_render_recovery_removed"] = bool(replacement_count)
-                    if replacement_count:
+                    result = _apply_p62_html_patch_to_targets(
+                        targets,
+                        lambda html: _replace_p62_recovery_with_missing_warning(
+                            html,
+                            figure_label=figure_label or resolved_figure_label,
+                            reason="source_visual_unavailable",
+                            replace_sources=P62_LOW_FIDELITY_RECOVERY_SOURCES,
+                        ),
+                        patched_paths=item.get("patched_paths") or [],
+                        replacement_count=int(item.get("patch_replacement_count") or 0),
+                    )
+                    _merge_p62_html_patch_result(item, result)
+                    item["page_render_recovery_removed"] = bool(result.replacement_count)
+                    if result.replacement_count:
                         patched_article_ids.add(article_id)
                 item["unresolved_reason"] = "existing_pdf_page_render_no_higher_fidelity_asset"
                 recovered_records.append(item)
@@ -1849,48 +1827,42 @@ def write_p62_image_recovery_stage(
         item["recovery_detail"] = recovery_detail
         if apply_patches:
             warning_index = int(record.get("warning_index") or 0) or None
-            patched_paths: list[str] = []
-            replacement_count = 0
-            for target_path in targets:
-                try:
-                    html = target_path.read_text(encoding="utf-8", errors="replace")
-                    patched, replacements = _replace_p62_missing_warning_with_image(
+            def patch_recovered_image(html: str) -> tuple[str, int]:
+                patched, replacements = _replace_p62_missing_warning_with_image(
+                    html,
+                    figure_label=figure_label or resolved_figure_label,
+                    warning_index=warning_index,
+                    data_url=data_url,
+                    source=recovery_source,
+                    source_detail=recovery_detail,
+                )
+                if not replacements and replace_page_render:
+                    patched, replacements = _replace_p62_stale_recovery_with_image(
                         html,
                         figure_label=figure_label or resolved_figure_label,
-                        warning_index=warning_index,
                         data_url=data_url,
                         source=recovery_source,
                         source_detail=recovery_detail,
                     )
-                    if not replacements and replace_page_render:
-                        patched, replacements = _replace_p62_stale_recovery_with_image(
-                            html,
-                            figure_label=figure_label or resolved_figure_label,
-                            data_url=data_url,
-                            source=recovery_source,
-                            source_detail=recovery_detail,
-                        )
-                        if replacements:
-                            item["existing_page_render_upgrade"] = True
-                    if not replacements and item.get("existing_false_match_recovery"):
-                        patched, replacements = _replace_p62_stale_recovery_with_image(
-                            html,
-                            figure_label=figure_label or resolved_figure_label,
-                            data_url=data_url,
-                            source=recovery_source,
-                            source_detail=recovery_detail,
-                            replace_sources=P62_PDF_DERIVED_RECOVERY_SOURCES,
-                        )
-                        if replacements:
-                            item["existing_page_render_upgrade"] = recovery_source not in P62_LOW_FIDELITY_RECOVERY_SOURCES
                     if replacements:
-                        target_path.write_text(patched, encoding="utf-8")
-                        patched_paths.append(str(target_path))
-                        replacement_count += replacements
-                except OSError as exc:
-                    item.setdefault("patch_errors", []).append({"path": str(target_path), "error": str(exc)})
-            item["patch_replacement_count"] = replacement_count
-            item["patched_paths"] = patched_paths
+                        item["existing_page_render_upgrade"] = True
+                if not replacements and item.get("existing_false_match_recovery"):
+                    patched, replacements = _replace_p62_stale_recovery_with_image(
+                        html,
+                        figure_label=figure_label or resolved_figure_label,
+                        data_url=data_url,
+                        source=recovery_source,
+                        source_detail=recovery_detail,
+                        replace_sources=P62_PDF_DERIVED_RECOVERY_SOURCES,
+                    )
+                    if replacements:
+                        item["existing_page_render_upgrade"] = recovery_source not in P62_LOW_FIDELITY_RECOVERY_SOURCES
+                return patched, replacements
+
+            result = _apply_p62_html_patch_to_targets(targets, patch_recovered_image)
+            _merge_p62_html_patch_result(item, result)
+            patched_paths = list(result.patched_paths)
+            replacement_count = result.replacement_count
             if repair_duplicate_figure_images:
                 duplicate_repair = _apply_p62_duplicate_figure_image_repairs(
                     targets,
