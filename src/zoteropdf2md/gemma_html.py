@@ -59,6 +59,10 @@ from .translation.recovery_ladders import (
     recover_segment_with_context_markers as _recover_segment_with_context_markers_impl,
     recover_segment_with_forced_markers as _recover_segment_with_forced_markers_impl,
 )
+from .translation.windowed_batch import (
+    WindowedBatchDependencies,
+    try_windowed_batch_translate_with_reason as _try_windowed_batch_translate_with_reason_impl,
+)
 from .translation.masks import (
     ABBREV_PATTERN as _ABBREV_PATTERN,
     ABBREV_TOKEN_PATTERN as _ABBREV_TOKEN_PATTERN,
@@ -2072,52 +2076,6 @@ def _try_windowed_batch_translate(
     return result
 
 
-def _try_windowed_batch_translate_with_reason_legacy(
-    segments: list[str],
-    translate_text: Callable[[str], str],
-    *,
-    window_segments: int = _WINDOW_BATCH_TARGET_SEGMENTS,
-    overlap_segments: int = _WINDOW_BATCH_OVERLAP_SEGMENTS,
-    max_window_chars: int = _MAX_WINDOW_BATCH_CHARS,
-) -> tuple[list[str] | None, str]:
-    """Translate in overlapping windows to balance context quality and GPU load."""
-    if len(segments) < 2:
-        return None, f"single_segment count={len(segments)}"
-
-    window_segments = max(2, int(window_segments))
-    overlap_segments = max(0, int(overlap_segments))
-    n = len(segments)
-    translated: list[str | None] = [None] * n
-
-    core_start = 0
-    while core_start < n:
-        core_end = min(n, core_start + window_segments)
-        ext_start = max(0, core_start - overlap_segments)
-        ext_end = min(n, core_end + overlap_segments)
-
-        window_result, reason = _try_batch_translate_with_reason(
-            segments[ext_start:ext_end],
-            translate_text,
-            max_batch_chars=max_window_chars,
-        )
-        if window_result is None:
-            return None, (
-                "window_failed "
-                f"core=[{core_start}:{core_end}) "
-                f"extended=[{ext_start}:{ext_end}) "
-                f"reason={reason}"
-            )
-
-        local_start = core_start - ext_start
-        for idx in range(core_start, core_end):
-            translated[idx] = window_result[local_start + (idx - core_start)]
-        core_start = core_end
-
-    if any(item is None for item in translated):
-        return None, "window_postcheck_none_entries"
-    return [item for item in translated if item is not None], "ok"
-
-
 # --------------------------------------------------------------------------- #
 # Batch translation protocol v2 (id-addressed + retry/bisect recovery)
 # --------------------------------------------------------------------------- #
@@ -2350,133 +2308,66 @@ def _try_windowed_batch_translate_with_reason(
     segment_groups: list[int | None] | None = None,
     mask_abbrev_flags: list[bool] | None = None,
 ) -> tuple[list[str] | None, str]:
-    if len(segments) < 2:
-        return None, f"single_segment count={len(segments)}"
-    if mask_abbrev_flags is not None and len(mask_abbrev_flags) != len(segments):
-        return None, "mask_abbrev_flags_length_mismatch"
-
-    window_segments = max(2, int(window_segments))
-    overlap_segments = max(0, int(overlap_segments))
-    n = len(segments)
-    translated: list[str | None] = [None] * n
     leaf_cache: dict[str, str] = {}
-    leaf_max_chunk_chars = max(256, min(max_window_chars, 1800))
 
-    def _store_core_from_window(
-        *,
-        core_start: int,
-        core_end: int,
-        ext_start: int,
-        window_result: list[str],
-    ) -> None:
-        local_start = core_start - ext_start
-        for idx in range(core_start, core_end):
-            translated[idx] = window_result[local_start + (idx - core_start)]
-
-    def _translate_core_range(core_start: int, core_end: int) -> tuple[bool, str]:
-        ext_start = max(0, core_start - overlap_segments)
-        ext_end = min(n, core_end + overlap_segments)
-        window_result, reason = _try_batch_translate_with_reason(
-            segments[ext_start:ext_end],
+    def try_batch_translate(window_segments_arg: list[str], **kwargs: object) -> tuple[list[str] | None, str]:
+        return _try_batch_translate_with_reason(
+            window_segments_arg,
             translate_text,
-            max_batch_chars=max_window_chars,
-            max_batch_tokens=max_window_tokens,
-            count_text_tokens=count_text_tokens,
-            segment_groups=(
-                segment_groups[ext_start:ext_end]
-                if segment_groups is not None
-                else None
-            ),
-            mask_abbrev_flags=(
-                mask_abbrev_flags[ext_start:ext_end]
-                if mask_abbrev_flags is not None
-                else None
-            ),
+            **kwargs,
+        )
+
+    def recover_single(
+        segment: str,
+        max_chunk_chars: int,
+        context_label: str,
+        seg_index: int,
+    ) -> str:
+        return _recover_single_segment_with_tag_mask(
+            segment,
+            translate_text=translate_text,
+            cache=leaf_cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    def apply_post_reassembly_guards(
+        source_segments: list[str],
+        translated_segments: list[str],
+        max_chunk_chars: int,
+        context_label: str,
+        segment_groups_arg: list[int | None] | None,
+    ) -> tuple[list[str], dict[str, int]]:
+        return _apply_post_reassembly_guards(
+            source_segments=source_segments,
+            translated_segments=translated_segments,
+            translate_text=translate_text,
+            cache=leaf_cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            segment_groups=segment_groups_arg,
             enable_identity_residual_guard=False,
             enable_identity_context_recovery=False,
         )
-        if window_result is not None:
-            _store_core_from_window(
-                core_start=core_start,
-                core_end=core_end,
-                ext_start=ext_start,
-                window_result=window_result,
-            )
-            return True, "ok"
-        _cascade_debug(
-            "window_fail "
-            f"core=[{core_start}:{core_end}) "
-            f"extended=[{ext_start}:{ext_end}) "
-            f"reason={reason}"
-        )
 
-        core_len = core_end - core_start
-        if core_len <= 2:
-            _cascade_debug(
-                "leaf_per_segment "
-                f"core=[{core_start}:{core_end}) "
-                f"extended=[{ext_start}:{ext_end}) "
-                f"reason={reason}"
-            )
-            for idx in range(core_start, core_end):
-                translated[idx] = _recover_single_segment_with_tag_mask(
-                    segments[idx],
-                    translate_text=translate_text,
-                    cache=leaf_cache,
-                    max_chunk_chars=leaf_max_chunk_chars,
-                    context_label="window",
-                    seg_index=idx + 1,
-                )
-            return True, (
-                "ok_leaf_per_segment "
-                f"core=[{core_start}:{core_end}) "
-                f"extended=[{ext_start}:{ext_end}) "
-                f"reason={reason}"
-            )
-
-        mid = core_start + core_len // 2
-        left_ok, left_reason = _translate_core_range(core_start, mid)
-        if not left_ok:
-            return False, left_reason
-        right_ok, right_reason = _translate_core_range(mid, core_end)
-        if not right_ok:
-            return False, right_reason
-        return True, "ok"
-
-    core_start = 0
-    while core_start < n:
-        core_end = min(n, core_start + window_segments)
-        ok, reason = _translate_core_range(core_start, core_end)
-        if not ok:
-            return None, reason
-        core_start = core_end
-
-    if any(item is None for item in translated):
-        return None, "window_postcheck_none_entries"
-    translated_full = [item for item in translated if item is not None]
-    translated_full, guard_recovery_counts = _apply_post_reassembly_guards(
-        source_segments=segments,
-        translated_segments=translated_full,
-        translate_text=translate_text,
-        cache=leaf_cache,
-        max_chunk_chars=leaf_max_chunk_chars,
-        context_label="window",
-        segment_groups=segment_groups,
-        enable_identity_residual_guard=False,
-        enable_identity_context_recovery=False,
+    dependencies = WindowedBatchDependencies(
+        try_batch_translate=try_batch_translate,
+        recover_single=recover_single,
+        apply_post_reassembly_guards=apply_post_reassembly_guards,
+        debug=_cascade_debug,
     )
-    guard_recovered = sum(guard_recovery_counts.values())
-    if guard_recovered > 0:
-        details = ",".join(
-            f"{name}={count}"
-            for name, count in sorted(guard_recovery_counts.items())
-            if count > 0
-        )
-        return translated_full, (
-            "ok_window_leak_recovery "
-            f"count={guard_recovered} details={details}"
-        )
-    return translated_full, "ok"
+    return _try_windowed_batch_translate_with_reason_impl(
+        segments,
+        window_segments=window_segments,
+        overlap_segments=overlap_segments,
+        max_window_chars=max_window_chars,
+        max_window_tokens=max_window_tokens,
+        count_text_tokens=count_text_tokens,
+        segment_groups=segment_groups,
+        mask_abbrev_flags=mask_abbrev_flags,
+        dependencies=dependencies,
+    )
 
 
 def _translate_plain_fragment(
