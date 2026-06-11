@@ -15,6 +15,18 @@ MULTIPANEL_FIG_REF_RE = re.compile(
     r"\bfigures?\s+\d+\s*\([A-Za-z]\)\s*,\s*\([A-Za-z]\)",
     re.IGNORECASE,
 )
+BODY_FIGURE_REFERENCE_START_RE = re.compile(r"^\s*fig(?:ure)?s?\.?\s*\d", re.IGNORECASE)
+BODY_FIGURE_TABLE_REF_RE = re.compile(
+    r"\b(?:fig(?:ure)?s?\.?\s*\d+[A-Za-z]?(?:\s*\([A-Za-z]\))?|table\s+(?:[IVXLCM]+|\d+))\b",
+    re.IGNORECASE,
+)
+BODY_FIGURE_REFERENCE_PROSE_VERB_RE = re.compile(
+    r"\b(?:show|shows|showed|depict|depicts|depicted|illustrate|illustrates|illustrated|"
+    r"present|presents|presented|represent|represents|represented|summarize|summarizes|"
+    r"summarise|summarises|compare|compares|report|reports|provide|provides|"
+    r"demonstrate|demonstrates)\b",
+    re.IGNORECASE,
+)
 PAGE_FURNITURE_CONTINUATION_RE = re.compile(
     r"(?:Copyright\s+\d{4}[\s\S]{0,120}?</p>\s*<p\b[^>]*>\s*(?:<a\b[^>]*>\s*)?\d{4}\s+[a-z]\s*,\s*[a-z]\)|"
     r"Correspondence:[\s\S]{0,120}?@\S+\s+[a-z]{1,4}\.\s+\d{4}\))",
@@ -52,6 +64,20 @@ def caption_raw_for_tex_residue(block: Block) -> str:
             return caption_match.group(0)
         return re.split(r"<table\b", block.raw, maxsplit=1, flags=re.IGNORECASE)[0]
     return block.raw
+
+
+def looks_like_body_figure_reference_list(block: Block) -> bool:
+    if (block.id or "").lower().startswith("fig-"):
+        return False
+    if block.classes.intersection({"z2m-figure-caption", "z2m-figure-unit", "z2m-float-unit"}):
+        return False
+    text = re.sub(r"\s+", " ", block.text).strip()
+    if not BODY_FIGURE_REFERENCE_START_RE.match(text):
+        return False
+    head = text[:260]
+    if len(BODY_FIGURE_TABLE_REF_RE.findall(head)) < 2:
+        return False
+    return bool(BODY_FIGURE_REFERENCE_PROSE_VERB_RE.search(head))
 
 
 def figure_caption_ux_defects(
@@ -144,6 +170,7 @@ def figure_caption_ux_defects(
         is_figure_caption = looks_like_figure_caption(block)
         if (
             is_figure_caption
+            and not looks_like_body_figure_reference_list(block)
             and not is_supplementary_figure_block(block)
             and not is_handled_missing_figure_block(block)
             and figure_id_counts.get(block.id, 0) <= 1

@@ -7666,6 +7666,27 @@ def test_link_figure_refs_wraps_plural_multipanel_refs() -> None:
     assert "figures\xa04" in linked
 
 
+def test_link_figure_refs_wraps_spaced_singular_multipanel_refs() -> None:
+    html = "<p>The previous task (figure 7 (a), (c) and table 4) was reused.</p>"
+    linked = _link_figure_refs(html, {"7"})
+    assert '<a href="#fig-7" class="z2m-fig-link">figure\xa07</a> (a), (c)' in linked
+
+
+def test_polish_html_document_relinks_spaced_multipanel_refs_after_float_targets() -> None:
+    html = (
+        "<html><body>"
+        "<p>Ref (figure \n    7 (a), (c)\n    and table 4).</p>"
+        "<p><img src=x.jpeg/></p>"
+        "<p><span id=page-7-0></span><b>FIGURE 7.</b> Caption.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-7"' in polished
+    assert '<a href="#fig-7" class="z2m-fig-link">figure\xa07</a> (a), (c)' in polished
+
+
 def test_link_figure_refs_does_not_create_nested_fig_links() -> None:
     html = "<p>As shown in Figure 1a, the design remains stable.</p>"
     linked = _link_figure_refs(html, {"1"})

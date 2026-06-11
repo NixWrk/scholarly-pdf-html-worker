@@ -450,6 +450,7 @@ def test_analyze_pair_ignores_body_figure_references_for_p13() -> None:
             "<p>Fig. 3 depicts the first prototype we fabricated.</p>"
             "<p>Fig. 2 , represents the cleaner closed in the manner to hold the covering.</p>"
             "<p>FIG. 1 depicts an exploded perspective view of the system.</p>"
+            "<p>Fig. 6, Fig. 7 and Table I show our main results focused on the performance.</p>"
             "<p>Figure 2f summarizes literature results at a specific condition.</p>"
             "<p>Figure 4a ,b represents a recent progress in this direction.</p>"
             "<p>Figure 1 A snapshot of the output 6 Figure 2 : Uroflow Dashboard preview7 Figure 3 Different symptoms.</p>"

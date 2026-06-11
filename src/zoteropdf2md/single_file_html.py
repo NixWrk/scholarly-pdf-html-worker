@@ -487,9 +487,19 @@ _FIG_REF_PATTERN = re.compile(
     rf"\b({_FIG_REF_LABEL_TOKEN}\.?)\s*({_FIG_KEY_TOKEN})({_FIG_PANEL_SUFFIX_TOKEN})?\b(?!\s*(?:\.\s|\|))",
     re.IGNORECASE,
 )
+_SPACED_MULTIPANEL_FIG_REF_PATTERN = re.compile(
+    rf"\b({_FIG_REF_LABEL_TOKEN}\.?)\s*({_FIG_KEY_TOKEN})"
+    r"(?P<panels>\s*\([A-Za-z]\)(?:\s*,\s*\([A-Za-z]\))*)"
+    r"(?=\s*(?:,|\band\b|\bor\b|\)|;))",
+    re.IGNORECASE,
+)
 _FIG_REF_CHAIN_CONT_PATTERN = re.compile(
     rf"(?P<sep>\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)"
     rf"(?P<num>{_FIG_KEY_TOKEN})(?P<suf>{_FIG_PANEL_SUFFIX_TOKEN})?\b",
+    re.IGNORECASE,
+)
+_FIG_ID_ATTR_PATTERN = re.compile(
+    r'\bid\s*=\s*(["\'])fig-(?P<key>[^"\']+)\1',
     re.IGNORECASE,
 )
 _PAGE_ANCHOR_PATTERN = re.compile(
@@ -11256,6 +11266,17 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             return m.group(0)
         return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
 
+    def _replace_spaced_multipanel(m: re.Match[str]) -> str:
+        prefix = m.group(1)
+        num = m.group(2)
+        panels = m.group("panels") or ""
+        key = _figure_key_from_visible_number(num)
+        if scan_text and _is_inside_fig_link(scan_text, m.start(), m.end()):
+            return m.group(0)
+        if key not in found_figures:
+            return m.group(0)
+        return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}</a>{panels}'
+
     for part in parts:
         if not part:
             continue
@@ -11273,6 +11294,8 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             continue
         scan_text = part
         linked = _SUPPLEMENTARY_FIG_REF_PATTERN.sub(_replace_supplementary, part)
+        scan_text = linked
+        linked = _SPACED_MULTIPANEL_FIG_REF_PATTERN.sub(_replace_spaced_multipanel, linked)
         scan_text = linked
         linked = _FIG_REF_PATTERN.sub(_replace, linked)
         scan_text = linked
@@ -11305,6 +11328,80 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
         linked = _unwrap_nested_fig_links(linked)
         out.append(linked)
 
+    return "".join(out)
+
+
+def _current_figure_target_keys(html: str) -> set[str]:
+    return {match.group("key") for match in _FIG_ID_ATTR_PATTERN.finditer(html)}
+
+
+def _link_spaced_multipanel_figure_refs(html: str, found_figures: set[str]) -> str:
+    if not found_figures:
+        return html
+
+    def _is_inside_fig_link(fragment: str, start: int, end: int) -> bool:
+        open_pos = fragment.rfind("<a", 0, start)
+        if open_pos < 0:
+            return False
+        open_end = fragment.find(">", open_pos)
+        if open_end < 0 or open_end >= start:
+            return False
+        if "z2m-fig-link" not in fragment[open_pos:open_end + 1]:
+            return False
+        close_before = fragment.rfind("</a", 0, start)
+        if close_before > open_pos:
+            return False
+        close_after = fragment.find("</a", end)
+        return close_after >= 0
+
+    def _opens_protected_figure_text(raw_tag: str) -> bool:
+        return bool(
+            re.match(r"<p\b", raw_tag)
+            and (
+                re.search(r'\bid\s*=\s*["\']fig-[A-Za-z0-9-]+', raw_tag)
+                or re.search(
+                    r'\bclass\s*=\s*["\'][^"\']*\b(?:z2m-figure-caption|'
+                    r"z2m-figure-target|z2m-missing-figure-warning)\b",
+                    raw_tag,
+                )
+            )
+        )
+
+    def _replace_spaced_multipanel(m: re.Match[str]) -> str:
+        prefix = m.group(1)
+        num = m.group(2)
+        panels = m.group("panels") or ""
+        key = _figure_key_from_visible_number(num)
+        if scan_text and _is_inside_fig_link(scan_text, m.start(), m.end()):
+            return m.group(0)
+        if key not in found_figures:
+            return m.group(0)
+        return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}</a>{panels}'
+
+    html = _unwrap_nested_fig_links(html)
+    parts = _TAG_SPLIT_PATTERN.split(html)
+    out: list[str] = []
+    skip_stack: list[str] = []
+    scan_text = ""
+    inside_protected_figure_text = False
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("<"):
+            raw_tag = part.strip().lower()
+            if re.match(r"</p\b", raw_tag):
+                inside_protected_figure_text = False
+            elif _opens_protected_figure_text(raw_tag):
+                inside_protected_figure_text = True
+            _update_skip_stack(part, skip_stack)
+            out.append(part)
+            continue
+        if skip_stack or inside_protected_figure_text:
+            out.append(part)
+            continue
+        scan_text = part
+        linked = _SPACED_MULTIPANEL_FIG_REF_PATTERN.sub(_replace_spaced_multipanel, part)
+        out.append(linked)
     return "".join(out)
 
 
@@ -20389,6 +20486,12 @@ def _polish_phase_katex_and_final_repairs(state: RawPolishState, context: RawPol
     polished = _repair_second_echelon_ocr_residue_html(polished)
     polished = _repair_confirmed_front_matter_artifacts(polished)
     polished = _normalize_double_escaped_url_anchor_text(polished)
+    if context.enable_citation_linkify:
+        current_figures = _current_figure_target_keys(polished)
+        if current_figures:
+            polished = _link_spaced_multipanel_figure_refs(polished, current_figures)
+            polished = _unwrap_nested_same_href_internal_links(polished)
+            polished = _normalize_spacing_after_z2m_links(polished)
     polished = _unwrap_broken_internal_semantic_links(polished)
     return state.with_html(polished)
 
