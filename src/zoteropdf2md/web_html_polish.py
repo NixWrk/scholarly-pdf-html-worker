@@ -26,6 +26,7 @@ from .html_images import (
     to_data_url,
     validate_data_url,
 )
+from .raw_html_polish.katex import render_katex_html
 from .html_links import (
     _ATTR_HREF_RE,
     _arxiv_abs_parts,
@@ -93,6 +94,8 @@ _ROOT_RELATIVE_URL_ATTR_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TITLE_RE = re.compile(r"<title\b[^>]*>(?P<title>[\s\S]*?)</title>", re.IGNORECASE)
+_META_TAG_RE = re.compile(r"<meta\b(?P<attrs>[^>]*)>", re.IGNORECASE | re.DOTALL)
+_H1_RE = re.compile(r"<h1\b", re.IGNORECASE)
 
 
 def detect_web_html_kind(html: str, *, source_url: str | None = None) -> WebHtmlKind:
@@ -199,6 +202,7 @@ def polish_web_html_document(
         title=title,
         article_selector=extraction.selector,
     )
+    wrapped = render_katex_html(wrapped, ensure_head=_ensure_web_html_head)
     return WebHtmlPolishResult(
         html=wrapped,
         kind=kind,
@@ -636,6 +640,15 @@ def _looks_like_ojs_abstract_page(
 
 
 def _document_title(html: str) -> str:
+    for match in _META_TAG_RE.finditer(html[:500_000]):
+        attrs = match.group("attrs") or ""
+        name = (_attr_value(attrs, "name") or _attr_value(attrs, "property") or "").strip().lower()
+        if name not in {"citation_title", "dc.title", "og:title"}:
+            continue
+        content = (_attr_value(attrs, "content") or "").strip()
+        if content:
+            return _visible_text(content) or content
+
     match = _TITLE_RE.search(html)
     if match is None:
         return "Web Article"
@@ -655,6 +668,9 @@ def _wrap_web_article_html(
     selector_attr = ""
     if article_selector:
         selector_attr = f' data-z2m-article-selector="{html_escape(article_selector, quote=True)}"'
+    heading = ""
+    if title != "Web Article" and _H1_RE.search(article_html) is None:
+        heading = f'<h1 class="z2m-web-title">{escaped_title}</h1>\n'
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -665,11 +681,26 @@ def _wrap_web_article_html(
         "</head>\n"
         "<body>\n"
         f'<main id="web-doc" data-z2m-source-kind="{escaped_kind}"{selector_attr}>\n'
+        f"{heading}"
         f"{article_html}\n"
         "</main>\n"
         "</body>\n"
         "</html>\n"
     )
+
+
+def _ensure_web_html_head(html: str) -> str:
+    if re.search(r"<head\b", html, flags=re.IGNORECASE):
+        return html
+    if re.search(r"<html\b[^>]*>", html, flags=re.IGNORECASE):
+        return re.sub(
+            r"(<html\b[^>]*>)",
+            r"\1\n<head><meta charset=\"utf-8\"></head>",
+            html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    return f'<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"></head>\n<body>{html}</body>\n</html>'
 
 
 def _is_nonlocal_image_src(src_value: str) -> bool:

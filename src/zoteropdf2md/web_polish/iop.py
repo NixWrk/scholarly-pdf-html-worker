@@ -37,9 +37,22 @@ _IOP_BIB_HREF_RE = re.compile(
     r"(?<![\w:-])href\s*=\s*(['\"])#(?P<base>[A-Za-z0-9_.:-]*bib)(?P<number>\d+)\1",
     re.IGNORECASE,
 )
+_TEX_SPAN_RE = re.compile(
+    r"<span\b(?=[^>]*\bclass\s*=\s*(['\"])[^'\"]*\btex\b)[^>]*>\s*"
+    r"(?:<span\b(?=[^>]*\bclass\s*=\s*(['\"])[^'\"]*\btexImage\b)[\s\S]*?</span>\s*)?"
+    r"<script\b(?P<script_attrs>[^>]*)>(?P<tex>[\s\S]*?)</script>\s*"
+    r"</span>",
+    re.IGNORECASE,
+)
+_MATH_TEX_SCRIPT_RE = re.compile(
+    r"<script\b(?P<script_attrs>[^>]*)>(?P<tex>[\s\S]*?)</script>",
+    re.IGNORECASE,
+)
 
 
 def extract_article_fragment(html: str) -> WebArticleExtraction:
+    source_html = html
+    html = _replace_iop_tex_fallbacks(html)
     extraction = _extract_fragment_by_attr_tokens(
         html,
         kind=WebHtmlKind.IOP_ARTICLE,
@@ -50,7 +63,7 @@ def extract_article_fragment(html: str) -> WebArticleExtraction:
     )
     if extraction is not None:
         return WebArticleExtraction(
-            html=_append_meta_references(extraction.html, html),
+            html=_append_meta_references(extraction.html, source_html),
             extracted=extraction.extracted,
             selector=extraction.selector,
             text_length=extraction.text_length,
@@ -68,7 +81,7 @@ def extract_article_fragment(html: str) -> WebArticleExtraction:
     )
     extraction = extraction or extract_generic_web_article_fragment(html, kind=WebHtmlKind.IOP_ARTICLE)
     return WebArticleExtraction(
-        html=_append_meta_references(extraction.html, html),
+        html=_append_meta_references(extraction.html, source_html),
         extracted=extraction.extracted,
         selector=extraction.selector,
         text_length=extraction.text_length,
@@ -169,6 +182,31 @@ def _remove_empty_references_shells(html: str) -> str:
             cleaned = cleaned[: match.start()] + " " + cleaned[match.start() + len(fragment) :]
             break
     return cleaned
+
+
+def _replace_iop_tex_fallbacks(html: str) -> str:
+    html = _TEX_SPAN_RE.sub(lambda match: _tex_replacement(match.group("script_attrs"), match.group("tex")), html)
+    return _MATH_TEX_SCRIPT_RE.sub(
+        lambda match: _tex_replacement(match.group("script_attrs"), match.group("tex")),
+        html,
+    )
+
+
+def _tex_replacement(script_attrs: str, tex: str) -> str:
+    type_value = (_attr_value(script_attrs, "type") or "").lower()
+    if not type_value.startswith("math/tex"):
+        return f"<script{script_attrs}>{tex}</script>"
+    display = "mode=display" in type_value
+    normalized = _normalize_tex_source(tex)
+    if not normalized:
+        return ""
+    if display:
+        return f"\\[{html_escape(normalized, quote=False)}\\]"
+    return f"\\({html_escape(normalized, quote=False)}\\)"
+
+
+def _normalize_tex_source(tex: str) -> str:
+    return re.sub(r"\s+", " ", unescape(tex)).strip()
 
 
 def _append_meta_references(article_html: str, full_html: str) -> str:

@@ -483,6 +483,7 @@ def test_polish_web_html_document_extracts_iop_article_content() -> None:
         <title>IOP Article</title>
         <link rel="canonical" href="https://iopscience.iop.org/article/10.1088/example">
         <meta name="citation_publisher" content="IOP Publishing">
+        <meta name="citation_title" content="IOP Clean Article Title">
       </head>
       <body>
         <header>IOP publisher navigation</header>
@@ -513,7 +514,15 @@ def test_polish_web_html_document_extracts_iop_article_content() -> None:
                     <a href="https://iopscience.iop.org/article/10.1088/example#iops1">same document</a>
                     <a href="/article/10.1088/example/pdf">PDF</a>
                     <a href="#iopfn1">note</a>
+                    <span class="inline-eqn"><span class="tex"><span class="texImage">
+                      <img alt="$G(x,\\sigma)$" role="math" src="data:image/png;base64,placeholder" data-src="https://content.cld.iop.org/journals/example/jneieqn1.gif">
+                    </span><script type="math/tex">G(x,\\sigma)</script></span></span>
                   </p>
+                </div>
+                <div class="display-eqn" id="iop-eqn1">
+                  <span class="tex"><span class="texImage">
+                    <img alt="Equation (1)" role="math" src="data:image/png;base64,placeholder" data-src="https://content.cld.iop.org/journals/example/jneeqn1.gif">
+                  </span><script type="math/tex; mode=display">E=mc^2 \\tag{{1}}</script></span>
                 </div>
                 <figure id="iopf1" data-toolbar-img="https://content.cld.iop.org/journals/example/fig1_lr.jpg">
                   <figure>
@@ -554,6 +563,7 @@ def test_polish_web_html_document_extracts_iop_article_content() -> None:
     assert result.article_extracted is True
     assert result.article_selector == ".article-content"
     assert 'data-z2m-source-kind="iop_article"' in result.html
+    assert '<h1 class="z2m-web-title">IOP Clean Article Title</h1>' in result.html
     assert "Abstract" in result.html
     assert "1. Introduction" in result.html
     assert "Footnote one." in result.html
@@ -573,6 +583,14 @@ def test_polish_web_html_document_extracts_iop_article_content() -> None:
     assert "fa-icon" not in result.html
     assert 'href="#iops1"' in result.html
     assert 'href="https://iopscience.iop.org/article/10.1088/example/pdf"' in result.html
+    assert 'data-z2m-style="katex"' in result.html
+    assert 'class="z2m-math z2m-math-inline"' in result.html
+    assert 'class="z2m-math z2m-math-display"' in result.html
+    assert r'data-z2m-tex="\(G(x,\sigma)\)"' in result.html
+    assert r'data-z2m-tex="\[E=mc^2 \tag{1}\]"' in result.html
+    assert "texImage" not in result.html
+    assert "jneieqn1.gif" not in result.html
+    assert "jneeqn1.gif" not in result.html
     assert 'src="https://content.cld.iop.org/journals/example/fig1_lr.jpg"' in result.html
     assert 'data-z2m-src-placeholder="data:image/png;base64,placeholder"' in result.html
     assert 'src="data:image/png;base64,placeholder"' not in result.html
