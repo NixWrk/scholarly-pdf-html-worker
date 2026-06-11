@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import lru_cache
 import json
 import os
 import re
@@ -171,6 +172,121 @@ def zotero_root_paths(*, repo_root: Path) -> list[Path]:
     return roots
 
 
+def normalize_pdf_title_text(value: str) -> str:
+    text = re.sub(r"[^0-9A-Za-zА-Яа-яЁё]+", " ", str(value or "").casefold())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _title_match_tokens(value: str) -> list[str]:
+    return [token for token in normalize_pdf_title_text(value).split() if len(token) >= 4]
+
+
+def article_title_fragments(article: str, manifest_article: dict[str, Any]) -> list[str]:
+    fragments: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "")
+        if not text:
+            return
+        stem = Path(text).stem if "." in Path(text).name else text
+        stem = re.sub(r"^Zotero_[^_]+_[^_]+_[A-Z0-9]{6,10}(?:_\d+){1,3}_", "", stem)
+        stem = re.sub(r"^[^-_]+(?:_[^_]+){0,4}_-_\d{4}[a-z]?_-_", "", stem)
+        stem = stem.replace("_", " ")
+        normalized = normalize_pdf_title_text(stem)
+        if len(normalized) >= 32 and normalized not in fragments:
+            fragments.append(normalized)
+
+    add(article)
+    for key in (
+        "article",
+        "article_id",
+        "source_run_article",
+        "raw_stage_path",
+        "polish_stage_path",
+        "source_polish_path",
+        "polish_path",
+        "restored_image_source",
+    ):
+        add(manifest_article.get(key))
+    return fragments
+
+
+@lru_cache(maxsize=8)
+def _zotero_pdf_index(repo_root_text: str) -> tuple[str, ...]:
+    repo_root = Path(repo_root_text)
+    paths: list[str] = []
+    seen: set[str] = set()
+    for root in zotero_root_paths(repo_root=repo_root):
+        if not root.is_dir():
+            continue
+        storage_roots = [root / "storage", *root.glob("*/storage")]
+        for storage_root in storage_roots:
+            if not storage_root.is_dir():
+                continue
+            try:
+                iterator = storage_root.glob("*/*.pdf")
+                for pdf_path in iterator:
+                    resolved = str(pdf_path.resolve(strict=False))
+                    if resolved not in seen and pdf_path.is_file():
+                        seen.add(resolved)
+                        paths.append(resolved)
+            except OSError:
+                continue
+    return tuple(sorted(paths))
+
+
+def title_fragment_matches_pdf(fragment: str, pdf_stem: str) -> tuple[bool, float]:
+    fragment_norm = normalize_pdf_title_text(fragment)
+    pdf_norm = normalize_pdf_title_text(pdf_stem)
+    if len(fragment_norm) >= 32 and fragment_norm in pdf_norm:
+        return True, 1.0
+    tokens = _title_match_tokens(fragment_norm)
+    if len(tokens) < 6:
+        return False, 0.0
+    pdf_tokens = _title_match_tokens(pdf_norm)
+    if not pdf_tokens:
+        return False, 0.0
+    matched = 0
+    search_start = 0
+    for token in tokens:
+        found_at = -1
+        for index in range(search_start, len(pdf_tokens)):
+            pdf_token = pdf_tokens[index]
+            if pdf_token.startswith(token) or token.startswith(pdf_token):
+                found_at = index
+                break
+        if found_at >= 0:
+            matched += 1
+            search_start = found_at + 1
+    score = matched / max(1, len(tokens))
+    return matched >= 6 and score >= 0.78, round(score, 4)
+
+
+def pdf_candidates_from_zotero_title(article: str, manifest_article: dict[str, Any], *, repo_root: Path) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    fragments = article_title_fragments(article, manifest_article)
+    if not fragments:
+        return candidates
+    for pdf_text in _zotero_pdf_index(str(repo_root.resolve(strict=False))):
+        pdf_path = Path(pdf_text)
+        for fragment in fragments:
+            matched, score = title_fragment_matches_pdf(fragment, pdf_path.stem)
+            if not matched:
+                continue
+            candidates.append(
+                {
+                    "path": str(pdf_path),
+                    "exists": pdf_path.is_file(),
+                    "source": "zotero_storage.title_match",
+                    "original_path": fragment,
+                    "match_score": score,
+                }
+            )
+            break
+    candidates.sort(key=lambda item: (-float(item.get("match_score") or 0.0), str(item.get("path"))))
+    return candidates[:8]
+
+
 def attachment_keys_from_article(article: str, manifest_article: dict[str, Any]) -> list[str]:
     keys: list[str] = []
 
@@ -266,6 +382,8 @@ def article_source_pdf_candidates(
         add_pdf_value(manifest_article.get(key), f"manifest.{key}")
     for attachment_key in attachment_keys_from_article(article, manifest_article):
         candidates.extend(pdf_candidates_from_zotero_storage(attachment_key, repo_root=repo_root))
+    if not any(candidate.get("exists") for candidate in candidates):
+        candidates.extend(pdf_candidates_from_zotero_title(article, manifest_article, repo_root=repo_root))
 
     def visit(source_run: Path) -> None:
         source_run = source_run.resolve(strict=False)
@@ -280,6 +398,8 @@ def article_source_pdf_candidates(
                 add_pdf_value(item.get(key), f"{source_run.name}.manifest.{key}")
             for attachment_key in attachment_keys_from_article(article, item):
                 candidates.extend(pdf_candidates_from_zotero_storage(attachment_key, repo_root=repo_root))
+            if not any(candidate.get("exists") for candidate in candidates):
+                candidates.extend(pdf_candidates_from_zotero_title(article, item, repo_root=repo_root))
         nested = manifest.get("source_run_dir")
         if nested:
             visit(Path(str(nested)))

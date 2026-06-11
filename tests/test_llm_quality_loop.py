@@ -50,18 +50,23 @@ def _valid_tiny_png_data_url() -> str:
     return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
 
 
-def _tiny_rgba_png_bytes(red: int, green: int, blue: int, alpha: int = 255) -> bytes:
+def _rgba_png_bytes(width: int, height: int, red: int, green: int, blue: int, alpha: int = 255) -> bytes:
     def chunk(kind: bytes, payload: bytes) -> bytes:
         body = kind + payload
         return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
 
-    raw_scanline = b"\x00" + bytes([red, green, blue, alpha])
+    raw_scanline = b"\x00" + bytes([red, green, blue, alpha]) * width
+    raw = raw_scanline * height
     return (
         b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw_scanline))
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
         + chunk(b"IEND", b"")
     )
+
+
+def _tiny_rgba_png_bytes(red: int, green: int, blue: int, alpha: int = 255) -> bytes:
+    return _rgba_png_bytes(1, 1, red, green, blue, alpha)
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -1414,6 +1419,62 @@ def test_p62_pdf_figure_asset_allows_prose_reference_when_caption_exists(tmp_pat
     assert Path(asset["path"]).is_file()
 
 
+def test_p62_pdf_figure_asset_ignores_page_header_rule_for_caption_region(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "header_rule_and_figure.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 48), "Detecting signage and doors for blind navigation")
+    page.draw_line((72, 60), (540, 60))
+    page.insert_text((72, 86), "Fig. 2 Query-based signage and door detection by a wearable camera.")
+    page.insert_image(fitz.Rect(250, 80, 430, 230), stream=_valid_tiny_png_bytes())
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "2",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "native_image_extracted"
+    assert asset["source"] == "pdf_native_image"
+    assert Path(asset["path"]).is_file()
+
+
+def test_p62_pdf_figure_asset_prefers_side_aligned_graphics_over_lower_image(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    pdf_path = tmp_path / "side_aligned_flowchart.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((72, 48), "Detecting signage and doors for blind navigation")
+    page.draw_line((72, 60), (540, 60))
+    page.insert_text((72, 90), "Fig. 5 Flow chart of our proposed door detection method.")
+    page.draw_rect(fitz.Rect(250, 82, 330, 122))
+    page.draw_rect(fitz.Rect(370, 82, 450, 122))
+    page.draw_line((330, 102), (370, 102))
+    page.insert_image(fitz.Rect(90, 240, 390, 420), stream=_valid_tiny_png_bytes())
+    doc.save(str(pdf_path))
+    doc.close()
+
+    asset = llm_quality_loop._recover_p62_pdf_figure_asset(
+        pdf_path,
+        1,
+        "5",
+        tmp_path / "asset",
+        zoom=1.0,
+    )
+
+    assert asset["status"] == "region_rendered"
+    assert asset["source"] == "pdf_figure_region_render"
+    selected_rect = asset["selected_rect"]
+    assert selected_rect[1] < 130
+    assert selected_rect[3] < 170
+    assert Path(asset["path"]).is_file()
+
+
 def test_p62_recovery_replaces_missing_warning_with_image() -> None:
     html = (
         '<div id="fig-6" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
@@ -2361,6 +2422,51 @@ def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_nume
         assert '<li id="ref-3">[3] Flores, A. Example citation.</li>' in html
 
 
+def test_polish_auto_repair_stage_repairs_p59_numeric_labels(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><body>"
+            '<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 '
+            'mark author-year style. map <sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>: '
+            "doll, cat, knife.</p>"
+            "<h4>References</h4><ol>"
+            '<li id="ref-1">[1] Real bibliography entry.</li>'
+            "</ol></body></html>",
+            encoding="utf-8",
+        )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {},
+                    "defects_found": [{"id": "P59", "extra": {"ref_target": "1"}}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["patched_article_count"] == 1
+    assert report["repair_counts"] == {"P59": 2}
+    for path in (polish_path, audit_tree_path):
+        html = path.read_text(encoding="utf-8")
+        before_refs = html[: html.index("References")]
+        assert 'href="#ref-1"' not in before_refs
+        assert "map <sup>1</sup>: doll, cat, knife" in before_refs
+        assert '<li id="ref-1">[1] Real bibliography entry.</li>' in html
+
+
 def test_polish_auto_repair_stage_repairs_plain_duplicate_figure_visuals(
     tmp_path: Path,
     monkeypatch,
@@ -2442,6 +2548,145 @@ def test_polish_auto_repair_stage_repairs_plain_duplicate_figure_visuals(
     assert {repair["repair_mode"] for repair in repairs if repair["status"] == "patched"} == {
         "plain_duplicate_group"
     }
+
+
+def test_polish_auto_repair_stage_rejects_strip_like_duplicate_region_assets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    duplicated_payload = base64.b64encode(b"plain-duplicate-visual").decode("ascii")
+    duplicated_data_url = f"data:image/png;base64,{duplicated_payload}"
+    polish_path.write_text(
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target">'
+        f'<img alt="Figure 2" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 2. Query-based signage and door detection.</p>'
+        "</div>"
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target">'
+        f'<img alt="Figure 5" src="{duplicated_data_url}"/>'
+        "</p>"
+        '<p class="z2m-figure-caption">Figure 5. Experimental evaluation examples.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    strip_asset = run_dir / "header_strip.png"
+    strip_asset.write_bytes(_rgba_png_bytes(769, 40, 255, 255, 255))
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {"source_pdf_path": str(source_pdf)},
+                    "defects_found": [{"id": "P96", "extra": {"figure_ids": ["fig-2", "fig-5"]}}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    def fake_text_pages(pdf_path: Path, *, max_pages=None):
+        assert pdf_path == source_pdf
+        return ("fixture", ["Figure 2. Query-based signage.", "Figure 5. Experimental evaluation."], None)
+
+    def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
+        assert pdf_path == source_pdf
+        return {
+            "status": "region_rendered",
+            "path": str(strip_asset),
+            "source": "pdf_figure_region_render",
+            "error": "",
+            "page_number": page_number,
+        }
+
+    monkeypatch.setattr(llm_quality_loop, "_pdf_text_pages", fake_text_pages)
+    monkeypatch.setattr(llm_quality_loop, "_p62_pdf_page_false_match_hint", lambda *args, **kwargs: "")
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_recover_p62_detached_pdf_figure_plate_asset",
+        lambda *args, **kwargs: {"status": "not_found"},
+    )
+    monkeypatch.setattr(llm_quality_loop, "_recover_p62_pdf_figure_asset", fake_recover)
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={"polish_auto_repair_render_zoom": 1.0})
+
+    assert report["status"] == "no_changes"
+    assert report["repair_counts"] == {}
+    patched_html = polish_path.read_text(encoding="utf-8")
+    assert patched_html.count(duplicated_data_url) == 2
+    assert 'data-z2m-recovery-source="pdf_figure_region_render"' not in patched_html
+    repairs = report["articles"][0]["repairs"][0]["repairs"]
+    assert {repair["reason"] for repair in repairs} == {"pdf_region_asset_looks_like_page_strip"}
+    assert {repair["asset_dimensions"]["height"] for repair in repairs} == {40}
+
+
+def test_polish_auto_repair_stage_uses_zotero_title_pdf_fallback_for_p96(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    article = (
+        "Zotero_Elvis_D_C37DAWJT_2754214_17806620590000_"
+        "Custom_Zotero_Fallback_Mobility_Paper_With_Unique_Nebula_Marker"
+    )
+    polish_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="data:image/png;base64,dup"/></p>'
+        '<p class="z2m-figure-caption">Figure 5. A virtual environment.</p>'
+        "</div>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="data:image/png;base64,dup"/></p>'
+        '<p class="z2m-figure-caption">Figure 6. Questionnaire.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    zotero_root = tmp_path / "Zotero_Elvis_Data"
+    storage_dir = zotero_root / "storage" / "LQQBDBNU"
+    storage_dir.mkdir(parents=True)
+    source_pdf = (
+        storage_dir
+        / "Example - 2024 - Custom Zotero Fallback Mobility Paper With Unique Nebula Marker.pdf"
+    )
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv("ZOTERO_PATH_PREFIX_MAP", f"/zotero_roots/test_zotero={zotero_root}")
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {"source_pdf_path": str(polish_path.parent / "00.source.pdf")},
+                    "defects_found": [{"id": "P96", "extra": {"figure_ids": ["fig-5", "fig-6"]}}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+    captured: dict[str, Path] = {}
+
+    def fake_duplicate_repair(targets, *, pdf_path: Path, artifact_dir: Path, zoom: float, repair_plain_duplicates: bool):
+        captured["pdf_path"] = pdf_path
+        return {"repair_count": 1, "patched_paths": [str(polish_path)], "repairs": [], "errors": []}
+
+    monkeypatch.setattr(llm_quality_loop, "_apply_p62_duplicate_figure_image_repairs", fake_duplicate_repair)
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={"polish_auto_repair_render_zoom": 1.0})
+
+    assert captured["pdf_path"] == source_pdf.resolve(strict=False)
+    assert report["status"] == "patched"
+    assert report["repair_counts"] == {"P96": 1}
 
 
 def test_p62_image_recovery_stage_uses_detached_plate_before_region_crop(

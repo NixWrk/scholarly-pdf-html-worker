@@ -556,6 +556,18 @@ def page_label_rects(page: Any, figure_label: str) -> list[Any]:
     return rects
 
 
+def graphic_rect_is_page_rule(page_rect: Any, rect: Any) -> bool:
+    page_width = max(1.0, float(page_rect.width))
+    page_height = max(1.0, float(page_rect.height))
+    rect_width = max(0.0, float(rect.width))
+    rect_height = max(0.0, float(rect.height))
+    if rect_width < page_width * 0.72 or rect_height > max(2.0, page_height * 0.01):
+        return False
+    top_distance = max(0.0, float(rect.y0) - float(page_rect.y0))
+    bottom_distance = max(0.0, float(page_rect.y1) - float(rect.y1))
+    return top_distance <= page_height * 0.12 or bottom_distance <= page_height * 0.12
+
+
 def page_graphic_rects(page: Any) -> list[dict[str, Any]]:
     graphics: list[dict[str, Any]] = []
     seen: set[tuple[str, int, tuple[float, float, float, float]]] = set()
@@ -577,6 +589,8 @@ def page_graphic_rects(page: Any) -> list[dict[str, Any]]:
         for drawing in page.get_drawings():
             rect = drawing.get("rect")
             if rect is None or fitz_rect_area(rect) <= 4.0:
+                continue
+            if graphic_rect_is_page_rule(page.rect, rect):
                 continue
             key = ("drawing", 0, fitz_rect_tuple(rect))
             if key in seen:
@@ -604,12 +618,26 @@ def select_graphic_rects_for_caption(
     above: list[tuple[float, dict[str, Any]]] = []
     below: list[tuple[float, dict[str, Any]]] = []
     overlapping: list[tuple[float, dict[str, Any]]] = []
+    side_aligned: list[tuple[float, dict[str, Any]]] = []
     for item in graphics:
         rect = item["rect"]
         area = fitz_rect_area(rect)
         if area < max(4.0, page_area * 0.00005):
             continue
         x_overlap = fitz_x_overlap_ratio(rect, caption_rect)
+        y_overlap = fitz_y_overlap_ratio(rect, caption_rect)
+        horizontal_gap = max(
+            0.0,
+            max(float(caption_rect.x0) - float(rect.x1), float(rect.x0) - float(caption_rect.x1)),
+        )
+        same_vertical_band = (
+            y_overlap > 0.0
+            or abs(float(rect.y0) - float(caption_rect.y0)) <= page_height * 0.08
+            or abs(float(rect.y1) - float(caption_rect.y1)) <= page_height * 0.08
+        )
+        if same_vertical_band and horizontal_gap <= page_width * 0.72:
+            side_aligned.append((horizontal_gap - min(0.5, y_overlap) * 40.0, item))
+            continue
         if x_overlap <= 0 and area < page_area * 0.03:
             continue
         if rect.y1 <= caption_rect.y0 + 3:
@@ -623,15 +651,16 @@ def select_graphic_rects_for_caption(
         else:
             overlapping.append((0.0, item))
 
-    chosen_pool = above if above else below if below else overlapping
+    chosen_pool = side_aligned if side_aligned else above if above else below if below else overlapping
     if not chosen_pool:
         return sorted(graphics, key=lambda item: fitz_rect_area(item["rect"]), reverse=True)[:8]
     chosen_pool.sort(key=lambda item: item[0])
     nearest_distance = chosen_pool[0][0]
+    distance_window = page_width * 0.62 if chosen_pool is side_aligned else page_height * 0.28
     selected = [
         item
         for distance, item in chosen_pool
-        if distance <= nearest_distance + page_height * 0.28
+        if distance <= nearest_distance + distance_window
     ]
     if not selected:
         selected = [chosen_pool[0][1]]
@@ -707,6 +736,11 @@ def fitz_rect_area(rect: Any) -> float:
 def fitz_x_overlap_ratio(a: Any, b: Any) -> float:
     overlap = max(0.0, min(float(a.x1), float(b.x1)) - max(float(a.x0), float(b.x0)))
     return overlap / max(1.0, min(float(a.width), float(b.width)))
+
+
+def fitz_y_overlap_ratio(a: Any, b: Any) -> float:
+    overlap = max(0.0, min(float(a.y1), float(b.y1)) - max(float(a.y0), float(b.y0)))
+    return overlap / max(1.0, min(float(a.height), float(b.height)))
 
 
 def fitz_rects_intersect(a: Any, b: Any) -> bool:

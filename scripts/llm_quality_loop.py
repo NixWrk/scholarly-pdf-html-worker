@@ -1143,7 +1143,19 @@ def write_polish_auto_repair_stage(
         }
 
         if "P96" in defect_ids:
-            pdf_path = Path(str((audit_article.get("summary") or {}).get("source_pdf_path") or ""))
+            audit_summary = audit_article.get("summary") or {}
+            pdf_path = Path(str(audit_summary.get("source_pdf_path") or ""))
+            selected_candidate: dict[str, Any] | None = None
+            source_pdf_candidates: list[dict[str, Any]] = []
+            if not pdf_path.is_file():
+                selected_candidate, source_pdf_candidates = _selected_pdf_candidate(
+                    run_dir,
+                    article_id,
+                    audit_summary,
+                    manifest_article,
+                )
+                if selected_candidate and selected_candidate.get("path"):
+                    pdf_path = Path(str(selected_candidate.get("path")))
             if pdf_path.is_file() and apply_patches:
                 duplicate_report = _apply_p62_duplicate_figure_image_repairs(
                     targets,
@@ -1153,9 +1165,9 @@ def write_polish_auto_repair_stage(
                     repair_plain_duplicates=True,
                 )
                 patched_count = int(duplicate_report.get("repair_count") or 0)
-                repair_counts["P96"] += patched_count
                 article_report["repairs"].append({"id": "P96", **duplicate_report})
                 if patched_count:
+                    repair_counts["P96"] += patched_count
                     patched_article_ids.add(article_id)
                     article_report["patched"] = True
                     for path in duplicate_report.get("patched_paths") or []:
@@ -1167,10 +1179,12 @@ def write_polish_auto_repair_stage(
                         "repair_count": 0,
                         "status": "skipped_missing_pdf" if not pdf_path.is_file() else "dry_run",
                         "source_pdf_path": str(pdf_path),
+                        "selected_pdf_candidate": selected_candidate or {},
+                        "source_pdf_candidates": source_pdf_candidates[:8],
                     }
                 )
 
-        if {"P55", "P97", "P98"} & defect_ids and apply_patches:
+        if {"P55", "P59", "P97", "P98"} & defect_ids and apply_patches:
             for target_path in targets:
                 try:
                     html = target_path.read_text(encoding="utf-8", errors="replace")
@@ -1179,14 +1193,19 @@ def write_polish_auto_repair_stage(
                     continue
                 patched = html
                 p55_repairs = 0
+                p59_repairs = 0
                 p97_repairs = 0
                 p98_repairs = 0
                 if "P55" in defect_ids:
                     patched, p55_repairs = _unwrap_author_year_ref_anchors(patched)
                 if "P97" in defect_ids:
                     patched, p97_repairs = _repair_visible_reference_numbers(patched)
-                if "P98" in defect_ids:
-                    patched, p98_repairs = _unwrap_author_year_numeric_ref_links(patched)
+                if {"P59", "P98"} & defect_ids:
+                    patched, numeric_repairs = _unwrap_author_year_numeric_ref_links(patched)
+                    if "P59" in defect_ids:
+                        p59_repairs = numeric_repairs
+                    if "P98" in defect_ids:
+                        p98_repairs = numeric_repairs
                 if patched != html:
                     try:
                         target_path.write_text(patched, encoding="utf-8")
@@ -1198,16 +1217,19 @@ def write_polish_auto_repair_stage(
                     target_patch_counts[str(target_path)] += 1
                 if p55_repairs:
                     repair_counts["P55"] += p55_repairs
+                if p59_repairs:
+                    repair_counts["P59"] += p59_repairs
                 if p97_repairs:
                     repair_counts["P97"] += p97_repairs
                 if p98_repairs:
                     repair_counts["P98"] += p98_repairs
-                if p55_repairs or p97_repairs or p98_repairs:
+                if p55_repairs or p59_repairs or p97_repairs or p98_repairs:
                     article_report["repairs"].append(
                         {
-                            "id": "P55/P97/P98",
+                            "id": "P55/P59/P97/P98",
                             "path": str(target_path),
                             "p55_author_year_link_unwraps": p55_repairs,
+                            "p59_numeric_link_unwraps": p59_repairs,
                             "p97_visible_number_repairs": p97_repairs,
                             "p98_numeric_link_unwraps": p98_repairs,
                         }

@@ -29,11 +29,36 @@ AUTHOR_YEAR_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 AUTHOR_YEAR_SURNAME_FRAGMENT_RE = re.compile(r"^[A-Z][A-Za-z'\u2019.-]{3,}$")
+AUTHOR_YEAR_NAME_LABEL_RE = re.compile(
+    r"^[A-Z][A-Za-z'\u2019.-]{2,}"
+    r"(?:\s+(?:et\s+al\.?|[A-Z][A-Za-z'\u2019.-]{2,}|(?:and|&)\s+[A-Z][A-Za-z'\u2019.-]{2,}))*\.?$",
+    re.IGNORECASE,
+)
 AUTHOR_YEAR_RIGHT_CONTEXT_RE = re.compile(
     r"^\s*(?:et\s+al\.?|(?:and|&)\s+[A-Z][A-Za-z'\u2019.-]+)?\s*,?\s*\(?\d{4}[a-z]?\)?",
     re.IGNORECASE,
 )
+AUTHOR_YEAR_AUTHOR_LIST_RIGHT_CONTEXT_RE = re.compile(
+    r"^\s*,?\s*(?:[A-Z][A-Za-z'\u2019.-]+|(?:and|&)\s+[A-Z][A-Za-z'\u2019.-]+)"
+    r"(?:\s*,\s*(?:[A-Z][A-Za-z'\u2019.-]+|(?:and|&)\s+[A-Z][A-Za-z'\u2019.-]+))*"
+    r"\s*,?\s*\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
+SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P55", "P59", "P96", "P97", "P98"}
+AUTHOR_YEAR_LABEL_STOPWORDS = {
+    "appendix",
+    "chapter",
+    "eq",
+    "equation",
+    "fig",
+    "figure",
+    "image",
+    "map",
+    "panel",
+    "section",
+    "table",
+}
 
 
 def audit_defect_ids(article: dict[str, Any]) -> set[str]:
@@ -54,7 +79,7 @@ def audit_articles_by_auto_repair_need(audit_report: dict[str, Any]) -> dict[str
         if not article_id:
             continue
         defect_ids = audit_defect_ids(article)
-        selected = defect_ids & {"P55", "P96", "P97", "P98"}
+        selected = defect_ids & SUPPORTED_AUTO_REPAIR_DEFECT_IDS
         if not selected:
             continue
         articles[article_id] = {"article": article, "defect_ids": sorted(selected)}
@@ -139,9 +164,20 @@ def looks_like_author_year_ref_anchor(label: str, right_text: str) -> bool:
     if AUTHOR_YEAR_TEXT_RE.search(label) is not None:
         return True
     cleaned = re.sub(r"\s+", " ", label).strip(" ([{,;")
-    if AUTHOR_YEAR_SURNAME_FRAGMENT_RE.fullmatch(cleaned) is None:
+    if not cleaned[:1].isupper():
         return False
-    return AUTHOR_YEAR_RIGHT_CONTEXT_RE.match(right_text) is not None
+    first_token = re.split(r"\s+", cleaned, maxsplit=1)[0].strip(".").casefold()
+    if first_token in AUTHOR_YEAR_LABEL_STOPWORDS:
+        return False
+    if (
+        AUTHOR_YEAR_SURNAME_FRAGMENT_RE.fullmatch(cleaned) is None
+        and AUTHOR_YEAR_NAME_LABEL_RE.fullmatch(cleaned) is None
+    ):
+        return False
+    return (
+        AUTHOR_YEAR_RIGHT_CONTEXT_RE.match(right_text) is not None
+        or AUTHOR_YEAR_AUTHOR_LIST_RIGHT_CONTEXT_RE.match(right_text) is not None
+    )
 
 
 def unwrap_author_year_ref_anchors(html: str) -> tuple[str, int]:
