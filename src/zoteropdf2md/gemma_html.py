@@ -40,6 +40,10 @@ from .translation.prompt_guards import (
     strip_prompt_leak_echo as _strip_prompt_leak_echo,
     strip_source_echo as _strip_source_echo,
 )
+from .translation.quality_gates import (
+    build_neighbor_context as _build_quality_gate_neighbor_context,
+    safe_quality_gate_call as _safe_quality_gate_call,
+)
 from .translation.masks import (
     ABBREV_PATTERN as _ABBREV_PATTERN,
     ABBREV_TOKEN_PATTERN as _ABBREV_TOKEN_PATTERN,
@@ -1594,42 +1598,14 @@ def _apply_post_reassembly_guards(
                     paragraph_identity_indices.update(range(run_start, run_end + 1))
 
     def _build_neighbor_context_text(seg_idx: int) -> str:
-        snippets: list[str] = []
-
-        def _append_from_index(idx: int) -> None:
-            if idx < 0 or idx >= len(source_segments) or idx == seg_idx:
-                return
-            core = _normalize_ws(_segment_core_text(source_segments[idx]))
-            if not core:
-                return
-            if len(core) > 220:
-                core = core[:220].rstrip() + "..."
-            if core in snippets:
-                return
-            snippets.append(core)
-
-        if segment_groups is not None and len(segment_groups) == len(source_segments):
-            group_id = segment_groups[seg_idx]
-            if group_id is not None:
-                indices = grouped_indices.get(group_id, [])
-                if indices:
-                    try:
-                        local_pos = indices.index(seg_idx)
-                    except ValueError:
-                        local_pos = -1
-                    if local_pos >= 0:
-                        if local_pos > 0:
-                            _append_from_index(indices[local_pos - 1])
-                        if local_pos + 1 < len(indices):
-                            _append_from_index(indices[local_pos + 1])
-
-        if not snippets:
-            _append_from_index(seg_idx - 1)
-            _append_from_index(seg_idx + 1)
-
-        if not snippets:
-            return ""
-        return "Context (for consistency only): " + " ".join(snippets[:2])
+        return _build_quality_gate_neighbor_context(
+            source_segments,
+            seg_idx,
+            segment_groups=segment_groups,
+            grouped_indices=grouped_indices,
+            segment_core_text=_segment_core_text,
+            normalize_ws=_normalize_ws,
+        )
 
     def _try_context_recovery_for_index(seg_idx: int) -> bool:
         if not enable_identity_context_recovery:
@@ -2040,47 +2016,24 @@ def _apply_en_residual_quality_gate(
         return guarded, False
 
     def _neighbor_context(seg_idx: int) -> str:
-        candidates: list[int] = []
-        group_id = paragraph_groups[seg_idx]
-        if group_id is not None:
-            indices = grouped_indices.get(group_id, [])
-            if seg_idx in indices:
-                pos = indices.index(seg_idx)
-                candidates.extend(indices[max(0, pos - 1):pos])
-                candidates.extend(indices[pos + 1:pos + 2])
-        if not candidates:
-            candidates.extend([seg_idx - 1, seg_idx + 1])
-
-        snippets: list[str] = []
-        for idx in candidates:
-            if idx < 0 or idx >= len(source_segments) or idx == seg_idx:
-                continue
-            core = _normalize_ws(_segment_core_text(source_segments[idx]))
-            if not core:
-                continue
-            if len(core) > 220:
-                core = core[:220].rstrip() + "..."
-            if core not in snippets:
-                snippets.append(core)
-        if not snippets:
-            return ""
-        return "Context (for consistency only): " + " ".join(snippets[:2])
+        return _build_quality_gate_neighbor_context(
+            source_segments,
+            seg_idx,
+            segment_groups=paragraph_groups,
+            grouped_indices=grouped_indices,
+            segment_core_text=_segment_core_text,
+            normalize_ws=_normalize_ws,
+        )
 
     def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        try:
-            return call()
-        except Exception as exc:
-            counts["quality_gate_recovery_error"] = (
-                counts.get("quality_gate_recovery_error", 0) + 1
-            )
-            counts[f"quality_gate_{action}_error"] = (
-                counts.get(f"quality_gate_{action}_error", 0) + 1
-            )
-            _cascade_debug(
-                "quality_gate reason=recovery_error "
-                f"seg={seg_idx + 1} action={action} error={type(exc).__name__}"
-            )
-            return None
+        return _safe_quality_gate_call(
+            action,
+            seg_idx,
+            call,
+            counts,
+            debug_prefix="quality_gate",
+            debug=_cascade_debug,
+        )
 
     for seg_idx in residual_indices:
         part_idx = translatable_indices[seg_idx]
@@ -2275,35 +2228,23 @@ def _apply_en_residual_segment_quality_gate(
         return guarded, False
 
     def _neighbor_context(seg_idx: int) -> str:
-        snippets: list[str] = []
-        for idx in (seg_idx - 1, seg_idx + 1):
-            if idx < 0 or idx >= len(source_segments):
-                continue
-            core = _normalize_ws(_segment_core_text(source_segments[idx]))
-            if not core:
-                continue
-            if len(core) > 220:
-                core = core[:220].rstrip() + "..."
-            snippets.append(core)
-        if not snippets:
-            return ""
-        return "Context (for consistency only): " + " ".join(snippets)
+        return _build_quality_gate_neighbor_context(
+            source_segments,
+            seg_idx,
+            segment_core_text=_segment_core_text,
+            normalize_ws=_normalize_ws,
+            dedupe=False,
+        )
 
     def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        try:
-            return call()
-        except Exception as exc:
-            counts["quality_gate_recovery_error"] = (
-                counts.get("quality_gate_recovery_error", 0) + 1
-            )
-            counts[f"quality_gate_{action}_error"] = (
-                counts.get(f"quality_gate_{action}_error", 0) + 1
-            )
-            _cascade_debug(
-                "quality_gate_fallback reason=recovery_error "
-                f"seg={seg_idx + 1} action={action} error={type(exc).__name__}"
-            )
-            return None
+        return _safe_quality_gate_call(
+            action,
+            seg_idx,
+            call,
+            counts,
+            debug_prefix="quality_gate_fallback",
+            debug=_cascade_debug,
+        )
 
     processed = 0
     for seg_idx in residual_indices:
@@ -2492,47 +2433,24 @@ def _apply_cjk_quality_gate(
         return not _has_unexpected_cjk(candidate, target_language_code=target_language_code)
 
     def _neighbor_context(seg_idx: int) -> str:
-        candidates: list[int] = []
-        group_id = paragraph_groups[seg_idx]
-        if group_id is not None:
-            indices = grouped_indices.get(group_id, [])
-            if seg_idx in indices:
-                pos = indices.index(seg_idx)
-                candidates.extend(indices[max(0, pos - 1):pos])
-                candidates.extend(indices[pos + 1:pos + 2])
-        if not candidates:
-            candidates.extend([seg_idx - 1, seg_idx + 1])
-
-        snippets: list[str] = []
-        for idx in candidates:
-            if idx < 0 or idx >= len(source_segments) or idx == seg_idx:
-                continue
-            core = _normalize_ws(_segment_core_text(source_segments[idx]))
-            if not core:
-                continue
-            if len(core) > 220:
-                core = core[:220].rstrip() + "..."
-            if core not in snippets:
-                snippets.append(core)
-        if not snippets:
-            return ""
-        return "Context (for consistency only): " + " ".join(snippets[:2])
+        return _build_quality_gate_neighbor_context(
+            source_segments,
+            seg_idx,
+            segment_groups=paragraph_groups,
+            grouped_indices=grouped_indices,
+            segment_core_text=_segment_core_text,
+            normalize_ws=_normalize_ws,
+        )
 
     def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        try:
-            return call()
-        except Exception as exc:
-            counts["quality_gate_recovery_error"] = (
-                counts.get("quality_gate_recovery_error", 0) + 1
-            )
-            counts[f"quality_gate_{action}_error"] = (
-                counts.get(f"quality_gate_{action}_error", 0) + 1
-            )
-            _cascade_debug(
-                "cjk_gate reason=recovery_error "
-                f"seg={seg_idx + 1} action={action} error={type(exc).__name__}"
-            )
-            return None
+        return _safe_quality_gate_call(
+            action,
+            seg_idx,
+            call,
+            counts,
+            debug_prefix="cjk_gate",
+            debug=_cascade_debug,
+        )
 
     for seg_idx in cjk_indices:
         part_idx = translatable_indices[seg_idx]
@@ -2715,20 +2633,14 @@ def _apply_cjk_segment_quality_gate(
         return result, counts
 
     def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        try:
-            return call()
-        except Exception as exc:
-            counts["quality_gate_recovery_error"] = (
-                counts.get("quality_gate_recovery_error", 0) + 1
-            )
-            counts[f"quality_gate_{action}_error"] = (
-                counts.get(f"quality_gate_{action}_error", 0) + 1
-            )
-            _cascade_debug(
-                "cjk_gate_fallback reason=recovery_error "
-                f"seg={seg_idx + 1} action={action} error={type(exc).__name__}"
-            )
-            return None
+        return _safe_quality_gate_call(
+            action,
+            seg_idx,
+            call,
+            counts,
+            debug_prefix="cjk_gate_fallback",
+            debug=_cascade_debug,
+        )
 
     processed = 0
     for seg_idx in cjk_indices:
