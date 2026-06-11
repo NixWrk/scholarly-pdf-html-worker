@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from zoteropdf2md.translation.quality_gates import (
+    CjkQualityGateDependencies,
     EnResidualQualityGateDependencies,
+    apply_cjk_quality_gate,
+    apply_cjk_segment_quality_gate,
     apply_en_residual_quality_gate,
     apply_en_residual_segment_quality_gate,
     build_neighbor_context,
@@ -35,6 +38,23 @@ def _en_deps(**overrides: object) -> EnResidualQualityGateDependencies:
     }
     values.update(overrides)
     return EnResidualQualityGateDependencies(**values)  # type: ignore[arg-type]
+
+
+def _cjk_deps(**overrides: object) -> CjkQualityGateDependencies:
+    values = {
+        "normalize_language_code": lambda value: (value or "").lower(),
+        "has_unexpected_cjk": lambda text, **_kwargs: "[CJK]" in text,
+        "repair_known_cjk_contamination": lambda _source, translated, **_kwargs: translated,
+        "segment_core_text": _segment_core_text,
+        "normalize_ws": _normalize_ws,
+        "strip_unexpected_trailing_ellipsis": lambda _source, candidate: (candidate, False),
+        "recover_parts_slice": lambda source_parts, start, end, _label, _seg: source_parts[start:end + 1],
+        "recover_context": lambda source, _context, _label, _seg: source,
+        "recover_forced": lambda source, _label, _seg: source,
+        "debug": lambda _message: None,
+    }
+    values.update(overrides)
+    return CjkQualityGateDependencies(**values)  # type: ignore[arg-type]
 
 
 def test_build_neighbor_context_prefers_group_neighbors() -> None:
@@ -166,3 +186,86 @@ def test_apply_en_residual_segment_quality_gate_counts_short_guard_rejection() -
         "quality_gate_short_guard_too_short": 1,
         "quality_gate_sentence_recovery": 1,
     }
+
+
+def test_apply_cjk_quality_gate_uses_known_repair_first() -> None:
+    messages: list[str] = []
+    deps = _cjk_deps(
+        repair_known_cjk_contamination=lambda _source, _translated, **_kwargs: "Clean text.",
+        debug=messages.append,
+    )
+
+    result, counts = apply_cjk_quality_gate(
+        source_parts=["<p>", "Source text.", "</p>"],
+        translated_parts=["<p>", "Translated [CJK]", "</p>"],
+        translatable_indices=[1],
+        source_segments=["Source text."],
+        paragraph_groups=[7],
+        paragraph_part_ranges={7: (0, 2)},
+        max_chunk_chars=1000,
+        max_segments=3,
+        target_language_code="ru",
+        dependencies=deps,
+    )
+
+    assert result == ["<p>", "Clean text.", "</p>"]
+    assert counts == {
+        "quality_gate_attempted": 1,
+        "quality_gate_known_recovery": 1,
+    }
+    assert messages == ["cjk_gate reason=cjk_contamination seg=1 action=known_repair"]
+
+
+def test_apply_cjk_quality_gate_recovers_paragraph_slice() -> None:
+    messages: list[str] = []
+    deps = _cjk_deps(
+        recover_parts_slice=lambda _source_parts, _start, _end, _label, _seg: [
+            "<p>",
+            "Clean translated text.",
+            "</p>",
+        ],
+        debug=messages.append,
+    )
+
+    result, counts = apply_cjk_quality_gate(
+        source_parts=["<p>", "Source text.", "</p>"],
+        translated_parts=["<p>", "Translated [CJK]", "</p>"],
+        translatable_indices=[1],
+        source_segments=["Source text."],
+        paragraph_groups=[7],
+        paragraph_part_ranges={7: (0, 2)},
+        max_chunk_chars=1000,
+        max_segments=3,
+        target_language_code="ru",
+        dependencies=deps,
+    )
+
+    assert result == ["<p>", "Clean translated text.", "</p>"]
+    assert counts == {
+        "quality_gate_attempted": 1,
+        "quality_gate_paragraph_recovery": 1,
+    }
+    assert messages == ["cjk_gate reason=cjk_contamination seg=1 action=paragraph_recovery"]
+
+
+def test_apply_cjk_segment_quality_gate_uses_forced_recovery() -> None:
+    messages: list[str] = []
+    deps = _cjk_deps(
+        recover_forced=lambda _source, _label, _seg: "Clean translated text.",
+        debug=messages.append,
+    )
+
+    result, counts = apply_cjk_segment_quality_gate(
+        source_segments=["Source text."],
+        translated_segments=["Translated [CJK]"],
+        max_segments=3,
+        target_language_code="ru",
+        dependencies=deps,
+    )
+
+    assert result == ["Clean translated text."]
+    assert counts == {
+        "quality_gate_attempted": 1,
+        "quality_gate_forced_recovery": 1,
+    }
+    assert messages == ["cjk_gate_fallback reason=cjk_contamination seg=1 action=forced_recovery"]

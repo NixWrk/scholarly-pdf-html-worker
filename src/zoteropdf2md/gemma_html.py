@@ -42,11 +42,13 @@ from .translation.prompt_guards import (
     strip_source_echo as _strip_source_echo,
 )
 from .translation.quality_gates import (
+    CjkQualityGateDependencies,
     EnResidualQualityGateDependencies,
+    apply_cjk_quality_gate as _apply_cjk_quality_gate_impl,
+    apply_cjk_segment_quality_gate as _apply_cjk_segment_quality_gate_impl,
     apply_en_residual_quality_gate as _apply_en_residual_quality_gate_impl,
     apply_en_residual_segment_quality_gate as _apply_en_residual_segment_quality_gate_impl,
     build_neighbor_context as _build_quality_gate_neighbor_context,
-    safe_quality_gate_call as _safe_quality_gate_call,
 )
 from .translation.post_reassembly import (
     PostReassemblyGuardDependencies,
@@ -1789,6 +1791,70 @@ def _build_en_residual_quality_gate_dependencies(
     )
 
 
+def _build_cjk_quality_gate_dependencies(
+    *,
+    translate_text: Callable[[str], str],
+    cache: dict[str, str],
+    max_chunk_chars: int,
+) -> CjkQualityGateDependencies:
+    def recover_parts_slice(
+        source_parts_arg: list[str],
+        start_part_idx: int,
+        end_part_idx: int,
+        context_label: str,
+        seg_index: int,
+    ) -> list[str] | None:
+        return _recover_parts_slice_with_tag_mask(
+            source_parts=source_parts_arg,
+            start_part_idx=start_part_idx,
+            end_part_idx=end_part_idx,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    def recover_context(
+        source_seg: str,
+        context_text: str,
+        context_label: str,
+        seg_index: int,
+    ) -> str:
+        return _recover_segment_with_context_markers(
+            source_seg,
+            context_text=context_text,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    def recover_forced(source_seg: str, context_label: str, seg_index: int) -> str:
+        return _recover_segment_with_forced_markers(
+            source_seg,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    return CjkQualityGateDependencies(
+        normalize_language_code=normalize_language_code,
+        has_unexpected_cjk=_has_unexpected_cjk,
+        repair_known_cjk_contamination=_repair_known_cjk_contamination,
+        segment_core_text=_segment_core_text,
+        normalize_ws=_normalize_ws,
+        strip_unexpected_trailing_ellipsis=_strip_unexpected_trailing_ellipsis,
+        recover_parts_slice=recover_parts_slice,
+        recover_context=recover_context,
+        recover_forced=recover_forced,
+        debug=_cascade_debug,
+    )
+
+
 def _apply_en_residual_quality_gate(
     *,
     source_parts: list[str],
@@ -1856,209 +1922,23 @@ def _apply_cjk_quality_gate(
     max_segments: int,
     target_language_code: str,
 ) -> tuple[list[str], dict[str, int]]:
-    if normalize_language_code(target_language_code) == "zh":
-        return translated_parts, {}
-    if (
-        len(translatable_indices) != len(source_segments)
-        or len(source_segments) != len(paragraph_groups)
-    ):
-        return translated_parts, {}
-
-    cjk_indices = [
-        seg_idx
-        for seg_idx, part_idx in enumerate(translatable_indices)
-        if _has_unexpected_cjk(translated_parts[part_idx], target_language_code=target_language_code)
-    ]
-    if not cjk_indices:
-        return translated_parts, {}
-
-    counts: dict[str, int] = {}
-    result_parts = list(translated_parts)
-    known_attempted: set[int] = set()
-    remaining_cjk_indices: list[int] = []
-    for seg_idx in cjk_indices:
-        part_idx = translatable_indices[seg_idx]
-        repaired = _repair_known_cjk_contamination(
-            source_segments[seg_idx],
-            result_parts[part_idx],
-            target_language_code=target_language_code,
-        )
-        if repaired != result_parts[part_idx]:
-            result_parts[part_idx] = repaired
-            known_attempted.add(seg_idx)
-            counts["quality_gate_attempted"] = counts.get("quality_gate_attempted", 0) + 1
-            if not _has_unexpected_cjk(repaired, target_language_code=target_language_code):
-                counts["quality_gate_known_recovery"] = (
-                    counts.get("quality_gate_known_recovery", 0) + 1
-                )
-                _cascade_debug(
-                    "cjk_gate reason=cjk_contamination "
-                    f"seg={seg_idx + 1} action=known_repair"
-                )
-                continue
-        remaining_cjk_indices.append(seg_idx)
-    cjk_indices = remaining_cjk_indices
-    if not cjk_indices:
-        return result_parts, counts
-
-    if max_segments <= 0:
-        counts["quality_gate_skipped_limit"] = len(cjk_indices)
-        return result_parts, counts
-
-    grouped_indices: dict[int, list[int]] = {}
-    for seg_idx, group_id in enumerate(paragraph_groups):
-        if group_id is None:
-            continue
-        grouped_indices.setdefault(group_id, []).append(seg_idx)
-
-    processed = 0
-
-    def _candidate_is_clean(candidate: str) -> bool:
-        return not _has_unexpected_cjk(candidate, target_language_code=target_language_code)
-
-    def _neighbor_context(seg_idx: int) -> str:
-        return _build_quality_gate_neighbor_context(
-            source_segments,
-            seg_idx,
-            segment_groups=paragraph_groups,
-            grouped_indices=grouped_indices,
-            segment_core_text=_segment_core_text,
-            normalize_ws=_normalize_ws,
-        )
-
-    def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        return _safe_quality_gate_call(
-            action,
-            seg_idx,
-            call,
-            counts,
-            debug_prefix="cjk_gate",
-            debug=_cascade_debug,
-        )
-
-    for seg_idx in cjk_indices:
-        part_idx = translatable_indices[seg_idx]
-        if not _has_unexpected_cjk(result_parts[part_idx], target_language_code=target_language_code):
-            continue
-        if processed >= max_segments:
-            counts["quality_gate_skipped_limit"] = counts.get("quality_gate_skipped_limit", 0) + 1
-            continue
-
-        processed += 1
-        if seg_idx not in known_attempted:
-            counts["quality_gate_attempted"] = counts.get("quality_gate_attempted", 0) + 1
-
-        recovered = False
-        group_id = paragraph_groups[seg_idx]
-        part_range = paragraph_part_ranges.get(group_id) if group_id is not None else None
-        if part_range is not None:
-            slice_chars = sum(len(source_parts[idx]) for idx in range(part_range[0], part_range[1] + 1))
-            if slice_chars <= max(2_500, max_chunk_chars * 2):
-                recovered_slice = _safe_gate_call(
-                    "paragraph",
-                    seg_idx,
-                    lambda: _recover_parts_slice_with_tag_mask(
-                        source_parts=source_parts,
-                        start_part_idx=part_range[0],
-                        end_part_idx=part_range[1],
-                        translate_text=translate_text,
-                        cache=cache,
-                        max_chunk_chars=max_chunk_chars,
-                        context_label="cjk_gate_wide",
-                        seg_index=seg_idx + 1,
-                    ),
-                )
-                if recovered_slice is not None:
-                    candidate_parts = list(result_parts)
-                    candidate_parts[part_range[0]:part_range[1] + 1] = recovered_slice
-                    if _candidate_is_clean(candidate_parts[part_idx]):
-                        result_parts = candidate_parts
-                        recovered = True
-                        counts["quality_gate_paragraph_recovery"] = (
-                            counts.get("quality_gate_paragraph_recovery", 0) + 1
-                        )
-                        _cascade_debug(
-                            "cjk_gate reason=cjk_contamination "
-                            f"seg={seg_idx + 1} action=paragraph_recovery"
-                        )
-            else:
-                counts["quality_gate_paragraph_skipped_large"] = (
-                    counts.get("quality_gate_paragraph_skipped_large", 0) + 1
-                )
-
-        if not recovered:
-            context_text = _neighbor_context(seg_idx)
-            if context_text:
-                candidate = _safe_gate_call(
-                    "context",
-                    seg_idx,
-                    lambda: _recover_segment_with_context_markers(
-                        source_segments[seg_idx],
-                        context_text=context_text,
-                        translate_text=translate_text,
-                        cache=cache,
-                        max_chunk_chars=max_chunk_chars,
-                        context_label="cjk_gate_context",
-                        seg_index=seg_idx + 1,
-                    ),
-                )
-                if isinstance(candidate, str):
-                    stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(
-                        source_segments[seg_idx],
-                        candidate,
-                    )
-                    if stripped:
-                        candidate = stripped_candidate
-                    if _candidate_is_clean(candidate):
-                        result_parts[part_idx] = candidate
-                        recovered = True
-                        counts["quality_gate_context_recovery"] = (
-                            counts.get("quality_gate_context_recovery", 0) + 1
-                        )
-                        _cascade_debug(
-                            "cjk_gate reason=cjk_contamination "
-                            f"seg={seg_idx + 1} action=context_recovery"
-                        )
-
-        if not recovered:
-            candidate = _safe_gate_call(
-                "forced",
-                seg_idx,
-                lambda: _recover_segment_with_forced_markers(
-                    source_segments[seg_idx],
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label="cjk_gate_forced",
-                    seg_index=seg_idx + 1,
-                ),
-            )
-            if isinstance(candidate, str):
-                stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(
-                    source_segments[seg_idx],
-                    candidate,
-                )
-                if stripped:
-                    candidate = stripped_candidate
-                if _candidate_is_clean(candidate):
-                    result_parts[part_idx] = candidate
-                    recovered = True
-                    counts["quality_gate_forced_recovery"] = (
-                        counts.get("quality_gate_forced_recovery", 0) + 1
-                    )
-                    _cascade_debug(
-                        "cjk_gate reason=cjk_contamination "
-                        f"seg={seg_idx + 1} action=forced_recovery"
-                    )
-
-        if not recovered:
-            counts["quality_gate_unresolved"] = counts.get("quality_gate_unresolved", 0) + 1
-            _cascade_debug(
-                "cjk_gate reason=cjk_contamination "
-                f"seg={seg_idx + 1} action=keep_unresolved"
-            )
-
-    return result_parts, counts
+    dependencies = _build_cjk_quality_gate_dependencies(
+        translate_text=translate_text,
+        cache=cache,
+        max_chunk_chars=max_chunk_chars,
+    )
+    return _apply_cjk_quality_gate_impl(
+        source_parts=source_parts,
+        translated_parts=translated_parts,
+        translatable_indices=translatable_indices,
+        source_segments=source_segments,
+        paragraph_groups=paragraph_groups,
+        paragraph_part_ranges=paragraph_part_ranges,
+        max_chunk_chars=max_chunk_chars,
+        max_segments=max_segments,
+        target_language_code=target_language_code,
+        dependencies=dependencies,
+    )
 
 
 def _apply_cjk_segment_quality_gate(
@@ -2071,102 +1951,18 @@ def _apply_cjk_segment_quality_gate(
     max_segments: int,
     target_language_code: str,
 ) -> tuple[list[str], dict[str, int]]:
-    if normalize_language_code(target_language_code) == "zh":
-        return translated_segments, {}
-    if len(source_segments) != len(translated_segments):
-        return translated_segments, {}
-
-    cjk_indices = [
-        idx
-        for idx, translated_seg in enumerate(translated_segments)
-        if _has_unexpected_cjk(translated_seg, target_language_code=target_language_code)
-    ]
-    if not cjk_indices:
-        return translated_segments, {}
-
-    counts: dict[str, int] = {}
-    result = list(translated_segments)
-    known_attempted: set[int] = set()
-    remaining_cjk_indices: list[int] = []
-    for seg_idx in cjk_indices:
-        repaired = _repair_known_cjk_contamination(
-            source_segments[seg_idx],
-            result[seg_idx],
-            target_language_code=target_language_code,
-        )
-        if repaired != result[seg_idx]:
-            result[seg_idx] = repaired
-            known_attempted.add(seg_idx)
-            counts["quality_gate_attempted"] = counts.get("quality_gate_attempted", 0) + 1
-            if not _has_unexpected_cjk(repaired, target_language_code=target_language_code):
-                counts["quality_gate_known_recovery"] = (
-                    counts.get("quality_gate_known_recovery", 0) + 1
-                )
-                _cascade_debug(
-                    "cjk_gate_fallback reason=cjk_contamination "
-                    f"seg={seg_idx + 1} action=known_repair"
-                )
-                continue
-        remaining_cjk_indices.append(seg_idx)
-    cjk_indices = remaining_cjk_indices
-    if not cjk_indices:
-        return result, counts
-
-    if max_segments <= 0:
-        counts["quality_gate_skipped_limit"] = len(cjk_indices)
-        return result, counts
-
-    def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        return _safe_quality_gate_call(
-            action,
-            seg_idx,
-            call,
-            counts,
-            debug_prefix="cjk_gate_fallback",
-            debug=_cascade_debug,
-        )
-
-    processed = 0
-    for seg_idx in cjk_indices:
-        if not _has_unexpected_cjk(result[seg_idx], target_language_code=target_language_code):
-            continue
-        if processed >= max_segments:
-            counts["quality_gate_skipped_limit"] = counts.get("quality_gate_skipped_limit", 0) + 1
-            continue
-
-        processed += 1
-        if seg_idx not in known_attempted:
-            counts["quality_gate_attempted"] = counts.get("quality_gate_attempted", 0) + 1
-        candidate = _safe_gate_call(
-            "forced",
-            seg_idx,
-            lambda: _recover_segment_with_forced_markers(
-                source_segments[seg_idx],
-                translate_text=translate_text,
-                cache=cache,
-                max_chunk_chars=max_chunk_chars,
-                context_label="cjk_gate_fallback_forced",
-                seg_index=seg_idx + 1,
-            ),
-        )
-        if isinstance(candidate, str) and not _has_unexpected_cjk(candidate, target_language_code=target_language_code):
-            result[seg_idx] = candidate
-            counts["quality_gate_forced_recovery"] = (
-                counts.get("quality_gate_forced_recovery", 0) + 1
-            )
-            _cascade_debug(
-                "cjk_gate_fallback reason=cjk_contamination "
-                f"seg={seg_idx + 1} action=forced_recovery"
-            )
-            continue
-
-        counts["quality_gate_unresolved"] = counts.get("quality_gate_unresolved", 0) + 1
-        _cascade_debug(
-            "cjk_gate_fallback reason=cjk_contamination "
-            f"seg={seg_idx + 1} action=keep_unresolved"
-        )
-
-    return result, counts
+    dependencies = _build_cjk_quality_gate_dependencies(
+        translate_text=translate_text,
+        cache=cache,
+        max_chunk_chars=max_chunk_chars,
+    )
+    return _apply_cjk_segment_quality_gate_impl(
+        source_segments=source_segments,
+        translated_segments=translated_segments,
+        max_segments=max_segments,
+        target_language_code=target_language_code,
+        dependencies=dependencies,
+    )
 
 
 def _try_batch_translate(
