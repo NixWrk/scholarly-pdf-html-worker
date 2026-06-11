@@ -42,6 +42,9 @@ from .translation.prompt_guards import (
     strip_source_echo as _strip_source_echo,
 )
 from .translation.quality_gates import (
+    EnResidualQualityGateDependencies,
+    apply_en_residual_quality_gate as _apply_en_residual_quality_gate_impl,
+    apply_en_residual_segment_quality_gate as _apply_en_residual_segment_quality_gate_impl,
     build_neighbor_context as _build_quality_gate_neighbor_context,
     safe_quality_gate_call as _safe_quality_gate_call,
 )
@@ -1712,6 +1715,80 @@ def _apply_wide_paragraph_recovery(
     return result_parts, recovery_counts
 
 
+def _build_en_residual_quality_gate_dependencies(
+    *,
+    translate_text: Callable[[str], str],
+    cache: dict[str, str],
+    max_chunk_chars: int,
+) -> EnResidualQualityGateDependencies:
+    def recover_parts_slice(
+        source_parts_arg: list[str],
+        start_part_idx: int,
+        end_part_idx: int,
+        context_label: str,
+        seg_index: int,
+    ) -> list[str] | None:
+        return _recover_parts_slice_with_tag_mask(
+            source_parts=source_parts_arg,
+            start_part_idx=start_part_idx,
+            end_part_idx=end_part_idx,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    def recover_context(
+        source_seg: str,
+        context_text: str,
+        context_label: str,
+        seg_index: int,
+    ) -> str:
+        return _recover_segment_with_context_markers(
+            source_seg,
+            context_text=context_text,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    def recover_forced(source_seg: str, context_label: str, seg_index: int) -> str:
+        return _recover_segment_with_forced_markers(
+            source_seg,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    def recover_sentencewise(source_seg: str, context_label: str, seg_index: int) -> str:
+        return _recover_segment_sentencewise(
+            source_seg,
+            translate_text=translate_text,
+            cache=cache,
+            max_chunk_chars=max_chunk_chars,
+            context_label=context_label,
+            seg_index=seg_index,
+        )
+
+    return EnResidualQualityGateDependencies(
+        apply_short_translation_guard=_apply_short_translation_guard,
+        is_identity_residual=_is_identity_residual,
+        segment_core_text=_segment_core_text,
+        normalize_ws=_normalize_ws,
+        strip_unexpected_trailing_ellipsis=_strip_unexpected_trailing_ellipsis,
+        recover_parts_slice=recover_parts_slice,
+        recover_context=recover_context,
+        recover_forced=recover_forced,
+        recover_sentencewise=recover_sentencewise,
+        debug=_cascade_debug,
+    )
+
+
 def _apply_en_residual_quality_gate(
     *,
     source_parts: list[str],
@@ -1725,217 +1802,22 @@ def _apply_en_residual_quality_gate(
     max_chunk_chars: int,
     max_segments: int,
 ) -> tuple[list[str], dict[str, int]]:
-    if (
-        len(translatable_indices) != len(source_segments)
-        or len(source_segments) != len(paragraph_groups)
-    ):
-        return translated_parts, {}
-
-    residual_indices = [
-        seg_idx
-        for seg_idx, (part_idx, source_seg) in enumerate(zip(translatable_indices, source_segments))
-        if _is_identity_residual(source_seg, translated_parts[part_idx])
-    ]
-    if not residual_indices:
-        return translated_parts, {}
-
-    counts: dict[str, int] = {}
-    if max_segments <= 0:
-        counts["quality_gate_skipped_limit"] = len(residual_indices)
-        return translated_parts, counts
-
-    grouped_indices: dict[int, list[int]] = {}
-    for seg_idx, group_id in enumerate(paragraph_groups):
-        if group_id is None:
-            continue
-        grouped_indices.setdefault(group_id, []).append(seg_idx)
-
-    result_parts = list(translated_parts)
-    processed = 0
-
-    def _guard_quality_candidate(source_seg: str, candidate: str) -> tuple[str, bool]:
-        guarded, guard_reason = _apply_short_translation_guard(source_seg, candidate)
-        if guard_reason is None:
-            return candidate, True
-        counts["quality_gate_short_guard_rejected"] = (
-            counts.get("quality_gate_short_guard_rejected", 0) + 1
-        )
-        counts[f"quality_gate_short_guard_{guard_reason}"] = (
-            counts.get(f"quality_gate_short_guard_{guard_reason}", 0) + 1
-        )
-        return guarded, False
-
-    def _neighbor_context(seg_idx: int) -> str:
-        return _build_quality_gate_neighbor_context(
-            source_segments,
-            seg_idx,
-            segment_groups=paragraph_groups,
-            grouped_indices=grouped_indices,
-            segment_core_text=_segment_core_text,
-            normalize_ws=_normalize_ws,
-        )
-
-    def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        return _safe_quality_gate_call(
-            action,
-            seg_idx,
-            call,
-            counts,
-            debug_prefix="quality_gate",
-            debug=_cascade_debug,
-        )
-
-    for seg_idx in residual_indices:
-        part_idx = translatable_indices[seg_idx]
-        source_seg = source_segments[seg_idx]
-        if not _is_identity_residual(source_seg, result_parts[part_idx]):
-            continue
-        if processed >= max_segments:
-            counts["quality_gate_skipped_limit"] = counts.get("quality_gate_skipped_limit", 0) + 1
-            continue
-
-        processed += 1
-        counts["quality_gate_attempted"] = counts.get("quality_gate_attempted", 0) + 1
-
-        recovered = False
-        group_id = paragraph_groups[seg_idx]
-        part_range = paragraph_part_ranges.get(group_id) if group_id is not None else None
-        if part_range is not None:
-            slice_chars = sum(len(source_parts[idx]) for idx in range(part_range[0], part_range[1] + 1))
-            if slice_chars <= max(2_500, max_chunk_chars * 2):
-                recovered_slice = _safe_gate_call(
-                    "paragraph",
-                    seg_idx,
-                    lambda: _recover_parts_slice_with_tag_mask(
-                        source_parts=source_parts,
-                        start_part_idx=part_range[0],
-                        end_part_idx=part_range[1],
-                        translate_text=translate_text,
-                        cache=cache,
-                        max_chunk_chars=max_chunk_chars,
-                        context_label="quality_gate_wide",
-                        seg_index=seg_idx + 1,
-                    ),
-                )
-                if recovered_slice is not None:
-                    candidate_parts = list(result_parts)
-                    candidate_parts[part_range[0]:part_range[1] + 1] = recovered_slice
-                    candidate = candidate_parts[part_idx]
-                    candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                    candidate_parts[part_idx] = candidate
-                    if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                        result_parts = candidate_parts
-                        recovered = True
-                        counts["quality_gate_paragraph_recovery"] = (
-                            counts.get("quality_gate_paragraph_recovery", 0) + 1
-                        )
-                        _cascade_debug(
-                            "quality_gate reason=en_residual "
-                            f"seg={seg_idx + 1} action=paragraph_recovery"
-                        )
-            else:
-                counts["quality_gate_paragraph_skipped_large"] = (
-                    counts.get("quality_gate_paragraph_skipped_large", 0) + 1
-                )
-
-        if not recovered:
-            context_text = _neighbor_context(seg_idx)
-            if context_text:
-                candidate = _safe_gate_call(
-                    "context",
-                    seg_idx,
-                    lambda: _recover_segment_with_context_markers(
-                        source_seg,
-                        context_text=context_text,
-                        translate_text=translate_text,
-                        cache=cache,
-                        max_chunk_chars=max_chunk_chars,
-                        context_label="quality_gate_context",
-                        seg_index=seg_idx + 1,
-                    ),
-                )
-                if isinstance(candidate, str):
-                    stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(source_seg, candidate)
-                    if stripped:
-                        candidate = stripped_candidate
-                    candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                    if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                        result_parts[part_idx] = candidate
-                        recovered = True
-                        counts["quality_gate_context_recovery"] = (
-                            counts.get("quality_gate_context_recovery", 0) + 1
-                        )
-                        _cascade_debug(
-                            "quality_gate reason=en_residual "
-                            f"seg={seg_idx + 1} action=context_recovery"
-                        )
-
-        if not recovered:
-            candidate = _safe_gate_call(
-                "forced",
-                seg_idx,
-                lambda: _recover_segment_with_forced_markers(
-                    source_seg,
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label="quality_gate_forced",
-                    seg_index=seg_idx + 1,
-                ),
-            )
-            if isinstance(candidate, str):
-                stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(source_seg, candidate)
-                if stripped:
-                    candidate = stripped_candidate
-                candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                    result_parts[part_idx] = candidate
-                    recovered = True
-                    counts["quality_gate_forced_recovery"] = (
-                        counts.get("quality_gate_forced_recovery", 0) + 1
-                    )
-                    _cascade_debug(
-                        "quality_gate reason=en_residual "
-                        f"seg={seg_idx + 1} action=forced_recovery"
-                    )
-
-        if not recovered:
-            candidate = _safe_gate_call(
-                "sentence",
-                seg_idx,
-                lambda: _recover_segment_sentencewise(
-                    source_seg,
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label="quality_gate_sent",
-                    seg_index=seg_idx + 1,
-                ),
-            )
-            if isinstance(candidate, str):
-                stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(source_seg, candidate)
-                if stripped:
-                    candidate = stripped_candidate
-                candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                    result_parts[part_idx] = candidate
-                    recovered = True
-                    counts["quality_gate_sentence_recovery"] = (
-                        counts.get("quality_gate_sentence_recovery", 0) + 1
-                    )
-                    _cascade_debug(
-                        "quality_gate reason=en_residual "
-                        f"seg={seg_idx + 1} action=sentence_recovery"
-                    )
-
-        if not recovered:
-            counts["quality_gate_unresolved"] = counts.get("quality_gate_unresolved", 0) + 1
-            _cascade_debug(
-                "quality_gate reason=en_residual "
-                f"seg={seg_idx + 1} action=keep_unresolved"
-            )
-
-    return result_parts, counts
+    dependencies = _build_en_residual_quality_gate_dependencies(
+        translate_text=translate_text,
+        cache=cache,
+        max_chunk_chars=max_chunk_chars,
+    )
+    return _apply_en_residual_quality_gate_impl(
+        source_parts=source_parts,
+        translated_parts=translated_parts,
+        translatable_indices=translatable_indices,
+        source_segments=source_segments,
+        paragraph_groups=paragraph_groups,
+        paragraph_part_ranges=paragraph_part_ranges,
+        max_chunk_chars=max_chunk_chars,
+        max_segments=max_segments,
+        dependencies=dependencies,
+    )
 
 
 def _apply_en_residual_segment_quality_gate(
@@ -1947,165 +1829,17 @@ def _apply_en_residual_segment_quality_gate(
     max_chunk_chars: int,
     max_segments: int,
 ) -> tuple[list[str], dict[str, int]]:
-    if len(source_segments) != len(translated_segments):
-        return translated_segments, {}
-
-    residual_indices = [
-        idx
-        for idx, (source_seg, translated_seg) in enumerate(zip(source_segments, translated_segments))
-        if _is_identity_residual(source_seg, translated_seg)
-    ]
-    if not residual_indices:
-        return translated_segments, {}
-
-    counts: dict[str, int] = {}
-    if max_segments <= 0:
-        counts["quality_gate_skipped_limit"] = len(residual_indices)
-        return translated_segments, counts
-
-    result = list(translated_segments)
-
-    def _guard_quality_candidate(source_seg: str, candidate: str) -> tuple[str, bool]:
-        guarded, guard_reason = _apply_short_translation_guard(source_seg, candidate)
-        if guard_reason is None:
-            return candidate, True
-        counts["quality_gate_short_guard_rejected"] = (
-            counts.get("quality_gate_short_guard_rejected", 0) + 1
-        )
-        counts[f"quality_gate_short_guard_{guard_reason}"] = (
-            counts.get(f"quality_gate_short_guard_{guard_reason}", 0) + 1
-        )
-        return guarded, False
-
-    def _neighbor_context(seg_idx: int) -> str:
-        return _build_quality_gate_neighbor_context(
-            source_segments,
-            seg_idx,
-            segment_core_text=_segment_core_text,
-            normalize_ws=_normalize_ws,
-            dedupe=False,
-        )
-
-    def _safe_gate_call(action: str, seg_idx: int, call: Callable[[], object]) -> object | None:
-        return _safe_quality_gate_call(
-            action,
-            seg_idx,
-            call,
-            counts,
-            debug_prefix="quality_gate_fallback",
-            debug=_cascade_debug,
-        )
-
-    processed = 0
-    for seg_idx in residual_indices:
-        source_seg = source_segments[seg_idx]
-        if not _is_identity_residual(source_seg, result[seg_idx]):
-            continue
-        if processed >= max_segments:
-            counts["quality_gate_skipped_limit"] = counts.get("quality_gate_skipped_limit", 0) + 1
-            continue
-
-        processed += 1
-        counts["quality_gate_attempted"] = counts.get("quality_gate_attempted", 0) + 1
-
-        recovered = False
-        context_text = _neighbor_context(seg_idx)
-        if context_text:
-            candidate = _safe_gate_call(
-                "context",
-                seg_idx,
-                lambda: _recover_segment_with_context_markers(
-                    source_seg,
-                    context_text=context_text,
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label="quality_gate_fallback_context",
-                    seg_index=seg_idx + 1,
-                ),
-            )
-            if isinstance(candidate, str):
-                stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(source_seg, candidate)
-                if stripped:
-                    candidate = stripped_candidate
-                candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                    result[seg_idx] = candidate
-                    recovered = True
-                    counts["quality_gate_context_recovery"] = (
-                        counts.get("quality_gate_context_recovery", 0) + 1
-                    )
-                    _cascade_debug(
-                        "quality_gate_fallback reason=en_residual "
-                        f"seg={seg_idx + 1} action=context_recovery"
-                    )
-
-        if not recovered:
-            candidate = _safe_gate_call(
-                "forced",
-                seg_idx,
-                lambda: _recover_segment_with_forced_markers(
-                    source_seg,
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label="quality_gate_fallback_forced",
-                    seg_index=seg_idx + 1,
-                ),
-            )
-            if isinstance(candidate, str):
-                stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(source_seg, candidate)
-                if stripped:
-                    candidate = stripped_candidate
-                candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                    result[seg_idx] = candidate
-                    recovered = True
-                    counts["quality_gate_forced_recovery"] = (
-                        counts.get("quality_gate_forced_recovery", 0) + 1
-                    )
-                    _cascade_debug(
-                        "quality_gate_fallback reason=en_residual "
-                        f"seg={seg_idx + 1} action=forced_recovery"
-                    )
-
-        if not recovered:
-            candidate = _safe_gate_call(
-                "sentence",
-                seg_idx,
-                lambda: _recover_segment_sentencewise(
-                    source_seg,
-                    translate_text=translate_text,
-                    cache=cache,
-                    max_chunk_chars=max_chunk_chars,
-                    context_label="quality_gate_fallback_sent",
-                    seg_index=seg_idx + 1,
-                ),
-            )
-            if isinstance(candidate, str):
-                stripped_candidate, stripped = _strip_unexpected_trailing_ellipsis(source_seg, candidate)
-                if stripped:
-                    candidate = stripped_candidate
-                candidate, candidate_ok = _guard_quality_candidate(source_seg, candidate)
-                if candidate_ok and not _is_identity_residual(source_seg, candidate):
-                    result[seg_idx] = candidate
-                    recovered = True
-                    counts["quality_gate_sentence_recovery"] = (
-                        counts.get("quality_gate_sentence_recovery", 0) + 1
-                    )
-                    _cascade_debug(
-                        "quality_gate_fallback reason=en_residual "
-                        f"seg={seg_idx + 1} action=sentence_recovery"
-                    )
-
-        if not recovered:
-            counts["quality_gate_unresolved"] = counts.get("quality_gate_unresolved", 0) + 1
-            _cascade_debug(
-                "quality_gate_fallback reason=en_residual "
-                f"seg={seg_idx + 1} action=keep_unresolved"
-            )
-
-    return result, counts
+    dependencies = _build_en_residual_quality_gate_dependencies(
+        translate_text=translate_text,
+        cache=cache,
+        max_chunk_chars=max_chunk_chars,
+    )
+    return _apply_en_residual_segment_quality_gate_impl(
+        source_segments=source_segments,
+        translated_segments=translated_segments,
+        max_segments=max_segments,
+        dependencies=dependencies,
+    )
 
 
 def _apply_cjk_quality_gate(
