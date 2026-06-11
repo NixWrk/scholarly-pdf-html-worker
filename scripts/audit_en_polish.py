@@ -79,6 +79,10 @@ from zoteropdf2md.quality_loop.audit_reference_identity import (
 from zoteropdf2md.quality_loop.audit_manual_patterns import (
     looks_like_affiliation_label_roman_boundary as _looks_like_affiliation_label_roman_boundary,
 )
+from zoteropdf2md.quality_loop.audit_manual_recent import (
+    ManualBlindSpotDeps,
+    manual_blind_spot_defects as _manual_blind_spot_defects_base,
+)
 from zoteropdf2md.quality_loop.audit_math_units import (
     DEGREE_DEFECT_RE,
     DISPLAY_MATH_OCR_RE,
@@ -2045,236 +2049,46 @@ def _citation_style_consistency_defects(
     return []
 
 
+def _manual_blind_spot_deps() -> ManualBlindSpotDeps:
+    return ManualBlindSpotDeps(
+        page_link_re=PAGE_LINK_RE,
+        anchor_body_re=ANCHOR_BODY_RE,
+        double_close_anchor_re=DOUBLE_CLOSE_ANCHOR_RE,
+        url_anchor_re=URL_ANCHOR_RE,
+        malformed_url_anchor_body_re=MALFORMED_URL_ANCHOR_BODY_RE,
+        broken_url_text_re=BROKEN_URL_TEXT_RE,
+        references_heading_re=REFERENCES_HEADING_RE,
+        ref_anchor_body_re=REF_ANCHOR_BODY_RE,
+        lowercase_ref_glue_re=LOWERCASE_REF_GLUE_RE,
+        box_unit_re=BOX_UNIT_RE,
+        figure_unit_re=FIGURE_UNIT_RE,
+        immediate_external_figure_caption_re=IMMEDIATE_EXTERNAL_FIGURE_CAPTION_RE,
+        table_caption_re=TABLE_CAPTION_RE,
+        table_doi_append_re=TABLE_DOI_APPEND_RE,
+        page_link_semantic_kind=_page_link_semantic_kind,
+        looks_like_figure_caption=_looks_like_figure_caption,
+        ends_like_sentence_fragment=_ends_like_sentence_fragment,
+        looks_like_float_or_caption=_looks_like_float_or_caption,
+        looks_like_float_note=_looks_like_float_note,
+        looks_like_equation_continuation=_looks_like_equation_continuation,
+        starts_like_sentence_continuation=_starts_like_sentence_continuation,
+        source_pdf_text_confirms_float_gap=_source_pdf_text_confirms_float_gap,
+    )
+
+
 def _manual_blind_spot_defects(
     polish_html: str,
     polish_blocks: list[Block],
     *,
     pdf_text: str = "",
 ) -> list[Defect]:
-    defects: list[Defect] = []
-    slim_html = _structure_html(polish_html)
-
-    for match in PAGE_LINK_RE.finditer(slim_html):
-        kind = _page_link_semantic_kind(slim_html, match)
-        if kind is None:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P33",
-                cc_class="CC-02/CC-03/CC-10",
-                check="Semantic reference still points to PDF page anchor",
-                severity="warning" if kind.startswith("semantic") else "error",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="A citation, table/figure/box/section reference, or OCR-glued citation was left as a #page-* link.",
-                proposed_fix_layer="EN polish semantic cross-reference retargeting",
-                regression_test="Box/Table/Section/Appendix and bibliography refs must target #box/#table/#section/#ref rather than #page.",
-                extra={"page_target": match.group("target"), "label": _strip_tags(match.group("body")), "kind": kind},
-            )
-        )
-        break
-
-    nested_anchor_match = next(
-        (match for match in ANCHOR_BODY_RE.finditer(slim_html) if "<a" in match.group("body").lower()),
-        None,
+    return _manual_blind_spot_defects_base(
+        polish_html,
+        polish_blocks,
+        deps=_manual_blind_spot_deps(),
+        pdf_text=pdf_text,
+        polish_stage=POLISH_STAGE,
     )
-    double_close_match = DOUBLE_CLOSE_ANCHOR_RE.search(slim_html)
-    malformed_anchor_match = nested_anchor_match or double_close_match
-    if malformed_anchor_match is not None:
-        defects.append(
-            _defect(
-                defect_id="P34",
-                cc_class="CC-02/CC-03",
-                check="Malformed nested or double-closed anchor",
-                severity="error",
-                block=None,
-                snippet=_snippet(slim_html, malformed_anchor_match.start(), malformed_anchor_match.end()),
-                stage=POLISH_STAGE,
-                hypothesis="Citation/link reconstruction wrapped an already-linked fragment or left an extra closing anchor.",
-                proposed_fix_layer="EN polish anchor normalization after citation retargeting",
-                regression_test="Citation lists such as [24, 25] and [30] never contain nested <a> tags or stray </a>.",
-            )
-        )
-
-    defects.extend(_replacement_char_defects(polish_html, pdf_text, stage=POLISH_STAGE))
-
-    plain = _plain_text(slim_html)
-    url_check_plain = _plain_text(URL_ANCHOR_RE.sub(" URL ", slim_html))
-    broken_url_match = BROKEN_URL_TEXT_RE.search(url_check_plain)
-    malformed_url_anchor_match = MALFORMED_URL_ANCHOR_BODY_RE.search(slim_html)
-    if broken_url_match is not None or malformed_url_anchor_match is not None:
-        if broken_url_match is not None:
-            snippet = _snippet(url_check_plain, broken_url_match.start(), broken_url_match.end())
-        else:
-            assert malformed_url_anchor_match is not None
-            snippet = _strip_tags(
-                _snippet(slim_html, malformed_url_anchor_match.start(), malformed_url_anchor_match.end())
-            )
-        defects.append(
-            _defect(
-                defect_id="P36",
-                cc_class="CC-03/CC-13",
-                check="Visible URL or DOI is split or malformed",
-                severity="warning",
-                block=None,
-                snippet=snippet,
-                stage=POLISH_STAGE,
-                hypothesis="Line/page splitting, OCR, or autolinking left a visibly broken URL/DOI label.",
-                proposed_fix_layer="EN polish URL/DOI label normalization",
-                regression_test="URLs like 'https:// creativecommons.org', 'hps://dl.acm.org', and 'doi.org/ 10...' are joined or reported.",
-            )
-        )
-
-    references_started = False
-    for block in polish_blocks:
-        if REFERENCES_HEADING_RE.match(block.text):
-            references_started = True
-        if _is_references_block(block, references_started) or block.classes & {
-            "z2m-front-matter",
-            "z2m-affiliations",
-            "z2m-footnote",
-        }:
-            continue
-        for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
-            label = _strip_tags(match.group("body"))
-            if not LOWERCASE_REF_GLUE_RE.fullmatch(label):
-                continue
-            defects.append(
-                _defect(
-                    defect_id="P37",
-                    cc_class="CC-02/CC-13",
-                    check="Citation link absorbed the final letter of a word",
-                    severity="error",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Superscript OCR split the last letter from the preceding word and citation linking preserved that split.",
-                    proposed_fix_layer="EN polish citation OCR glue repair",
-                    regression_test="Patterns like 'functio n13,14' and 'consideration s20,23' rejoin the letter to the word.",
-                    extra={"label": label, "ref_target": match.group("num")},
-                )
-            )
-            break
-        if defects and defects[-1].id == "P37":
-            break
-
-    for match in BOX_UNIT_RE.finditer(slim_html):
-        box_text = _strip_tags(match.group("body"))
-        tail = slim_html[match.end() : match.end() + 600]
-        if len(box_text) <= 40 and re.fullmatch(r"(?:BOX|Box)\s+\d+[A-Za-z]?", box_text) and re.match(
-            r"\s*<h[1-6]\b", tail, re.IGNORECASE
-        ):
-            defects.append(
-                _defect(
-                    defect_id="P38",
-                    cc_class="CC-09/CC-12",
-                    check="Box wrapper contains only the box label",
-                    severity="warning",
-                    block=None,
-                    snippet=_snippet(slim_html, match.start(), min(len(slim_html), match.end() + 220)),
-                    stage=POLISH_STAGE,
-                    hypothesis="Box framing stopped at the label and left the box title/content outside the wrapper.",
-                    proposed_fix_layer="EN polish box-unit assembly",
-                    regression_test="Box 1 label, title, and body paragraphs are wrapped as one z2m-box-unit with top/bottom rules.",
-                )
-            )
-            break
-
-    for match in FIGURE_UNIT_RE.finditer(slim_html):
-        figure_id = match.group("id")
-        tail = slim_html[match.end() : match.end() + 5000]
-        caption_match = IMMEDIATE_EXTERNAL_FIGURE_CAPTION_RE.search(tail)
-        if caption_match is None:
-            continue
-        caption_raw = caption_match.group(0)
-        caption_text = _strip_tags(caption_raw)
-        figure_num_match = re.search(r"\d+", figure_id)
-        figure_num = figure_num_match.group(0) if figure_num_match else ""
-        points_to_same_figure = (
-            re.search(rf"href\s*=\s*['\"]#{re.escape(figure_id)}['\"]", caption_raw, re.IGNORECASE) is not None
-            or bool(figure_num and re.match(rf"\s*(?:Fig\.?|Figure)\s*{re.escape(figure_num)}\b", caption_text, re.IGNORECASE))
-        )
-        if not points_to_same_figure:
-            continue
-        defects.append(
-            _defect(
-                defect_id="P39",
-                cc_class="CC-08/CC-12",
-                check="Figure wrapper closes before its remaining image or caption",
-                severity="warning",
-                block=None,
-                snippet=_snippet(slim_html, match.start(), min(len(slim_html), match.end() + caption_match.end())),
-                stage=POLISH_STAGE,
-                hypothesis="Multi-image or caption assembly left part of the same figure outside the z2m-figure-unit.",
-                proposed_fix_layer="EN polish figure-unit expansion after target assignment",
-                regression_test="Multi-panel figures keep all adjacent images and the matching caption inside the same figure wrapper.",
-                extra={"figure_id": figure_id},
-            )
-        )
-        break
-
-    saw_float_split = False
-    for index, block in enumerate(polish_blocks[:-2]):
-        if block.tag != "p" or block.classes & {"z2m-front-matter", "z2m-affiliations"}:
-            continue
-        if _looks_like_figure_caption(block) or TABLE_CAPTION_RE.match(block.text):
-            continue
-        if not _ends_like_sentence_fragment(block.text):
-            continue
-        saw_float = False
-        for candidate in polish_blocks[index + 1 : min(len(polish_blocks), index + 14)]:
-            if _looks_like_float_or_caption(candidate):
-                saw_float = True
-                continue
-            if not saw_float:
-                break
-            if _looks_like_float_note(candidate):
-                continue
-            if _looks_like_equation_continuation(candidate):
-                break
-            if candidate.tag == "p" and _starts_like_sentence_continuation(candidate.text):
-                if _source_pdf_text_confirms_float_gap(block.text, candidate.text, pdf_text):
-                    break
-                defects.append(
-                    _defect(
-                        defect_id="P40",
-                        cc_class="CC-07/CC-13",
-                        check="Float likely interrupts a sentence continuation",
-                        severity="warning",
-                        block=block,
-                        snippet=f"{block.text[-140:]} ... {candidate.text[:140]}",
-                        stage=POLISH_STAGE,
-                        hypothesis="A figure/table was left between two fragments of the same sentence.",
-                        proposed_fix_layer="EN polish float-aware reading-order repair",
-                        regression_test="Paragraph fragments around a float rejoin when the before-text has no sentence terminator and after-text starts as a continuation.",
-                    )
-                )
-                saw_float_split = True
-                break
-            break
-        if saw_float_split:
-            break
-
-    for block in polish_blocks:
-        if TABLE_DOI_APPEND_RE.search(block.text):
-            defects.append(
-                _defect(
-                    defect_id="P41",
-                    cc_class="CC-07/CC-13",
-                    check="Body prose is appended to a table DOI/note paragraph",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="A table note/DOI block swallowed the continuation of body prose after a misplaced table.",
-                    proposed_fix_layer="EN polish table-note boundary and reading-order repair",
-                    regression_test="Text following a table DOI, such as 'three parameters). These tendencies...', is restored to the surrounding body paragraph.",
-                )
-            )
-            break
-
-    return defects
 
 
 def _meine_recent_manual_defects(
