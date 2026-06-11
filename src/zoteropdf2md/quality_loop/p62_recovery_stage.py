@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -19,6 +21,13 @@ class P62ImageRecoveryStageConfig:
     replace_page_render: bool
     remove_false_match_recovery: bool
     repair_duplicate_figure_images: bool
+
+
+@dataclass(frozen=True)
+class P62PatchTargetDependencies:
+    existing_path_candidates: Callable[[Any], Iterable[Path]]
+    path_is_inside: Callable[[Path, Path], bool]
+    polish_stage: str
 
 
 def resolve_p62_image_recovery_stage_config(
@@ -74,3 +83,46 @@ def resolve_p62_image_recovery_stage_config(
             gate_config.get("p62_image_recovery_repair_duplicate_figure_images", True)
         ),
     )
+
+
+def patch_targets_for_record(
+    run_dir: Path,
+    record: dict[str, Any],
+    manifest_article: dict[str, Any],
+    *,
+    allow_external_paths: bool,
+    dependencies: P62PatchTargetDependencies,
+) -> list[Path]:
+    article_id = str(record.get("article") or manifest_article.get("article_id") or "")
+    values: list[Any] = [
+        record.get("polish_stage_path"),
+        manifest_article.get("polish_path"),
+        manifest_article.get("polish_stage_path"),
+        manifest_article.get("source_polish_path"),
+    ]
+    if article_id:
+        values.extend(
+            [
+                run_dir / "polish" / f"{article_id}.{dependencies.polish_stage}",
+                run_dir / "audit_tree" / article_id / dependencies.polish_stage,
+            ]
+        )
+
+    candidates: list[Path] = []
+    for value in values:
+        for candidate in dependencies.existing_path_candidates(value):
+            if not candidate.is_file():
+                continue
+            if not allow_external_paths and not dependencies.path_is_inside(candidate, run_dir):
+                continue
+            candidates.append(candidate)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate.resolve(strict=False)).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped

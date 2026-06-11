@@ -1,4 +1,29 @@
-from zoteropdf2md.quality_loop.p62_recovery_stage import resolve_p62_image_recovery_stage_config
+from pathlib import Path
+from typing import Any
+
+from zoteropdf2md.quality_loop.p62_recovery_stage import (
+    P62PatchTargetDependencies,
+    patch_targets_for_record,
+    resolve_p62_image_recovery_stage_config,
+)
+
+
+def _path_dependencies() -> P62PatchTargetDependencies:
+    def existing_path_candidates(value: Any) -> list[Path]:
+        return [value] if isinstance(value, Path) else []
+
+    def path_is_inside(path: Path, root: Path) -> bool:
+        try:
+            path.resolve(strict=False).relative_to(root.resolve(strict=False))
+            return True
+        except ValueError:
+            return False
+
+    return P62PatchTargetDependencies(
+        existing_path_candidates=existing_path_candidates,
+        path_is_inside=path_is_inside,
+        polish_stage="02.en.polish.html",
+    )
 
 
 def test_resolve_p62_image_recovery_stage_config_defaults() -> None:
@@ -63,3 +88,67 @@ def test_resolve_p62_image_recovery_stage_config_call_overrides_gate_values() ->
     assert config.execute_marker is False
     assert config.apply_patches is False
     assert config.probe_marker_for_unavailable is False
+
+
+def test_patch_targets_for_record_uses_record_manifest_and_run_fallbacks(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    record_path = run_dir / "record.html"
+    manifest_path = run_dir / "manifest.html"
+    fallback_path = run_dir / "polish" / "A1.02.en.polish.html"
+    for path in (record_path, manifest_path, fallback_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<html></html>", encoding="utf-8")
+
+    targets = patch_targets_for_record(
+        run_dir,
+        {"article": "A1", "polish_stage_path": record_path},
+        {"polish_path": manifest_path},
+        allow_external_paths=False,
+        dependencies=_path_dependencies(),
+    )
+
+    assert targets == [record_path, manifest_path, fallback_path]
+
+
+def test_patch_targets_for_record_filters_external_paths_unless_allowed(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    fallback_path = run_dir / "polish" / "A1.02.en.polish.html"
+    external_path = tmp_path / "external.html"
+    for path in (fallback_path, external_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<html></html>", encoding="utf-8")
+
+    without_external = patch_targets_for_record(
+        run_dir,
+        {"article": "A1", "polish_stage_path": external_path},
+        {},
+        allow_external_paths=False,
+        dependencies=_path_dependencies(),
+    )
+    with_external = patch_targets_for_record(
+        run_dir,
+        {"article": "A1", "polish_stage_path": external_path},
+        {},
+        allow_external_paths=True,
+        dependencies=_path_dependencies(),
+    )
+
+    assert without_external == [fallback_path]
+    assert with_external == [external_path, fallback_path]
+
+
+def test_patch_targets_for_record_deduplicates_equivalent_paths(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    record_path = run_dir / "same.html"
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text("<html></html>", encoding="utf-8")
+
+    targets = patch_targets_for_record(
+        run_dir,
+        {"polish_stage_path": record_path},
+        {"polish_path": record_path},
+        allow_external_paths=False,
+        dependencies=_path_dependencies(),
+    )
+
+    assert targets == [record_path]

@@ -152,6 +152,8 @@ from zoteropdf2md.quality_loop.p62_plan import (  # noqa: E402
     write_marker_recovery_plan as _write_p62_marker_recovery_plan_impl,
 )
 from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
+    P62PatchTargetDependencies,
+    patch_targets_for_record as _p62_patch_targets_for_record_impl,
     resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
 )
 from zoteropdf2md.quality_loop.p62_pdf_assets import (  # noqa: E402
@@ -941,39 +943,18 @@ def _p62_patch_targets_for_record(
     *,
     allow_external_paths: bool,
 ) -> list[Path]:
-    article_id = str(record.get("article") or manifest_article.get("article_id") or "")
-    values: list[Any] = [
-        record.get("polish_stage_path"),
-        manifest_article.get("polish_path"),
-        manifest_article.get("polish_stage_path"),
-        manifest_article.get("source_polish_path"),
-    ]
-    if article_id:
-        values.extend(
-            [
-                run_dir / "polish" / f"{article_id}.{POLISH_STAGE}",
-                run_dir / "audit_tree" / article_id / POLISH_STAGE,
-            ]
-        )
-
-    candidates: list[Path] = []
-    for value in values:
-        for candidate in _existing_path_candidates(value):
-            if not candidate.is_file():
-                continue
-            if not allow_external_paths and not _path_is_inside(candidate, run_dir):
-                continue
-            candidates.append(candidate)
-
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        key = str(candidate.resolve(strict=False)).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(candidate)
-    return deduped
+    dependencies = P62PatchTargetDependencies(
+        existing_path_candidates=_existing_path_candidates,
+        path_is_inside=_path_is_inside,
+        polish_stage=POLISH_STAGE,
+    )
+    return _p62_patch_targets_for_record_impl(
+        run_dir,
+        record,
+        manifest_article,
+        allow_external_paths=allow_external_paths,
+        dependencies=dependencies,
+    )
 
 
 def _profile_for_assessment(manifest_article: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
