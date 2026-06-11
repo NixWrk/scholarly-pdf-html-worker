@@ -156,6 +156,7 @@ from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
     build_p62_image_recovery_report as _build_p62_image_recovery_report,
     P62PatchTargetDependencies,
     patch_targets_for_record as _p62_patch_targets_for_record_impl,
+    recover_pdf_figure_asset_for_stage as _recover_p62_pdf_figure_asset_for_stage,
     resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
 )
 from zoteropdf2md.quality_loop.p62_pdf_assets import (  # noqa: E402
@@ -1643,40 +1644,20 @@ def write_p62_image_recovery_stage(
                 continue
 
         if not data_url:
-            figure_asset = _recover_p62_detached_pdf_figure_plate_asset(
+            recovered_asset = _recover_p62_pdf_figure_asset_for_stage(
                 pdf_path,
                 source_page_number,
                 resolved_figure_label or figure_label,
                 artifact_dir,
                 zoom=render_zoom,
+                recover_detached_pdf_figure_plate_asset=_recover_p62_detached_pdf_figure_plate_asset,
+                recover_pdf_figure_asset=_recover_p62_pdf_figure_asset,
+                data_url_from_image_file=_data_url_from_image_file,
             )
-            if not (figure_asset.get("path") and figure_asset.get("source")):
-                figure_asset = _recover_p62_pdf_figure_asset(
-                    pdf_path,
-                    source_page_number,
-                    resolved_figure_label or figure_label,
-                    artifact_dir,
-                    zoom=render_zoom,
-                )
-            item.update(
-                {
-                    "figure_asset_status": figure_asset.get("status"),
-                    "figure_asset_path": figure_asset.get("path") or "",
-                    "figure_asset_source": figure_asset.get("source") or "",
-                    "figure_asset_error": figure_asset.get("error") or "",
-                    "figure_asset_page_number": figure_asset.get("page_number") or 0,
-                    "figure_asset_selected_rect": figure_asset.get("selected_rect"),
-                    "figure_asset_caption_found": figure_asset.get("caption_found"),
-                    "figure_asset_plate_index": figure_asset.get("plate_index"),
-                    "figure_asset_plate_count": figure_asset.get("plate_count"),
-                }
-            )
-            if figure_asset.get("path") and figure_asset.get("source"):
-                asset_path = Path(str(figure_asset.get("path")))
-                data_url = _data_url_from_image_file(asset_path) or ""
-                if data_url:
-                    recovery_source = str(figure_asset.get("source") or "pdf_figure_region_render")
-                    recovery_detail = str(asset_path)
+            item.update(recovered_asset.item_updates)
+            data_url = recovered_asset.data_url
+            recovery_source = recovered_asset.recovery_source
+            recovery_detail = recovered_asset.recovery_detail
 
         if not data_url:
             if item.get("existing_page_render_recovery") and probe_source_visual_unavailable:

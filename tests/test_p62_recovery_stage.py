@@ -6,6 +6,7 @@ from zoteropdf2md.quality_loop.p62_recovery_stage import (
     apply_html_patch_to_targets,
     build_p62_image_recovery_report,
     patch_targets_for_record,
+    recover_pdf_figure_asset_for_stage,
     resolve_p62_image_recovery_stage_config,
 )
 
@@ -198,6 +199,82 @@ def test_apply_html_patch_to_targets_records_file_errors(tmp_path: Path) -> None
     assert result.patched_paths == ()
     assert result.errors
     assert result.errors[0]["path"] == str(missing_path)
+
+
+def test_recover_pdf_figure_asset_for_stage_prefers_detached_asset(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    asset_path = tmp_path / "detached.png"
+    fallback_called = False
+
+    def recover_detached(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert args == (pdf_path, 4, "Figure 2", tmp_path)
+        assert kwargs == {"zoom": 1.75}
+        return {
+            "status": "recovered_detached",
+            "path": str(asset_path),
+            "source": "pdf_detached_plate_region_render",
+            "page_number": 4,
+            "selected_rect": [1, 2, 3, 4],
+            "caption_found": True,
+            "plate_index": 1,
+            "plate_count": 2,
+        }
+
+    def recover_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal fallback_called
+        fallback_called = True
+        return {}
+
+    result = recover_pdf_figure_asset_for_stage(
+        pdf_path,
+        4,
+        "Figure 2",
+        tmp_path,
+        zoom=1.75,
+        recover_detached_pdf_figure_plate_asset=recover_detached,
+        recover_pdf_figure_asset=recover_fallback,
+        data_url_from_image_file=lambda path: "data:image/png;base64,abc" if path == asset_path else "",
+    )
+
+    assert fallback_called is False
+    assert result.data_url == "data:image/png;base64,abc"
+    assert result.recovery_source == "pdf_detached_plate_region_render"
+    assert result.recovery_detail == str(asset_path)
+    assert result.item_updates["figure_asset_status"] == "recovered_detached"
+    assert result.item_updates["figure_asset_selected_rect"] == [1, 2, 3, 4]
+    assert result.item_updates["figure_asset_caption_found"] is True
+    assert result.item_updates["figure_asset_plate_index"] == 1
+    assert result.item_updates["figure_asset_plate_count"] == 2
+
+
+def test_recover_pdf_figure_asset_for_stage_falls_back_to_region_asset(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    asset_path = tmp_path / "region.png"
+
+    result = recover_pdf_figure_asset_for_stage(
+        pdf_path,
+        8,
+        "Figure 4",
+        tmp_path,
+        zoom=2.0,
+        recover_detached_pdf_figure_plate_asset=lambda *args, **kwargs: {
+            "status": "detached_unavailable",
+        },
+        recover_pdf_figure_asset=lambda *args, **kwargs: {
+            "status": "recovered_region",
+            "path": str(asset_path),
+            "source": "pdf_figure_region_render",
+            "error": "",
+            "page_number": 8,
+        },
+        data_url_from_image_file=lambda path: "data:image/png;base64,region" if path == asset_path else "",
+    )
+
+    assert result.data_url == "data:image/png;base64,region"
+    assert result.recovery_source == "pdf_figure_region_render"
+    assert result.recovery_detail == str(asset_path)
+    assert result.item_updates["figure_asset_status"] == "recovered_region"
+    assert result.item_updates["figure_asset_page_number"] == 8
 
 
 def test_build_p62_image_recovery_report_summarizes_partial_recovery(tmp_path: Path) -> None:

@@ -38,6 +38,14 @@ class P62HtmlPatchResult:
     errors: tuple[dict[str, str], ...]
 
 
+@dataclass(frozen=True)
+class P62RecoveredAsset:
+    data_url: str
+    recovery_source: str
+    recovery_detail: str
+    item_updates: dict[str, Any]
+
+
 P62_REQUIRED_RECOVERY_CHECKS = (
     "marker_single_page_image",
     "source_visual_unavailable_probe",
@@ -173,6 +181,65 @@ def apply_html_patch_to_targets(
         replacement_count=total_replacements,
         patched_paths=tuple(patched_path_list),
         errors=tuple(errors),
+    )
+
+
+def figure_asset_item_updates(figure_asset: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "figure_asset_status": figure_asset.get("status"),
+        "figure_asset_path": figure_asset.get("path") or "",
+        "figure_asset_source": figure_asset.get("source") or "",
+        "figure_asset_error": figure_asset.get("error") or "",
+        "figure_asset_page_number": figure_asset.get("page_number") or 0,
+        "figure_asset_selected_rect": figure_asset.get("selected_rect"),
+        "figure_asset_caption_found": figure_asset.get("caption_found"),
+        "figure_asset_plate_index": figure_asset.get("plate_index"),
+        "figure_asset_plate_count": figure_asset.get("plate_count"),
+    }
+
+
+def recover_pdf_figure_asset_for_stage(
+    pdf_path: Path,
+    source_page_number: int,
+    figure_label: str,
+    artifact_dir: Path,
+    *,
+    zoom: float,
+    recover_detached_pdf_figure_plate_asset: Callable[..., dict[str, Any]],
+    recover_pdf_figure_asset: Callable[..., dict[str, Any]],
+    data_url_from_image_file: Callable[[Path], str | None],
+) -> P62RecoveredAsset:
+    figure_asset = recover_detached_pdf_figure_plate_asset(
+        pdf_path,
+        source_page_number,
+        figure_label,
+        artifact_dir,
+        zoom=zoom,
+    )
+    if not (figure_asset.get("path") and figure_asset.get("source")):
+        figure_asset = recover_pdf_figure_asset(
+            pdf_path,
+            source_page_number,
+            figure_label,
+            artifact_dir,
+            zoom=zoom,
+        )
+
+    data_url = ""
+    recovery_source = ""
+    recovery_detail = ""
+    if figure_asset.get("path") and figure_asset.get("source"):
+        asset_path = Path(str(figure_asset.get("path")))
+        data_url = data_url_from_image_file(asset_path) or ""
+        if data_url:
+            recovery_source = str(figure_asset.get("source") or "pdf_figure_region_render")
+            recovery_detail = str(asset_path)
+
+    return P62RecoveredAsset(
+        data_url=data_url,
+        recovery_source=recovery_source,
+        recovery_detail=recovery_detail,
+        item_updates=figure_asset_item_updates(figure_asset),
     )
 
 
