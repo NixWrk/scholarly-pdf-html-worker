@@ -1,0 +1,104 @@
+import re
+
+from zoteropdf2md.quality_loop.audit_blocks import Block, parse_blocks
+from zoteropdf2md.quality_loop.audit_figure_caption_ux import (
+    CAPTION_TEX_RESIDUE_RE,
+    figure_caption_ux_defects,
+)
+
+
+def _looks_like_figure_caption(block: Block) -> bool:
+    return (
+        block.id.startswith("fig-")
+        or "z2m-figure-caption" in block.classes
+        or re.match(r"^\s*(?:Figure|Fig\.?)\s+\d+", block.text, re.IGNORECASE) is not None
+    )
+
+
+def _defects(html: str, *, has_internal_links: bool = False) -> list[str]:
+    defects = figure_caption_ux_defects(
+        html,
+        parse_blocks(html),
+        has_internal_links=has_internal_links,
+        looks_like_figure_caption=_looks_like_figure_caption,
+        is_supplementary_figure_block=lambda block: False,
+        is_handled_missing_figure_block=lambda block: False,
+        has_nearby_image=lambda blocks, index: any(
+            candidate.has_figure_visual
+            for candidate in blocks[max(0, index - 2) : min(len(blocks), index + 3)]
+        ),
+        has_nearby_missing_figure_warning=lambda blocks, index: any(
+            "z2m-missing-figure-warning" in candidate.classes
+            for candidate in blocks[max(0, index - 2) : min(len(blocks), index + 3)]
+        ),
+        source_pdf_text_confirms_float_gap=lambda left, right, pdf_text: False,
+    )
+    return [defect.id for defect in defects]
+
+
+def test_figure_caption_ux_reports_caption_tex_residue() -> None:
+    ids = _defects('<p id="fig-1" class="z2m-figure-caption">Figure 1. Caption \\label{fig:a}</p>')
+
+    assert "P12" in ids
+
+
+def test_figure_caption_ux_reports_caption_without_image() -> None:
+    ids = _defects('<p id="fig-2" class="z2m-figure-caption">Figure 2. Caption text.</p>')
+
+    assert "P13" in ids
+
+
+def test_figure_caption_ux_reports_internal_target_style_gap() -> None:
+    ids = _defects('<p>See <a href="#fig-1">Figure 1</a>.</p>', has_internal_links=True)
+
+    assert "P15" in ids
+
+
+def test_figure_caption_ux_reports_delayed_image_after_missing_warning() -> None:
+    ids = _defects(
+        '<p class="z2m-missing-figure-warning">Figure 3 image was not extracted.</p>'
+        "<p>caption continuation.</p>"
+        '<p><img src="fig3.png"/></p>'
+    )
+
+    assert "P16" in ids
+
+
+def test_figure_caption_ux_reports_plural_multipanel_reference() -> None:
+    ids = _defects("<p>The figures 4(A), (B) show the result.</p>")
+
+    assert "P17" in ids
+
+
+def test_figure_caption_ux_reports_float_interruption() -> None:
+    ids = _defects(
+        "<p>The signal was stable and</p>"
+        '<figure><img src="fig1.png"/></figure>'
+        "<p>continued after the image.</p>"
+    )
+
+    assert "P30" in ids
+
+
+def test_figure_caption_ux_reports_page_furniture_and_caption_intrusion() -> None:
+    ids = _defects(
+        "<p>Copyright 2024 Publisher.</p><p>2024 a, b). Each shank was inserted.</p>"
+        "<p>human input (required) image-modeling task was visible.</p>"
+    )
+
+    assert "P18" in ids
+    assert "P19" in ids
+
+
+def test_audit_script_keeps_legacy_figure_caption_ux_aliases() -> None:
+    import importlib.util
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "audit_en_polish.py"
+    spec = importlib.util.spec_from_file_location("audit_en_polish_caption_ux_alias_check", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._figure_caption_ux_defects_base is figure_caption_ux_defects
+    assert module.CAPTION_TEX_RESIDUE_RE is CAPTION_TEX_RESIDUE_RE
