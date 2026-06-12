@@ -10527,7 +10527,7 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
     Returns the modified HTML and the set of figure number strings found.
     """
     found: set[str] = set()
-    matches = list(_P_BLOCK_PATTERN.finditer(html))
+    matches = list(_P_OR_H_BLOCK_PATTERN.finditer(html))
     if not matches:
         return html, found
 
@@ -10537,10 +10537,7 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
         return replacements.get(index, matches[index].group(0))
 
     def _replace_open(raw: str, transform: Callable[[str], str]) -> str:
-        node_match = _SENTENCE_P_NODE_PATTERN.match(raw)
-        if node_match is None:
-            return raw
-        return f"{transform(node_match.group('open'))}{node_match.group('body')}{node_match.group('close')}"
+        return _transform_node_open(raw, transform)
 
     def _has_image(index: int) -> bool:
         return bool(re.search(r"<img\b", _node_raw(index), re.IGNORECASE))
@@ -11524,6 +11521,41 @@ def _link_spaced_multipanel_figure_refs(html: str, found_figures: set[str]) -> s
         linked = _SPACED_MULTIPANEL_FIG_REF_PATTERN.sub(_replace_spaced_multipanel, part)
         out.append(linked)
     return "".join(out)
+
+
+def _retarget_void_figure_number_links(html: str, found_figures: set[str]) -> str:
+    """Retarget publisher placeholder anchors used for split figure refs."""
+    if not found_figures or "javascript:void(0)" not in html:
+        return html
+    inline_wrap = r"(?:<(?:i|em|b|strong|span)\b[^>]*>\s*){0,3}"
+    inline_close = r"(?:\s*</(?:i|em|b|strong|span)>){0,3}"
+    pattern = re.compile(
+        rf"(?P<prefix>\b{_FIG_REF_LABEL_TOKEN}\.?\s*{inline_wrap})"
+        r"<a(?P<attrs>\b[^>]*\bhref\s*=\s*([\"'])javascript:void\(0\)\3[^>]*)>"
+        rf"\s*(?P<num>{_FIG_KEY_TOKEN})(?P<suffix>{_FIG_PANEL_SUFFIX_TOKEN})?"
+        r"(?P<trail>[\)\]\.,;:]?)\s*</a>"
+        rf"(?P<closing>{inline_close})",
+        re.IGNORECASE,
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        num = match.group("num")
+        key = _figure_key_from_visible_number(num)
+        if key not in found_figures:
+            return match.group(0)
+        suffix = match.group("suffix") or ""
+        trail = match.group("trail") or ""
+        attrs = re.sub(
+            r'\bhref\s*=\s*(["\'])javascript:void\(0\)\1',
+            f'href="#fig-{key}"',
+            match.group("attrs"),
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        attrs = _replace_href_and_link_class(attrs, f"#fig-{key}", "z2m-fig-link")
+        return f"{match.group('prefix')}<a{attrs}>{num}{suffix}{trail}</a>{match.group('closing')}"
+
+    return pattern.sub(_replace, html)
 
 
 def _repair_figure_refs_split_by_line_number_artifacts(html: str, found_figures: set[str]) -> str:
@@ -20473,6 +20505,7 @@ def _polish_phase_references_and_links(state: RawPolishState, context: RawPolish
             language_policy=language_policy,
         )
         polished = _link_figure_refs(polished, found_figures)
+        polished = _retarget_void_figure_number_links(polished, found_figures)
         polished = _repair_figure_ref_links_misclassified_as_refs(polished, found_figures)
         polished = _repair_bracket_citation_fig_links_misclassified_as_figures(polished)
         polished = _repair_sup_figure_chain_continuations(polished, found_figures)

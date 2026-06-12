@@ -9196,6 +9196,105 @@ def test_polish_html_document_retargets_caption_id_to_image_with_page_anchor() -
     assert 'href="#fig-1"' in polished
 
 
+def test_polish_html_document_anchors_heading_figure_caption_to_previous_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>Optical coherence tomography revealed optic disc edema (Figure 2).</p>"
+        '<p><img src="oct.jpg"/></p>'
+        "<h2><b>FIGURE 2: Retinal photographs and thickness evaluation</b></h2>"
+        "<p>Retinal nerve fiber layer defects were observed in both eyes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="oct.jpg"' in fig2
+    assert re.search(
+        r'<h2\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-2")[^>]*>[\s\S]*?Retinal photographs',
+        fig2,
+    )
+    assert 'href="#fig-2"' in polished
+
+
+def test_polish_html_document_retargets_void_number_link_for_heading_figure_ref() -> None:
+    html = (
+        "<html><body>"
+        "<p>Optical coherence tomography revealed optic disc edema "
+        '(Figure <i><a href="javascript:void(0)"> 2 </a></i>).</p>'
+        '<p><img src="oct.jpg"/></p>'
+        "<h2><b>FIGURE 2: Retinal photographs and thickness evaluation</b></h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index('id="fig-2"')]
+
+    assert "javascript:void(0)" not in body
+    assert re.search(
+        r'Figure\s*<i>\s*<a href="#fig-2" class="z2m-fig-link">\s*2\s*</a>\s*</i>',
+        body,
+    )
+    assert 'src="oct.jpg"' in polished
+
+
+def test_polish_html_document_anchors_heading_figure_caption_to_following_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>A diagram of participant flow is shown in figure 2.</p>"
+        "<h2>Figure 2 Participant recruitment flow diagram.</h2>"
+        '<p><img src="flow.jpg"/></p>'
+        "<p>One hundred and seventy-two patients were approached.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="flow.jpg"' in fig2
+    assert re.search(
+        r'<h2\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-2")[^>]*>[\s\S]*?Participant recruitment',
+        fig2,
+    )
+    assert 'href="#fig-2"' in polished
+
+
+def test_polish_html_document_wraps_heading_caption_without_image_as_missing() -> None:
+    html = (
+        "<html><body>"
+        "<p>Compare the missing schematic in Figure 8.</p>"
+        "<h2>Figure 8. Missing heading caption.</h2>"
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig8_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-8")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig8_match is not None
+    fig8 = fig8_match.group(0)
+    assert "Figure 8 image was not extracted" in fig8
+    assert 'data-z2m-origin="caption-only-target"' in fig8
+    assert re.search(
+        r'<h2\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-8")[^>]*>[\s\S]*?Missing heading caption',
+        fig8,
+    )
+    assert 'href="#fig-8"' in polished
+
+
 def test_polish_html_document_recovers_orphan_figure_from_page_linked_ref_across_table() -> None:
     html = (
         "<html><body>"
