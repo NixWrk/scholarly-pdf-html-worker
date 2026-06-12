@@ -9157,6 +9157,37 @@ def test_polish_html_document_retargets_caption_id_to_image_with_page_anchor() -
     assert 'href="#fig-1"' in polished
 
 
+def test_polish_html_document_recovers_orphan_figure_from_page_linked_ref_across_table() -> None:
+    html = (
+        "<html><body>"
+        '<p>Detailed information can be found in <a href="#table-4">Table 4</a> '
+        'and <a href="#page-13-0">Figure 3</a>.</p>'
+        '<div id="table-4" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">TABLE 4. Spatial navigation clusters.</p>'
+        "<table><tr><td>Cluster</td></tr></table></div>"
+        '<p><img data-z2m-src="_page_13_Figure_1.jpeg" src="fig3.jpg"/></p>'
+        "<p><span id=\"page-13-0\"></span> Brain areas activated by spatial navigation "
+        "in EB and SC and results of conjunction analysis. (Left) 3D renders of the brain "
+        "and activation clusters. (Right) Axial cuts of the brain with identified clusters.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert 'src="fig3.jpg"' in fig3
+    assert "Brain areas activated by spatial navigation" in fig3
+    assert 'class="z2m-figure-target"' in fig3
+    assert 'class="z2m-figure-caption"' in fig3
+    assert 'href="#fig-3"' in polished
+    assert 'href="#page-13-0">Figure 3</a>' not in polished
+
+
 def test_polish_html_document_retargets_caption_id_across_short_ocr_prose_gap() -> None:
     html = (
         "<html><body>"

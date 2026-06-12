@@ -10827,6 +10827,24 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
                 _add(_figure_key_from_visible_number(match.group(2)))
         return nums
 
+    def _page_linked_missing_figure_refs() -> dict[str, list[str]]:
+        refs_by_page: dict[str, list[str]] = {}
+        for anchor_match in _PAGE_ANCHOR_PATTERN.finditer(html):
+            href_match = re.search(
+                r'\bhref\s*=\s*(["\'])#(?P<page>page-[^"\']+)\1',
+                anchor_match.group("attrs"),
+                re.IGNORECASE,
+            )
+            if href_match is None:
+                continue
+            refs = _figure_ref_nums_from_visible(_visible_text(anchor_match.group("body")))
+            if len(refs) != 1:
+                continue
+            page_id = href_match.group("page")
+            if refs[0] not in refs_by_page.setdefault(page_id, []):
+                refs_by_page[page_id].append(refs[0])
+        return refs_by_page
+
     def _nearby_missing_refs_after(index: int, *, window: int = 7) -> list[str]:
         refs: list[str] = []
         seen: set[str] = set()
@@ -10895,6 +10913,21 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
         bare_panel_hits = len(re.findall(r"(?:^|[.;]\s+)[A-Ha-h]\s+(?:Before|After|[A-Z(])", visible))
         if bare_panel_hits >= 2:
             return True
+        orientation_panel_hits = {
+            match.group(1).lower()
+            for match in re.finditer(
+                r"\((left|right|top|bottom|upper|lower|middle|center|central)\)",
+                visible,
+                re.IGNORECASE,
+            )
+        }
+        if len(orientation_panel_hits) >= 2 and re.search(
+            r"\b(?:render|renders|image|images|panel|panels|plot|plots|map|maps|slice|slices|"
+            r"diagram|schematic|cluster|clusters|activated|displayed)\b",
+            visible,
+            re.IGNORECASE,
+        ):
+            return True
         return bool(
             re.search(r"\b(?:Before|After)\b[\s\S]{0,240}\b(?:Before|After)\b", visible)
             and re.search(r"\b(?:volume|flow|trace|curve|micrograph|image|plot|diagram|schematic)\b", visible, re.IGNORECASE)
@@ -10919,6 +10952,31 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
                 _node_raw(caption_index),
                 lambda open_tag: _add_class_attr(_remove_id_attr(open_tag), "z2m-figure-caption"),
             )
+
+    page_linked_refs = _page_linked_missing_figure_refs()
+
+    for index in range(len(matches)):
+        if not _is_orphan_figure_image(index) or index in assigned_images:
+            continue
+        caption_index = _following_unlabeled_caption_index(index)
+        if caption_index is None:
+            continue
+        caption_raw = _node_raw(caption_index)
+        page_ids = [
+            match.group("page")
+            for match in re.finditer(
+                r'\bid\s*=\s*(["\'])(?P<page>page-[^"\']+)\1',
+                caption_raw,
+                re.IGNORECASE,
+            )
+        ]
+        candidates: list[str] = []
+        for page_id in page_ids:
+            for fig_num in page_linked_refs.get(page_id, []):
+                if fig_num not in found_figures and fig_num not in recovered and fig_num not in candidates:
+                    candidates.append(fig_num)
+        if len(candidates) == 1:
+            _assign_image(index, candidates[0], caption_index)
 
     # Strongest signal: a Marker figure image followed by an unlabeled panel
     # legend, then the next numbered figure target. Use the missing predecessor.
