@@ -16,6 +16,16 @@ VISIBLE_FIGURE_REF_RE = re.compile(
     r"(?P<letter>[A-Z])?\b",
     re.IGNORECASE,
 )
+AUTHOR_YEAR_FIGURE_PREFIX_RE = re.compile(
+    r"(?:^|[\(\[\{~;]\s*)"
+    r"(?:[A-Z][A-Za-z'`\-]+(?:\s+et\s+al\.)?|[A-Z][A-Za-z'`\-]+\s+(?:and|&)\s+[A-Z][A-Za-z'`\-]+)"
+    r"\s*,?\s*(?:19|20)\d{2}[a-z]?\s*,?\s*$",
+    re.IGNORECASE,
+)
+AUTHOR_YEAR_CITATION_RE = re.compile(
+    r"\b[A-Z][A-Za-z'`\-]+(?:\s+et\s+al\.)?\s*,?\s*(?:19|20)\d{2}[a-z]?\b",
+    re.IGNORECASE,
+)
 
 
 def figure_key_from_visible_match(match: re.Match[str]) -> str:
@@ -50,6 +60,24 @@ def has_nearby_fig_link(block: Block, figure_key: str, text_pos: int) -> bool:
     return re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_key)}['\"]", raw_window, re.IGNORECASE) is not None
 
 
+def is_external_author_year_figure_ref(block: Block, match: re.Match[str]) -> bool:
+    left = block.text[max(0, match.start() - 120) : match.start()]
+    if AUTHOR_YEAR_FIGURE_PREFIX_RE.search(left):
+        return True
+
+    opener = max(left.rfind("("), left.rfind("["), left.rfind("{"), left.rfind("~"))
+    if opener < 0 or len(left) - opener > 120:
+        return False
+    right = block.text[match.end() : min(len(block.text), match.end() + 140)]
+    closer_candidates = [pos for pos in (right.find(")"), right.find("]"), right.find("}"), right.find("!")) if pos >= 0]
+    if not closer_candidates:
+        return False
+    citation_clause = left[opener:] + match.group(0) + right[: min(closer_candidates) + 1]
+    if not AUTHOR_YEAR_CITATION_RE.search(citation_clause):
+        return False
+    return re.search(r"\b(?:Fig\.?|Figure)\s+\d", citation_clause, re.IGNORECASE) is not None
+
+
 def visible_figure_target_defects(
     body_blocks: Iterable[Block],
     fig_targets: set[str],
@@ -63,6 +91,8 @@ def visible_figure_target_defects(
         for match in VISIBLE_FIGURE_REF_RE.finditer(block.text):
             figure_key = figure_key_from_visible_match(match)
             if is_external_supplementary_figure_ref(match):
+                continue
+            if is_external_author_year_figure_ref(block, match):
                 continue
             if figure_key in fig_targets:
                 continue

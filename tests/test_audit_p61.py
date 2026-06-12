@@ -59,3 +59,18 @@ def test_visible_figure_target_defects_accepts_nearby_existing_link() -> None:
     )
 
     assert _defects(block) == []
+
+
+def test_visible_figure_target_defects_ignores_external_author_year_figure_citation() -> None:
+    block = _block(
+        "Perusal of published distributions (Fiorani et al., 1992, Fig. 5; "
+        "Zhou et al., 2000, Fig. 19) supports the range."
+    )
+
+    assert _defects(block) == []
+
+
+def test_visible_figure_target_defects_keeps_local_figure_after_author_year_sentence() -> None:
+    block = _block("Fiorani et al. described similar effects in 1992. Figure 5 shows the local result.")
+
+    assert [defect.id for defect in _defects(block)] == ["P61"]
