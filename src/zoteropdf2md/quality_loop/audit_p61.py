@@ -40,6 +40,11 @@ def is_external_supplementary_figure_ref(match: re.Match[str]) -> bool:
     return bool(match.group("supp")) or key.startswith("s")
 
 
+def is_compound_chapter_style_figure_ref(match: re.Match[str]) -> bool:
+    number = match.group("num")
+    return re.search(r"(?:[\-\u2010-\u2014]|\.\s*\d)", number) is not None
+
+
 def figure_target_keys(html: str) -> set[str]:
     return {
         key.lower()
@@ -95,6 +100,8 @@ def visible_figure_target_defects(
             if is_external_author_year_figure_ref(block, match):
                 continue
             if figure_key in fig_targets:
+                continue
+            if is_compound_chapter_style_figure_ref(match):
                 continue
             if has_nearby_fig_link(block, figure_key, match.start()):
                 continue

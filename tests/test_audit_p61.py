@@ -52,6 +52,12 @@ def test_visible_figure_target_defects_ignores_supplementary_references() -> Non
     assert _defects(_block("The details are shown in Figure S1.")) == []
 
 
+def test_visible_figure_target_defects_ignores_chapter_style_compound_numbers() -> None:
+    assert _defects(_block("The next section explains the retinotopic map (Fig. 7.5).")) == []
+    assert _defects(_block("The approach follows the workflow in Figure 5-1.")) == []
+    assert [defect.id for defect in _defects(_block("The local result is summarized in Figure 5."))] == ["P61"]
+
+
 def test_visible_figure_target_defects_accepts_nearby_existing_link() -> None:
     block = _block(
         "The result is summarized in Figure 3.",

@@ -5704,6 +5704,45 @@ def test_polish_html_document_discloses_caption_without_image_and_adds_target_st
     assert ":target" in polished
 
 
+def test_polish_html_document_wraps_accepted_manuscript_figure_placeholder_as_missing_target() -> None:
+    html = (
+        "<html><body>"
+        "<p>The spectral echo analysis is summarized in Figure 1.</p>"
+        "<h2>/ FIGURE 1 NEAR HERE /</h2>"
+        "<table><tr><th>Figure and table captions</th></tr>"
+        "<tr><td>Figure 1. Spectral cues used in the object detection task.</td></tr></table>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig1_match is not None
+    fig1 = fig1_match.group(0)
+    assert 'data-z2m-origin="accepted-manuscript-placeholder"' in fig1
+    assert "Figure 1 image was not extracted" in fig1
+    assert "NEAR HERE" in fig1
+    assert 'class="z2m-missing-figure-warning z2m-figure-target"' in fig1
+    assert 'href="#fig-1"' in polished
+
+
+def test_polish_html_document_wraps_slash_only_accepted_manuscript_figure_placeholder() -> None:
+    html = (
+        "<html><body>"
+        "<p>The room impulse response results are shown in Figure 12.</p>"
+        "<p>/ FIGURE 12 /</p>"
+        "<p>Figure 12</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<div id="fig-12" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">' in polished
+    assert 'data-z2m-origin="accepted-manuscript-placeholder"' in polished
+    assert 'href="#fig-12"' in polished
+    assert polished.count('id="fig-12"') == 1
+
+
 def test_polish_html_document_does_not_warn_when_empty_spacer_separates_image_and_caption() -> None:
     html = (
         "<html><body>"

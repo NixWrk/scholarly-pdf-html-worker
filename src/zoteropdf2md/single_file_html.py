@@ -11351,7 +11351,18 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
     out: list[str] = []
     skip_stack: list[str] = []
     scan_text = ""
-    inside_fig_caption = False
+    protected_figure_tag: str | None = None
+
+    def _opens_protected_figure_text(raw_tag: str) -> str | None:
+        open_match = _OPEN_TAG_PATTERN.match(raw_tag)
+        if open_match is None:
+            return None
+        tag_name = open_match.group(1).lower()
+        if tag_name == "p" and re.search(r'\bid\s*=\s*["\']fig-[A-Za-z0-9-]+', raw_tag):
+            return tag_name
+        if re.search(r'\bclass\s*=\s*["\'][^"\']*\bz2m-missing-figure-warning\b', raw_tag):
+            return tag_name
+        return None
 
     def _replace(m: re.Match[str]) -> str:
         prefix = m.group(1)
@@ -11391,14 +11402,15 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             continue
         if part.startswith("<"):
             raw_tag = part.strip().lower()
-            if re.match(r"</p\b", raw_tag):
-                inside_fig_caption = False
-            elif re.match(r"<p\b", raw_tag) and re.search(r'\bid\s*=\s*["\']fig-[A-Za-z0-9-]+', raw_tag):
-                inside_fig_caption = True
+            close_match = _CLOSE_TAG_PATTERN.match(raw_tag)
+            if close_match is not None and close_match.group(1).lower() == protected_figure_tag:
+                protected_figure_tag = None
+            elif protected_figure_tag is None:
+                protected_figure_tag = _opens_protected_figure_text(raw_tag)
             _update_skip_stack(part, skip_stack)
             out.append(part)
             continue
-        if skip_stack or inside_fig_caption:
+        if skip_stack or protected_figure_tag is not None:
             out.append(part)
             continue
         scan_text = part
@@ -15833,6 +15845,91 @@ def _missing_figure_warning_html(fig_num: str, *, figure_caption_language: str =
             "Please check the original PDF for the missing visual content."
         )
     return f'<p class="z2m-missing-figure-warning" role="note">{text}</p>'
+
+
+_ACCEPTED_MANUSCRIPT_FIGURE_PLACEHOLDER_RE = re.compile(
+    r"^\s*(?:[/\[\(\{]\s*)?"
+    r"(?:INSERT\s+)?FIG(?:URE)?\.?\s+(?P<num>\d{1,3})\s+"
+    r"(?:NEAR\s+HERE|HERE|GOES\s+HERE|TO\s+COME)"
+    r"(?:\s*[/\]\)\}])?\s*$",
+    re.IGNORECASE,
+)
+_ACCEPTED_MANUSCRIPT_SLASH_FIGURE_PLACEHOLDER_RE = re.compile(
+    r"^\s*/\s*(?:INSERT\s+)?FIG(?:URE)?\.?\s+(?P<num>\d{1,3})\s*/\s*$",
+    re.IGNORECASE,
+)
+
+
+def _wrap_accepted_manuscript_figure_placeholders_as_missing(
+    html: str,
+    *,
+    figure_caption_language: str = "en",
+) -> tuple[str, set[str]]:
+    nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
+    if not nodes:
+        return html, set()
+
+    existing_ids = {
+        match.group("id").lower()
+        for match in re.finditer(r'\bid\s*=\s*(["\'])(?P<id>fig-[A-Za-z0-9-]+)\1', html, re.IGNORECASE)
+    }
+    replacements: dict[int, str] = {}
+    found: set[str] = set()
+
+    for index, node in enumerate(nodes):
+        raw = node.group(0)
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            continue
+        if _node_has_class(raw, "z2m-float-unit") or _node_has_class(raw, "z2m-missing-figure-unit"):
+            continue
+        visible = _visible_text(raw)
+        placeholder = _ACCEPTED_MANUSCRIPT_FIGURE_PLACEHOLDER_RE.match(visible)
+        if placeholder is None:
+            placeholder = _ACCEPTED_MANUSCRIPT_SLASH_FIGURE_PLACEHOLDER_RE.match(visible)
+        if placeholder is None:
+            continue
+        fig_num = _figure_key_from_visible_number(placeholder.group("num"))
+        target_id = f"fig-{fig_num}"
+        if target_id.lower() in existing_ids:
+            continue
+
+        warning_html = _missing_figure_warning_html(
+            fig_num,
+            figure_caption_language=figure_caption_language,
+        )
+        warning_html = re.sub(
+            r"^<p\b",
+            '<p data-z2m-origin="accepted-manuscript-placeholder"',
+            warning_html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        warning_html = re.sub(
+            r'\bclass\s*=\s*(["\'])z2m-missing-figure-warning\1',
+            r'class=\1z2m-missing-figure-warning z2m-figure-target\1',
+            warning_html,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        caption_html = _strip_node_id_and_add_class(raw, "z2m-figure-caption")
+        replacements[index] = (
+            f'<div id="{target_id}" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+            f"{warning_html}{caption_html}</div>"
+        )
+        existing_ids.add(target_id.lower())
+        found.add(fig_num)
+
+    if not replacements:
+        return html, set()
+
+    out_parts: list[str] = []
+    cursor = 0
+    for index, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        out_parts.append(replacements.get(index, node.group(0)))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), found
 
 
 def _insert_missing_figure_warnings(
@@ -20311,7 +20408,6 @@ def _polish_phase_frontmatter_and_footnotes(state: RawPolishState, context: RawP
 
 
 def _polish_phase_semantic_targets(state: RawPolishState, context: RawPolishContext) -> RawPolishState:
-    del context
     polished = state.html
     polished = _strip_reference_links_in_protected_blocks(polished)
     polished = _strip_pdf_line_number_artifacts(polished)
@@ -20323,6 +20419,11 @@ def _polish_phase_semantic_targets(state: RawPolishState, context: RawPolishCont
     polished, found_tables = _add_table_anchors(polished)
     polished, recovered_figures = _recover_orphan_figure_anchors(polished, found_figures)
     found_figures.update(recovered_figures)
+    polished, placeholder_figures = _wrap_accepted_manuscript_figure_placeholders_as_missing(
+        polished,
+        figure_caption_language=context.table_caption_language,
+    )
+    found_figures.update(placeholder_figures)
     polished, found_boxes = _add_box_anchors(polished)
     polished, _ = _repair_known_float_body_intrusions(polished)
     return state.with_updates(
