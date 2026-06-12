@@ -10608,6 +10608,51 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             is not None
         )
 
+    def _embedded_figure_caption_num(index: int) -> str | None:
+        raw = _node_raw(index)
+        if _node_has_class(raw, "z2m-front-matter") or re.search(
+            r'\bblock-type\s*=\s*(["\'])Text\1',
+            raw,
+            re.IGNORECASE,
+        ):
+            return None
+        visible = _visible_text(raw)
+        if not visible or len(visible) > 700:
+            return None
+        if (
+            _figure_caption_num_from_visible(visible) is not None
+            or _table_caption_key_from_visible(visible) is not None
+        ):
+            return None
+        matches = list(_FIG_REF_PATTERN.finditer(visible))
+        if len(matches) != 1:
+            return None
+        match = matches[0]
+        left = visible[: match.start()].strip(" \t\r\n.;:,-|")
+        right = visible[match.end() :].strip(" \t\r\n.;:,-|")
+        if not left or not right:
+            return None
+        if len(left) > 260 or len(right) > 520:
+            return None
+        if left.endswith(("(", "[", "{")) or right.startswith((")", "]", "}")):
+            return None
+        if re.search(
+            r"\b(?:associated with|discussed in|shown in|reported in|mentioned in|described in|"
+            r"depicted in|illustrated in|presented in|available in|see|in)\s*$",
+            left,
+            re.IGNORECASE,
+        ):
+            return None
+        if re.match(r"^(?:and|or|&|also|tables?\b|figs?\b|figures?\b)", right, re.IGNORECASE):
+            return None
+        if re.match(
+            r"^(?:shows?|shown|illustrates?|depicts?|presents?|describes?|see|where|which|that)\b",
+            right,
+            re.IGNORECASE,
+        ):
+            return None
+        return _figure_key_from_visible_number(match.group(2))
+
     def _nearby_image_index(caption_index: int, fig_num: str) -> int | None:
         grid_index = _caption_grid_image_index(caption_index)
         if grid_index is not None:
@@ -10657,6 +10702,10 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
     for index, match in enumerate(matches):
         raw = _node_raw(index)
         fig_num = _figure_caption_num_from_visible(_visible_text(raw))
+        embedded_caption = False
+        if fig_num is None:
+            fig_num = _embedded_figure_caption_num(index)
+            embedded_caption = fig_num is not None
         if fig_num is None:
             continue
         found.add(fig_num)
@@ -10682,6 +10731,8 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             image_index = _nearby_image_index(index, fig_num)
             if image_index is not None:
                 target_index = image_index
+            elif embedded_caption:
+                continue
 
         target_raw = _node_raw(target_index)
         replacements[target_index] = _replace_open(

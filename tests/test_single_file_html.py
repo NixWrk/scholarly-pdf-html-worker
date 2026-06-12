@@ -9188,6 +9188,53 @@ def test_polish_html_document_recovers_orphan_figure_from_page_linked_ref_across
     assert 'href="#page-13-0">Figure 3</a>' not in polished
 
 
+def test_polish_html_document_recovers_embedded_figure_label_caption_after_image() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="front.jpg"/></p>'
+        "<p>The Smart Power Assistance Module for Manual Wheelchairs (front view) "
+        "<b>Figure 1</b> The Smart Power Assistance Module for Manual Wheelchairs (front view).</p>"
+        '<p><img src="back.jpg"/></p>'
+        "<p>The Smart Power Assistance Module for Manual Wheelchairs (back view) "
+        "<b>Figure 2</b> The Smart Power Assistance Module for Manual Wheelchairs (back view).</p>"
+        "<p>The SPAM shown in Figure 1 and Figure 2 senses propulsion forces.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig1_match is not None
+    fig1 = fig1_match.group(0)
+    assert 'src="front.jpg"' in fig1
+    assert "Manual Wheelchairs (front view)" in fig1
+    assert 'class="z2m-figure-target"' in fig1
+    assert 'class="z2m-figure-caption"' in fig1
+
+    fig2_match = re.search(r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig2_match is not None
+    fig2 = fig2_match.group(0)
+    assert 'src="back.jpg"' in fig2
+    assert "Manual Wheelchairs (back view)" in fig2
+    assert 'href="#fig-1"' in polished
+    assert 'href="#fig-2"' in polished
+
+
+def test_polish_html_document_ignores_embedded_figure_ref_in_body_text_after_image() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="diagram.jpg"/></p>'
+        '<p block-type="Text">The system shown in Figure 1 describes the wheel force sensor.</p>'
+        "<p>No figure caption follows in this accepted-manuscript text.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    assert 'z2m-figure-unit' not in polished
+
+
 def test_polish_html_document_retargets_caption_id_across_short_ocr_prose_gap() -> None:
     html = (
         "<html><body>"
