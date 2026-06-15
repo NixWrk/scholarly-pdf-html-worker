@@ -5,10 +5,14 @@ import re
 
 from zoteropdf2md.quality_loop.audit_blocks import Block, Defect, attrs as parse_attrs, strip_tags
 from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
-from zoteropdf2md.semantic_labels import figure_key_from_visible_number
+from zoteropdf2md.semantic_labels import (
+    extended_data_figure_key_from_visible_number,
+    figure_key_from_visible_number,
+)
 
 
 VISIBLE_FIGURE_REF_RE = re.compile(
+    r"\b(?P<ext>Extended\s+Data\s+)?"
     r"\b(?P<supp>(?:Supplementary|Supplemental|Suppl\.?)\s+)?"
     r"(?:Fig\.?|Figure)\s+"
     r"(?P<num>(?:S\s*)?\d{1,3}"
@@ -38,6 +42,8 @@ CAPTION_BLOCK_RE = re.compile(
 
 def figure_key_from_visible_match(match: re.Match[str]) -> str:
     key = figure_key_from_visible_number(match.group("num"))
+    if match.group("ext"):
+        return extended_data_figure_key_from_visible_number(match.group("num"))
     if match.group("supp"):
         return f"supplementary-{key}"
     return key

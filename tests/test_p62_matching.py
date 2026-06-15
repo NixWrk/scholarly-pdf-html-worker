@@ -15,9 +15,22 @@ def test_full_figure_label_from_context_expands_hierarchical_label() -> None:
     assert full_figure_label_from_context(context, "3") == "3-1"
 
 
+def test_full_figure_label_from_context_keeps_semantic_extended_data_label() -> None:
+    context = "Extended Data Fig. 3 | T17 Electrode tuning to 30-way finger movements."
+
+    assert full_figure_label_from_context(context, "extended-data-3") == "extended-data-3"
+
+
 def test_strict_figure_label_match_does_not_match_hierarchical_prefix() -> None:
     assert figure_label_present_in_text_strict("Figure 3-1 shows the apparatus.", "3") is False
     assert figure_label_present_in_text_strict("Figure 3 shows the apparatus.", "3") is True
+    assert (
+        figure_label_present_in_text_strict(
+            "Extended Data Fig. 3 | T17 Electrode tuning to 30-way finger movements.",
+            "extended-data-3",
+        )
+        is True
+    )
 
 
 def test_false_page_match_hint_classifies_common_non_visual_pages() -> None:
@@ -36,6 +49,21 @@ def test_caption_head_matching_keeps_true_caption_despite_parenthetical_referenc
     assert caption_head_tokens(snippets, "8")[:3] == ["fluorescence", "response", "after"]
     assert caption_head_present_near_label(page_text, "8", snippets) is True
     assert label_looks_caption_like(page_text, "8") is False
+
+
+def test_caption_head_matching_supports_extended_data_labels() -> None:
+    snippets = ["Extended Data Fig. 3 | T17 Electrode tuning to 30-way finger movements."]
+    page_text = (
+        "Earlier prose cited (Extended Data Fig. 3). "
+        "Extended Data Fig. 3 | T17 Electrode tuning to 30-way finger movements."
+    )
+
+    assert caption_head_tokens(snippets, "extended-data-3")[:3] == ["t17", "electrode", "tuning"]
+    assert caption_head_present_near_label(page_text, "extended-data-3", snippets) is True
+    assert label_looks_caption_like("Extended Data Fig. 3 | T17 Electrode tuning.", "extended-data-3") is True
+    assert false_page_match_hint("Earlier prose cited (Extended Data Fig. 3).", "extended-data-3") == (
+        "prose_parenthetical_reference"
+    )
 
 
 def test_best_pdf_text_page_scores_snippet_overlap() -> None:

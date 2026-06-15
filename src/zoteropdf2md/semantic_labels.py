@@ -17,5 +17,9 @@ def supplementary_figure_key_from_visible_number(value: str) -> str:
     return f"supplementary-{figure_key_from_visible_number(value)}"
 
 
+def extended_data_figure_key_from_visible_number(value: str) -> str:
+    return f"extended-data-{figure_key_from_visible_number(value)}"
+
+
 def normalize_table_key(label: str) -> str:
     return normalize_semantic_key(label)

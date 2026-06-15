@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from ..semantic_labels import (
+    extended_data_figure_key_from_visible_number,
     figure_key_from_visible_number,
     normalize_table_key,
     supplementary_figure_key_from_visible_number,
@@ -30,6 +31,7 @@ FIG_REF_LABEL_TOKEN = (
 SUPPLEMENTARY_FIG_PREFIX_TOKEN = r"(?:Supplementary|Supplemental|Suppl\.?)"
 SUPPLEMENTARY_FIG_KEY_TOKEN = rf"(?:S\s*)?{FIG_KEY_TOKEN}"
 SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN = rf"(?:S\s*)?{FIG_RELAXED_KEY_TOKEN}"
+EXTENDED_DATA_FIG_PREFIX_TOKEN = r"(?:Extended\s+Data)"
 TABLE_KEY_TOKEN = r"(?:[A-Z]\d+|[IVXLCM]+|\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*)"
 TABLE_REF_WORD_TOKEN = (
     r"(?:TABLES?|Tables?|"
@@ -270,6 +272,21 @@ def caption_tail_opens_caption(tail: str) -> bool:
 
 
 def figure_caption_num_from_visible(visible: str) -> str | None:
+    extended_data_match = re.match(
+        rf"^\s*{EXTENDED_DATA_FIG_PREFIX_TOKEN}\s+"
+        r"(?:FIG(?:URE)?|Fig(?:ure)?)"
+        rf"\.?\s*({FIG_RELAXED_KEY_TOKEN})({FIG_CAPTION_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
+        visible,
+        re.IGNORECASE,
+    )
+    if extended_data_match is not None:
+        tail = extended_data_match.group(3)
+        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+            return None
+        if not caption_tail_opens_caption(tail):
+            return None
+        return extended_data_figure_key_from_visible_number(extended_data_match.group(1))
+
     supplementary_match = re.match(
         rf"^\s*{SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s+"
         r"(?:FIG(?:URE)?|Fig(?:ure)?"

@@ -113,6 +113,7 @@ from .raw_html_polish.float_units import (
     FIG_PANEL_SUFFIX_TOKEN as _FIG_PANEL_SUFFIX_TOKEN,
     FIG_REF_LABEL_TOKEN as _FIG_REF_LABEL_TOKEN,
     FIG_RELAXED_KEY_TOKEN as _FIG_RELAXED_KEY_TOKEN,
+    EXTENDED_DATA_FIG_PREFIX_TOKEN as _EXTENDED_DATA_FIG_PREFIX_TOKEN,
     SUPPLEMENTARY_FIG_KEY_TOKEN as _SUPPLEMENTARY_FIG_KEY_TOKEN,
     SUPPLEMENTARY_FIG_PREFIX_TOKEN as _SUPPLEMENTARY_FIG_PREFIX_TOKEN,
     SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN as _SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN,
@@ -170,6 +171,7 @@ from .raw_html_polish.url_autolink import (
     autolink_text_urls as _autolink_text_urls,
 )
 from .semantic_labels import (
+    extended_data_figure_key_from_visible_number as _extended_data_figure_key_from_visible_number,
     figure_key_from_visible_number as _figure_key_from_visible_number,
     normalize_table_key as _normalize_table_key,
     supplementary_figure_key_from_visible_number as _supplementary_figure_key_from_visible_number,
@@ -480,6 +482,12 @@ _EXT_FIG_REF_PATTERN = re.compile(
 _SUPPLEMENTARY_FIG_REF_PATTERN = re.compile(
     rf"\b(?P<prefix>{_SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s+{_FIG_REF_LABEL_TOKEN}\.?)"
     rf"\s*(?P<num>{_SUPPLEMENTARY_FIG_KEY_TOKEN})(?P<suffix>{_FIG_PANEL_SUFFIX_TOKEN})?"
+    r"\b(?!\s*(?:\.\s|\|))",
+    re.IGNORECASE,
+)
+_EXTENDED_DATA_FIG_REF_PATTERN = re.compile(
+    rf"\b(?P<prefix>{_EXTENDED_DATA_FIG_PREFIX_TOKEN}\s+{_FIG_REF_LABEL_TOKEN}\.?)"
+    rf"\s*(?P<num>{_FIG_KEY_TOKEN})(?P<suffix>{_FIG_PANEL_SUFFIX_TOKEN})?"
     r"\b(?!\s*(?:\.\s|\|))",
     re.IGNORECASE,
 )
@@ -10683,6 +10691,24 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
         image_open = _SENTENCE_P_NODE_PATTERN.match(_node_raw(index))
         return image_open is not None and not _has_id_attr(image_open.group("open"))
 
+    def _image_is_immediately_captioned_as_different_figure(index: int, fig_num: str) -> bool:
+        scan = index + 1
+        while scan < len(matches) and _between_is_whitespace(scan - 1, scan):
+            raw = _node_raw(scan)
+            if _has_image(scan) or re.search(r"<table\b", raw, re.IGNORECASE):
+                return False
+            visible = _visible_text(raw).strip()
+            if not visible:
+                scan += 1
+                continue
+            caption_num = _figure_caption_num_from_visible(visible)
+            if caption_num is not None:
+                return caption_num != fig_num
+            if not _node_is_caption_bridge_or_note_paragraph(raw):
+                return False
+            scan += 1
+        return False
+
     def _caption_grid_image_index(caption_index: int) -> int | None:
         caption_run_start = caption_index
         while caption_run_start > 0 and _between_is_whitespace(caption_run_start - 1, caption_run_start):
@@ -10796,6 +10822,8 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             if _node_is_caption_bridge_or_note_paragraph(previous_raw):
                 continue
             if _image_can_receive_figure_id(previous):
+                if _image_is_immediately_captioned_as_different_figure(previous, fig_num):
+                    break
                 return previous
             if _has_image(previous):
                 break
@@ -10814,6 +10842,11 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
                 break
             following_raw = _node_raw(following)
             if _image_can_receive_figure_id(following):
+                if (
+                    (following != caption_index + 1 or _node_has_class(_node_raw(caption_index), "has-continuation"))
+                    and _image_is_immediately_captioned_as_different_figure(following, fig_num)
+                ):
+                    break
                 return following
             if _has_image(following):
                 break
@@ -11070,11 +11103,16 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
         seen: set[str] = set()
         nums: list[str] = []
         supplementary_spans: list[tuple[int, int]] = []
+        extended_data_spans: list[tuple[int, int]] = []
 
         def _add(num: str) -> None:
             if num not in found_figures and num not in recovered and num not in seen:
                 seen.add(num)
                 nums.append(num)
+
+        for match in _EXTENDED_DATA_FIG_REF_PATTERN.finditer(visible):
+            extended_data_spans.append((match.start(), match.end()))
+            _add(_extended_data_figure_key_from_visible_number(match.group("num")))
 
         for match in _SUPPLEMENTARY_FIG_REF_PATTERN.finditer(visible):
             supplementary_spans.append((match.start(), match.end()))
@@ -11082,11 +11120,17 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
 
         for pattern in (_FIG_REF_PATTERN, _EXT_FIG_REF_PATTERN):
             for match in pattern.finditer(visible):
-                if any(start <= match.start() < end for start, end in supplementary_spans):
+                if any(
+                    start <= match.start() < end
+                    for start, end in (*supplementary_spans, *extended_data_spans)
+                ):
                     continue
                 _add(_figure_key_from_visible_number(match.group(2)))
         for match in _TERMINAL_FIG_REF_PATTERN.finditer(visible):
-            if any(start <= match.start() < end for start, end in supplementary_spans):
+            if any(
+                start <= match.start() < end
+                for start, end in (*supplementary_spans, *extended_data_spans)
+            ):
                 continue
             _add(_figure_key_from_visible_number(match.group(2)))
         return nums
@@ -11599,6 +11643,17 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             return m.group(0)
         return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
 
+    def _replace_extended_data(m: re.Match[str]) -> str:
+        prefix = m.group("prefix")
+        num = m.group("num")
+        suffix = m.group("suffix") or ""
+        key = _extended_data_figure_key_from_visible_number(num)
+        if scan_text and _is_inside_fig_link(scan_text, m.start(), m.end()):
+            return m.group(0)
+        if key not in found_figures:
+            return m.group(0)
+        return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
+
     def _replace_spaced_multipanel(m: re.Match[str]) -> str:
         prefix = m.group(1)
         num = m.group(2)
@@ -11627,7 +11682,9 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             out.append(part)
             continue
         scan_text = part
-        linked = _SUPPLEMENTARY_FIG_REF_PATTERN.sub(_replace_supplementary, part)
+        linked = _EXTENDED_DATA_FIG_REF_PATTERN.sub(_replace_extended_data, part)
+        scan_text = linked
+        linked = _SUPPLEMENTARY_FIG_REF_PATTERN.sub(_replace_supplementary, linked)
         scan_text = linked
         linked = _SPACED_MULTIPANEL_FIG_REF_PATTERN.sub(_replace_spaced_multipanel, linked)
         scan_text = linked
@@ -11886,13 +11943,17 @@ def _rewrite_existing_page_figure_links(
         rf"\.?\s*(?:{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
     )
     supplementary_left_context = rf"\b{_SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s*$"
+    extended_data_left_context = rf"\b{_EXTENDED_DATA_FIG_PREFIX_TOKEN}\s*$"
 
     def _replace_split(m: re.Match[str]) -> str:
         number = m.group("num")
         left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
+        extended_data_context = re.search(extended_data_left_context, left_text, re.IGNORECASE) is not None
         supplementary_context = re.search(supplementary_left_context, left_text, re.IGNORECASE) is not None
         key = (
-            _supplementary_figure_key_from_visible_number(number)
+            _extended_data_figure_key_from_visible_number(number)
+            if extended_data_context
+            else _supplementary_figure_key_from_visible_number(number)
             if supplementary_context
             else _figure_key_from_visible_number(number)
         )
@@ -11912,6 +11973,20 @@ def _rewrite_existing_page_figure_links(
             else body_text
         )
         left_text = _visible_text(html[max(0, m.start() - 180):m.start()])
+        extended_data_direct = re.match(
+            rf"^[\(\[]*(?:(?P<lead>{_EXTENDED_DATA_FIG_PREFIX_TOKEN})\s+)?"
+            r"(?:FIG(?:URE)?S?|Fig(?:ure)?s?)"
+            rf"\.?\s*(?P<num>{_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
+            semantic_body_text,
+            re.IGNORECASE,
+        )
+        extended_data_context = (
+            extended_data_direct is not None
+            and (
+                bool(extended_data_direct.group("lead"))
+                or re.search(extended_data_left_context, left_text, re.IGNORECASE) is not None
+            )
+        )
         supplementary_direct = re.match(
             rf"^[\(\[]*(?:(?P<lead>{_SUPPLEMENTARY_FIG_PREFIX_TOKEN})\s+)?"
             r"(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
@@ -11926,7 +12001,9 @@ def _rewrite_existing_page_figure_links(
                 or re.search(supplementary_left_context, left_text, re.IGNORECASE) is not None
             )
         )
-        if supplementary_context:
+        if extended_data_context:
+            number = _extended_data_figure_key_from_visible_number(extended_data_direct.group("num"))
+        elif supplementary_context:
             number = _supplementary_figure_key_from_visible_number(supplementary_direct.group("num"))
         else:
             direct = re.match(
@@ -11953,7 +12030,7 @@ def _rewrite_existing_page_figure_links(
                     number = num_only.group(1)
         key = (
             number
-            if supplementary_context
+            if supplementary_context or extended_data_context
             else (_figure_key_from_visible_number(number) if number is not None else None)
         )
         if key is None or key not in found_figures:
@@ -12071,6 +12148,7 @@ def _unwrap_unresolved_semantic_page_links(
         rf"\.?\s*(?:{_FIG_KEY_TOKEN}(?:[a-z]|\([a-z]\))?\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
     )
     supplementary_left_context = rf"\b{_SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s*$"
+    extended_data_left_context = rf"\b{_EXTENDED_DATA_FIG_PREFIX_TOKEN}\s*$"
     table_left_context = (
         rf"(?:TABLES?|Tables?|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)\.?\s*"
         rf"(?:{_TABLE_KEY_TOKEN}\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)?$"
@@ -12106,6 +12184,20 @@ def _unwrap_unresolved_semantic_page_links(
         right_text = _visible_text(html[m.end():m.end() + 120])
 
         fig_number: str | None = None
+        extended_data_direct = re.match(
+            rf"^[\(\[]*(?:(?P<lead>{_EXTENDED_DATA_FIG_PREFIX_TOKEN})\s+)?"
+            r"(?:FIG(?:URE)?S?|Fig(?:ure)?s?)"
+            rf"\.?\s*(?P<num>{_FIG_KEY_TOKEN}){fig_tail}[\(\)\]\.,;:]*$",
+            semantic_body_text,
+            re.IGNORECASE,
+        )
+        extended_data_context = (
+            extended_data_direct is not None
+            and (
+                bool(extended_data_direct.group("lead"))
+                or re.search(extended_data_left_context, left_text, re.IGNORECASE) is not None
+            )
+        )
         supplementary_direct = re.match(
             rf"^[\(\[]*(?:(?P<lead>{_SUPPLEMENTARY_FIG_PREFIX_TOKEN})\s+)?"
             r"(?:FIG(?:URE)?S?|Fig(?:ure)?s?|\u0420\u0438\u0441|\u0440\u0438\u0441|\u0424\u0438\u0433|\u0444\u0438\u0433)"
@@ -12120,7 +12212,9 @@ def _unwrap_unresolved_semantic_page_links(
                 or re.search(supplementary_left_context, left_text, re.IGNORECASE) is not None
             )
         )
-        if supplementary_context:
+        if extended_data_context:
+            fig_number = _extended_data_figure_key_from_visible_number(extended_data_direct.group("num"))
+        elif supplementary_context:
             fig_number = _supplementary_figure_key_from_visible_number(supplementary_direct.group("num"))
         else:
             fig_decimal_direct = re.match(
@@ -20846,6 +20940,24 @@ def _retarget_caption_only_figure_ids_to_nearby_images(html: str) -> str:
             end += 1
         return list(range(start, end + 1))
 
+    def _image_is_immediately_captioned_as_different_figure(image_idx: int, fig_num: str) -> bool:
+        scan_idx = image_idx + 1
+        while scan_idx < len(nodes) and _between_is_whitespace(scan_idx - 1, scan_idx):
+            raw = replacements.get(scan_idx, nodes[scan_idx].group(0))
+            if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+                return False
+            visible = _visible_text(raw).strip()
+            if not visible:
+                scan_idx += 1
+                continue
+            caption_num = _figure_caption_num_from_visible(visible)
+            if caption_num is not None:
+                return caption_num != fig_num
+            if not _node_is_caption_bridge_or_note_paragraph(raw):
+                return False
+            scan_idx += 1
+        return False
+
     def _nearby_image_indices(caption_idx: int, fig_num: str, target_id: str, *, relaxed: bool = False) -> list[int]:
         max_scan = 4 if relaxed else 8
         for direction in (1, -1):
@@ -20859,6 +20971,15 @@ def _retarget_caption_only_figure_ids_to_nearby_images(html: str) -> str:
                     break
                 raw = replacements.get(scan_idx, nodes[scan_idx].group(0))
                 if _image_can_receive_target(scan_idx, target_id):
+                    if (
+                        direction > 0
+                        and (
+                            scan_idx != caption_idx + 1
+                            or _node_has_class(replacements.get(caption_idx, nodes[caption_idx].group(0)), "has-continuation")
+                        )
+                        and _image_is_immediately_captioned_as_different_figure(scan_idx, fig_num)
+                    ):
+                        break
                     return _image_run_indices(scan_idx, target_id)
                 if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
                     break

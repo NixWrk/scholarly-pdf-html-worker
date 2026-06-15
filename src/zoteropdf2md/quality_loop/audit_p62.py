@@ -6,8 +6,26 @@ import re
 from typing import Any, Callable
 
 from zoteropdf2md.quality_loop.audit_blocks import Block
+from zoteropdf2md.semantic_labels import (
+    extended_data_figure_key_from_visible_number,
+    supplementary_figure_key_from_visible_number,
+)
 
 
+SEMANTIC_FIGURE_WARNING_TEXT_RE = re.compile(
+    r"\bFigure\s+(?P<label>(?:extended-data|supplementary)-[A-Za-z0-9][A-Za-z0-9.\-\u2010-\u2014]*)\b",
+    re.IGNORECASE,
+)
+EXTENDED_DATA_FIGURE_LABEL_TEXT_RE = re.compile(
+    r"\bExtended\s+Data\s+Fig(?:ure)?\.?\s+"
+    r"(?P<label>\d+[A-Za-z]?|\d+(?:\s*[.\-\u2010-\u2014]\s*\d+(?!\s*[A-Za-z]))+)\b",
+    re.IGNORECASE,
+)
+SUPPLEMENTARY_FIGURE_LABEL_TEXT_RE = re.compile(
+    r"\bSupplement(?:ary|al)?\s+Fig(?:ure)?\.?\s+"
+    r"(?P<label>\d+[A-Za-z]?|\d+(?:\s*[.\-\u2010-\u2014]\s*\d+(?!\s*[A-Za-z]))+)\b",
+    re.IGNORECASE,
+)
 FIGURE_LABEL_TEXT_RE = re.compile(
     r"\b(?:Fig(?:ure)?\.?|Figure)\s+"
     r"(?P<label>\d+[A-Za-z]?|\d+(?:\s*[.\-\u2010-\u2014]\s*\d+(?!\s*[A-Za-z]))+)\b",
@@ -28,6 +46,15 @@ def normalize_figure_label_key(label: str) -> str | None:
 
 
 def figure_label_from_text(text: str) -> str | None:
+    semantic_warning_match = SEMANTIC_FIGURE_WARNING_TEXT_RE.search(text)
+    if semantic_warning_match is not None:
+        return normalize_figure_label_key(semantic_warning_match.group("label"))
+    extended_data_match = EXTENDED_DATA_FIGURE_LABEL_TEXT_RE.search(text)
+    if extended_data_match is not None:
+        return extended_data_figure_key_from_visible_number(extended_data_match.group("label"))
+    supplementary_match = SUPPLEMENTARY_FIGURE_LABEL_TEXT_RE.search(text)
+    if supplementary_match is not None:
+        return supplementary_figure_key_from_visible_number(supplementary_match.group("label"))
     match = FIGURE_LABEL_TEXT_RE.search(text)
     if match is None:
         return None

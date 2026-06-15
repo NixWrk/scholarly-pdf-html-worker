@@ -1,4 +1,5 @@
 from zoteropdf2md.semantic_labels import (
+    extended_data_figure_key_from_visible_number,
     figure_key_from_visible_number,
     normalize_semantic_key,
     normalize_table_key,
@@ -14,6 +15,7 @@ def test_normalize_semantic_key_collapses_separators() -> None:
 def test_figure_key_from_visible_number_normalizes_supplement_prefix() -> None:
     assert figure_key_from_visible_number("S 1") == "s1"
     assert supplementary_figure_key_from_visible_number("S 1") == "supplementary-s1"
+    assert extended_data_figure_key_from_visible_number("8A") == "extended-data-8a"
 
 
 def test_normalize_table_key_uses_semantic_key_rules() -> None:

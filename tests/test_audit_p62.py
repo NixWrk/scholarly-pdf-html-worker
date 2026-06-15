@@ -9,6 +9,8 @@ from zoteropdf2md.quality_loop.audit_p62 import (
 def test_figure_label_from_text_normalizes_panel_labels() -> None:
     assert figure_label_from_text("Figure 4A. Example panel.") == "4a"
     assert figure_label_from_text("Fig. 7. Example.") == "7"
+    assert figure_label_from_text("Figure extended-data-3 image was not extracted.") == "extended-data-3"
+    assert figure_label_from_text("Extended Data Fig. 4 | Fitting single-cell models.") == "extended-data-4"
 
 
 def test_p62_classifier_reports_same_label_image_near_warning() -> None:
@@ -43,3 +45,28 @@ def test_nearby_image_offsets_stops_at_different_labeled_figure_unit() -> None:
 
     assert nearby_image_offsets(blocks, target.index, label="10") == []
     assert nearby_image_offsets(blocks, target.index, label=None) == [-1]
+
+
+def test_p62_classifier_does_not_count_extended_data_missing_warning_next_to_other_caption() -> None:
+    html = "\n".join(
+        [
+            '<div id="fig-extended-data-3" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">',
+            '<p data-z2m-origin="caption-only-target" class="z2m-missing-figure-warning z2m-figure-target">',
+            "Figure extended-data-3 image was not extracted into this HTML.",
+            "</p>",
+            '<p class="z2m-figure-caption"><b>Extended Data Fig. 3 | Missing source visual.</b></p>',
+            "</div>",
+            '<div id="fig-extended-data-4" class="z2m-float-unit z2m-figure-unit">',
+            '<p class="z2m-figure-target"><img src="data:image/png;base64,abc"/></p>',
+            '<p class="z2m-figure-caption"><b>Extended Data Fig. 4 | Fitting single-cell models.</b></p>',
+            "</div>",
+        ]
+    )
+    blocks = parse_overlapping_blocks(html)
+    warning = next(block for block in blocks if "z2m-missing-figure-warning" in block.classes)
+
+    classification = classify_missing_figure_warning(warning, blocks)
+
+    assert classification["defect_id"] == "P62"
+    assert classification["extra"]["figure_label"] == "extended-data-3"
+    assert classification["extra"]["p62_subtype"] == "no_nearby_image"

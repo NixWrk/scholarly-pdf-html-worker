@@ -49,34 +49,55 @@ def best_pdf_text_page(snippets: list[str], pages: list[str]) -> tuple[int, floa
     return best_page, max(0.0, best_score)
 
 
+def _label_number_pattern(value: str) -> str:
+    parts = [part for part in re.split(r"[.\-\u2010-\u2014]+", value.strip()) if part]
+    if len(parts) <= 1:
+        return re.escape(value.strip())
+    return r"\s*[.\-\u2010-\u2014]\s*".join(re.escape(part) for part in parts)
+
+
+def _figure_label_ref_pattern(figure_label: str, *, strict: bool) -> str:
+    label = str(figure_label or "").strip()
+    terminator = r"(?![\w-]|\.[A-Za-z0-9])" if strict else r"(?=\b|[^\w])"
+    lower = label.casefold()
+    if lower.startswith("extended-data-"):
+        number = label[len("extended-data-") :]
+        number_pattern = _label_number_pattern(number)
+        return (
+            rf"(?:\bExtended\s*Data\s+Fig(?:ure)?\.?\s*{number_pattern}"
+            rf"|\bFigure\s+{re.escape(label)}){terminator}"
+        )
+    if lower.startswith("supplementary-"):
+        number = label[len("supplementary-") :]
+        number_pattern = _label_number_pattern(number)
+        return (
+            rf"(?:\bSupplement(?:ary|al)?\s+Fig(?:ure)?\.?\s*{number_pattern}"
+            rf"|\bFigure\s+{re.escape(label)}){terminator}"
+        )
+    return rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}{terminator}"
+
+
 def figure_label_present_in_text(text: str, figure_label: str) -> bool:
     label = str(figure_label or "").strip()
     if not label:
         return False
-    return bool(
-        re.search(
-            rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?=\b|[^\w])",
-            str(text or ""),
-            re.IGNORECASE,
-        )
-    )
+    return bool(re.search(_figure_label_ref_pattern(label, strict=False), str(text or ""), re.IGNORECASE))
 
 
 def figure_label_present_in_text_strict(text: str, figure_label: str) -> bool:
     label = str(figure_label or "").strip()
     if not label:
         return False
-    return bool(
-        re.search(
-            rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
-            str(text or ""),
-            re.IGNORECASE,
-        )
-    )
+    return bool(re.search(_figure_label_ref_pattern(label, strict=True), str(text or ""), re.IGNORECASE))
 
 
 def full_figure_label_from_context(context: str, fallback_label: str) -> str:
     fallback = str(fallback_label or "").strip()
+    if (
+        fallback.casefold().startswith(("extended-data-", "supplementary-"))
+        and figure_label_present_in_text(str(context or ""), fallback)
+    ):
+        return fallback
     candidates: list[str] = []
     for match in re.finditer(
         r"\b(?:fig(?:ure)?\.?)\s*([A-Za-z0-9]+(?:[-.][A-Za-z0-9]+)*[A-Za-z]?)\b",
@@ -102,10 +123,10 @@ def false_page_match_hint(page_text: str, figure_label: str) -> str:
     text = str(page_text or "")
     compact = re.sub(r"\s+", " ", text).strip()
     lower = compact.casefold()
-    label = re.escape(str(figure_label or "").strip())
-    if not label:
+    raw_label = str(figure_label or "").strip()
+    if not raw_label:
         return ""
-    label_ref = rf"(?:fig(?:ure)?\.?)\s*{label}(?![\w-]|\.[A-Za-z0-9])"
+    label_ref = _figure_label_ref_pattern(raw_label, strict=True)
     label_pos = re.search(label_ref, compact, re.IGNORECASE)
     window = lower
     if label_pos:
@@ -116,7 +137,7 @@ def false_page_match_hint(page_text: str, figure_label: str) -> str:
         return "toc_or_contents"
     if "figure captions" in window or "list of figures" in window:
         return "figure_caption_list"
-    if re.search(rf"\binsert\s+(?:fig(?:ure)?\.?)\s*{label}\b", window, re.IGNORECASE):
+    if re.search(rf"\binsert\s+{label_ref}", window, re.IGNORECASE):
         return "manuscript_placeholder"
     if re.search(rf"\({label_ref}\)", window, re.IGNORECASE):
         return "prose_parenthetical_reference"
@@ -130,7 +151,7 @@ def label_looks_caption_like(page_text: str, figure_label: str) -> bool:
     if not label:
         return False
     pattern = re.compile(
-        rf"^\s*(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])"
+        rf"^\s*{_figure_label_ref_pattern(label, strict=True)}"
         r"[\s:.\-\u2013|]+.{8,}",
         re.IGNORECASE,
     )
@@ -141,10 +162,7 @@ def caption_head_tokens(snippets: list[str], figure_label: str) -> list[str]:
     label = str(figure_label or "").strip()
     if not label:
         return []
-    label_pattern = re.compile(
-        rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
-        re.IGNORECASE,
-    )
+    label_pattern = re.compile(_figure_label_ref_pattern(label, strict=True), re.IGNORECASE)
     for snippet in snippets:
         text = str(snippet or "")
         match = label_pattern.search(text)
@@ -165,10 +183,7 @@ def caption_head_present_near_label(
     if not expected_tokens:
         return False
     label = str(figure_label or "").strip()
-    label_pattern = re.compile(
-        rf"\b(?:fig(?:ure)?\.?)\s*{re.escape(label)}(?![\w-]|\.[A-Za-z0-9])",
-        re.IGNORECASE,
-    )
+    label_pattern = re.compile(_figure_label_ref_pattern(label, strict=True), re.IGNORECASE)
     threshold = min(6, max(3, len(expected_tokens) // 2))
     required_head = expected_tokens[: min(3, len(expected_tokens))]
     for match in label_pattern.finditer(str(page_text or "")):

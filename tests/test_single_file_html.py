@@ -8392,6 +8392,81 @@ def test_polish_html_document_retargets_supplementary_page_figure_link() -> None
     assert 'href="#page-9-0"' not in polished
 
 
+def test_polish_html_document_retargets_extended_data_figure_link() -> None:
+    html = (
+        "<html><body>"
+        '<p>The rig is shown in Extended Data <a href="#page-8-0">Fig. 8</a>, '
+        'while the main result appears in <a href="#page-9-0">Figure 8</a>.</p>'
+        '<p><img src="extended8.jpg"/></p>'
+        '<p><b>Extended Data Fig. 8</b> | Hardware setup used for the trials.</p>'
+        '<p><img src="main8.jpg"/></p>'
+        '<p><b>Figure 8</b> Main behavioural result.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-extended-data-8"' in polished
+    assert 'id="fig-8"' in polished
+    assert 'href="#fig-extended-data-8"' in polished
+    assert 'href="#fig-8"' in polished
+    assert 'Extended Data <a href="#fig-extended-data-8" class="z2m-fig-link">Fig. 8</a>' in polished
+    assert '<a href="#fig-8" class="z2m-fig-link">Figure 8</a>' in polished
+    assert 'href="#page-8-0"' not in polished
+    assert 'href="#page-9-0"' not in polished
+
+
+def test_polish_html_document_pairs_extended_data_heading_caption_with_previous_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>Dynamics are shown in Extended Data Fig. 8.</p>"
+        '<p block-type="Text" class="has-continuation">'
+        "<b>Extended Data Fig. 3 | Network of simplified neurons.</b> "
+        "The networks consist of simplified branches.</p>"
+        "<p block-type=\"Text\">(activity on the right) and the gradient with respect to all conductances.</p>"
+        '<p><img src="ed4.jpg"/></p>'
+        "<p><b>Extended Data Fig. 4 | Fitting single-cell models.</b> "
+        "Number of simulations and runtime required to achieve the target loss.</p>"
+        "<p block-type=\"Text\">loss across ten gradient descent runs and ten genetic algorithms.</p>"
+        '<p><img src="ed5.jpg"/></p>'
+        "<p><b>Extended Data Fig. 5 | Recordings from the Allen Cell Types Database.</b> "
+        "Gradient descent and the genetic algorithm were run for fifty iterations.</p>"
+        "<p block-type=\"Text\">simulations per step in parallel on GPU. Scale bars: 200 ms and 30 mV.</p>"
+        '<p><img src="ed6.jpg"/></p>'
+        "<p><b>Extended Data Fig. 6 | Bayesian inference of membrane conductances.</b> "
+        "Blue lines show confidence intervals.</p>"
+        '<p><img src="ed7.jpg"/></p>'
+        "<p><b>Extended Data Fig. 7 | Generalization of the evidence integration task.</b> "
+        'We used the same network parameters as in Fig. <a href="#page-5-0">4.</a></p>'
+        '<p><img src="ed8.jpg"/></p>'
+        "<h3><b>Extended Data Fig. 8 | Long-term dynamics reveal transient coding.</b> "
+        'Long-term dynamics of the network from Fig. <a href="#page-5-0">4</a>.</h3>'
+        "<p block-type=\"Text\">space, after briefly presenting either stimulus.</p>"
+        '<p><img src="ed9.jpg"/></p>'
+        "<p><b>Extended Data Fig. 9 | Hidden layer tuning.</b> Left: Before training.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    for key, image in (
+        ("extended-data-4", "ed4.jpg"),
+        ("extended-data-5", "ed5.jpg"),
+        ("extended-data-6", "ed6.jpg"),
+        ("extended-data-7", "ed7.jpg"),
+        ("extended-data-8", "ed8.jpg"),
+        ("extended-data-9", "ed9.jpg"),
+    ):
+        unit_match = re.search(
+            rf'<div\b(?=[^>]*\bid="fig-{key}")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+            polished,
+        )
+        assert unit_match is not None
+        unit = unit_match.group(0)
+        assert f'src="{image}"' in unit
+        assert "z2m-missing-figure-warning" not in unit
+
+
 def test_polish_html_document_does_not_insert_missing_warning_for_supplementary_caption() -> None:
     html = (
         "<html><body>"

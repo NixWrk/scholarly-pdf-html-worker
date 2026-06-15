@@ -31,6 +31,21 @@ def test_figure_target_keys_collects_semantic_fig_ids() -> None:
     assert figure_target_keys(html) == {"3", "supplementary-4"}
 
 
+def test_figure_target_keys_keeps_extended_data_separate_from_main_figure() -> None:
+    html = (
+        '<div id="fig-extended-data-8" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="extended8.jpg"/></p>'
+        '<p class="z2m-figure-caption">Extended Data Fig. 8 | Hardware setup.</p>'
+        "</div>"
+    )
+    targets = figure_target_keys(html)
+
+    assert "extended-data-8" in targets
+    assert "8" not in targets
+    assert _defects(_block("Extended Data Fig. 8 shows the rig."), targets) == []
+    assert [defect.id for defect in _defects(_block("Figure 8 shows the rig."), targets)] == ["P61"]
+
+
 def test_figure_target_keys_infers_caption_number_from_slugged_figure_unit() -> None:
     html = (
         '<div id="fig-18-1840" class="z2m-float-unit z2m-figure-unit">'
