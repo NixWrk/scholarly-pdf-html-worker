@@ -771,6 +771,34 @@ def test_analyze_pair_allows_single_image_multiple_caption_alias_for_p57() -> No
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_allows_embedded_caption_label_alias_for_p57() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "embedded caption alias sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+            '<span id="fig-7" class="z2m-float-alias"></span>'
+            '<p class="z2m-figure-target"><img src="data:image/png;base64,abc"/></p>'
+            '<p class="z2m-figure-caption">Figure 6 - Fully assembled ISM device '
+            'Figure 7 - Differing ISM models showing leaded vs non-leaded designs.</p>'
+            "</div>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P57" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_closes_raw_frontmatter_ocr_when_polish_repairs_markers() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

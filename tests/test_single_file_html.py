@@ -8869,6 +8869,101 @@ def test_polish_html_document_aliases_single_image_with_multiple_captions() -> N
     assert polished.count('id="fig-14"') == 1
 
 
+def test_polish_html_document_aliases_embedded_caption_labels_in_one_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        "<p>The matured ISM design is shown in Figure 7.</p>"
+        '<p><img src="ism-models.jpg"/></p>'
+        "<p>Figure 6 - Fully assembled ISM device Figure 7 - Differing ISM models "
+        "showing leaded vs non-leaded designs.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig6_match = re.search(r'<div\b(?=[^>]*\bid="fig-6")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig6_match is not None
+    fig6 = fig6_match.group(0)
+    fig6_text = re.sub(r"<[^>]+>", " ", fig6).replace("\xa0", " ")
+    assert 'src="ism-models.jpg"' in fig6
+    assert "Figure 6" in fig6_text
+    assert "Figure 7" in fig6_text
+    assert '<span id="fig-7" class="z2m-float-alias"></span>' in fig6
+    assert polished.count('id="fig-7"') == 1
+
+
+def test_polish_html_document_aliases_embedded_list_caption_labels() -> None:
+    html = (
+        "<html><body>"
+        "<p>The spherical coordinate system is shown in Fig. 7.</p>"
+        '<p><img src="flattened.jpg"/></p>'
+        "<p><b>FIG. 5.</b> Three flattened left hemispheres.</p>"
+        '<p block-type="ListGroup"><ul>'
+        "<li><b>FIG. 6.</b> Lateral view after spherical transformation.</li>"
+        "<li><b>FIG. 7.</b> Spherical coordinate system painted onto surfaces.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig5_match = re.search(r'<div\b(?=[^>]*\bid="fig-5")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig5_match is not None
+    fig5 = fig5_match.group(0)
+    assert '<span id="fig-6" class="z2m-float-alias"></span>' in fig5
+    assert '<span id="fig-7" class="z2m-float-alias"></span>' in fig5
+    assert polished.count('id="fig-6"') == 1
+    assert polished.count('id="fig-7"') == 1
+
+
+def test_polish_html_document_does_not_alias_decimal_caption_label_prefix() -> None:
+    html = (
+        "<html><body>"
+        "<p>The room task is discussed in Fig. 4.</p>"
+        '<p><img src="letter-task.jpg"/></p>'
+        "<p>Figure 4.1 : Letter recognition task in the virtual room.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-4" class="z2m-float-alias"' not in polished
+    assert '<span id="fig-4" class="z2m-float-alias"></span>' not in polished
+    assert 'id="fig-4-1"' in polished
+
+
+def test_polish_html_document_does_not_alias_in_caption_body_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p>Current steering is compared with Figure 2A.</p>"
+        '<p><img src="steering.jpg"/></p>'
+        "<p>Figure 3. Effectiveness of Dynamic Current Steering in a blind participant "
+        "(same participant as Figure 2). Five subdural electrodes were stimulated.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<span id="fig-2" class="z2m-float-alias"></span>' not in polished
+    assert 'id="fig-3"' in polished
+
+
+def test_polish_html_document_does_not_alias_extended_data_caption_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p>The recurrent network is summarized in Fig. 4.</p>"
+        '<p><img src="network.jpg"/></p>'
+        "<p>Fig. 4. Recurrent network dynamics. Extended Data Fig. 8 | "
+        "Long-term dynamics reveal transient coding.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<span id="fig-8" class="z2m-float-alias"></span>' not in polished
+    assert 'id="fig-4"' in polished
+
+
 def test_polish_html_document_does_not_alias_caption_that_starts_next_image_run() -> None:
     html = (
         "<html><body>"

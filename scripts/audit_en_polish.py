@@ -1584,6 +1584,28 @@ def _figure_caption_number_from_caption_node(raw_body: str) -> int | None:
     return int(match.group(1))
 
 
+def _figure_caption_numbers_from_caption_node(raw_body: str) -> set[int]:
+    text = _strip_tags(raw_body)
+    label_re = re.compile(
+        r"\b(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*"
+        r"(?P<num>\d{1,3})(?!\d)(?![.-]\d)"
+        r"(?:\s*(?:[\.:|]|[-\u2010\u2011\u2012\u2013\u2014]))",
+        re.IGNORECASE,
+    )
+    skip_left_context = re.compile(
+        r"\b(?:as|see|shown|showing|participant|panel|panels?|same|in|of|from|with|"
+        r"extended\s+data|supplementary|supplemental)\s+$",
+        re.IGNORECASE,
+    )
+    numbers: set[int] = set()
+    for match in label_re.finditer(text):
+        left_context = text[max(0, match.start() - 36):match.start()]
+        if skip_left_context.search(left_context):
+            continue
+        numbers.add(int(match.group("num")))
+    return numbers
+
+
 def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelated: list[int]) -> bool:
     if not unrelated:
         return False
@@ -1600,8 +1622,7 @@ def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelate
     caption_nums = {
         number
         for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
-        for number in [_figure_caption_number_from_caption_node(caption_match.group("body"))]
-        if number is not None
+        for number in _figure_caption_numbers_from_caption_node(caption_match.group("body"))
     }
     expected = set(unrelated)
     if not expected.issubset(float_alias_nums) or not expected.issubset(caption_nums):

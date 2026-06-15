@@ -19753,6 +19753,66 @@ def _drop_unbacked_foreign_figure_aliases(html: str) -> str:
     return _FLOAT_UNIT_DIV_PATTERN.sub(_replace_unit, html)
 
 
+def _add_aliases_for_embedded_figure_caption_labels(html: str) -> str:
+    if "z2m-figure-unit" not in html or "Figure" not in html and "Fig" not in html:
+        return html
+
+    existing_ids = {
+        match.group("id")
+        for match in re.finditer(r'\bid\s*=\s*(["\'])(?P<id>fig-[^"\']+)\1', html, re.IGNORECASE)
+    }
+    caption_label_pattern = re.compile(
+        r"\b(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*"
+        r"(?P<num>\d{1,3})(?!\d)(?![.-]\d)"
+        r"(?:\s*(?:[\.:|]|[-\u2010\u2011\u2012\u2013\u2014]))",
+        re.IGNORECASE,
+    )
+    skip_left_context = re.compile(
+        r"\b(?:as|see|shown|showing|participant|panel|panels?|same|in|of|from|with|"
+        r"extended\s+data|supplementary|supplemental)\s+$",
+        re.IGNORECASE,
+    )
+
+    def _caption_label_keys(raw: str) -> list[str]:
+        keys: list[str] = []
+        for caption_match in _P_OR_H_BLOCK_PATTERN.finditer(raw):
+            if not _node_has_class(caption_match.group("open"), "z2m-figure-caption"):
+                continue
+            visible = _visible_text(caption_match.group("body"))
+            for label_match in caption_label_pattern.finditer(visible):
+                left_context = visible[max(0, label_match.start() - 36):label_match.start()]
+                if skip_left_context.search(left_context):
+                    continue
+                key = _figure_key_from_visible_number(label_match.group("num"))
+                if key not in keys:
+                    keys.append(key)
+        return keys
+
+    def _replace_unit(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        unit_id = _node_id_value(raw)
+        unit_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", unit_id or "", re.IGNORECASE)
+        if unit_match is None:
+            return raw
+        primary_key = unit_match.group(1)
+        alias_ids: list[str] = []
+        for key in _caption_label_keys(raw):
+            alias_id = f"fig-{key}"
+            if key == primary_key or alias_id in existing_ids:
+                continue
+            alias_ids.append(alias_id)
+            existing_ids.add(alias_id)
+        if not alias_ids:
+            return raw
+        open_end = raw.find(">")
+        if open_end < 0:
+            return raw
+        alias_html = "".join(f'<span id="{alias_id}" class="z2m-float-alias"></span>' for alias_id in alias_ids)
+        return raw[: open_end + 1] + alias_html + raw[open_end + 1:]
+
+    return _FLOAT_UNIT_DIV_PATTERN.sub(_replace_unit, html)
+
+
 def _retarget_duplicate_figure_targets_from_context_refs(html: str) -> tuple[str, set[str]]:
     """Retarget a repeated figure label when nearby prose clearly points to the next figure.
 
@@ -21250,6 +21310,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _drop_unbacked_foreign_figure_aliases(polished)
+    polished = _add_aliases_for_embedded_figure_caption_labels(polished)
     polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
     polished, _ = _merge_caption_only_missing_units_with_previous_table_surrogates(polished)
     polished = _drop_stale_in_text_figure_reference_ids(polished)
