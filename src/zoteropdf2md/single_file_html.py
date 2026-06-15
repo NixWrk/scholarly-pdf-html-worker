@@ -19753,6 +19753,200 @@ def _drop_unbacked_foreign_figure_aliases(html: str) -> str:
     return _FLOAT_UNIT_DIV_PATTERN.sub(_replace_unit, html)
 
 
+def _retarget_duplicate_figure_targets_from_context_refs(html: str) -> tuple[str, set[str]]:
+    """Retarget a repeated figure label when nearby prose clearly points to the next figure.
+
+    Some PDFs have a real numbering inconsistency: two adjacent visual figures both carry
+    ``Figure N`` captions, while the prose immediately before the second one refers to
+    ``Figure N+1`` (often with a panel suffix such as ``Figure 6A``).  In that case the
+    second target should be addressable as ``fig-(N+1)`` instead of producing a missing
+    target warning.
+    """
+    if "fig-" not in html or not re.search(r"\bFig(?:ure)?s?\.?\s*\d", html, re.IGNORECASE):
+        return html, set()
+
+    nodes = list(_FLOAT_AWARE_SENTENCE_NODE_PATTERN.finditer(html))
+    if len(nodes) < 3:
+        return html, set()
+
+    existing_keys = _current_figure_target_keys(html)
+    replacements: dict[int, str] = {}
+    retargeted: set[str] = set()
+
+    def _node_raw(index: int) -> str:
+        return replacements.get(index, nodes[index].group(0))
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _simple_next_key(key: str) -> str | None:
+        if not re.fullmatch(r"\d{1,3}", key):
+            return None
+        try:
+            return str(int(key) + 1)
+        except ValueError:
+            return None
+
+    def _figure_ref_keys(visible: str) -> set[str]:
+        keys: set[str] = set()
+        for pattern in (_FIG_REF_PATTERN, _EXT_FIG_REF_PATTERN):
+            for match in pattern.finditer(visible):
+                keys.add(_figure_key_from_visible_number(match.group(2)))
+        return keys
+
+    def _preceding_context_refs_key(index: int, target_key: str) -> bool:
+        scan = index - 1
+        scanned_text_nodes = 0
+        while scan >= 0 and scanned_text_nodes < 4:
+            if scan + 1 < len(nodes) and not _between_is_whitespace(scan, scan + 1):
+                break
+            raw = _node_raw(scan)
+            if _node_has_class(raw, "z2m-float-unit") or re.search(r"<table\b", raw, re.IGNORECASE):
+                break
+            if re.search(r"<img\b", raw, re.IGNORECASE):
+                scan -= 1
+                continue
+            visible = _visible_text(raw)
+            if not visible.strip():
+                scan -= 1
+                continue
+            if _figure_caption_num_from_visible(visible) is not None:
+                break
+            if target_key in _figure_ref_keys(visible):
+                return True
+            scanned_text_nodes += 1
+            if len(visible) > 1800:
+                break
+            scan -= 1
+        return False
+
+    def _caption_label_key(raw: str) -> str | None:
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            return None
+        return _figure_caption_num_from_visible(_visible_text(raw))
+
+    def _unit_caption_key(raw: str) -> str | None:
+        labels: list[str] = []
+        for match in _P_OR_H_BLOCK_PATTERN.finditer(raw):
+            if not _node_has_class(match.group("open"), "z2m-figure-caption"):
+                continue
+            label = _caption_label_key(match.group(0))
+            if label is not None:
+                labels.append(label)
+        if len(set(labels)) == 1:
+            return labels[0]
+        return None
+
+    def _following_caption_index(image_index: int, fig_key: str) -> int | None:
+        scan = image_index + 1
+        while scan < len(nodes):
+            if not _between_is_whitespace(scan - 1, scan):
+                break
+            raw = _node_raw(scan)
+            if re.search(r"<img\b", raw, re.IGNORECASE):
+                scan += 1
+                continue
+            if _node_is_caption_bridge_or_note_paragraph(raw):
+                scan += 1
+                continue
+            label = _caption_label_key(raw)
+            if label == fig_key:
+                return scan
+            break
+        return None
+
+    def _target_key_at(index: int) -> str | None:
+        raw = _node_raw(index)
+        node_id = _node_id_value(raw)
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", node_id or "", re.IGNORECASE)
+        if fig_match is None:
+            return None
+        key = fig_match.group(1)
+        if _node_has_class(raw, "z2m-figure-unit"):
+            return key if _unit_caption_key(raw) == key else None
+        if re.search(r"<img\b", raw, re.IGNORECASE):
+            caption_idx = _following_caption_index(index, key)
+            return key if caption_idx is not None else None
+        return None
+
+    target_key_counts = Counter(
+        key for index in range(len(nodes)) for key in [_target_key_at(index)] if key is not None
+    )
+    if not any(count > 1 for count in target_key_counts.values()):
+        return html, set()
+
+    def _retarget_open_id(raw: str, new_key: str) -> str:
+        open_end = raw.find(">")
+        if open_end < 0:
+            return raw
+        open_tag = raw[: open_end + 1]
+        return _add_id_attr(_remove_id_attr(open_tag), f"fig-{new_key}") + raw[open_end + 1:]
+
+    def _replace_caption_label(raw: str, old_key: str, new_key: str) -> str:
+        label_pattern = re.compile(
+            rf"(?P<prefix>^\s*(?:<(?:b|strong|em|i|span)\b[^>]*>\s*)*"
+            rf"(?:Fig(?:ure)?|FIG(?:URE)?|Figure)\.?(?:\s|&nbsp;|\xa0)*)"
+            rf"{re.escape(old_key)}"
+            rf"(?P<suffix>(?:\s|&nbsp;|\xa0)*(?:[\).:|,\-])?)",
+            re.IGNORECASE,
+        )
+
+        def _replace_block(match: re.Match[str]) -> str:
+            open_tag = match.group("open")
+            if not _node_has_class(open_tag, "z2m-figure-caption"):
+                return match.group(0)
+            if _caption_label_key(match.group(0)) != old_key:
+                return match.group(0)
+            body = label_pattern.sub(
+                lambda label_match: (
+                    f"{label_match.group('prefix')}{new_key}{label_match.group('suffix')}"
+                ),
+                match.group("body"),
+                count=1,
+            )
+            return f"{open_tag}{body}{match.group('close')}"
+
+        return _P_OR_H_BLOCK_PATTERN.sub(_replace_block, raw, count=1)
+
+    seen_target_counts: Counter[str] = Counter()
+    for index in range(len(nodes)):
+        key = _target_key_at(index)
+        if key is None:
+            continue
+        seen_target_counts[key] += 1
+        if seen_target_counts[key] < 2 or target_key_counts[key] < 2:
+            continue
+        new_key = _simple_next_key(key)
+        if new_key is None or new_key in existing_keys or new_key in retargeted:
+            continue
+        if not _preceding_context_refs_key(index, new_key):
+            continue
+
+        raw = _node_raw(index)
+        retargeted_raw = _retarget_open_id(raw, new_key)
+        if _node_has_class(raw, "z2m-figure-unit"):
+            retargeted_raw = _replace_caption_label(retargeted_raw, key, new_key)
+        else:
+            caption_idx = _following_caption_index(index, key)
+            if caption_idx is not None:
+                replacements[caption_idx] = _replace_caption_label(_node_raw(caption_idx), key, new_key)
+        replacements[index] = retargeted_raw
+        retargeted.add(new_key)
+        existing_keys.add(new_key)
+
+    if not replacements:
+        return html, set()
+
+    out_parts: list[str] = []
+    cursor = 0
+    for index, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        out_parts.append(replacements.get(index, node.group(0)))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), retargeted
+
+
 def _drop_stale_in_text_figure_reference_ids(html: str) -> str:
     """Remove duplicate fig-* ids from prose references once a real target exists."""
     fig_ids = [
@@ -20899,6 +21093,8 @@ def _polish_phase_semantic_targets(state: RawPolishState, context: RawPolishCont
     polished = _normalize_numeric_section_heading_levels(polished)
     polished, found_sections = _add_section_anchors(polished)
     polished, found_figures = _add_figure_anchors(polished)
+    polished, duplicate_context_figures = _retarget_duplicate_figure_targets_from_context_refs(polished)
+    found_figures.update(duplicate_context_figures)
     polished, _ = _split_trailing_table_captions_before_tables(polished)
     polished, found_tables = _add_table_anchors(polished)
     polished, recovered_figures = _recover_orphan_figure_anchors(polished, found_figures)

@@ -9677,6 +9677,58 @@ def test_polish_html_document_does_not_suppress_missing_warning_across_previous_
     assert 'src="fig1.jpg"' not in fig2
 
 
+def test_polish_html_document_retargets_duplicate_figure_label_with_nearby_next_ref() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="cells.jpg"/></p>'
+        "<p>Figure 5. Time-course imaging of cell internalization.</p>"
+        '<p block-type="Text">As illustrated in Figure 6A, three different nanomicelles '
+        "were dipped on the buttock of the nude mice.</p>"
+        '<p><img src="mouse-nir.jpg"/></p>'
+        '<p><img src="mouse-brightfield.jpg"/></p>'
+        "<p><b>Figure 5. </b>In vivo imaging of nude mice after subcutaneous injections. "
+        "(A) NIR image. (B) Bright field image.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig5_match = re.search(r'<div\b(?=[^>]*\bid="fig-5")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    fig6_match = re.search(r'<div\b(?=[^>]*\bid="fig-6")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>', polished)
+    assert fig5_match is not None
+    assert fig6_match is not None
+    fig5 = fig5_match.group(0)
+    fig6 = fig6_match.group(0)
+    assert 'src="cells.jpg"' in fig5
+    assert 'src="mouse-nir.jpg"' in fig6
+    assert 'src="mouse-brightfield.jpg"' in fig6
+    assert "Figure 6." in fig6
+    assert "In vivo imaging" in fig6
+    assert 'href="#fig-6"' in polished
+    assert "z2m-missing-figure-warning" not in fig6
+    assert polished.count('id="fig-6"') == 1
+
+
+def test_polish_html_document_keeps_duplicate_figure_label_without_next_ref() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="cells.jpg"/></p>'
+        "<p>Figure 5. Time-course imaging of cell internalization.</p>"
+        '<p block-type="Text">The in vivo experiment used the same nanomicelles for comparison.</p>'
+        '<p><img src="mouse-nir.jpg"/></p>'
+        '<p><img src="mouse-brightfield.jpg"/></p>'
+        "<p><b>Figure 5. </b>In vivo imaging of nude mice after subcutaneous injections. "
+        "(A) NIR image. (B) Bright field image.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-6"' not in polished
+    assert "Figure 6." not in polished
+    assert 'href="#fig-6"' not in polished
+
+
 def test_split_table_unit_before_heading_preserves_following_figure_close() -> None:
     html = (
         '<div id="table-4" class="z2m-float-unit z2m-table-unit">'
