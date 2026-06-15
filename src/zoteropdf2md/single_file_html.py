@@ -10521,6 +10521,23 @@ def _add_section_anchors(html: str) -> tuple[str, set[str]]:
     return result, found
 
 
+_ROMAN_ONE_OCR_FIGURE_CAPTION_RE = re.compile(
+    r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?|fig(?:ure)?)\.?\s*I\b([\s\S]*)$",
+)
+
+
+def _roman_one_ocr_figure_caption_num_from_visible(visible: str) -> str | None:
+    match = _ROMAN_ONE_OCR_FIGURE_CAPTION_RE.match(visible)
+    if match is None:
+        return None
+    tail = match.group(1)
+    if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+        return None
+    if not _caption_tail_opens_caption(tail):
+        return None
+    return _figure_key_from_visible_number("1")
+
+
 def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
     """Add ``id="fig-{n}"`` to the visual figure target when possible.
 
@@ -10696,15 +10713,42 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
                 break
         return None
 
+    def _adjacent_image_index(caption_index: int) -> int | None:
+        previous = caption_index - 1
+        if (
+            previous >= 0
+            and _between_is_whitespace(previous, caption_index)
+            and _image_can_receive_figure_id(previous)
+        ):
+            return previous
+        following = caption_index + 1
+        if (
+            following < len(matches)
+            and _between_is_whitespace(caption_index, following)
+            and _image_can_receive_figure_id(following)
+        ):
+            return following
+        return None
+
     for index, match in enumerate(matches):
         raw = _node_raw(index)
-        fig_num = _figure_caption_num_from_visible(_visible_text(raw))
+        visible = _visible_text(raw)
+        fig_num = _figure_caption_num_from_visible(visible)
         embedded_caption = False
+        roman_one_ocr_caption = False
+        if fig_num is None:
+            fig_num = _roman_one_ocr_figure_caption_num_from_visible(visible)
+            roman_one_ocr_caption = fig_num is not None
         if fig_num is None:
             fig_num = _embedded_figure_caption_num(index)
             embedded_caption = fig_num is not None
         if fig_num is None:
             continue
+        roman_one_image_index: int | None = None
+        if roman_one_ocr_caption and not _has_image(index):
+            roman_one_image_index = _adjacent_image_index(index)
+            if roman_one_image_index is None:
+                continue
         found.add(fig_num)
 
         target_id = f"fig-{fig_num}"
@@ -10725,7 +10769,11 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
 
         target_index = index
         if not _has_image(index):
-            image_index = _nearby_image_index(index, fig_num)
+            image_index = (
+                roman_one_image_index
+                if roman_one_ocr_caption
+                else _nearby_image_index(index, fig_num)
+            )
             if image_index is not None:
                 target_index = image_index
             elif embedded_caption:
