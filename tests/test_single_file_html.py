@@ -8049,6 +8049,113 @@ def test_polish_html_document_recovers_orphan_figure_after_nearby_ref() -> None:
     assert 'href="#fig-4"' in polished
 
 
+def test_polish_html_document_recovers_picture_orphan_with_consecutive_alias_refs() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="_page_4_Picture_2.jpeg"/></p>'
+        "<h2>Results</h2>"
+        "<p>Participants completed the two obstacle courses shown in Figure 6 and Figure 7.</p>"
+        '<p><img src="_page_5_Figure_2.jpeg"/></p>'
+        "<p>Figure 8. Collisions for able-bodied participants.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig6_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-6")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig6_match is not None
+    fig6 = fig6_match.group(0)
+    assert '_page_4_Picture_2.jpeg' in fig6
+    assert 'id="fig-7"' not in fig6
+    alias = '<span id="fig-7" class="z2m-float-alias" data-z2m-origin="orphan-image-ref"></span>'
+    assert alias in polished
+    assert polished.index(alias) < polished.index('id="fig-6"')
+    assert not re.search(r'<div\b(?=[^>]*\bid="fig-7")(?=[^>]*\bz2m-figure-unit\b)', polished)
+    assert 'href="#fig-6"' in polished
+    assert 'href="#fig-7"' in polished
+
+
+def test_polish_html_document_does_not_assign_page_zero_picture_from_later_refs() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="_page_0_Picture_17.jpeg"/></p>'
+        "<p>Visual field testing was abnormal (Figure 1). "
+        "The fundal examination was normal (Figure 2), and OCT showed edema (Figure 3).</p>"
+        '<p><img src="_page_2_Figure_1.jpeg"/></p>'
+        "<p>Figure 4. Eye position photography before surgery.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    logo_unit = re.search(
+        r'<div\b(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?_page_0_Picture_17\.jpeg[\s\S]*?</div>',
+        polished,
+    )
+    assert logo_unit is None
+    assert 'href="#fig-1"' not in polished
+    assert 'href="#fig-2"' not in polished
+    assert 'href="#fig-3"' not in polished
+    assert re.search(r'<div\b(?=[^>]*\bid="fig-4")(?=[^>]*\bz2m-figure-unit\b)', polished)
+
+
+def test_polish_html_document_recovers_page_id_picture_orphan_after_known_figure() -> None:
+    html = (
+        "<html><body>"
+        "<p>The results shown in Figure 10 show robust hand detection. Figure 11 also demonstrates pointing.</p>"
+        '<p><img src="_page_11_Figure_1.jpeg"/></p>'
+        "<p>Figure 11. Results of finger pointing estimation with dynamic backgrounds.</p>"
+        '<p id="page-11-1"><img src="_page_11_Picture_4.jpeg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig10_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-10")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig10_match is not None
+    assert '_page_11_Picture_4.jpeg' in fig10_match.group(0)
+    assert '<span id="page-11-1"></span>' in polished
+    assert 'href="#fig-10"' in polished
+    assert 'href="#fig-11"' in polished
+
+
+def test_polish_html_document_recovers_multipart_picture_orphan_from_preceding_ref() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 16 shows a snapshot of one user using the proposed system during the field test. "
+        "As seen in Figure 16b, the system required entering the destination through speech.</p>"
+        "<p>Some ethical issues regarding this study should be mentioned.</p>"
+        '<p id="page-24-0"><img src="_page_24_Picture_2.jpeg"/></p>'
+        '<p><img src="_page_24_Picture_3.jpeg"/></p>'
+        "<p>proposed system; (b) Screen of the proposed wayfinding system. "
+        "Figure 16. A user performing the initial tasks: (a) A user is moving according to guidance; "
+        "(b) Screen of the proposed wayfinding system.</p>"
+        "<p>Figure 17 shows the test maps constructed for the field tests.</p>"
+        '<p><img src="_page_25_Figure_1.jpeg"/></p>'
+        "<p>Figure 17. Test maps constructed for real environments.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig16_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-16")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig16_match is not None
+    fig16 = fig16_match.group(0)
+    assert '_page_24_Picture_2.jpeg' in fig16
+    assert '_page_24_Picture_3.jpeg' in fig16
+    assert 'href="#fig-16"' in polished
+    assert 'href="#fig-17"' in polished
+
+
 def test_polish_html_document_recovers_orphan_figure_from_terminal_ref_after_heading() -> None:
     html = (
         "<html><body>"

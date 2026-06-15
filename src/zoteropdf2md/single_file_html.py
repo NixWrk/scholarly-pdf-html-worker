@@ -10685,11 +10685,17 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
     def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
         return _html_gap_is_ignorable(html[matches[a_idx].end():matches[b_idx].start()])
 
+    def _page_anchor_id(raw: str) -> str | None:
+        node_id = _node_id_value(raw) or ""
+        return node_id if re.fullmatch(r"page-[A-Za-z0-9_.:-]+", node_id, re.IGNORECASE) else None
+
     def _image_can_receive_figure_id(index: int) -> bool:
         if not _has_image(index):
             return False
         image_open = _SENTENCE_P_NODE_PATTERN.match(_node_raw(index))
-        return image_open is not None and not _has_id_attr(image_open.group("open"))
+        if image_open is None:
+            return False
+        return not _has_id_attr(image_open.group("open")) or _page_anchor_id(_node_raw(index)) is not None
 
     def _image_is_immediately_captioned_as_different_figure(index: int, fig_num: str) -> bool:
         scan = index + 1
@@ -10822,9 +10828,16 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             if _node_is_caption_bridge_or_note_paragraph(previous_raw):
                 continue
             if _image_can_receive_figure_id(previous):
-                if _image_is_immediately_captioned_as_different_figure(previous, fig_num):
+                candidate = previous
+                while (
+                    candidate > 0
+                    and _between_is_whitespace(candidate - 1, candidate)
+                    and _image_can_receive_figure_id(candidate - 1)
+                ):
+                    candidate -= 1
+                if _image_is_immediately_captioned_as_different_figure(candidate, fig_num):
                     break
-                return previous
+                return candidate
             if _has_image(previous):
                 break
             previous_caption_num = _figure_caption_num_from_visible(_visible_text(previous_raw))
@@ -10975,16 +10988,20 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
                 continue
 
         target_raw = _node_raw(target_index)
-        replacements[target_index] = _replace_open(
+        page_id = _page_anchor_id(target_raw) if _has_image(target_index) else None
+        target_replacement = _replace_open(
             target_raw,
             lambda open_tag: (
-                _add_class_attr(_add_id_attr(open_tag, target_id), "z2m-figure-target")
+                _add_class_attr(_add_id_attr(_remove_id_attr(open_tag), target_id), "z2m-figure-target")
                 if _has_image(target_index)
                 else _add_class_attr(_add_id_attr(open_tag, target_id), "z2m-figure-caption")
                 if roman_one_table_surrogate_caption and target_index == index
                 else _add_id_attr(open_tag, target_id)
             ),
         )
+        if page_id is not None:
+            target_replacement = f'<span id="{page_id}"></span>{target_replacement}'
+        replacements[target_index] = target_replacement
         if target_index != index:
             replacements[index] = _replace_open(
                 _node_raw(index),
@@ -11068,11 +11085,26 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
     def _image_src_looks_like_marker_figure(raw: str) -> bool:
         for src in _image_src_values(raw):
             clean_src = src.split("?", 1)[0].split("#", 1)[0]
-            if re.search(r"(?:^|[/\\])_?page_\d+_Figure_\d+\.(?:jpe?g|png|webp|gif)\b", clean_src, re.IGNORECASE):
+            if re.search(
+                r"(?:^|[/\\])_?page_\d+_(?:Figure|Picture)_\d+\.(?:jpe?g|png|webp|gif)\b",
+                clean_src,
+                re.IGNORECASE,
+            ):
                 return True
             if re.search(r"(?:^|[/\\])Figure[_\s-]*\d+\.(?:jpe?g|png|webp|gif)\b", clean_src, re.IGNORECASE):
                 return True
         return False
+
+    def _image_src_is_page_zero_picture(raw: str) -> bool:
+        for src in _image_src_values(raw):
+            clean_src = src.split("?", 1)[0].split("#", 1)[0]
+            if re.search(r"(?:^|[/\\])_?page_0_Picture_\d+\.(?:jpe?g|png|webp|gif)\b", clean_src, re.IGNORECASE):
+                return True
+        return False
+
+    def _page_anchor_id(raw: str) -> str | None:
+        node_id = _node_id_value(raw) or ""
+        return node_id if re.fullmatch(r"page-[A-Za-z0-9_.:-]+", node_id, re.IGNORECASE) else None
 
     def _is_table_caption(index: int) -> bool:
         return _table_caption_key_from_visible(_visible_text(_node_raw(index))) is not None
@@ -11089,7 +11121,9 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
             return False
         raw = _node_raw(index)
         node_match = _SENTENCE_P_NODE_PATTERN.match(raw)
-        if node_match is None or _has_id_attr(node_match.group("open")):
+        if node_match is None:
+            return False
+        if _has_id_attr(node_match.group("open")) and _page_anchor_id(raw) is None:
             return False
         if _node_has_class(raw, "z2m-figure-target") or _node_has_class(raw, "z2m-figure-caption"):
             return False
@@ -11179,6 +11213,8 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
             if scan < index - 1 and not _between_allows_reference_scan(scan, scan + 1):
                 break
             raw = _node_raw(scan)
+            if _node_has_class(raw, "z2m-figure-target") or _node_has_class(raw, "z2m-figure-caption"):
+                continue
             if _has_image(scan):
                 return []
             if _figure_caption_num_from_visible(_visible_text(raw)) is not None or _is_table_caption(scan):
@@ -11247,19 +11283,65 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
             return following
         return None
 
-    def _assign_image(index: int, fig_num: str, caption_index: int | None = None) -> None:
+    def _orphan_image_run_start(index: int) -> int:
+        run_start = index
+        while (
+            run_start > 0
+            and _between_is_whitespace(run_start - 1, run_start)
+            and _is_orphan_figure_image(run_start - 1)
+            and run_start - 1 not in assigned_images
+        ):
+            run_start -= 1
+        return run_start
+
+    def _assign_image(index: int, fig_num: str, caption_index: int | None = None, aliases: Iterable[str] = ()) -> None:
         target_id = f"fig-{fig_num}"
-        replacements[index] = _replace_open(
+        raw = _node_raw(index)
+        page_id = _page_anchor_id(raw)
+        alias_nums: list[str] = []
+        for alias in aliases:
+            if alias == fig_num or alias in found_figures or alias in recovered or alias in alias_nums:
+                continue
+            alias_nums.append(alias)
+        replacement = _replace_open(
             _node_raw(index),
-            lambda open_tag: _add_class_attr(_add_id_attr(open_tag, target_id), "z2m-figure-target"),
+            lambda open_tag: _add_class_attr(
+                _add_id_attr(_remove_id_attr(open_tag), target_id),
+                "z2m-figure-target",
+            ),
         )
+        alias_html = ""
+        if alias_nums:
+            alias_html = "".join(
+                f'<span id="fig-{alias}" class="z2m-float-alias" data-z2m-origin="orphan-image-ref"></span>'
+                for alias in alias_nums
+            )
+        if page_id is not None:
+            replacement = f'<span id="{page_id}"></span>{replacement}'
+        if alias_html:
+            replacement = alias_html + replacement
+        replacements[index] = replacement
         assigned_images.add(index)
         recovered.add(fig_num)
+        recovered.update(alias_nums)
         if caption_index is not None:
             replacements[caption_index] = _replace_open(
                 _node_raw(caption_index),
                 lambda open_tag: _add_class_attr(_remove_id_attr(open_tag), "z2m-figure-caption"),
             )
+
+    def _simple_consecutive_keys(values: list[str]) -> bool:
+        if len(values) < 2 or not all(re.fullmatch(r"\d{1,3}", value) for value in values):
+            return False
+        numbers = [int(value) for value in values]
+        return numbers == list(range(numbers[0], numbers[0] + len(numbers)))
+
+    def _keys_are_predecessors_of(values: list[str], next_key: str | None) -> bool:
+        if next_key is None or not re.fullmatch(r"\d{1,3}", next_key):
+            return False
+        if not _simple_consecutive_keys(values):
+            return False
+        return int(values[-1]) + 1 == int(next_key)
 
     page_linked_refs = _page_linked_missing_figure_refs()
 
@@ -11305,7 +11387,9 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
                 predecessor = ""
             fig_num = predecessor if predecessor and predecessor not in found_figures and predecessor not in recovered else None
         if fig_num is not None:
-            _assign_image(index, fig_num, caption_index)
+            target_index = _orphan_image_run_start(index)
+            _assign_image(target_index, fig_num, caption_index)
+            assigned_images.update(range(target_index, index + 1))
 
     # Prose may introduce a figure immediately before the visual region.  Use
     # it before forward-looking assignment so a later reference to another
@@ -11334,6 +11418,10 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
             run.append(scan)
             scan += 1
 
+        if any(_image_src_is_page_zero_picture(_node_raw(image_index)) for image_index in run):
+            index = run[-1] + 1
+            continue
+
         refs = [
             fig_num
             for fig_num in _nearby_missing_refs_after(run[-1])
@@ -11342,6 +11430,8 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
         if refs and len(refs) == len(run):
             for image_index, fig_num in zip(run, refs):
                 _assign_image(image_index, fig_num)
+        elif len(run) == 1 and _keys_are_predecessors_of(refs, _next_known_figure_num_after(run[-1], window=10)):
+            _assign_image(run[0], refs[0], aliases=refs[1:])
         index = run[-1] + 1
 
     if not replacements:
@@ -20519,6 +20609,8 @@ def _drop_unbacked_foreign_figure_aliases(html: str) -> str:
         labels = _caption_labels(raw)
 
         def _replace_alias(alias_match: re.Match[str]) -> str:
+            if re.search(r'\bdata-z2m-origin\s*=\s*(["\'])orphan-image-ref\1', alias_match.group(0), re.IGNORECASE):
+                return alias_match.group(0)
             alias_id = alias_match.group("id")
             alias_num_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", alias_id, re.IGNORECASE)
             if alias_num_match is None or alias_id == unit_id:
