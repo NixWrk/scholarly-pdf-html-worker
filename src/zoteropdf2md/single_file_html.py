@@ -10804,15 +10804,50 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             return following
         return None
 
+    def _relaxed_adjacent_figure_caption_num(index: int) -> str | None:
+        if _has_image(index) or _adjacent_image_index(index) is None:
+            return None
+        visible = _visible_text(_node_raw(index))
+        if not visible or len(visible) > 700:
+            return None
+        match = re.match(
+            r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
+            r"|Р РёСЃ(?:СѓРЅРѕРє)?|СЂРёСЃ(?:СѓРЅРѕРє)?|Р¤РёРі(?:СѓСЂР°)?|С„РёРі(?:СѓСЂР°)?)"
+            rf"\.?\s*({_FIG_RELAXED_KEY_TOKEN})({_FIG_CAPTION_PANEL_SUFFIX_TOKEN})?([\s\S]*)$",
+            visible,
+            re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        tail = match.group(3).strip()
+        if not tail or _caption_tail_opens_caption(tail):
+            return None
+        panel_suffix = (match.group(2) or "").strip()
+        tail_for_check = tail
+        if panel_suffix and re.fullmatch(r"[tTfFzZrR]", panel_suffix):
+            tail_for_check = f"{panel_suffix} {tail_for_check}"
+        if re.match(
+            r"^(?:(?:[tTfFzZrR]\s+)(?:maps?|plots?|curves?|contrasts?)|"
+            r"(?:activation|statistical|contrast)\s+maps?)\b",
+            tail_for_check,
+            re.IGNORECASE,
+        ) is None:
+            return None
+        return _figure_key_from_visible_number(match.group(1))
+
     for index, match in enumerate(matches):
         raw = _node_raw(index)
         visible = _visible_text(raw)
         fig_num = _figure_caption_num_from_visible(visible)
         embedded_caption = False
+        relaxed_adjacent_caption = False
         roman_one_ocr_caption = False
         if fig_num is None:
             fig_num = _roman_one_ocr_figure_caption_num_from_visible(visible)
             roman_one_ocr_caption = fig_num is not None
+        if fig_num is None:
+            fig_num = _relaxed_adjacent_figure_caption_num(index)
+            relaxed_adjacent_caption = fig_num is not None
         if fig_num is None:
             fig_num = _embedded_figure_caption_num(index)
             embedded_caption = fig_num is not None
@@ -10826,7 +10861,11 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
         found.add(fig_num)
 
         target_id = f"fig-{fig_num}"
-        if not _has_image(index) and _looks_like_in_text_figure_reference_node(raw, fig_num):
+        if (
+            not _has_image(index)
+            and not relaxed_adjacent_caption
+            and _looks_like_in_text_figure_reference_node(raw, fig_num)
+        ):
             if _caption_points_to_existing_figure_target(index, raw, target_id):
                 replacements[index] = _replace_open(
                     _node_raw(index),
@@ -16336,7 +16375,7 @@ def _standalone_figure_label_key_from_visible(visible: str) -> str | None:
 
 
 def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[str]]:
-    """Promote short ``Figure N`` labels immediately before images to real targets."""
+    """Promote short ``Figure N`` labels immediately next to images to real targets."""
     if "<img" not in html.lower():
         return html, set()
 
@@ -16398,6 +16437,51 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
                 "z2m-figure-target",
             ),
         )
+        consumed.update({index, index + 1})
+        existing_ids.add(target_id.lower())
+        found.add(fig_num)
+
+    for index in range(len(nodes) - 1):
+        if index in consumed or index + 1 in consumed:
+            continue
+        if not _between_is_whitespace(index, index + 1):
+            continue
+
+        image_raw = nodes[index].group(0)
+        if not image_raw.lstrip().lower().startswith("<p"):
+            continue
+        if re.search(r"<img\b", image_raw, re.IGNORECASE) is None:
+            continue
+        if _node_has_class(image_raw, "z2m-figure-target") or _node_has_class(image_raw, "z2m-figure-unit"):
+            continue
+
+        label_raw = nodes[index + 1].group(0)
+        if not re.match(r"<(?:p|h[1-6])\b", label_raw.lstrip(), re.IGNORECASE):
+            continue
+        if re.search(r"<img\b|<table\b", label_raw, re.IGNORECASE):
+            continue
+        if _node_has_class(label_raw, "z2m-float-unit") or _node_has_class(label_raw, "z2m-figure-unit"):
+            continue
+
+        fig_num = _standalone_figure_label_key_from_visible(_visible_text(label_raw))
+        if fig_num is None:
+            continue
+        target_id = f"fig-{fig_num}"
+        if target_id.lower() in existing_ids:
+            continue
+
+        image_id = _node_open_id_value(image_raw)
+        if image_id is not None and image_id.lower() != target_id.lower():
+            continue
+
+        replacements[index] = _replace_open(
+            image_raw,
+            lambda open_tag, target_id=target_id: _add_class_attr(
+                _add_id_attr(_remove_id_attr(open_tag), target_id),
+                "z2m-figure-target",
+            ),
+        )
+        replacements[index + 1] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
         consumed.update({index, index + 1})
         existing_ids.add(target_id.lower())
         found.add(fig_num)

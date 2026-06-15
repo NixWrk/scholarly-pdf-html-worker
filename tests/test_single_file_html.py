@@ -9415,6 +9415,66 @@ def test_polish_html_document_anchors_heading_figure_caption_to_following_image(
     assert 'href="#fig-2"' in polished
 
 
+def test_polish_html_document_anchors_standalone_heading_label_after_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>The retina projects information to the LGN for further processing (Figure 3).</p>"
+        '<p><img src="_page_3_Picture_8.jpeg"/></p>'
+        '<h4><span id="page-3-1"></span>FIGURE 3</h4>'
+        "<p>The structure of the retina. Created with BioRender.com.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert '_page_3_Picture_8.jpeg' in fig3
+    assert re.search(
+        r'<h4\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-3")[^>]*>[\s\S]*?FIGURE',
+        fig3,
+    )
+    assert 'href="#fig-3"' in polished
+
+
+def test_polish_html_document_anchors_stat_map_caption_to_previous_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>The localization contrast is shown in Fig. 3 (P &lt;0.001 uncorrected).</p>"
+        '<p><img src="_page_7_Picture_8.jpeg"/></p>'
+        "<p><b>Fig. 3</b> <i>t</i> maps for contrasts testing the main effect.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert '_page_7_Picture_8.jpeg' in fig3
+    assert re.search(
+        r'<p\b(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid="fig-3")[^>]*>[\s\S]*?maps for contrasts',
+        fig3,
+    )
+    assert 'href="#fig-3"' in polished
+
+
+def test_add_figure_anchors_keeps_stat_map_caption_plain_without_adjacent_image() -> None:
+    html = "<p><b>Fig. 3</b> <i>t</i> maps for contrasts testing the main effect.</p>"
+
+    result, found = _add_figure_anchors(html)
+
+    assert "3" not in found
+    assert 'id="fig-3"' not in result
+
+
 def test_polish_html_document_wraps_heading_caption_without_image_as_missing() -> None:
     html = (
         "<html><body>"
