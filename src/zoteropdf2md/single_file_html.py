@@ -1272,6 +1272,12 @@ _ALLOY_OXYGEN_VARIABLE_FORMULA_PATTERN = re.compile(
     r"\b(?P<metal>(?:[A-Z][a-z]?){2,})\s*"
     r"<i>\s*x\s*</i>\s*O\s*<i>\s*y\s*</i>"
 )
+_INLINE_CHRONOLOGICALLY_SPLIT_PATTERN = re.compile(
+    r"(?P<open><(?:i|em|b|strong|span)\b[^>]*>\s*)"
+    r"(?P<stem>chronologicall)"
+    r"(?P<close>\s*</(?:i|em|b|strong|span)>)\s*y\b",
+    re.IGNORECASE,
+)
 _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\b(\d+)year-old\b", re.IGNORECASE), r"\1-year-old"),
     (re.compile(r"\b(\d+)\s+year-old\b", re.IGNORECASE), r"\1-year-old"),
@@ -1387,6 +1393,15 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bpathologica\b", re.IGNORECASE), "pathological"),
     (re.compile(r"\bdeceases\s+as\s+the\s+distance\b", re.IGNORECASE), "decreases as the distance"),
     (re.compile(r"\blength\s+form\s+ADF4351\b", re.IGNORECASE), "length from ADF4351"),
+    (re.compile(r"\btoxity\b", re.IGNORECASE), "toxicity"),
+    (re.compile(r"\bTlOO\b"), "T100"),
+    (re.compile(r"\bQrnax\b"), "Qmax"),
+    (re.compile(r"\bTQrnax\b"), "TQmax"),
+    (re.compile(r"\bQ2sea\b"), "Q2sec"),
+    (re.compile(r"\bLondon(?=(?:1[6-9]|20)\d{2}\b)"), "London "),
+    (re.compile(r"\bco\s+verage\b", re.IGNORECASE), "coverage"),
+    (re.compile(r"\bistor\s+ii\b", re.IGNORECASE), "istorii"),
+    (re.compile(r"\bfotograf\s+ii\b", re.IGNORECASE), "fotografii"),
     (re.compile(r"\bMirocontroller\b", re.IGNORECASE), "microcontroller"),
     (re.compile(r"\bmicroconroller\b", re.IGNORECASE), "microcontroller"),
     (re.compile(r"\bNusssenblatt\b", re.IGNORECASE), "Nussenblatt"),
@@ -1536,9 +1551,22 @@ _LARGE_HTML_SAFE_WORD_GLUE_REPAIRS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\btelsa\b", re.IGNORECASE), "tesla"),
     (re.compile(r"\bTQma\s+x\b"), "TQmax"),
     (re.compile(r"\bPdetQma\s+x\b"), "PdetQmax"),
+    (re.compile(r"\bQrnax\b"), "Qmax"),
+    (re.compile(r"\bTQrnax\b"), "TQmax"),
+    (re.compile(r"\bQ2sea\b"), "Q2sec"),
+    (re.compile(r"\bTlOO\b"), "T100"),
     (re.compile(r"\bAppel's\s+Sir\s+i\b", re.IGNORECASE), "Apple's Siri"),
     (re.compile(r"\bF\s+igures\b"), "Figures"),
     (re.compile(r"\bf\s+igures\b"), "figures"),
+    (re.compile(r"\bchronologicall\s+y\b", re.IGNORECASE), "chronologically"),
+    (re.compile(r"\bArchtecture\b"), "Architecture"),
+    (re.compile(r"\barchtecture\b"), "architecture"),
+    (re.compile(r"\bWoodsawer\b"), "Woodsawyer"),
+    (re.compile(r"\bwoodsawer\b"), "woodsawyer"),
+    (re.compile(r"\bclassifified\b", re.IGNORECASE), "classified"),
+    (re.compile(r"\binital\b", re.IGNORECASE), "initial"),
+    (re.compile(r"\bLondon(?=(?:1[6-9]|20)\d{2}\b)"), "London "),
+    (re.compile(r"\bco\s+verage\b", re.IGNORECASE), "coverage"),
     (re.compile(r"\bappro\s+ximately\b", re.IGNORECASE), "approximately"),
     (re.compile(r"\bPRAVALENCE\b", re.IGNORECASE), "prevalence"),
     (re.compile(r"\bMulitmodal\b", re.IGNORECASE), "Multimodal"),
@@ -1724,8 +1752,21 @@ _LARGE_HTML_SAFE_WORD_GLUE_MARKERS = (
     "telsa",
     "TQma x",
     "PdetQma x",
+    "Qrnax",
+    "TQrnax",
+    "Q2sea",
+    "TlOO",
     "Appel's Sir i",
     "F igures",
+    "chronologicall y",
+    "Archtecture",
+    "archtecture",
+    "Woodsawer",
+    "woodsawer",
+    "classifified",
+    "inital",
+    "London1843",
+    "co verage",
     "appro ximately",
     "PRAVALENCE",
     "Mulitmodal",
@@ -5426,8 +5467,17 @@ def _compact_effective_variable_html(match: re.Match[str]) -> str:
     return f"{var_tag}<sub>eff</sub>"
 
 
+def _repair_known_word_glue_inline_html(html: str) -> str:
+    def _repair_chronologically(match: re.Match[str]) -> str:
+        replacement = "Chronologically" if match.group("stem")[0].isupper() else "chronologically"
+        return f"{match.group('open')}{replacement}{match.group('close')}"
+
+    return _INLINE_CHRONOLOGICALLY_SPLIT_PATTERN.sub(_repair_chronologically, html)
+
+
 def _repair_known_word_glue(html: str) -> str:
     html = _EFFECTIVE_VARIABLE_HTML_PATTERN.sub(_compact_effective_variable_html, html)
+    html = _repair_known_word_glue_inline_html(html)
     if len(html) > 500000:
         return _repair_large_html_safe_word_glue(html)
     parts = _TAG_SPLIT_PATTERN.split(html)

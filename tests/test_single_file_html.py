@@ -11827,6 +11827,9 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
         "The sensor has qualify factor Q, and the worklow stayed stable.</p>"
         "<p>Clinical documentation had ofclinical and essenetial residues.</p>"
         "<p>Fudan Univerisity reported a pathologica example that deceases as the distance grows.</p>"
+        "<p>The cell toxity was negligible, TlOO minus the baseline was stable, "
+        "Qrnax, TQrnax, and Q2sea were measured, London1843 was cited, co verage improved, "
+        "and Dokumenty po istor ii fotograf ii was cited.</p>"
         "<p>Extra ligature loss had modifcations, fowmeter hardware, "
         "flling pressure, diffi culty voiding, and Specifi cally, the testing identifi es causes.</p>"
         "<p>More lost ligatures had fows, fowrate, flter, cutof, fuid, signifcant, "
@@ -11906,6 +11909,12 @@ def test_polish_html_document_normalizes_safe_control_article_artifacts() -> Non
     assert "Fudan University" in polished
     assert "pathological example" in polished
     assert "decreases as the distance" in polished
+    assert "cell toxicity was negligible" in polished
+    assert "T100 minus the baseline was stable" in polished
+    assert "Qmax, TQmax, and Q2sec were measured" in polished
+    assert "London 1843 was cited" in polished
+    assert "coverage improved" in polished
+    assert "Dokumenty po istorii fotografii" in polished
     assert "Extra ligature loss had modifications, flowmeter hardware" in polished
     assert "filling pressure, difficulty voiding" in polished
     assert "Specifically, the testing identifies causes" in polished
@@ -11991,6 +12000,7 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
         'be best, safe <a href="#ref-1" class="z2m-ref-link">ty c</a>oncerns remain.</p>'
         '<p>People enj <a href="#page-9-0">oy a</a> painting.</p>'
         "<p><b>B</b> rain-computer interfaces were reported in Roma, Ita <b>ly</b>.</p>"
+        "<p>The method proceeded <i>chronologicall</i> y through the experiments.</p>"
         '<p>We specifically incl <a href="#page-7-4">ude</a>, which has to '
         '<a href="#page-7-5">b</a> e interpreted. A <a href="#page-7-6">dd</a> itional '
         'expressi <a href="#page-7-5">ve</a> ness follows. T <a href="#ref-1">his</a> '
@@ -12015,6 +12025,7 @@ def test_polish_html_document_repairs_english_ocr_artifacts_across_inline_markup
     assert "original objects would be best, safety concerns remain" in polished
     assert "People enjoy a painting" in polished
     assert "Brain-computer interfaces were reported in Roma, Italy" in polished
+    assert "proceeded <i>chronologically</i> through the experiments" in polished
     assert "specifically include, which has to be interpreted" in polished
     assert "Additional expressiveness follows. This fact uses CNC-milling machines" in polished
     assert "support structures in additive production, alternatives, printing services" in polished
@@ -12450,6 +12461,32 @@ def test_large_html_known_word_glue_repairs_old_scan_ocr_residues() -> None:
     assert "Multiphasicity, establishment of reference values, variables and abilities" in repaired
     assert "Abstract, variation, measure, Druck/Flow" in repaired
     assert "<code>foriTi and It isl should stay in code</code>" in repaired
+
+
+def test_large_html_known_word_glue_repairs_residual_p71_tokens() -> None:
+    html = (
+        "<html><body>"
+        "<p>The dissertation proceeds chronologicall y. "
+        "The method proceeds <i>chronologicall</i> y through the archive. "
+        "Centre Canadien d'Archtecture and A Woodsawer's Nooning were cited. "
+        "The subject is classifified as positive after an inital test. "
+        "Variables Qrnax, TQrnax, Q2sea, and TlOO were measured. "
+        "London1843 and co verage appeared in references.</p>"
+        "<code>chronologicall y and classifified should stay in code</code>"
+        + (" " * 500001)
+        + "</body></html>"
+    )
+
+    repaired = _repair_known_word_glue(html)
+
+    assert "proceeds chronologically" in repaired
+    assert "proceeds <i>chronologically</i> through the archive" in repaired
+    assert "Centre Canadien d'Architecture" in repaired
+    assert "A Woodsawyer's Nooning" in repaired
+    assert "classified as positive after an initial test" in repaired
+    assert "Variables Qmax, TQmax, Q2sec, and T100 were measured" in repaired
+    assert "London 1843 and coverage appeared" in repaired
+    assert "<code>chronologicall y and classifified should stay in code</code>" in repaired
 
 
 def test_large_html_false_sup_repair_unlinks_statistical_r_squared() -> None:
