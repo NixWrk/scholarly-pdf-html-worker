@@ -10201,7 +10201,9 @@ def test_polish_html_document_does_not_steal_following_caption_image_for_roman_o
     html = (
         "<html><body>"
         "<p>For a graphical illustration, see Figure 1.</p>"
-        "<table><tr><td>Scale item</td></tr></table>"
+        "<table><tr><td>0</td><td>10</td><td>20</td><td>30</td></tr>"
+        "<tr><td>Cannot do at all</td><td></td><td>Moderately can do</td><td>Highly certain can do</td></tr>"
+        "<tr><td colspan=\"4\">Self-efficacy item</td></tr></table>"
         "<p>Figure I This figure displays the self-efficacy scale.</p>"
         "<p>Notes: Used with permission.</p>"
         '<p><img src="_page_22_Figure_1.jpeg"/></p>'
@@ -10215,12 +10217,23 @@ def test_polish_html_document_does_not_steal_following_caption_image_for_roman_o
         r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
         polished,
     )
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
     assert fig2_match is not None
+    fig1 = fig1_match.group(0)
     fig2 = fig2_match.group(0)
+    assert "<table" in fig1
+    assert "Self-efficacy item" in fig1
+    assert "Figure I This figure displays the self-efficacy scale." in fig1
+    assert "Notes: Used with permission." in fig1
+    assert 'src="_page_22_Figure_1.jpeg"' not in fig1
     assert 'src="_page_22_Figure_1.jpeg"' in fig2
     assert "Figure\xa02" in fig2
     assert "z2m-missing-figure-warning" not in fig2
-    assert 'id="fig-1"' not in polished
+    assert 'href="#fig-1"' in polished
 
 
 def test_polish_html_document_does_not_anchor_in_text_figure_sentence_before_image() -> None:

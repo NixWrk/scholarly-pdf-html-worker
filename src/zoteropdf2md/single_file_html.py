@@ -10626,6 +10626,33 @@ def _roman_one_ocr_figure_caption_num_from_visible(visible: str) -> str | None:
     return _figure_key_from_visible_number("1")
 
 
+_PLAIN_TABLE_SURROGATE_PATTERN = re.compile(
+    r"^(?P<open><table\b[^>]*>)(?P<body>[\s\S]*)(?P<close></table>)$",
+    re.IGNORECASE,
+)
+
+
+def _plain_table_surrogate_parts(raw: str) -> tuple[str, str, str] | None:
+    match = _PLAIN_TABLE_SURROGATE_PATTERN.match(raw.strip())
+    if match is None:
+        return None
+    open_tag = match.group("open")
+    if _has_id_attr(open_tag):
+        return None
+    if any(
+        _node_has_class(open_tag, class_name)
+        for class_name in ("z2m-float-unit", "z2m-table-target", "z2m-figure-target")
+    ):
+        return None
+    if "z2m-table-caption" in raw or "z2m-table-unit" in raw:
+        return None
+    if len(re.findall(r"<t[dh]\b", raw, flags=re.IGNORECASE)) < 4:
+        return None
+    if len(_visible_text(raw)) < 10:
+        return None
+    return open_tag, match.group("body"), match.group("close")
+
+
 def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
     """Add ``id="fig-{n}"`` to the visual figure target when possible.
 
@@ -10818,6 +10845,11 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             return following
         return None
 
+    def _caption_follows_plain_table_surrogate(caption_index: int) -> bool:
+        before_caption = html[: matches[caption_index].start()]
+        table_match = re.search(r"(<table\b[\s\S]*?</table>)\s*$", before_caption, re.IGNORECASE)
+        return table_match is not None and _plain_table_surrogate_parts(table_match.group(1)) is not None
+
     def _relaxed_adjacent_figure_caption_num(index: int) -> str | None:
         if _has_image(index) or _adjacent_image_index(index) is None:
             return None
@@ -10868,9 +10900,12 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
         if fig_num is None:
             continue
         roman_one_image_index: int | None = None
+        roman_one_table_surrogate_caption = False
         if roman_one_ocr_caption and not _has_image(index):
             roman_one_image_index = _adjacent_image_index(index)
             if roman_one_image_index is None:
+                roman_one_table_surrogate_caption = _caption_follows_plain_table_surrogate(index)
+            if roman_one_image_index is None and not roman_one_table_surrogate_caption:
                 continue
         found.add(fig_num)
 
@@ -10912,6 +10947,8 @@ def _add_figure_anchors(html: str) -> tuple[str, set[str]]:
             lambda open_tag: (
                 _add_class_attr(_add_id_attr(open_tag, target_id), "z2m-figure-target")
                 if _has_image(target_index)
+                else _add_class_attr(_add_id_attr(open_tag, target_id), "z2m-figure-caption")
+                if roman_one_table_surrogate_caption and target_index == index
                 else _add_id_attr(open_tag, target_id)
             ),
         )
@@ -16928,6 +16965,110 @@ def _wrap_standalone_caption_before_image_units(html: str) -> str:
     return "".join(out_parts)
 
 
+def _wrap_figure_table_surrogate_units(html: str) -> str:
+    """Wrap table-like visuals that are captioned as figures."""
+    if "z2m-figure-caption" not in html or "<table" not in html.lower():
+        return html
+
+    nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
+    if len(nodes) < 2:
+        return html
+
+    groups: dict[int, tuple[list[int], str]] = {}
+    consumed: set[int] = set()
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _is_table_surrogate_figure_note(raw: str) -> bool:
+        if re.match(r"<p\b", raw, re.IGNORECASE) is None:
+            return False
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            return False
+        if _figure_caption_num_from_visible(_visible_text(raw)) is not None:
+            return False
+        visible = _visible_text(raw).strip()
+        if not visible or len(visible) > 1400:
+            return False
+        if re.match(r"^(?:notes?|source)\s*[:.]\s+\S", visible, re.IGNORECASE) is None:
+            return False
+        return re.search(
+            r"\b(?:used with permission|permission|adapted|reprinted|copyright|from)\b",
+            visible,
+            re.IGNORECASE,
+        ) is not None
+
+    for index in range(1, len(nodes)):
+        if index in consumed or index - 1 in consumed:
+            continue
+        if not _between_is_whitespace(index - 1, index):
+            continue
+
+        caption_raw = nodes[index].group(0)
+        caption_id = _node_id_value(caption_raw) or ""
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", caption_id, re.IGNORECASE)
+        if fig_match is None:
+            continue
+        if not _node_has_class(caption_raw, "z2m-figure-caption"):
+            continue
+        if re.search(r"<img\b|<table\b", caption_raw, re.IGNORECASE):
+            continue
+
+        table_parts = _plain_table_surrogate_parts(nodes[index - 1].group(0))
+        if table_parts is None:
+            continue
+        table_open, table_body, table_close = table_parts
+
+        note_indices: list[int] = []
+        next_idx = index + 1
+        while next_idx < len(nodes) and _between_is_whitespace(next_idx - 1, next_idx):
+            next_raw = nodes[next_idx].group(0)
+            if not (
+                _node_is_caption_bridge_or_note_paragraph(next_raw)
+                or _is_table_surrogate_figure_note(next_raw)
+            ):
+                break
+            note_indices.append(next_idx)
+            next_idx += 1
+
+        group_indices = [index - 1, index, *note_indices]
+        if any(idx in consumed for idx in group_indices):
+            continue
+
+        table_html = f'{_add_class_attr(table_open, "z2m-figure-target")}{table_body}{table_close}'
+        caption_html = _strip_node_id_and_add_class(caption_raw, "z2m-figure-caption")
+        note_html = "".join(
+            _strip_node_id_and_add_class(nodes[idx].group(0), "z2m-figure-caption")
+            for idx in note_indices
+        )
+        wrapper = (
+            f'<div id="{caption_id}" class="z2m-float-unit z2m-figure-unit">'
+            f"{table_html}{caption_html}{note_html}</div>"
+        )
+        groups[group_indices[0]] = (group_indices, wrapper)
+        consumed.update(group_indices)
+
+    if not groups:
+        return html
+
+    out_parts: list[str] = []
+    cursor = 0
+    skip_indices: set[int] = set()
+    for idx, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        if idx in groups:
+            group_indices, wrapper = groups[idx]
+            out_parts.append(wrapper)
+            skip_indices.update(group_indices[1:])
+        elif idx in skip_indices:
+            pass
+        else:
+            out_parts.append(node.group(0))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts)
+
+
 def _insert_missing_figure_warnings(
     html: str,
     *,
@@ -21830,6 +21971,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished, _ = _drop_same_label_image_missing_warnings(polished)
     polished = _wrap_box_units(polished)
     polished = _wrap_standalone_caption_before_image_units(polished)
+    polished = _wrap_figure_table_surrogate_units(polished)
     polished = _wrap_float_units(polished)
     polished = _absorb_external_figure_captions_into_units(polished)
     polished = _collapse_duplicate_nested_float_units(polished)
@@ -21857,6 +21999,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished, _ = _merge_caption_only_missing_units_with_previous_table_surrogates(polished)
     polished, _ = _drop_same_label_image_missing_warnings(polished)
     polished = _wrap_standalone_caption_before_image_units(polished)
+    polished = _wrap_figure_table_surrogate_units(polished)
     polished = _wrap_float_units(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _collapse_duplicate_nested_float_units(polished)
