@@ -10623,6 +10623,85 @@ def test_polish_html_document_repairs_known_replacement_char_symbols() -> None:
     assert "SilkeKärcher" in polished
 
 
+def test_polish_html_document_repairs_rollema_scan_replacement_chars() -> None:
+    html = (
+        "<html><body>"
+        "<p>The urinary f lo\ufffd rate and volume of u\ufffdine were measured. "
+        "The \"A\ufffdroplethysmograph\" was refined by KAUF\ufffdmN. "
+        "For volumes \ufffd 100 ml, output was 10 V/\ufffd 0.02 V and differed by less than \ufffd 3%. "
+        "Target markers used (\ufffd) the edge of the grid. Targ\ufffdt points followed.</p>"
+        "<p>After a warming-up period of \ufffd h, an error of up to \ufffd 2% was introduced. "
+        "The measurement does not exceed \ufffd 2 ml/ s and will rarely exceed \ufffd 2.0 ml/s. "
+        "The error : \ufffd 1.0 s, and Qmax was 5.9 \ufffd 3.3 ml/ s.</p>"
+        "<p>duration of s;t\ufffdtoms and subjective s\ufffdtoms; duration of s\ufffd111 2toms "
+        "and subjective s\ufffdEtoms; rectal 12al\ufffdtion; vesical trabeculat\ufffdon.</p>"
+        "<table><tbody><tr><th> patient number </th><th> I </th><th> 2 </th><th> J </th>"
+        "<th> \ufffd </th><th> 5 </th></tr><tr> <td> \ufffd </td> <td> 66 </td>"
+        "<td> 78 </td></tr><tr><td> duration </td><td> I\ufffd </td></tr>"
+        "<tr><td> TURP ( n=13) </td><td> \ufffd\xb7 </td></tr><tr><td> \ufffd </td></tr>"
+        "</tbody></table>"
+        "<p>blood creatinine (\ufffdmol/1); 98 \ufffdol/1; MAR \ufffdIN; bladder \ufffdicture; "
+        "\ufffd (maximum f low rate); co\ufffdtraction; urinary f\ufffdow rate signa\ufffd.</p>"
+        "<p>0 \ufffd R<sup>2</sup> :5 l and mean value + 2 SD (x \ufffd 2 SD). "
+        "The useful range is 200 ml \ufffd V \ufffd 150 ml. "
+        "The relevant percentile discrimination l imi t \ufffd measurements continue.</p>"
+        "<ul><li>no further interest in the context of this study \ufffd </li>"
+        "<li>measurements are only useful if 200 \ufffd V \ufffd 350 ml ;</li>"
+        "<li>the sensitivity is \ufffd x 100% 62% \ufffd</li>"
+        "<li>the specificity is * x 100% 75% \ufffd</li>"
+        "<li>the percentage of misclassifications is 3 + 2 × 100% = 3 1 % . 8 + 8</li></ul>"
+        "<p>Differences ( a \ufffd 0.05). relative!\ufffd low prevalence. "
+        "urge prior \ufffdo micturition. (n=SB ; \ufffd m=870). "
+        "SD derived o.\ufffd .v. and fitted o.\ufffd.v. to data from ( n\ufffdSB). "
+        "T100 ; \ufffd 2 3 .2 s and TQmax ; \ufffd 7 . 6 s. "
+        "Limits are given ( y SO\ufffd). The method is mean \ufffd 1 SD.</p>"
+        "<p>McNEMAR\ufffds test; 100 ml \ufffd V \ufffd 450 ml; presence was \ufffdresence; "
+        "F\ufffdE each \ufffdalected variable; m\ufffdsclassifications; ran\ufffde of V; "
+        "4. \ufffd \ufffde variable; 100 \ufffd1 \ufffd V \ufffd 450 ml; "
+        "methods used (\ufffd 2.5 % false pos itives).</p>"
+        "<p>psychologische re\ufffd\ufffding; 1 0 0 ml \ufffd V \ufffd 450 ml; "
+        "binnen \ufffden persoon; (V \ufffd res idu na mictie).</p>"
+        "<p>FRIMODT-M\u00a2LLE\ufffd; Bl\ufffdstomningens; North k\ufffderica; MENNINGER, \ufffd. A.; "
+        "SAN\ufffdE; \ufffdatho logie; EDW\ufffd\ufffdS; f\ufffdgures and f\ufffdgure; "
+        "(d\ufffd/dtlmax; percent\ufffd le.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "\ufffd" not in polished
+    assert "flow rate" in polished
+    assert "A&euml;roplethysmograph" in polished
+    assert "KAUFMAN" in polished
+    assert "for volumes &le; 100 ml" in polished
+    assert "10 V/&plusmn; 0.02 V" in polished
+    assert "less than &plusmn; 3%" in polished
+    assert "period of &frac12; h" in polished
+    assert "exceed &plusmn; 2 ml/ s" in polished
+    assert "age </td> <td> 66" in polished
+    assert re.search(r"<th>\s*4\s*</th>", polished)
+    assert "<td> 1&frac12; </td>" in polished
+    assert "blood creatinine (&micro;mol/l)" in polished
+    assert "Qmax (maximum flow rate)" in polished
+    assert "0 &le; R<sup>2</sup> &le; 1" in polished
+    assert "the sensitivity is 5/8 × 100% = 62%;" in polished
+    assert "the specificity is 6/8 × 100% = 75%;" in polished
+    assert "(&alpha; = 0.05)" in polished
+    assert "(n=58; &Sigma; m=870)" in polished
+    assert "o.i.v." in polished
+    assert "(&gamma; = 80%)" in polished
+    assert "McNEMAR's test" in polished
+    assert "100 ml &le; V &le; 450 ml" in polished
+    assert "For each selected variable" in polished
+    assert "psychologische remming" in polished
+    assert "binnen &eacute;&eacute;n persoon" in polished
+    assert "FRIMODT-M&Oslash;LLER" in polished
+    assert "SAND&Oslash;E" in polished
+    assert "EDWARDS" in polished
+    assert "(dL/dt)max" in polished
+    assert "percentile" in polished
+
+
 def test_polish_html_document_drops_journal_page_furniture_and_preserves_sentence() -> None:
     html = (
         "<html><body>"

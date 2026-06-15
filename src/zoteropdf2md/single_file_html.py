@@ -14952,9 +14952,41 @@ def _repair_known_replacement_char_symbols(html: str) -> str:
     html = html.replace("Let\ufffdsosa", "Letšosa")
     html = html.replace("FRIMODT-M\ufffdLLER", "FRIMODT-MØLLER")
     html = html.replace("FRI-MODT-M\ufffdLLER", "FRI-MODT-MØLLER")
+    html = html.replace("FRIMODT-M\u00a2LLE\ufffd", "FRIMODT-M&Oslash;LLER")
     html = html.replace("EB1*\ufffd", "EB1**")
     html = html.replace("dynes\ufffdsec\ufffdcm-5\ufffdm", "dynes&middot;sec&middot;cm-5&middot;m")
     html = html.replace("dynes\ufffdsec\ufffdcm-5", "dynes&middot;sec&middot;cm-5")
+    html = html.replace("A\ufffdroplethysmograph", "A&euml;roplethysmograph")
+    html = html.replace("KAUF\ufffdmN", "KAUFMAN")
+    html = html.replace("f lo\ufffd rate", "flow rate")
+    html = html.replace("f\ufffdow rate signa\ufffd", "flow rate signal")
+    html = html.replace("signa\ufffd", "signal")
+    html = html.replace("u\ufffdine", "urine")
+    html = html.replace("Targ\ufffdt points", "Target points")
+    html = html.replace("trabeculat\ufffdon", "trabeculation")
+    html = html.replace("MAR \ufffdIN", "MARTIN")
+    html = html.replace("\ufffdmol/1", "&micro;mol/l")
+    html = html.replace("\ufffdol/1", "&micro;mol/l")
+    html = html.replace("bladder \ufffdicture", "bladder picture")
+    html = html.replace("co\ufffdtraction", "contraction")
+    html = html.replace("relative!\ufffd", "relatively")
+    html = html.replace("prior \ufffdo", "prior to")
+    html = html.replace("\ufffdresence", "presence")
+    html = html.replace("F\ufffdE each \ufffdalected", "For each selected")
+    html = html.replace("m\ufffdsclassifications", "misclassifications")
+    html = html.replace("ran\ufffde of V", "range of V")
+    html = html.replace("McNEMAR\ufffds", "McNEMAR's")
+    html = html.replace("psychologische re\ufffd\ufffding", "psychologische remming")
+    html = html.replace("binnen \ufffden persoon", "binnen &eacute;&eacute;n persoon")
+    html = html.replace("Bl\ufffdstomningens", "Bl&aring;st&ouml;mningens")
+    html = html.replace("North k\ufffderica", "North America")
+    html = html.replace("MENNINGER, \ufffd. A.", "MENNINGER, K. A.")
+    html = html.replace("SAN\ufffdE", "SAND&Oslash;E")
+    html = html.replace("\ufffdatho logie", "Pathologie")
+    html = html.replace("EDW\ufffd\ufffdS", "EDWARDS")
+    html = html.replace("f\ufffdgures", "figures")
+    html = html.replace("f\ufffdgure", "figure")
+    html = html.replace("percent\ufffd le", "percentile")
 
     html = re.sub(r">\s*\ufffd\s*(?=<b>\s*IMPLICATIONS\s+FOR\s+REHABILITATION\b)", "> ", html, flags=re.IGNORECASE)
     html = re.sub(r"(<li\b[^>]*>)\s*\ufffd\s*", r"\1", html, flags=re.IGNORECASE)
@@ -14969,6 +15001,72 @@ def _repair_known_replacement_char_symbols(html: str) -> str:
     html = html.replace("Model 1\ufffd", "Model 1*")
     html = re.sub(r"\ufffd(?=\s*<b>\s*(?:140|90)\s+mmHg\b)", "&ge;", html, flags=re.IGNORECASE)
     html = re.sub(r"\ufffd(?=\s*(?:27\.5\s*kg/m|50\s+years|50\s+years\s+old|140\s+mmHg|90\s+mmHg))", "&ge;", html)
+    html = re.sub(r"\bf\ufffdow\b", "flow", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bTabl\s+2\s+1\s+e\s*\.\s*\.\s*con\s+t['\"]\s*\ufffdnue\s+d\)", "Table 2.1 (continued)", html, flags=re.IGNORECASE)
+    html = re.sub(
+        r"\bTABLE\s+2\.\s*1\s*\.\s*\(co\s+n\s+t[\"']\s*\ufffdnue\s+d\)\.",
+        "Table 2.1 (continued).",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"\bTable\s+2\s+1\s*\.\s*(?:<br/?>\s*)?\(co\s+n\s+t[\"']\s*\ufffdnue\s+d\)",
+        "Table 2.1 (continued)",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(r"for volumes\s*\ufffd\s*100\s+ml", "for volumes &le; 100 ml", html, flags=re.IGNORECASE)
+    html = re.sub(r"10\s*V/\s*\ufffd\s*0\.02\s*V", "10 V/&plusmn; 0.02 V", html)
+    html = re.sub(r"less\s+than\s*\ufffd\s*3%", "less than &plusmn; 3%", html, flags=re.IGNORECASE)
+    html = re.sub(r"\(\s*\ufffd\s*\)(?=\s*the\s+edge\s+of\s+the\s+grid\b)", "(&#9662;)", html, flags=re.IGNORECASE)
+    html = re.sub(r"\ufffd\s*h\b", "&frac12; h", html)
+    html = re.sub(r"\b(?:up\s+to|exceed)\s*\ufffd\s*(?=(?:2(?:\.0)?\s*ml/\s*s|2%))", lambda m: m.group(0).replace("\ufffd", "&plusmn;"), html, flags=re.IGNORECASE)
+    html = re.sub(r"error\s*:\s*\ufffd\s*1\.0\s*s", "error : &plusmn; 1.0 s", html, flags=re.IGNORECASE)
+    html = re.sub(r"\b5\.9\s*\ufffd\s*3\.3\s*ml/\s*s", "5.9 &plusmn; 3.3 ml/s", html)
+    html = re.sub(
+        r"(<th>\s*J\s*</th>\s*)<th>\s*\ufffd\s*</th>(\s*<th>\s*5\s*</th>)",
+        r"\1<th> 4 </th>\2",
+        html,
+    )
+    html = html.replace("<tr> <td> \ufffd </td> <td> 66 </td>", "<tr> <td> age </td> <td> 66 </td>")
+    html = html.replace("<tr> <td> \ufffd </td> <td> 78 </td>", "<tr> <td> age </td> <td> 78 </td>")
+    html = html.replace("duration of s;t\ufffdtoms", "duration of symptoms")
+    html = html.replace("subjective s\ufffdtoms", "subjective symptoms")
+    html = html.replace("duration of s\ufffd111 2toms", "duration of symptoms")
+    html = html.replace("subjective s\ufffdEtoms", "subjective symptoms")
+    html = html.replace("<td> I\ufffd </td>", "<td> 1&frac12; </td>")
+    html = html.replace("rectal 12al\ufffdtion", "rectal palpation")
+    html = html.replace("<td> \ufffd\xb7 </td>", "<td> i+ </td>")
+    html = html.replace("\ufffd (maximum f low rate)", "Qmax (maximum flow rate)")
+    html = re.sub(r"0\s*\ufffd\s*R\s*<sup\b[^>]*>\s*2\s*</sup>\s*:5\s*l", "0 &le; R<sup>2</sup> &le; 1", html)
+    html = re.sub(r"\(x\s*\ufffd\s*2\s*SD\)", "(x &plusmn; 2 SD)", html)
+    html = re.sub(r"(?:100|200)\s*(?:ml\s*)?\ufffd\s*V\s*\ufffd\s*(?:150|350|450)\s*ml", lambda m: re.sub(r"\s+", " ", m.group(0).replace("\ufffd", "&le;")), html)
+    html = re.sub(r"1\s*0\s*0\s*ml\s*\ufffd\s*V\s*\ufffd\s*450\s*ml", "100 ml &le; V &le; 450 ml", html)
+    html = re.sub(r"1\s*0\s*0\s*ml\s*&le;\s*V\s*&le;\s*450\s*ml", "100 ml &le; V &le; 450 ml", html)
+    html = re.sub(r"100\s*\ufffd1\s*\ufffd\s*V\s*\ufffd\s*450\s*ml", "100 ml &le; V &le; 450 ml", html)
+    html = re.sub(r"discrimination\s+l\s*imi\s*t\s*\ufffd\s*measurements", "discrimination limit; measurements", html, flags=re.IGNORECASE)
+    html = re.sub(r"study\s*\ufffd\s*</li>", "study; </li>", html, flags=re.IGNORECASE)
+    html = re.sub(r"the\s+sensitivity\s+is\s*\ufffd\s*x\s*100%\s*62%\s*\ufffd", "the sensitivity is 5/8 x 100% = 62%;", html, flags=re.IGNORECASE)
+    html = re.sub(r"the\s+specificity\s+is\s*\*\s*x\s*100%\s*75%\s*\ufffd", "the specificity is 6/8 x 100% = 75%;", html, flags=re.IGNORECASE)
+    html = re.sub(
+        r"the\s+percentage\s+of\s+misclassifications\s+is\s*3\s*\+\s*2\s*×\s*100%\s*=\s*3\s*1\s*%\s*\.\s*8\s*\+\s*8",
+        "the percentage of misclassifications is (3 + 2)/(8 + 8) x 100% = 31%.",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(r"\(\s*a\s*\ufffd\s*0\.05\s*\)", "(&alpha; = 0.05)", html)
+    html = re.sub(r"\(n=SB\s*;\s*\ufffd\s*m=870\)", "(n=58; &Sigma; m=870)", html)
+    html = html.replace("n\ufffdSB", "n=58")
+    html = re.sub(r"o\.\s*\ufffd\s*\.?\s*v\.", "o.i.v.", html)
+    html = re.sub(r";\s*\ufffd\s*2\s*3\s*\.2\s*s", "; x = 23.2 s", html)
+    html = re.sub(r";\s*\ufffd\s*7\s*\.\s*6\s*s", "; x = 7.6 s", html)
+    html = re.sub(r"\(\s*y\s+SO\ufffd\s*\)", "(&gamma; = 80%)", html)
+    html = re.sub(r"mean\s*\ufffd\s*1\s*SD", "mean &plusmn; 1 SD", html, flags=re.IGNORECASE)
+    html = html.replace("4. \ufffd \ufffde variable", "4. The variable")
+    html = re.sub(r"\(\s*\ufffd\s*2\.5\s*%\s*false\s+pos", "(&le; 2.5 % false pos", html, flags=re.IGNORECASE)
+    html = re.sub(r"\(V\s*\ufffd\s*res\s*idu\s+na\s+mictie\)", "(V + residu na mictie)", html, flags=re.IGNORECASE)
+    html = re.sub(r"\(d\ufffd/dt[lI]max", "(dL/dt)max", html)
+    html = re.sub(r"(<t[dh]\b[^>]*>)\s*\ufffd\s*(</t[dh]>)", r"\1\2", html, flags=re.IGNORECASE)
     return html
 
 
@@ -20731,6 +20829,7 @@ def _polish_phase_pre_cleanup(state: RawPolishState, context: RawPolishContext) 
     polished = _unescape_inline_sup_sub(polished)
     polished = _normalize_spaced_inline_sup_sub_tags(polished)
     polished = _fix_common_mojibake(polished)
+    polished = _repair_known_replacement_char_symbols(polished)
     polished = _repair_safe_text_artifacts(polished)
     polished = _BYTE_TOKEN_CITATION_PATTERN.sub(r'<sup>\1</sup>', polished)
     polished = _BYTE_TOKEN_ARTIFACT_PATTERN.sub("", polished)
@@ -20964,6 +21063,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _repair_known_word_glue(polished)
     polished = _repair_second_echelon_ocr_residue_html(polished)
     polished = _repair_known_table_ocr_artifacts(polished)
+    polished = _repair_known_replacement_char_symbols(polished)
     polished = _repair_safe_text_artifacts(polished)
     if language_policy.code == "en":
         polished = _repair_latin_detached_accent_artifacts_in_visible_text(polished)
