@@ -37,3 +37,19 @@ def test_cached_data_image_cache_follows_source_run_chain(tmp_path: Path) -> Non
 
     assert cache == {"fig1.png": "data:image/png;base64,AAAA"}
     assert source_path == str(previous_polish)
+
+
+def test_cached_data_image_cache_reads_audit_tree_review_copy(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    previous_polish = source / "audit_tree" / "doc" / "02.en.polish.html"
+    previous_polish.parent.mkdir(parents=True)
+    previous_polish.write_text(
+        '<img data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"/>',
+        encoding="utf-8",
+    )
+    write_json(source / "manifest.json", {"articles": [{"article": "doc"}]})
+
+    cache, source_path = cached_data_image_cache(source, "doc", '<img src="fig1.png"/>')
+
+    assert cache == {"fig1.png": "data:image/png;base64,AAAA"}
+    assert source_path == str(previous_polish)

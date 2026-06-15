@@ -55,6 +55,80 @@ def test_repolish_file_writes_polish_stage_and_inlines_article_images() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_repolish_file_restores_images_from_source_run_cache() -> None:
+    repolish = _load_module()
+    tmp_path = _make_temp_dir()
+    try:
+        article_dir = tmp_path / "Article sample"
+        stage_dir = article_dir / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        raw_path.write_text(
+            '<html><body><p><img src="fig1.png"></p></body></html>',
+            encoding="utf-8",
+        )
+
+        source_polish = tmp_path / "source_run" / "polish" / "Article sample.02.en.polish.html"
+        source_polish.parent.mkdir(parents=True)
+        source_polish.write_text(
+            '<html><body><p><img data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"></p></body></html>',
+            encoding="utf-8",
+        )
+
+        result = repolish.repolish_file(raw_path, image_cache_source_run=tmp_path / "source_run")
+
+        polished = (stage_dir / "02.en.polish.html").read_text(encoding="utf-8")
+        assert result.restored_images == 1
+        assert result.image_cache_source == str(source_polish.resolve(strict=False))
+        assert result.inlined_images == []
+        assert result.missing_images == []
+        assert 'data-z2m-src="fig1.png"' in polished
+        assert 'src="data:image/png;base64,AAAA"' in polished
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_repolish_cli_reports_restored_images_from_source_run_cache() -> None:
+    repolish = _load_module()
+    tmp_path = _make_temp_dir()
+    try:
+        article_dir = tmp_path / "Article sample"
+        stage_dir = article_dir / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "01.en.raw.html").write_text(
+            '<html><body><p><img src="fig1.png"></p></body></html>',
+            encoding="utf-8",
+        )
+        source_polish = tmp_path / "source_run" / "polish" / "Article sample.02.en.polish.html"
+        source_polish.parent.mkdir(parents=True)
+        source_polish.write_text(
+            '<html><body><p><img data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"></p></body></html>',
+            encoding="utf-8",
+        )
+        report_path = tmp_path / "report.json"
+
+        exit_code = repolish.main(
+            [
+                "--roots",
+                str(tmp_path),
+                "--out-report",
+                str(report_path),
+                "--image-cache-source-run",
+                str(tmp_path / "source_run"),
+                "--fail-on-missing-images",
+            ]
+        )
+
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert exit_code == 0
+        assert report["restored_image_count"] == 1
+        assert report["missing_image_count"] == 0
+        assert report["articles"][0]["restored_images"] == 1
+        assert report["articles"][0]["image_cache_source"] == str(source_polish.resolve(strict=False))
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_repolish_cli_writes_json_report() -> None:
     repolish = _load_module()
     tmp_path = _make_temp_dir()

@@ -127,6 +127,8 @@ def previous_polish_candidates(source_run_dir: Path, article: str) -> list[Path]
                     candidates.append(Path(str(value)).resolve(strict=False))
         direct_polish = run_dir / "polish" / f"{article}.{POLISH_STAGE}"
         candidates.append(direct_polish.resolve(strict=False))
+        review_polish = run_dir / "audit_tree" / article / POLISH_STAGE
+        candidates.append(review_polish.resolve(strict=False))
         nested = manifest.get("source_run_dir")
         if nested:
             visit(Path(str(nested)))
