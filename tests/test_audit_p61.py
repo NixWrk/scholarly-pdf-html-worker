@@ -31,6 +31,32 @@ def test_figure_target_keys_collects_semantic_fig_ids() -> None:
     assert figure_target_keys(html) == {"3", "supplementary-4"}
 
 
+def test_figure_target_keys_infers_caption_number_from_slugged_figure_unit() -> None:
+    html = (
+        '<div id="fig-18-1840" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig18.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 18. 1840 Robert Cornelius daguerreotype.</p>'
+        "</div>"
+    )
+    targets = figure_target_keys(html)
+
+    assert {"18", "18-1840"}.issubset(targets)
+    assert _defects(_block("Figure 18 illustrates the burnishing marks."), targets) == []
+
+
+def test_figure_target_keys_keeps_compound_caption_key_specific() -> None:
+    html = (
+        '<div id="fig-3-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig35.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 3.5. Flow-rate signal.</p>'
+        "</div>"
+    )
+    targets = figure_target_keys(html)
+
+    assert "3-5" in targets
+    assert "3" not in targets
+
+
 def test_visible_figure_target_defects_reports_missing_target() -> None:
     defects = _defects(_block("The result is summarized in Figure 3D."))
 

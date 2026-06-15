@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 import re
 
-from zoteropdf2md.quality_loop.audit_blocks import Block, Defect, strip_tags
+from zoteropdf2md.quality_loop.audit_blocks import Block, Defect, attrs as parse_attrs, strip_tags
 from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
 from zoteropdf2md.semantic_labels import figure_key_from_visible_number
 
@@ -26,6 +26,14 @@ AUTHOR_YEAR_CITATION_RE = re.compile(
     r"\b[A-Z][A-Za-z'`\-]+(?:\s+et\s+al\.)?\s*,?\s*(?:19|20)\d{2}[a-z]?\b",
     re.IGNORECASE,
 )
+HTML_CONTAINER_RE = re.compile(
+    r"<(?P<tag>div|figure)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>",
+    re.IGNORECASE | re.DOTALL,
+)
+CAPTION_BLOCK_RE = re.compile(
+    r"<(?P<tag>p|figcaption|div|h[1-6])\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def figure_key_from_visible_match(match: re.Match[str]) -> str:
@@ -46,10 +54,26 @@ def is_compound_chapter_style_figure_ref(match: re.Match[str]) -> bool:
 
 
 def figure_target_keys(html: str) -> set[str]:
-    return {
+    keys = {
         key.lower()
         for key in re.findall(r"\bid\s*=\s*['\"]fig-([A-Za-z0-9-]+)['\"]", html, re.IGNORECASE)
     }
+    for unit_match in HTML_CONTAINER_RE.finditer(html):
+        unit_attrs = parse_attrs(unit_match.group("attrs"))
+        unit_id = unit_attrs.get("id", "")
+        unit_classes = set(unit_attrs.get("class", "").split())
+        if not unit_id.lower().startswith("fig-") or "z2m-figure-unit" not in unit_classes:
+            continue
+        for caption_match in CAPTION_BLOCK_RE.finditer(unit_match.group("body")):
+            caption_attrs = parse_attrs(caption_match.group("attrs"))
+            if "z2m-figure-caption" not in set(caption_attrs.get("class", "").split()):
+                continue
+            caption_text = strip_tags(caption_match.group("body"))
+            visible_match = VISIBLE_FIGURE_REF_RE.search(caption_text)
+            if visible_match is not None and visible_match.start() <= 40:
+                keys.add(figure_key_from_visible_match(visible_match).lower())
+                break
+    return keys
 
 
 def figure_target_numbers(html: str) -> set[int]:
