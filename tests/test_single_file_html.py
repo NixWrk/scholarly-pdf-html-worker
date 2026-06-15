@@ -8049,6 +8049,48 @@ def test_polish_html_document_recovers_orphan_figure_after_nearby_ref() -> None:
     assert 'href="#fig-4"' in polished
 
 
+def test_polish_html_document_recovers_orphan_figure_from_terminal_ref_after_heading() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="_page_14_Figure_8.jpeg"/></p>'
+        "<p>Spatial and temporal codes can stimulate specific retinal cells.</p>"
+        "<p>Current printing technology can produce conical electrodes.</p>"
+        '<h4>5.2 "Eye in Eye" based on reflection</h4>'
+        "<p>The device projects colored light into the fovea, as shown in Figure 9. "
+        "Its micro-display supports flexible adjustment.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig9_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-9")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig9_match is not None
+    assert '_page_14_Figure_8.jpeg' in fig9_match.group(0)
+    assert "Figure 9 image was not extracted" not in polished
+
+
+def test_polish_html_document_does_not_split_chapter_style_terminal_ref_as_integer() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="_page_183_Figure_0.jpeg"/></p>'
+        "<p>The relationship between multiphasicity and V is summarized in Figure 8.14.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig814_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-8-14")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig814_match is not None
+    assert '_page_183_Figure_0.jpeg' in fig814_match.group(0)
+    assert 'id="fig-8"' not in polished
+
+
 def test_late_recover_orphan_figure_links_after_float_cleanup() -> None:
     html = (
         "<html><body>"

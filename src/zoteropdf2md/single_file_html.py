@@ -493,6 +493,11 @@ _SPACED_MULTIPANEL_FIG_REF_PATTERN = re.compile(
     r"(?=\s*(?:,|\band\b|\bor\b|\)|;))",
     re.IGNORECASE,
 )
+_TERMINAL_FIG_REF_PATTERN = re.compile(
+    rf"\b({_FIG_REF_LABEL_TOKEN}\.?)\s*(\d{{1,3}})({_FIG_PANEL_SUFFIX_TOKEN})?"
+    r"\b(?=\s*(?:\.(?!\s*\d)|[\),;\]:]|$))",
+    re.IGNORECASE,
+)
 _FIG_REF_CHAIN_CONT_PATTERN = re.compile(
     rf"(?P<sep>\s*(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*)"
     rf"(?P<num>{_FIG_KEY_TOKEN})(?P<suf>{_FIG_PANEL_SUFFIX_TOKEN})?\b",
@@ -11034,6 +11039,10 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
                 if any(start <= match.start() < end for start, end in supplementary_spans):
                     continue
                 _add(_figure_key_from_visible_number(match.group(2)))
+        for match in _TERMINAL_FIG_REF_PATTERN.finditer(visible):
+            if any(start <= match.start() < end for start, end in supplementary_spans):
+                continue
+            _add(_figure_key_from_visible_number(match.group(2)))
         return nums
 
     def _page_linked_missing_figure_refs() -> dict[str, list[str]]:
