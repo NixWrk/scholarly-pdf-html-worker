@@ -16439,6 +16439,260 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
             return False
         return bool(re.match(r"^\([A-Ha-h]\)\s+\S", visible))
 
+    def _looks_like_caption_body_after_standalone_label(raw: str) -> bool:
+        if not raw.lstrip().lower().startswith("<p"):
+            return False
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            return False
+        if _node_has_class(raw, "z2m-float-unit") or _node_has_class(raw, "z2m-figure-unit"):
+            return False
+        if _is_figure_caption_node(raw) or _is_table_caption_node(raw):
+            return False
+        visible = _visible_text(raw).strip()
+        if len(visible) < 24 or len(visible) > 2600:
+            return False
+        if _standalone_figure_label_key_from_visible(visible) is not None:
+            return False
+        if _figure_caption_num_from_visible(visible) is not None:
+            return False
+        if re.match(r"^\([A-Ha-h]\)\s+\S", visible):
+            return False
+        if re.match(
+            r"^(?:abstract|introduction|background|methods?|materials|results?|discussion|"
+            r"conclusions?|references|bibliography|acknowledg|funding|conflicts?)\b",
+            visible,
+            re.IGNORECASE,
+        ):
+            return False
+        return True
+
+    def _looks_like_caption_panel_heading_after_standalone_label(raw: str) -> bool:
+        if not re.match(r"<(?:p|h[1-6])\b", raw.lstrip(), re.IGNORECASE):
+            return False
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            return False
+        if _node_has_class(raw, "z2m-float-unit") or _node_has_class(raw, "z2m-figure-unit"):
+            return False
+        visible = _visible_text(raw).strip()
+        if not visible or len(visible) > 240:
+            return False
+        if _standalone_figure_label_key_from_visible(visible) is not None:
+            return False
+        if (
+            _figure_caption_num_from_visible(visible) is not None
+            or _table_caption_key_from_visible(visible) is not None
+        ):
+            return False
+        return bool(re.match(r"^\(?[A-Ha-h]\)?(?:[).:,\-\u2010-\u2014]|\s+)\S", visible))
+
+    def _image_target_replacement(raw: str, *, image_idx: int, first_image_idx: int, target_id: str) -> str:
+        return _replace_open(
+            raw,
+            lambda open_tag: _add_class_attr(
+                (
+                    _add_id_attr(_remove_id_attr(open_tag), target_id)
+                    if image_idx == first_image_idx
+                    else _remove_id_attr(open_tag)
+                ),
+                "z2m-figure-target",
+            ),
+        )
+
+    def _caption_body_has_rich_panel_inventory(raw: str) -> bool:
+        visible = _visible_text(raw)
+        return len(re.findall(r"\([A-Ha-h]\)", visible)) >= 3
+
+    def _preceding_panel_image_run_indices(label_index: int, target_id: str) -> tuple[list[int], list[int]]:
+        scan_idx = label_index - 1
+        group_reversed: list[int] = []
+        image_indices_reversed: list[int] = []
+        while scan_idx >= 0 and len(group_reversed) < 18:
+            if scan_idx < label_index - 1 and not _between_is_whitespace(scan_idx, scan_idx + 1):
+                break
+            scan_raw = nodes[scan_idx].group(0)
+            scan_visible = _visible_text(scan_raw)
+            if _standalone_figure_label_key_from_visible(scan_visible) is not None:
+                break
+            if (
+                _figure_caption_num_from_visible(scan_visible) is not None
+                or _table_caption_key_from_visible(scan_visible) is not None
+            ):
+                break
+            if re.search(r"<img\b", scan_raw, re.IGNORECASE) is not None:
+                image_id = _node_open_id_value(scan_raw)
+                if image_id is not None and image_id.lower() != target_id.lower():
+                    break
+                group_reversed.append(scan_idx)
+                image_indices_reversed.append(scan_idx)
+                scan_idx -= 1
+                continue
+            if image_indices_reversed and (
+                _looks_like_caption_panel_heading_after_standalone_label(scan_raw)
+                or _node_is_caption_bridge_or_note_paragraph(scan_raw)
+            ):
+                group_reversed.append(scan_idx)
+                scan_idx -= 1
+                continue
+            break
+        return list(reversed(group_reversed)), list(reversed(image_indices_reversed))
+
+    def _distant_previous_image_index_for_caption_label(label_index: int, target_id: str) -> int | None:
+        scan_idx = label_index - 1
+        scanned = 0
+        while scan_idx >= 0 and scanned < 14:
+            if scan_idx < label_index - 1 and not _between_is_whitespace(scan_idx, scan_idx + 1):
+                break
+            scan_raw = nodes[scan_idx].group(0)
+            scan_visible = _visible_text(scan_raw)
+            if _standalone_figure_label_key_from_visible(scan_visible) is not None:
+                break
+            if (
+                _figure_caption_num_from_visible(scan_visible) is not None
+                or _table_caption_key_from_visible(scan_visible) is not None
+            ):
+                break
+            if re.search(r"<img\b", scan_raw, re.IGNORECASE) is not None:
+                image_id = _node_open_id_value(scan_raw)
+                if image_id is None or image_id.lower() == target_id.lower():
+                    return scan_idx
+                return None
+            scan_idx -= 1
+            scanned += 1
+        return None
+
+    for index in range(len(nodes) - 2):
+        if index in consumed or index + 1 in consumed:
+            continue
+        if not _between_is_whitespace(index, index + 1):
+            continue
+
+        label_raw = nodes[index].group(0)
+        if not re.match(r"<(?:p|h[1-6])\b", label_raw.lstrip(), re.IGNORECASE):
+            continue
+        if re.search(r"<img\b|<table\b", label_raw, re.IGNORECASE):
+            continue
+        if _node_has_class(label_raw, "z2m-float-unit") or _node_has_class(label_raw, "z2m-figure-unit"):
+            continue
+
+        fig_num = _standalone_figure_label_key_from_visible(_visible_text(label_raw))
+        if fig_num is None:
+            continue
+        target_id = f"fig-{fig_num}"
+        if target_id.lower() in existing_ids:
+            continue
+
+        caption_body_raw = nodes[index + 1].group(0)
+        if not _looks_like_caption_body_after_standalone_label(caption_body_raw):
+            continue
+
+        run_indices, image_indices = _preceding_panel_image_run_indices(index, target_id)
+        if not image_indices and _caption_body_has_rich_panel_inventory(caption_body_raw):
+            previous_image_idx = _distant_previous_image_index_for_caption_label(index, target_id)
+            if previous_image_idx is not None:
+                run_indices = [previous_image_idx]
+                image_indices = [previous_image_idx]
+        if not image_indices:
+            continue
+
+        replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
+        replacements[index + 1] = _strip_node_id_and_add_class(caption_body_raw, "z2m-figure-caption")
+        for run_idx in run_indices:
+            run_raw = nodes[run_idx].group(0)
+            if re.search(r"<img\b", run_raw, re.IGNORECASE) is not None:
+                replacements[run_idx] = _image_target_replacement(
+                    run_raw,
+                    image_idx=run_idx,
+                    first_image_idx=image_indices[0],
+                    target_id=target_id,
+                )
+            else:
+                replacements[run_idx] = _strip_node_id_and_add_class(run_raw, "z2m-figure-caption")
+        consumed.update({index, index + 1, *run_indices})
+        existing_ids.add(target_id.lower())
+        found.add(fig_num)
+
+    for index in range(len(nodes) - 2):
+        if index in consumed or index + 1 in consumed:
+            continue
+        if not _between_is_whitespace(index, index + 1):
+            continue
+
+        label_raw = nodes[index].group(0)
+        if not re.match(r"<(?:p|h[1-6])\b", label_raw.lstrip(), re.IGNORECASE):
+            continue
+        if re.search(r"<img\b|<table\b", label_raw, re.IGNORECASE):
+            continue
+        if _node_has_class(label_raw, "z2m-float-unit") or _node_has_class(label_raw, "z2m-figure-unit"):
+            continue
+
+        fig_num = _standalone_figure_label_key_from_visible(_visible_text(label_raw))
+        if fig_num is None:
+            continue
+        target_id = f"fig-{fig_num}"
+        if target_id.lower() in existing_ids:
+            continue
+
+        caption_body_raw = nodes[index + 1].group(0)
+        if not _looks_like_caption_body_after_standalone_label(caption_body_raw):
+            continue
+
+        caption_indices = [index, index + 1]
+        image_indices: list[int] = []
+        different_label_after_images = False
+        scan_idx = index + 2
+        while scan_idx < len(nodes) and len(caption_indices) + len(image_indices) < 18:
+            if not _between_is_whitespace(scan_idx - 1, scan_idx):
+                break
+            if scan_idx in consumed:
+                break
+            scan_raw = nodes[scan_idx].group(0)
+            scan_visible = _visible_text(scan_raw)
+            if _standalone_figure_label_key_from_visible(scan_visible) is not None:
+                different_label_after_images = bool(image_indices)
+                break
+            if (
+                _figure_caption_num_from_visible(scan_visible) is not None
+                or _table_caption_key_from_visible(scan_visible) is not None
+            ):
+                break
+            if re.search(r"<img\b", scan_raw, re.IGNORECASE) is not None:
+                image_id = _node_open_id_value(scan_raw)
+                if image_id is not None and image_id.lower() != target_id.lower():
+                    break
+                image_indices.append(scan_idx)
+                scan_idx += 1
+                continue
+            if (
+                _looks_like_caption_panel_heading_after_standalone_label(scan_raw)
+                or _node_is_caption_bridge_or_note_paragraph(scan_raw)
+            ):
+                caption_indices.append(scan_idx)
+                scan_idx += 1
+                continue
+            break
+
+        if not image_indices or different_label_after_images:
+            continue
+
+        replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
+        replacements[index + 1] = _strip_node_id_and_add_class(caption_body_raw, "z2m-figure-caption")
+        for caption_idx in caption_indices[2:]:
+            replacements[caption_idx] = _strip_node_id_and_add_class(
+                nodes[caption_idx].group(0),
+                "z2m-figure-caption",
+            )
+        for image_idx in image_indices:
+            image_raw = nodes[image_idx].group(0)
+            replacements[image_idx] = _image_target_replacement(
+                image_raw,
+                image_idx=image_idx,
+                first_image_idx=image_indices[0],
+                target_id=target_id,
+            )
+        consumed.update({*caption_indices, *image_indices})
+        existing_ids.add(target_id.lower())
+        found.add(fig_num)
+
     for index in range(len(nodes) - 1):
         if index in consumed or index + 1 in consumed:
             continue
@@ -16569,6 +16823,109 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
         cursor = node.end()
     out_parts.append(html[cursor:])
     return "".join(out_parts), found
+
+
+def _wrap_standalone_caption_before_image_units(html: str) -> str:
+    """Wrap caption-before-image figure runs that include panel headings between images."""
+    if "z2m-figure-caption" not in html or "z2m-figure-target" not in html:
+        return html
+
+    nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
+    if not nodes:
+        return html
+
+    groups: dict[int, tuple[list[int], str]] = {}
+    consumed: set[int] = set()
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    for index, node in enumerate(nodes):
+        if index in consumed:
+            continue
+        raw = node.group(0)
+        if not _node_has_class(raw, "z2m-figure-caption"):
+            continue
+        fig_num = _standalone_figure_label_key_from_visible(_visible_text(raw))
+        if fig_num is None:
+            continue
+        target_id = f"fig-{fig_num}"
+        group_indices: list[int] = []
+        has_image = False
+        scan_idx = index
+        while scan_idx < len(nodes) and len(group_indices) < 24:
+            if scan_idx in consumed:
+                break
+            if scan_idx > index and not _between_is_whitespace(scan_idx - 1, scan_idx):
+                break
+            scan_raw = nodes[scan_idx].group(0)
+            scan_visible = _visible_text(scan_raw)
+            if scan_idx > index:
+                next_standalone = _standalone_figure_label_key_from_visible(scan_visible)
+                if next_standalone is not None and next_standalone != fig_num:
+                    break
+                caption_num = _figure_caption_num_from_visible(scan_visible)
+                if caption_num is not None and caption_num != fig_num:
+                    break
+                if _table_caption_key_from_visible(scan_visible) is not None:
+                    break
+            if re.search(r"<img\b", scan_raw, re.IGNORECASE) is not None:
+                if not _node_has_class(scan_raw, "z2m-figure-target"):
+                    break
+                image_id = _node_open_id_value(scan_raw)
+                if image_id is not None and image_id.lower() != target_id.lower():
+                    break
+                has_image = True
+                group_indices.append(scan_idx)
+                scan_idx += 1
+                continue
+            if _node_has_class(scan_raw, "z2m-figure-caption"):
+                group_indices.append(scan_idx)
+                scan_idx += 1
+                continue
+            if _node_is_caption_bridge_or_note_paragraph(scan_raw):
+                group_indices.append(scan_idx)
+                scan_idx += 1
+                continue
+            break
+
+        if not has_image or len(group_indices) < 2:
+            continue
+
+        content_html = "".join(
+            _strip_node_id_and_add_class(
+                nodes[idx].group(0),
+                (
+                    "z2m-figure-target"
+                    if re.search(r"<img\b", nodes[idx].group(0), re.IGNORECASE)
+                    else "z2m-figure-caption"
+                ),
+            )
+            for idx in group_indices
+        )
+        wrapper = f'<div id="{target_id}" class="z2m-float-unit z2m-figure-unit">{content_html}</div>'
+        groups[group_indices[0]] = (group_indices, wrapper)
+        consumed.update(group_indices)
+
+    if not groups:
+        return html
+
+    out_parts: list[str] = []
+    cursor = 0
+    skip_indices: set[int] = set()
+    for idx, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        if idx in groups:
+            group_indices, wrapper = groups[idx]
+            out_parts.append(wrapper)
+            skip_indices.update(group_indices[1:])
+        elif idx in skip_indices:
+            pass
+        else:
+            out_parts.append(node.group(0))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts)
 
 
 def _insert_missing_figure_warnings(
@@ -21345,15 +21702,17 @@ def _polish_phase_semantic_targets(state: RawPolishState, context: RawPolishCont
     polished = _strip_leading_reference_line_number_pairs_in_list_items(polished)
     polished = _normalize_numeric_section_heading_levels(polished)
     polished, found_sections = _add_section_anchors(polished)
+    polished, standalone_label_figures = _anchor_standalone_figure_labels_before_images(polished)
     polished, found_figures = _add_figure_anchors(polished)
+    found_figures.update(standalone_label_figures)
     polished, duplicate_context_figures = _retarget_duplicate_figure_targets_from_context_refs(polished)
     found_figures.update(duplicate_context_figures)
     polished, _ = _split_trailing_table_captions_before_tables(polished)
     polished, found_tables = _add_table_anchors(polished)
     polished, recovered_figures = _recover_orphan_figure_anchors(polished, found_figures)
     found_figures.update(recovered_figures)
-    polished, standalone_label_figures = _anchor_standalone_figure_labels_before_images(polished)
-    found_figures.update(standalone_label_figures)
+    polished, late_standalone_label_figures = _anchor_standalone_figure_labels_before_images(polished)
+    found_figures.update(late_standalone_label_figures)
     polished, placeholder_figures = _wrap_accepted_manuscript_figure_placeholders_as_missing(
         polished,
         figure_caption_language=context.table_caption_language,
@@ -21470,6 +21829,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished, _ = _drop_compound_caption_missing_warnings(polished)
     polished, _ = _drop_same_label_image_missing_warnings(polished)
     polished = _wrap_box_units(polished)
+    polished = _wrap_standalone_caption_before_image_units(polished)
     polished = _wrap_float_units(polished)
     polished = _absorb_external_figure_captions_into_units(polished)
     polished = _collapse_duplicate_nested_float_units(polished)
@@ -21496,6 +21856,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
     polished, _ = _merge_caption_only_missing_units_with_previous_table_surrogates(polished)
     polished, _ = _drop_same_label_image_missing_warnings(polished)
+    polished = _wrap_standalone_caption_before_image_units(polished)
     polished = _wrap_float_units(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _collapse_duplicate_nested_float_units(polished)

@@ -10055,6 +10055,123 @@ def test_polish_html_document_keeps_panel_details_with_standalone_figure_labels(
     assert "Body text resumes after the figure list." in polished[fig3_match.end() :]
 
 
+def test_polish_html_document_wraps_caption_before_panel_image_run() -> None:
+    html = (
+        "<html><body>"
+        "<p>The receptive-field results are summarized in Figure 9 and Figure 9b.</p>"
+        "<h4>Figure 9</h4>"
+        "<p>Location and size of phosphenes produced by stimulation of the primary visual cortex. "
+        "(a) A posterior-medial view of the occipital portion of one brain. "
+        "(b) Method for mapping receptive fields. "
+        "(c) Method for mapping phosphenes. "
+        "Modified with permission from the Society for Neuroscience.</p>"
+        "<h4>a Predicted cortical activation: human V1</h4>"
+        '<p><img src="fig9-a.jpg"/></p>'
+        '<p><img src="fig9-b.jpg"/></p>'
+        "<h4><b>C</b> Predicted cortical activation: macaque V1</h4>"
+        '<p><img src="fig9-c.jpg"/></p>'
+        '<p><img src="fig9-d.jpg"/></p>'
+        "<p>Body text resumes between the figure panels and the next caption.</p>"
+        "<p>Figure 10</p>"
+        "<p>Relationship between predicted cortical activity and behavior.</p>"
+        '<p><img src="fig10.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig9_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-9")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig10_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-10")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig9_match is not None
+    assert fig10_match is not None
+    fig9 = fig9_match.group(0)
+    fig10 = fig10_match.group(0)
+    assert 'src="fig9-a.jpg"' in fig9
+    assert 'src="fig9-b.jpg"' in fig9
+    assert 'src="fig9-c.jpg"' in fig9
+    assert 'src="fig9-d.jpg"' in fig9
+    assert "Predicted cortical activation: macaque V1" in fig9
+    assert 'src="fig10.jpg"' not in fig9
+    assert 'src="fig10.jpg"' in fig10
+    assert 'href="#fig-9"' in polished
+    assert "Figure 9b" not in polished
+    assert 'href="#fig-10"' not in fig9
+
+
+def test_polish_html_document_keeps_previous_caption_image_when_next_panel_run_follows() -> None:
+    html = (
+        "<html><body>"
+        "<p>Electrical stimulation of visual cortex provides an opportunity to test this tenet (Figure 9).</p>"
+        '<p><img src="fig9-location-size.jpg"/></p>'
+        "<p>Bosking Beauchamp Yoshor</p>"
+        "<p>area, this can be due to the centering of the electrode over a color domain.</p>"
+        "<h1><b>ECoG:</b> electrocorticography</h1>"
+        "<h4>Figure 9</h4>"
+        "<p>Location and size of phosphenes produced by stimulation of the primary visual cortex. "
+        "(a) A posterior-medial view of the occipital portion of one brain. "
+        "(b) Method for mapping receptive fields. "
+        "(c) Method for mapping phosphenes. "
+        "(d) Receptive field eccentricity versus phosphene eccentricity. "
+        "(e) Receptive field polar angle versus phosphene polar angle. "
+        "(f) Phosphene size tested for six currents. "
+        "(g) Phosphene size versus eccentricity.</p>"
+        "<h4>a Predicted cortical activation: human V1</h4>"
+        '<p><img src="fig10-a.jpg"/></p>'
+        '<p><img src="fig10-b.jpg"/></p>'
+        "<h4><b>C</b> Predicted cortical activation: macaque V1</h4>"
+        '<p><img src="fig10-c.jpg"/></p>'
+        '<p><img src="fig10-d.jpg"/></p>'
+        "<p>Figure 10</p>"
+        "<p>Relationship between predicted cortical activity and behavior. "
+        "(a) Schematic showing the map of visual space. "
+        "(b) The phosphene location and size predicted for electrical stimulation. "
+        "(c) Predicted cortical activation during primate saccades. "
+        "(d) The size of saccade delay fields.</p>"
+        '<p><img src="fig11-face-place.jpg"/></p>'
+        "<p>Figure 11</p>"
+        "<p>Stimulation of face- and place-selective regions of ventral temporal cortex.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig9 = re.search(
+        r'<div\b(?=[^>]*\bid="fig-9")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig10 = re.search(
+        r'<div\b(?=[^>]*\bid="fig-10")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig11 = re.search(
+        r'<div\b(?=[^>]*\bid="fig-11")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig9 is not None
+    assert fig10 is not None
+    assert fig11 is not None
+    fig9_html = fig9.group(0)
+    fig10_html = fig10.group(0)
+    fig11_html = fig11.group(0)
+    assert 'src="fig9-location-size.jpg"' in fig9_html
+    assert 'src="fig10-a.jpg"' not in fig9_html
+    assert 'src="fig10-a.jpg"' in fig10_html
+    assert 'src="fig10-b.jpg"' in fig10_html
+    assert 'src="fig10-c.jpg"' in fig10_html
+    assert 'src="fig10-d.jpg"' in fig10_html
+    assert 'src="fig11-face-place.jpg"' not in fig10_html
+    assert 'src="fig11-face-place.jpg"' in fig11_html
+    assert 'href="#fig-9"' in polished
+
+
 def test_polish_html_document_links_digit_ref_to_roman_one_ocr_caption_target() -> None:
     html = (
         "<html><body>"
