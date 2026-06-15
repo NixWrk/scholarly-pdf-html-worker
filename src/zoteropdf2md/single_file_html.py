@@ -15978,6 +15978,103 @@ def _wrap_accepted_manuscript_figure_placeholders_as_missing(
     return "".join(out_parts), found
 
 
+_STANDALONE_FIGURE_LABEL_RE = re.compile(
+    r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
+    r"|Рис(?:унок)?|рис(?:унок)?|Фиг(?:ура)?|фиг(?:ура)?)"
+    rf"\.?\s*({_FIG_RELAXED_KEY_TOKEN})({_FIG_CAPTION_PANEL_SUFFIX_TOKEN})?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _standalone_figure_label_key_from_visible(visible: str) -> str | None:
+    match = _STANDALONE_FIGURE_LABEL_RE.match(visible)
+    if match is None:
+        return None
+    if match.group(2):
+        return None
+    return _figure_key_from_visible_number(match.group(1))
+
+
+def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[str]]:
+    """Promote short ``Figure N`` labels immediately before images to real targets."""
+    if "<img" not in html.lower():
+        return html, set()
+
+    nodes = list(_SENTENCE_NODE_PATTERN.finditer(html))
+    if len(nodes) < 2:
+        return html, set()
+
+    existing_ids = {
+        match.group("id").lower()
+        for match in re.finditer(r'\bid\s*=\s*(["\'])(?P<id>fig-[A-Za-z0-9-]+)\1', html, re.IGNORECASE)
+    }
+    replacements: dict[int, str] = {}
+    consumed: set[int] = set()
+    found: set[str] = set()
+
+    def _between_is_whitespace(a_idx: int, b_idx: int) -> bool:
+        return _html_gap_is_ignorable(html[nodes[a_idx].end():nodes[b_idx].start()])
+
+    def _replace_open(raw: str, transform: Callable[[str], str]) -> str:
+        return _transform_node_open(raw, transform)
+
+    for index in range(len(nodes) - 1):
+        if index in consumed or index + 1 in consumed:
+            continue
+        if not _between_is_whitespace(index, index + 1):
+            continue
+
+        label_raw = nodes[index].group(0)
+        if not re.match(r"<(?:p|h[1-6])\b", label_raw.lstrip(), re.IGNORECASE):
+            continue
+        if re.search(r"<img\b|<table\b", label_raw, re.IGNORECASE):
+            continue
+        if _node_has_class(label_raw, "z2m-float-unit") or _node_has_class(label_raw, "z2m-figure-unit"):
+            continue
+
+        fig_num = _standalone_figure_label_key_from_visible(_visible_text(label_raw))
+        if fig_num is None:
+            continue
+        target_id = f"fig-{fig_num}"
+        if target_id.lower() in existing_ids:
+            continue
+
+        image_raw = nodes[index + 1].group(0)
+        if not image_raw.lstrip().lower().startswith("<p"):
+            continue
+        if re.search(r"<img\b", image_raw, re.IGNORECASE) is None:
+            continue
+        if _node_has_class(image_raw, "z2m-figure-target") or _node_has_class(image_raw, "z2m-figure-unit"):
+            continue
+        image_id = _node_open_id_value(image_raw)
+        if image_id is not None and image_id.lower() != target_id.lower():
+            continue
+
+        replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
+        replacements[index + 1] = _replace_open(
+            image_raw,
+            lambda open_tag, target_id=target_id: _add_class_attr(
+                _add_id_attr(_remove_id_attr(open_tag), target_id),
+                "z2m-figure-target",
+            ),
+        )
+        consumed.update({index, index + 1})
+        existing_ids.add(target_id.lower())
+        found.add(fig_num)
+
+    if not replacements:
+        return html, set()
+
+    out_parts: list[str] = []
+    cursor = 0
+    for index, node in enumerate(nodes):
+        out_parts.append(html[cursor:node.start()])
+        out_parts.append(replacements.get(index, node.group(0)))
+        cursor = node.end()
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), found
+
+
 def _insert_missing_figure_warnings(
     html: str,
     *,
@@ -20465,6 +20562,8 @@ def _polish_phase_semantic_targets(state: RawPolishState, context: RawPolishCont
     polished, found_tables = _add_table_anchors(polished)
     polished, recovered_figures = _recover_orphan_figure_anchors(polished, found_figures)
     found_figures.update(recovered_figures)
+    polished, standalone_label_figures = _anchor_standalone_figure_labels_before_images(polished)
+    found_figures.update(standalone_label_figures)
     polished, placeholder_figures = _wrap_accepted_manuscript_figure_placeholders_as_missing(
         polished,
         figure_caption_language=context.table_caption_language,

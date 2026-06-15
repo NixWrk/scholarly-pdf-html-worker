@@ -9712,6 +9712,61 @@ def test_polish_html_document_pairs_caption_before_image_after_prior_figure_targ
     assert "Figure\xa025" in fig25
 
 
+def test_polish_html_document_wraps_standalone_figure_label_before_image_as_real_target() -> None:
+    html = (
+        "<html><body>"
+        "<p>The vertical line guide position is shown in Figure 1.</p>"
+        "<p>Figure 1</p>"
+        '<p><img src="line-guide.jpg"/></p>'
+        "<p>Body text resumes.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    fig1 = fig1_match.group(0)
+    assert 'src="line-guide.jpg"' in fig1
+    assert "z2m-missing-figure-warning" not in fig1
+    assert 'class="z2m-figure-target"' in fig1
+    assert re.search(r'<p\b(?=[^>]*\bz2m-figure-caption\b)[^>]*>[\s\S]*?Figure', fig1)
+    assert 'href="#fig-1"' in polished
+    assert "Body text resumes." in polished[fig1_match.end() :]
+
+
+def test_polish_html_document_does_not_anchor_in_text_figure_sentence_before_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 1 shows the line guide attached to the magnifier.</p>"
+        '<p><img src="line-guide.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    assert "z2m-figure-unit" not in polished
+
+
+def test_polish_html_document_does_not_anchor_standalone_panel_label_before_image() -> None:
+    html = (
+        "<html><body>"
+        "<p>FIG. 2D depicts a top view of the base element.</p>"
+        "<p>FIG. 2D</p>"
+        '<p><img src="patent-panel.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-2"' not in polished
+    assert "z2m-figure-unit" not in polished
+
+
 def test_polish_html_document_retargets_split_page_figure_link_word_and_number() -> None:
     html = (
         "<html><body>"
