@@ -2196,6 +2196,35 @@ def test_citation_style_audit_ignores_reference_years_for_pdf_cite_numeric_artic
     assert [defect.id for defect in defects] == []
 
 
+def test_citation_style_audit_ignores_parenthetical_numeric_dominant_article() -> None:
+    audit = _load_audit_module()
+    numeric_citations = [
+        f'<p>Numeric citation evidence <a href="#ref-{idx}" class="z2m-ref-link">({idx})</a>.</p>'
+        for idx in range(1, 6)
+    ]
+    html = "\n".join(
+        [
+            "<html><body>",
+            "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
+            "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
+            "make front matter look author-year.</p>",
+            *numeric_citations,
+            '<p>Users explore through speech descriptions <a href="#ref-8" class="z2m-ref-link">(8,</a> '
+            '9) or vibration feedback <a href="#ref-10" class="z2m-ref-link">(10)</a>.</p>',
+            "<h4>References</h4><ol>",
+            *[
+                f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> Reference {idx}.</li>'
+                for idx in range(1, 11)
+            ],
+            "</ol></body></html>",
+        ]
+    )
+
+    defects = audit._citation_style_consistency_defects(html, audit._parse_blocks(html))
+
+    assert [defect.id for defect in defects] == []
+
+
 def test_analyze_pair_does_not_report_p22_for_numeric_value_rows() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

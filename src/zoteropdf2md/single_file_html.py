@@ -988,6 +988,14 @@ _FALSE_RANGE_ENDPOINT_SUP_REF_PATTERN = re.compile(
     r'(?=\s*(?:[.,;)]|\b(?:for|of|in|across|each|with|to)\b))',
     re.IGNORECASE,
 )
+_FALSE_NUMBERED_SEQUENCE_LEADING_SUP_REF_PATTERN = re.compile(
+    r'(?P<prefix>\b(?:graphics?|objects?|sessions?|experiments?|studies|items?|trials?|tasks?|stages?)\s+)'
+    r'<sup>\s*'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d+)["\'][^>]*\bz2m-ref-link\b[^>]*>'
+    r'\s*(?P<num>\d{1,3})\s*</a>\s*</sup>'
+    r'(?=\s*(?:to|through|and|or)\s+\d)',
+    re.IGNORECASE,
+)
 _FALSE_COLOR_LABEL_SUP_REF_PATTERN = re.compile(
     r'(?P<color>\b(?:red|green|blue|orange|yellow|purple|violet|gray|grey|white|black|brown))'
     r'<sup(?P<attrs>[^>]*)>\s*(?P<body>'
@@ -995,6 +1003,12 @@ _FALSE_COLOR_LABEL_SUP_REF_PATTERN = re.compile(
     r'(?:\s*,\s*<a\b[^>]*\bhref\s*=\s*["\']#ref-\d+["\'][^>]*\bz2m-ref-link\b[^>]*>\s*\d{1,3}\s*</a>){0,2}'
     r')\s*</sup>',
     re.IGNORECASE | re.DOTALL,
+)
+_FALSE_COLOR_LABEL_PLAIN_PERCENT_SUP_PATTERN = re.compile(
+    r'(?P<color>\b(?:red|green|blue|orange|yellow|purple|violet|gray|grey|white|black|brown))'
+    r'<sup(?P<attrs>[^>]*)>\s*(?P<first>\d{1,3})\s*,\s*(?P<tail>\d{1,3}(?:\s*,\s*\d{1,3}){0,2})\s*</sup>'
+    r'(?P<fraction>\s*\.\s*\d+\s*%)',
+    re.IGNORECASE,
 )
 _FALSE_ELECTRODE_PAIR_SUP_REF_PATTERN = re.compile(
     r'(?P<prefix>\b(?:electrodes?|contacts?|channels?)\s+)'
@@ -6176,9 +6190,15 @@ def _repair_numeric_ref_false_positives(html: str) -> str:
             return f"{color}<sup>{numbers[0]}</sup>," + ",".join(numbers[1:])
         return f"{color}<sup>{','.join(numbers)}</sup>"
 
+    def _normalize_plain_color_percent_label(match: re.Match[str]) -> str:
+        tail = re.sub(r"\s+", "", match.group("tail"))
+        fraction = re.sub(r"\s+", "", match.group("fraction"))
+        return f'{match.group("color")}<sup{match.group("attrs")}>{match.group("first")}</sup>,{tail}{fraction}'
+
     repaired = _FALSE_DIMENSION_LEADING_SUP_REF_PATTERN.sub(_unwrap_if_target_matches, html)
     repaired = _FALSE_BETWEEN_RANGE_SUP_REF_PATTERN.sub(_unwrap_if_target_matches, repaired)
     repaired = _FALSE_RANGE_ENDPOINT_SUP_REF_PATTERN.sub(_unwrap_if_target_matches, repaired)
+    repaired = _FALSE_NUMBERED_SEQUENCE_LEADING_SUP_REF_PATTERN.sub(_unwrap_if_target_matches, repaired)
     repaired = _FALSE_ELECTRODE_PAIR_SUP_REF_PATTERN.sub(
         lambda m: (
             m.group(0)
@@ -6195,7 +6215,11 @@ def _repair_numeric_ref_false_positives(html: str) -> str:
         ),
         repaired,
     )
-    return _FALSE_COLOR_LABEL_SUP_REF_PATTERN.sub(_unwrap_color_label, repaired)
+    repaired = _FALSE_COLOR_LABEL_SUP_REF_PATTERN.sub(_unwrap_color_label, repaired)
+    return _FALSE_COLOR_LABEL_PLAIN_PERCENT_SUP_PATTERN.sub(
+        _normalize_plain_color_percent_label,
+        repaired,
+    )
 
 
 def _fix_nested_autolink_in_escaped_anchor_snippets(html: str) -> str:
@@ -12681,6 +12705,13 @@ def _unwrap_author_year_ref_links(html: str, citation_profile: Any | None = None
             re.fullmatch(r"[A-Z][A-Za-z'’.-]{3,}", label) is not None
             and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE) is not None
         ) or _looks_like_author_year_author_fragment(label, left_text, right_text)
+        single_surname_et_al_fragment = (
+            re.fullmatch(r"[A-Z][A-Za-z'\u2019.-]{3,}", label) is not None
+            and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE)
+            is not None
+        )
+        if single_surname_et_al_fragment:
+            return match.group("body")
         if surname_fragment:
             matching_target = _author_year_matching_ref_target(label, right_text)
             if matching_target is not None and matching_target != int(match.group("num")):
@@ -13204,6 +13235,26 @@ def _looks_author_year_citation_document(html: str) -> bool:
     body_text = _visible_text(body_html)
     author_year_count = len(_AUTHOR_YEAR_CITATION_TEXT_PATTERN.findall(body_text))
     bracket_count = len(re.findall(r"\[\s*\d", body_text))
+    paren_numeric_ref_count = 0
+    for match in _REF_ANCHOR_PATTERN.finditer(body_html):
+        if "<sup" in body_html[max(0, match.start() - 40): match.start()].lower():
+            continue
+        label = _visible_text(match.group("body")).strip()
+        if re.fullmatch(r"[\s\(\)\[\],.;:\-\u2010-\u2014\d]+", label) is None:
+            continue
+        numbers = [int(value) for value in re.findall(r"\d{1,4}", label)]
+        if not numbers or any(1800 <= number <= 2099 for number in numbers):
+            continue
+        left_text = _visible_text(body_html[max(0, match.start() - 40): match.start()])
+        right_text = _visible_text(body_html[match.end() : match.end() + 80])
+        if (
+            re.search(r"\(\s*$", left_text) is not None
+            or label.startswith("(")
+            or re.match(r"^\s*(?:[,;\-\u2010-\u2014]\s*\d|\))", right_text) is not None
+        ):
+            paren_numeric_ref_count += 1
+    if paren_numeric_ref_count >= 5:
+        return False
     return author_year_count >= 4 and bracket_count < 4
 
 
@@ -13297,11 +13348,12 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
     def _replace(match: re.Match[str]) -> str:
         if references_heading is not None and match.start() > references_heading.start():
             return match.group(0)
-        label = _visible_text(match.group("body"))
-        if re.fullmatch(r"\d{1,3}", label) is None:
+        label = _visible_text(match.group("body")).strip()
+        label_number_match = re.fullmatch(r"[\s\(\[]*(\d{1,3})[\s\)\].;:]*", label)
+        if label_number_match is None:
             return match.group(0)
         try:
-            number = int(label)
+            number = int(label_number_match.group(1))
         except ValueError:
             return match.group(0)
         raw_window = html[max(0, match.start() - 80): match.end() + 80].lower()
@@ -13312,6 +13364,7 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
         paragraph_start = html.rfind("<p", 0, match.start())
         paragraph_close = html.rfind("</p>", 0, match.start())
         same_paragraph_start = paragraph_start if paragraph_start > paragraph_close else max(0, match.start() - 160)
+        same_paragraph_raw = html[same_paragraph_start : match.end() + 180]
         same_paragraph_window = _visible_text(html[max(same_paragraph_start, match.start() - 160): match.end() + 160])
         same_paragraph_left_text = _visible_text(
             html[max(same_paragraph_start, match.start() - 140): match.start()]
@@ -13326,6 +13379,10 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
             is not None
             or _version_number_context(same_paragraph_left_text)
         )
+        equation_label_context = (
+            re.fullmatch(r"[\[(]\s*\d{1,3}\s*[\])]", label) is not None
+            and re.search(r"<math\b|z2m-math|katex", same_paragraph_raw, re.IGNORECASE) is not None
+        )
         numbered_study_context = (
             re.search(
                 r"\b(?:experiments?|studies|study)\s+\d+\s*(?:,|and|or)\s*$",
@@ -13334,7 +13391,86 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
             )
             is not None
         )
-        right_text = _visible_text(html[match.end() : match.end() + 80])
+        right_context_start = match.end()
+        sup_close = html.find("</sup>", match.end(), match.end() + 60)
+        if sup_close >= 0 and not _visible_text(html[match.end() : sup_close]):
+            right_context_start = sup_close + len("</sup>")
+        right_text = _visible_text(html[right_context_start : right_context_start + 120])
+        counted_range_context = (
+            re.search(r"\b(?:counted|identified|selected|reported|rated)\s*$", left_text, re.IGNORECASE)
+            is not None
+            and re.match(r"^\s*(?:to|through|[-\u2013\u2014])\s+\d", right_text, re.IGNORECASE)
+            is not None
+        )
+        sample_count_context = (
+            (
+                re.search(r"\b\d{1,3}\s*,\s*\d{1,3}\s*,\s*(?:and|or)\s*$", left_text, re.IGNORECASE)
+                is not None
+                and re.match(r"^\s*of\s+", right_text, re.IGNORECASE) is not None
+            )
+            or (
+                re.search(r"\b\d{1,3}\s+with\b[\s\S]{0,80}\b(?:and|or)\s*$", left_text, re.IGNORECASE)
+                is not None
+                and re.match(r"^\s*with\s+", right_text, re.IGNORECASE) is not None
+            )
+        )
+        inline_numeric_range_context = (
+            re.search(r"(?:\(|\[)?\s*\d{1,3}\s*(?:,|[-\u2010-\u2014])\s*$", left_text)
+            is not None
+            and (
+                re.match(r"^\s*(?:[,;.)\]]|$)", right_text) is not None
+                or re.search(r"[\)\]]\s*$", label) is not None
+            )
+        )
+        front_matter_affiliation_context = (
+            number <= 20
+            and re.search(
+                r"\b[A-Z][A-Za-z'\u2019.-]+(?:\s+[A-Z]\.){0,4}\s+[A-Z][A-Za-z'\u2019.-]+\s*$",
+                left_text,
+            )
+            is not None
+            and re.match(r"^\s*[A-Z][A-Za-z'\u2019.-]+", right_text) is not None
+            and re.search(r"\b(?:Abstract|Background|Objective|Methods?)\b", right_text[:240], re.IGNORECASE)
+            is not None
+        )
+        standard_part_context = (
+            re.search(
+                r"\b(?:ISO|IEC|ASTM|DIN|EN|BS)\s+\d[\w.-]*\s+(?:part|pt\.?)\s*$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+            and re.match(r"^\s*(?:[),.;:]|\b(?:and|of|for|in)\b|$)", right_text, re.IGNORECASE)
+            is not None
+        )
+        decimal_unit_context = (
+            number <= 20
+            and re.search(
+                r"\b(?:may\s+be|was|were|is|are|below|above|difference|differences?|value|values?)\s*$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+            and re.match(
+                r"^\s*,\s*\d{1,2}\s*\.\s*(?:[a-z]\s*(?:[.\u00b7]\s*)?)?min\s*[-\u2212]?\s*1\b",
+                right_text,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+        color_label_context = (
+            number <= 30
+            and re.search(
+                r"\b(?:red|green|blue|orange|yellow|purple|violet|gray|grey|white|black|brown)\s*$",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+            and (
+                re.match(r"^\s*(?:,\s*\d+(?:\s*\.\s*\d+)?|\.\s*\d+)\s*%", right_text) is not None
+                or re.match(r"^\s*in\s+Experiment\s+\d\b", right_text, re.IGNORECASE) is not None
+            )
+        )
         numbered_sequence_context = (
             (
                 re.search(
@@ -13408,6 +13544,14 @@ def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | No
         enumerated_dot_context = _enumerated_dot_item_context(number, dot_enum_left_text, right_text)
         if (
             version_context
+            or equation_label_context
+            or counted_range_context
+            or sample_count_context
+            or inline_numeric_range_context
+            or front_matter_affiliation_context
+            or standard_part_context
+            or decimal_unit_context
+            or color_label_context
             or numbered_study_context
             or numbered_sequence_context
             or enumerated_item_context

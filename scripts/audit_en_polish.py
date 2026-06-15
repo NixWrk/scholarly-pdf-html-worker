@@ -1974,6 +1974,26 @@ def _numeric_ref_label_numbers(label: str) -> list[int]:
     return [number for number in numbers if not (1800 <= number <= 2099)]
 
 
+def _paren_numeric_ref_link_count(body_blocks: Iterable[Block]) -> int:
+    count = 0
+    for block in body_blocks:
+        for match in REF_ANCHOR_BODY_RE.finditer(block.raw):
+            if "<sup" in block.raw[max(0, match.start() - 40) : match.start()].lower():
+                continue
+            label = _strip_tags(match.group("body")).strip()
+            if not _numeric_ref_label_numbers(label):
+                continue
+            left_text = _strip_tags(block.raw[max(0, match.start() - 40) : match.start()])
+            right_text = _strip_tags(block.raw[match.end() : match.end() + 80])
+            if (
+                re.search(r"\(\s*$", left_text) is not None
+                or label.startswith("(")
+                or re.match(r"^\s*(?:[,;\-\u2010-\u2014]\s*\d|\))", right_text) is not None
+            ):
+                count += 1
+    return count
+
+
 def _citation_style_consistency_defects(
     polish_html: str,
     polish_blocks: list[Block],
@@ -2012,7 +2032,8 @@ def _citation_style_consistency_defects(
     ) or (
         numeric_ref_link_count >= 10 and numeric_sup_ref_link_count >= 3
     )
-    if numeric_citation_dominant and not pdf_author_year_evidence:
+    paren_numeric_ref_link_count = _paren_numeric_ref_link_count(body_blocks)
+    if (numeric_citation_dominant or paren_numeric_ref_link_count >= 5) and not pdf_author_year_evidence:
         return []
     if bracket_citation_count >= 4 and not pdf_author_year_evidence:
         return []

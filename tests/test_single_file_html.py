@@ -11148,6 +11148,155 @@ def test_polish_html_document_unlinks_author_year_numbered_experiment_refs() -> 
     assert "Experiments 1 and 2: performance changed" in body
 
 
+def test_polish_html_document_unlinks_author_year_numeric_false_refs_for_counts() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 27))
+    html = (
+        "<html><body>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        '<p>Subjects counted <sup><a href="#ref-4" class="z2m-ref-link">4</a></sup> '
+        "to 12 white squares.</p>"
+        "<p>In this study, 16, 14, and "
+        '<sup><a href="#ref-20" class="z2m-ref-link">20</a></sup> of congenital blind, '
+        "late blind, and sighted individuals were recruited.</p>"
+        "<p>Forty patients, 14 with sleep apnoea syndrome and "
+        '<sup><a href="#ref-26" class="z2m-ref-link">26</a></sup> with chronic obstructive '
+        "pulmonary disease, took part.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-4"' not in body
+    assert 'href="#ref-20"' not in body
+    assert 'href="#ref-26"' not in body
+    assert "counted <sup>4</sup> to 12 white squares" in body
+    assert "16, 14, and <sup>20</sup> of congenital blind" in body
+    assert "14 with sleep apnoea syndrome and <sup>26</sup> with chronic" in body
+
+
+def test_polish_html_document_unlinks_author_year_numeric_range_and_equation_labels() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 8))
+    html = (
+        "<html><body>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        '<p>Earlier prototypes solved tactile output (3 - <a href="#ref-7" '
+        'class="z2m-ref-link">7)</a>.</p>'
+        '<p><span class="z2m-math z2m-math-inline" role="math">delta V = rho L</span> '
+        '<a href="#ref-1" class="z2m-ref-link">[1]</a></p>'
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-7"' not in body
+    assert 'href="#ref-1"' not in body
+    assert "(3 - 7)" in body
+    assert "[1]" in body
+
+
+def test_polish_html_document_unlinks_author_year_standard_part_and_unit_decimal_refs() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 61))
+    html = (
+        "<html><body>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        "<p>Evaluation followed draft annex D of ISO 10993 Part "
+        '<sup><a href="#ref-60" class="z2m-ref-link">60</a></sup>) and included pathology.</p>'
+        "<p>This means that impedance cardiography may be "
+        '<sup><a href="#ref-4" class="z2m-ref-link">4</a>,11</sup>. min<sup>-1</sup> below Fick.</p>'
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-60"' not in body
+    assert 'href="#ref-4"' not in body
+    assert "ISO 10993 Part <sup>60</sup>)" in body
+    assert re.search(r"may be <sup>4,11</sup>\. min<sup[^>]*>-1</sup> below Fick", body)
+
+
+def test_polish_html_document_unlinks_author_year_front_matter_affiliation_marker() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 5))
+    html = (
+        "<html><body>"
+        "<h1>Ambulatory Impedance Cardiography</h1>"
+        '<p>Monica J. E. Parry <sup><a href="#ref-4" class="z2m-ref-link">4</a></sup> '
+        "Judith McFetridge-Durdle b Background: Standard noninvasive impedance cardiography "
+        "has been used in clinical studies.</p>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-4"' not in body
+    assert "Parry <sup>4</sup> Judith" in body
+
+
+def test_polish_html_document_unwraps_single_surname_et_al_author_year_ref_link() -> None:
+    refs = "".join(
+        (
+            '<li id="ref-10">10. Schira, M. M., Tyler, C. W., Breakspear, M., '
+            "&amp; Spehar, B. (2009).</li>"
+        )
+        if idx == 10
+        else f'<li id="ref-{idx}">{idx}. Reference.</li>'
+        for idx in range(1, 11)
+    )
+    html = (
+        "<html><body>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, and Black 2016 "
+        "show that this article uses author-year citations.</p>"
+        '<p>Using high resolution methods, <a href="#ref-10" class="z2m-ref-link">Schira</a> '
+        "et al. (2009) traced the angle maps.</p>"
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-10"' not in body
+    assert "Schira et al. (2009)" in body
+
+
+def test_polish_html_document_keeps_numeric_parenthetical_citations_despite_frontmatter_author_year_text() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 22))
+    numeric_citations = "".join(
+        f'<p>Numeric citation evidence <a href="#ref-{idx}" class="z2m-ref-link">({idx})</a>.</p>'
+        for idx in range(1, 6)
+    )
+    html = (
+        "<html><body>"
+        "<p>Smith 2020, Jones 2019, Brown 2018, White 2017, Black 2016, "
+        "and Green 2015 appear in front matter only.</p>"
+        f"{numeric_citations}"
+        "<p>Users explore elements through speech descriptions "
+        '<a href="#ref-8" class="z2m-ref-link">(8,</a> 9) or vibration feedback '
+        '<a href="#ref-10" class="z2m-ref-link">(10)</a>.</p>'
+        f"<h4>References</h4><ol>{refs}</ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-8"' in body
+    assert 'href="#ref-10"' in body
+    assert "(8," in body
+
+
 def test_polish_html_document_unlinks_color_label_ref_false_positives() -> None:
     html = (
         "<html><body>"
@@ -11192,6 +11341,24 @@ def test_polish_html_document_keeps_color_word_citation_without_label_context() 
     polished = polish_html_document(html, table_caption_language="en")
     body = polished[: polished.index("References")]
 
+    assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>' in body
+
+
+def test_polish_html_document_unlinks_numbered_sequence_ref_in_numeric_article() -> None:
+    html = (
+        "<html><body>"
+        "<p>We designed eight graphics representing train station floor plans, graphics "
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a></sup> to 8.</p>'
+        '<p>Earlier tactile studies <sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> '
+        "reported similar tasks.</p>"
+        "<h4>References</h4><ol><li>Reference one.</li><li>Reference two.</li></ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "graphics 1 to 8" in body
+    assert 'href="#ref-1"' not in body
     assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>' in body
 
 
