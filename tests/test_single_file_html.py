@@ -10004,6 +10004,57 @@ def test_polish_html_document_wraps_standalone_figure_label_before_image_as_real
     assert "Body text resumes." in polished[fig1_match.end() :]
 
 
+def test_polish_html_document_keeps_panel_details_with_standalone_figure_labels() -> None:
+    html = (
+        "<html><body>"
+        "<p>The final stent position is shown in Fig. 3A.</p>"
+        "<h3>Figures</h3>"
+        '<p><img src="venous-phase.jpg"/></p>'
+        "<h4>Figure 1</h4>"
+        "<p>(A) Venous phase angiogram demonstrating stenosis.</p>"
+        '<p><img src="pressure-map.jpg"/></p>'
+        "<p>Figure 2</p>"
+        "<p>(A) Showing an 8mm vascular stent across the stenosis.</p>"
+        '<p><img src="microwire.jpg"/></p>'
+        "<p>Figure 3</p>"
+        "<p>(A) Using a standard microwire to cross the narrowed segment.</p>"
+        "<p>Body text resumes after the figure list.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+
+    assert fig1_match is not None
+    assert fig2_match is not None
+    assert fig3_match is not None
+    fig1 = fig1_match.group(0)
+    fig2 = fig2_match.group(0)
+    fig3 = fig3_match.group(0)
+    assert 'src="venous-phase.jpg"' in fig1
+    assert "(A) Venous phase angiogram" in fig1
+    assert 'src="pressure-map.jpg"' not in fig1
+    assert 'src="pressure-map.jpg"' in fig2
+    assert "(A) Showing an 8mm vascular stent" in fig2
+    assert 'src="microwire.jpg"' not in fig2
+    assert 'src="microwire.jpg"' in fig3
+    assert "(A) Using a standard microwire" in fig3
+    assert 'href="#fig-3"' in polished
+    assert "Body text resumes after the figure list." in polished[fig3_match.end() :]
+
+
 def test_polish_html_document_links_digit_ref_to_roman_one_ocr_caption_target() -> None:
     html = (
         "<html><body>"

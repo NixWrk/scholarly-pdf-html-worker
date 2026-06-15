@@ -9712,7 +9712,17 @@ def _link_unlinked_numeric_superscripts_to_existing_refs(html: str) -> str:
             return re.sub(r"\d{1,4}", link_number, part)
 
         parts = _TAG_SPLIT_PATTERN.split(normalized_body)
-        return "".join(part if part.startswith("<") else link_text(part) for part in parts)
+        out: list[str] = []
+        skip_stack: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                _update_citation_skip_stack(part, skip_stack)
+                out.append(part)
+                continue
+            out.append(part if skip_stack else link_text(part))
+        return "".join(out)
 
     def _link_numeric_sup_ranges_in_body_fragment(fragment: str) -> str:
         def replace_sup(match: re.Match[str]) -> str:
@@ -9721,7 +9731,6 @@ def _link_unlinked_numeric_superscripts_to_existing_refs(html: str) -> str:
                 "z2m-unit-exp" in raw
                 or "z2m-footnote-ref" in raw
                 or "z2m-table-fn" in raw
-                or "<a " in raw.lower()
             ):
                 return raw
             if not _numeric_superscript_context_allows_citation(match.string, match.start(), match.end()):
@@ -13373,7 +13382,11 @@ def _should_suppress_numeric_ref_links_for_author_year(
 
 def _repair_author_year_footnote_ref_links(html: str, citation_profile: Any | None = None) -> str:
     """In author-year papers, source/web footnote markers are not numeric refs."""
-    if _citation_profile_is_high_confidence_paren_numeric(citation_profile):
+    if (
+        _citation_profile_is_high_confidence_paren_numeric(citation_profile)
+        or _citation_profile_is_high_confidence_superscript_numeric(citation_profile)
+        or _citation_profile_is_bracket_numeric(citation_profile)
+    ):
         return html
     if "#ref-" not in html or not _looks_author_year_citation_document(html):
         return html
@@ -16075,6 +16088,8 @@ def _looks_like_caption_continuation_after_figure(caption_text: str, right_text:
         return False
     if re.match(r"^\d+\s*[.)]", norm_right_start):
         return False
+    if re.match(r"^\([A-Ha-h]\)\s+\S", right_start) and _standalone_figure_label_key_from_visible(caption_text):
+        return True
     if not (
         norm_right_start[:1].islower()
         or right_start[:1] in "([{"
@@ -16406,6 +16421,24 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
     def _replace_open(raw: str, transform: Callable[[str], str]) -> str:
         return _transform_node_open(raw, transform)
 
+    def _looks_like_caption_detail_after_standalone_label(raw: str) -> bool:
+        if not raw.lstrip().lower().startswith("<p"):
+            return False
+        if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
+            return False
+        if _node_has_class(raw, "z2m-float-unit") or _node_has_class(raw, "z2m-figure-unit"):
+            return False
+        if _is_figure_caption_node(raw) or _is_table_caption_node(raw):
+            return False
+        visible = _visible_text(raw).strip()
+        if not visible or len(visible) > 1400:
+            return False
+        if _standalone_figure_label_key_from_visible(visible) is not None:
+            return False
+        if _figure_caption_num_from_visible(visible) is not None:
+            return False
+        return bool(re.match(r"^\([A-Ha-h]\)\s+\S", visible))
+
     for index in range(len(nodes) - 1):
         if index in consumed or index + 1 in consumed:
             continue
@@ -16438,6 +16471,16 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
         if image_id is not None and image_id.lower() != target_id.lower():
             continue
 
+        detail_indices: list[int] = []
+        detail_idx = index + 2
+        if (
+            detail_idx < len(nodes)
+            and detail_idx not in consumed
+            and _between_is_whitespace(index + 1, detail_idx)
+            and _looks_like_caption_detail_after_standalone_label(nodes[detail_idx].group(0))
+        ):
+            detail_indices.append(detail_idx)
+
         replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
         replacements[index + 1] = _replace_open(
             image_raw,
@@ -16446,7 +16489,12 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
                 "z2m-figure-target",
             ),
         )
-        consumed.update({index, index + 1})
+        for detail_idx in detail_indices:
+            replacements[detail_idx] = _strip_node_id_and_add_class(
+                nodes[detail_idx].group(0),
+                "z2m-figure-caption",
+            )
+        consumed.update({index, index + 1, *detail_indices})
         existing_ids.add(target_id.lower())
         found.add(fig_num)
 
@@ -16483,6 +16531,16 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
         if image_id is not None and image_id.lower() != target_id.lower():
             continue
 
+        detail_indices: list[int] = []
+        detail_idx = index + 2
+        if (
+            detail_idx < len(nodes)
+            and detail_idx not in consumed
+            and _between_is_whitespace(index + 1, detail_idx)
+            and _looks_like_caption_detail_after_standalone_label(nodes[detail_idx].group(0))
+        ):
+            detail_indices.append(detail_idx)
+
         replacements[index] = _replace_open(
             image_raw,
             lambda open_tag, target_id=target_id: _add_class_attr(
@@ -16491,7 +16549,12 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
             ),
         )
         replacements[index + 1] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
-        consumed.update({index, index + 1})
+        for detail_idx in detail_indices:
+            replacements[detail_idx] = _strip_node_id_and_add_class(
+                nodes[detail_idx].group(0),
+                "z2m-figure-caption",
+            )
+        consumed.update({index, index + 1, *detail_indices})
         existing_ids.add(target_id.lower())
         found.add(fig_num)
 
@@ -17458,6 +17521,13 @@ def _repair_sentence_breaks_around_figure_blocks(html: str) -> tuple[str, int]:
                 return gap_idx
         return None
 
+    def _gap_has_standalone_figure_label(indices: list[int]) -> bool:
+        for gap_idx in indices:
+            raw = replacements.get(gap_idx, nodes[gap_idx].group(0))
+            if _standalone_figure_label_key_from_visible(_visible_text(raw)) is not None:
+                return True
+        return False
+
     i = 0
     max_gap_blocks = 12
     while i < len(nodes):
@@ -17583,6 +17653,12 @@ def _repair_sentence_breaks_around_figure_blocks(html: str) -> tuple[str, int]:
         continuation_ok = _is_sentence_continuation(left_text, right_text)
         if not continuation_ok and all_affiliation_gap:
             continuation_ok = _is_sentence_continuation_across_affiliation_gap(left_text, right_text)
+        if (
+            continuation_ok
+            and _gap_has_standalone_figure_label(gap_indices)
+            and re.match(r"^\s*\([A-Ha-h]\)\s+\S", right_text)
+        ):
+            continuation_ok = False
 
         if continuation_ok:
             merged_left = _merge_sentence_parts(left_body, right_body)
@@ -18982,6 +19058,26 @@ def _wrap_float_units(html: str) -> str:
             and re.search(r"<img\b", nodes[following].group(0), re.IGNORECASE) is not None
         )
 
+    def _unnumbered_caption_fragment_belongs_to_previous_figure(caption_index: int, fig_num: str) -> bool:
+        raw = nodes[caption_index].group(0)
+        if not _node_has_class(raw, "z2m-figure-caption"):
+            return False
+        if _figure_caption_num_from_visible(_visible_text(raw)) is not None:
+            return False
+        scan_idx = caption_index - 1
+        while scan_idx >= 0 and _between_is_whitespace(scan_idx, scan_idx + 1):
+            scan_raw = nodes[scan_idx].group(0)
+            if re.search(r"<img\b|<table\b", scan_raw, re.IGNORECASE):
+                return False
+            if not _node_has_class(scan_raw, "z2m-figure-caption"):
+                return False
+            visible = _visible_text(scan_raw)
+            caption_num = _figure_caption_num_from_visible(visible) or _standalone_figure_label_key_from_visible(visible)
+            if caption_num is not None:
+                return caption_num != fig_num
+            scan_idx -= 1
+        return False
+
     for index, node in enumerate(nodes):
         if index in consumed:
             continue
@@ -19000,6 +19096,8 @@ def _wrap_float_units(html: str) -> str:
 
             prev_idx = index - 1
             while prev_idx >= 0 and _between_is_whitespace(prev_idx, prev_idx + 1):
+                if _unnumbered_caption_fragment_belongs_to_previous_figure(prev_idx, fig_num):
+                    break
                 if not _is_same_figure_caption(nodes[prev_idx].group(0), fig_num):
                     break
                 before.insert(0, prev_idx)
@@ -19011,6 +19109,8 @@ def _wrap_float_units(html: str) -> str:
                     if not _between_is_whitespace(candidate_idx, candidate_idx + 1):
                         break
                     candidate_raw = nodes[candidate_idx].group(0)
+                    if _unnumbered_caption_fragment_belongs_to_previous_figure(candidate_idx, fig_num):
+                        break
                     if _is_same_figure_caption(candidate_raw, fig_num):
                         candidate_range = list(range(candidate_idx, index))
                         if all(_looks_like_figure_caption_fragment(nodes[idx].group(0)) for idx in candidate_range):
