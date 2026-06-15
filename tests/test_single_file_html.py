@@ -14,6 +14,7 @@ from zoteropdf2md.single_file_html import (
     _link_figure_refs,
     _link_unlinked_numeric_superscripts_to_existing_refs,
     _link_section_refs,
+    _late_recover_orphan_figure_anchors_and_links,
     _repair_figure_ref_links_misclassified_as_refs,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
@@ -8029,6 +8030,39 @@ def test_polish_html_document_recovers_orphan_figure_after_nearby_ref() -> None:
     assert re.search(r'<div id="fig-4" class="[^"]*\bz2m-figure-unit\b', polished)
     assert '<p class="z2m-figure-target"><img src="_page_7_Figure_16.jpeg"/></p>' in polished
     assert 'href="#fig-4"' in polished
+
+
+def test_late_recover_orphan_figure_links_after_float_cleanup() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="_page_5_Figure_2.jpeg"/></p>'
+        '<p class="z2m-figure-caption"><b>Figure 6.</b> Prior estimate.</p>'
+        "</div>"
+        '<p block-type="Text">Figure 7 shows a case example with the complete evolution of '
+        "relative accelerations.</p>"
+        '<p><img src="_page_5_Figure_5.jpeg"/></p>'
+        '<p><img src="_page_5_Figure_6.jpeg"/></p>'
+        '<p block-type="Text">Table 1 shows positions defined in Figure 7.</p>'
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">Table 1. Detail of positions.</p>'
+        "<table><tr><td>A</td></tr></table>"
+        "</div>"
+        "</body></html>"
+    )
+
+    recovered = _late_recover_orphan_figure_anchors_and_links(html)
+
+    fig7_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-7")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        recovered,
+    )
+    assert fig7_match is not None
+    fig7 = fig7_match.group(0)
+    assert 'src="_page_5_Figure_5.jpeg"' in fig7
+    assert 'src="_page_5_Figure_6.jpeg"' in fig7
+    assert '<a href="#fig-7" class="z2m-fig-link">Figure\xa07</a> shows' in recovered
+    assert 'defined in <a href="#fig-7" class="z2m-fig-link">Figure\xa07</a>' in recovered
 
 
 def test_polish_html_document_does_not_recover_after_ambiguous_previous_refs() -> None:

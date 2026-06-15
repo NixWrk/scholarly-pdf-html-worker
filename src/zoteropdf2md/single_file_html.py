@@ -11453,6 +11453,20 @@ def _current_figure_target_keys(html: str) -> set[str]:
     return {match.group("key") for match in _FIG_ID_ATTR_PATTERN.finditer(html)}
 
 
+def _late_recover_orphan_figure_anchors_and_links(html: str) -> str:
+    current_figures = _current_figure_target_keys(html)
+    if not current_figures:
+        return html
+    recovered_html, recovered_figures = _recover_orphan_figure_anchors(html, current_figures)
+    if not recovered_figures:
+        return html
+    recovered_html = _wrap_float_units(recovered_html)
+    recovered_html = _mark_missing_figure_units(recovered_html)
+    recovered_html = _link_figure_refs(recovered_html, recovered_figures)
+    recovered_html = _unwrap_nested_same_href_internal_links(recovered_html)
+    return _normalize_spacing_after_z2m_links(recovered_html)
+
+
 def _link_spaced_multipanel_figure_refs(html: str, found_figures: set[str]) -> str:
     if not found_figures:
         return html
@@ -20730,6 +20744,7 @@ def _polish_phase_katex_and_final_repairs(state: RawPolishState, context: RawPol
     polished = _repair_confirmed_front_matter_artifacts(polished)
     polished = _normalize_double_escaped_url_anchor_text(polished)
     if context.enable_citation_linkify:
+        polished = _late_recover_orphan_figure_anchors_and_links(polished)
         current_figures = _current_figure_target_keys(polished)
         if current_figures:
             polished = _link_spaced_multipanel_figure_refs(polished, current_figures)
