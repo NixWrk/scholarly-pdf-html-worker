@@ -117,6 +117,24 @@ def test_visible_figure_target_defects_ignores_external_author_year_figure_citat
     assert _defects(block) == []
 
 
+def test_visible_figure_target_defects_ignores_right_author_year_figure_citation() -> None:
+    block = _block(
+        "Values were chosen by fitting Fig. 4, subject 5 of Fornos et al. (2012). "
+        "The red curve represents the model."
+    )
+
+    assert _defects(block) == []
+
+
+def test_visible_figure_target_defects_ignores_unreplicated_copyright_figure() -> None:
+    block = _block(
+        "For a tabular comparison of different models, see Figure 2 Izhikevich, 2004. "
+        "Due to copyright constraints, we cannot replicate this image here."
+    )
+
+    assert _defects(block) == []
+
+
 def test_visible_figure_target_defects_keeps_local_figure_after_author_year_sentence() -> None:
     block = _block("Fiorani et al. described similar effects in 1992. Figure 5 shows the local result.")
 

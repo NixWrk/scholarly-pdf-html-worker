@@ -30,6 +30,19 @@ AUTHOR_YEAR_CITATION_RE = re.compile(
     r"\b[A-Z][A-Za-z'`\-]+(?:\s+et\s+al\.)?\s*,?\s*(?:19|20)\d{2}[a-z]?\b",
     re.IGNORECASE,
 )
+RIGHT_AUTHOR_YEAR_FIGURE_CONTEXT_RE = re.compile(
+    r"^\s*(?:[,;:]\s*)?"
+    r"(?:(?:subject|panel|image|plot|curve|data|model|table)\s+\d{1,3}\s+)?"
+    r"(?:of\s+|from\s+|in\s+)?"
+    r"[A-Z][A-Za-z'`\-]+(?:\s+et\s+al\.)?"
+    r"(?:,?\s*\((?:19|20)\d{2}[a-z]?\)|,?\s+(?:19|20)\d{2}[a-z]?)",
+    re.IGNORECASE,
+)
+EXTERNAL_COPYRIGHT_FIGURE_CONTEXT_RE = re.compile(
+    r"\b(?:copyright\s+constraints?|copyright|cannot\s+replicate|not\s+replicated|"
+    r"not\s+reproduced|permission|adapted\s+from|reprinted\s+from)\b",
+    re.IGNORECASE,
+)
 HTML_CONTAINER_RE = re.compile(
     r"<(?P<tag>div|figure)\b(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
@@ -98,6 +111,12 @@ def has_nearby_fig_link(block: Block, figure_key: str, text_pos: int) -> bool:
 def is_external_author_year_figure_ref(block: Block, match: re.Match[str]) -> bool:
     left = block.text[max(0, match.start() - 120) : match.start()]
     if AUTHOR_YEAR_FIGURE_PREFIX_RE.search(left):
+        return True
+
+    right = block.text[match.end() : min(len(block.text), match.end() + 220)]
+    if RIGHT_AUTHOR_YEAR_FIGURE_CONTEXT_RE.search(right):
+        return True
+    if EXTERNAL_COPYRIGHT_FIGURE_CONTEXT_RE.search(right):
         return True
 
     opener = max(left.rfind("("), left.rfind("["), left.rfind("{"), left.rfind("~"))

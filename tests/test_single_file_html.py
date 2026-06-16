@@ -617,6 +617,37 @@ def test_polish_html_document_splits_distinct_nested_figure_units() -> None:
     assert polished.index("Figure 1. First result.</p></div>") < polished.index('<div id="fig-2"')
 
 
+def test_polish_html_document_splits_leading_image_from_duplicate_caption_successor() -> None:
+    html = (
+        "<html><body>"
+        "<p>The limits of agreement are presented in Fig. 2.</p>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="bland-altman-pooled.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="bland-altman-change.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 3: Bland-Altman plot for change values. '
+        "Fig. 3: Bland-Altman plot for change values.</p>"
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig2_match is not None
+    assert fig3_match is not None
+    assert "bland-altman-pooled.jpg" in fig2_match.group(0)
+    assert "bland-altman-change.jpg" not in fig2_match.group(0)
+    assert "bland-altman-pooled.jpg" not in fig3_match.group(0)
+    assert "bland-altman-change.jpg" in fig3_match.group(0)
+
+
 def test_polish_html_document_splits_figure_unit_before_swallowed_body_tail() -> None:
     html = (
         "<html><body>"
