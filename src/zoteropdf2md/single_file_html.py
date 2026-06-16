@@ -20691,6 +20691,112 @@ def _split_leading_image_from_duplicate_caption_successor_units(html: str) -> st
     return "".join(out_parts)
 
 
+def _recover_sequence_gap_bare_image_figure_units(html: str) -> str:
+    """Wrap a bare image as the missing figure between adjacent numbered units."""
+    if "z2m-figure-unit" not in html or "<img" not in html.lower():
+        return html
+
+    figure_units: list[tuple[int, int, int]] = []
+    semantic_keys: set[str] = set()
+    search_pos = 0
+
+    while True:
+        match = _FIGURE_UNIT_OPEN_TAG_PATTERN.search(html, search_pos)
+        if match is None:
+            break
+        close_span = _matching_div_close_span(html, match.end())
+        if close_span is None:
+            search_pos = match.end()
+            continue
+
+        unit_id = match.group("id")
+        unit_match = re.fullmatch(r"fig-(\d{1,3})", unit_id, re.IGNORECASE)
+        if unit_match is not None:
+            unit_num = int(unit_match.group(1))
+            figure_units.append((unit_num, match.start(), close_span[1]))
+            semantic_keys.add(str(unit_num))
+
+        body = html[match.end():close_span[0]]
+        for caption_match in _P_OR_H_BLOCK_PATTERN.finditer(body):
+            if not _node_has_class(caption_match.group("open"), "z2m-figure-caption"):
+                continue
+            caption_num = _figure_caption_num_from_visible(_visible_text(caption_match.group("body")))
+            if caption_num is not None:
+                semantic_keys.add(_figure_key_from_visible_number(caption_num).lower())
+
+        search_pos = close_span[1]
+
+    if len(figure_units) < 2:
+        return html
+
+    doc_text = _visible_text(html)
+
+    def _document_mentions_figure(key: str) -> bool:
+        return (
+            re.search(
+                rf"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*{re.escape(key)}(?!\d)(?:[A-Z])?\b",
+                doc_text,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+
+    def _bare_image_nodes(gap_html: str) -> list[re.Match[str]]:
+        nodes: list[re.Match[str]] = []
+        for node_match in _P_OR_H_BLOCK_PATTERN.finditer(gap_html):
+            raw = node_match.group(0)
+            if len(re.findall(r"<img\b", raw, re.IGNORECASE)) != 1:
+                continue
+            if _node_has_class(node_match.group("open"), "z2m-figure-target"):
+                continue
+            if _node_has_class(node_match.group("open"), "z2m-figure-caption"):
+                continue
+            if _node_has_class(node_match.group("open"), "z2m-missing-figure-warning"):
+                continue
+            if _visible_text(raw).strip():
+                continue
+            nodes.append(node_match)
+        return nodes
+
+    replacements: list[tuple[int, int, str]] = []
+    for left_unit, right_unit in zip(figure_units, figure_units[1:]):
+        left_num, _left_start, left_end = left_unit
+        right_num, right_start, _right_end = right_unit
+        if right_num - left_num != 2:
+            continue
+        missing_key = str(left_num + 1)
+        if missing_key in semantic_keys:
+            continue
+        if not _document_mentions_figure(missing_key):
+            continue
+
+        gap_html = html[left_end:right_start]
+        image_nodes = _bare_image_nodes(gap_html)
+        if len(image_nodes) != 1:
+            continue
+
+        image_node = image_nodes[0]
+        image_html = _strip_node_id_and_add_class(image_node.group(0), "z2m-figure-target")
+        wrapper = (
+            f'<div id="fig-{missing_key}" class="z2m-float-unit z2m-figure-unit">'
+            f"{image_html}</div>"
+        )
+        replacements.append((left_end + image_node.start(), left_end + image_node.end(), wrapper))
+        semantic_keys.add(missing_key)
+
+    if not replacements:
+        return html
+
+    out_parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in replacements:
+        out_parts.append(html[cursor:start])
+        out_parts.append(replacement)
+        cursor = end
+    out_parts.append(html[cursor:])
+    return "".join(out_parts)
+
+
 def _drop_unbacked_foreign_figure_aliases(html: str) -> str:
     def _caption_labels(raw: str) -> set[str]:
         labels: set[str] = set()
@@ -22297,6 +22403,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _recover_sequence_gap_bare_image_figure_units(polished)
     polished = _drop_unbacked_foreign_figure_aliases(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _repair_remaining_table_caption_units(polished)
@@ -22306,6 +22413,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _recover_sequence_gap_bare_image_figure_units(polished)
     polished = _drop_unbacked_foreign_figure_aliases(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)
@@ -22327,6 +22435,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _recover_sequence_gap_bare_image_figure_units(polished)
     polished = _drop_unbacked_foreign_figure_aliases(polished)
     polished = _add_aliases_for_embedded_figure_caption_labels(polished)
     polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
@@ -22400,6 +22509,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _recover_sequence_gap_bare_image_figure_units(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished = _strip_leading_reference_line_number_pairs_in_list_items(polished)
     polished = _repair_nested_reference_links(polished)
@@ -22412,6 +22522,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _recover_sequence_gap_bare_image_figure_units(polished)
     if not _should_suppress_numeric_ref_links_for_author_year(polished, citation_profile):
         polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
         polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)

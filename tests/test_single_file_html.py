@@ -648,6 +648,61 @@ def test_polish_html_document_splits_leading_image_from_duplicate_caption_succes
     assert "bland-altman-change.jpg" in fig3_match.group(0)
 
 
+def test_polish_html_document_wraps_bare_image_in_sequence_gap() -> None:
+    html = (
+        "<html><body>"
+        "<p>Learning trends are summarized in Figure 3.</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="mean-ratio.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Mean feedback ratio.</p>'
+        "</div>"
+        '<p><img src="learning-trends.jpg"/></p>'
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="volitional-control.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Volitional control results.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig3_match is not None
+    assert "learning-trends.jpg" in fig3_match.group(0)
+    assert "z2m-figure-target" in fig3_match.group(0)
+
+
+def test_polish_html_document_does_not_wrap_sequence_gap_without_visible_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p>The stimulation maps are discussed below.</p>"
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="previous-map.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 5. Previous stimulation map.</p>'
+        "</div>"
+        '<p><img src="unrelated-between-units.jpg"/></p>'
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="later-map.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 7. Later stimulation map.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert (
+        re.search(
+            r'<div\b(?=[^>]*\bid="fig-6")(?=[^>]*\bz2m-figure-unit\b)',
+            polished,
+        )
+        is None
+    )
+    assert '<p><img src="unrelated-between-units.jpg"/></p>' in polished
+
+
 def test_polish_html_document_splits_figure_unit_before_swallowed_body_tail() -> None:
     html = (
         "<html><body>"
