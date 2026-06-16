@@ -108,6 +108,25 @@ def has_nearby_fig_link(block: Block, figure_key: str, text_pos: int) -> bool:
     return re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_key)}['\"]", raw_window, re.IGNORECASE) is not None
 
 
+def is_existing_target_with_glued_numeric_suffix(
+    match: re.Match[str], figure_key: str, fig_targets: set[str], target_numbers: set[int]
+) -> bool:
+    if not target_numbers or not figure_key.isdigit():
+        return False
+    if figure_key in fig_targets:
+        return False
+    if not re.match(r"Fig\.", match.group(0), re.IGNORECASE):
+        return False
+    visible_number = match.group("num")
+    if not visible_number.isdigit() or len(visible_number) < 2 or visible_number.endswith("0"):
+        return False
+
+    prefix = visible_number[:-1].lstrip("0")
+    if not prefix or prefix not in fig_targets:
+        return False
+    return int(visible_number) > max(target_numbers)
+
+
 def is_external_author_year_figure_ref(block: Block, match: re.Match[str]) -> bool:
     left = block.text[max(0, match.start() - 120) : match.start()]
     if AUTHOR_YEAR_FIGURE_PREFIX_RE.search(left):
@@ -139,6 +158,7 @@ def visible_figure_target_defects(
     looks_like_float_or_caption: Callable[[Block], bool],
     stage: str,
 ) -> list[Defect]:
+    target_numbers = figure_target_numbers_from_keys(fig_targets)
     for block in body_blocks:
         if looks_like_float_or_caption(block):
             continue
@@ -149,6 +169,8 @@ def visible_figure_target_defects(
             if is_external_author_year_figure_ref(block, match):
                 continue
             if figure_key in fig_targets:
+                continue
+            if is_existing_target_with_glued_numeric_suffix(match, figure_key, fig_targets, target_numbers):
                 continue
             if is_compound_chapter_style_figure_ref(match):
                 continue
@@ -178,3 +200,7 @@ def visible_figure_target_defects(
                 )
             ]
     return []
+
+
+def figure_target_numbers_from_keys(fig_targets: set[str]) -> set[int]:
+    return {int(key) for key in fig_targets if key.isdigit()}

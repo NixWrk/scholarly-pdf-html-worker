@@ -135,6 +135,30 @@ def test_visible_figure_target_defects_ignores_unreplicated_copyright_figure() -
     assert _defects(block) == []
 
 
+def test_visible_figure_target_defects_ignores_glued_citation_suffix_for_existing_target() -> None:
+    block = _block(
+        "NP41-FAM labeling of degenerated nerves was not detectable by white light reflectance (Fig. 64). "
+        "To verify NP41 binding histologically, sections were stained."
+    )
+
+    assert _defects(block, {"1", "2", "3", "4", "5", "6"}) == []
+
+
+def test_visible_figure_target_defects_ignores_glued_ocr_suffix_for_existing_two_digit_target() -> None:
+    block = _block(
+        "There was a significant correlation between impedance changes and body weight changes "
+        "only in the first group (Fig. 101. However, there was no correlation in the severe group."
+    )
+
+    assert _defects(block, {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}) == []
+
+
+def test_visible_figure_target_defects_keeps_real_missing_large_figure_number() -> None:
+    block = _block("No further screenshot of the parameter Figure 50: The info screen is in the appendix.")
+
+    assert [defect.id for defect in _defects(block, {"5", "49", "51", "52", "66"})] == ["P61"]
+
+
 def test_visible_figure_target_defects_keeps_local_figure_after_author_year_sentence() -> None:
     block = _block("Fiorani et al. described similar effects in 1992. Figure 5 shows the local result.")
 
