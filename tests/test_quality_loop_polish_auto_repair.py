@@ -1,5 +1,6 @@
 from zoteropdf2md.quality_loop.polish_auto_repair import (
     audit_articles_by_auto_repair_need,
+    relink_external_numeric_citation_anchors,
     relink_spaced_multipanel_figure_refs,
     repair_visible_reference_numbers,
     unwrap_author_year_numeric_ref_links,
@@ -19,7 +20,7 @@ def test_audit_articles_by_auto_repair_need_selects_supported_ids() -> None:
 
     selected = audit_articles_by_auto_repair_need(report)
 
-    assert selected["a"]["defect_ids"] == ["P55"]
+    assert selected["a"]["defect_ids"] == ["P04N", "P55"]
     assert selected["b"]["defect_ids"] == ["P96", "P98"]
     assert selected["c"]["defect_ids"] == ["P59"]
     assert selected["d"]["defect_ids"] == ["P17"]
@@ -37,6 +38,39 @@ def test_relink_spaced_multipanel_figure_refs_uses_existing_targets() -> None:
 
     assert count == 1
     assert '<a href="#fig-7" class="z2m-fig-link">Figure\xa07</a> (b)' in repaired
+
+
+def test_relink_external_numeric_citation_anchors_uses_existing_ref_targets() -> None:
+    html = (
+        '<p>Prior work <a href="https://app.readcube.com/library/item-1">[1]</a> '
+        'and later studies <a href="https://app.readcube.com/library/item-2">[2,3]</a>.</p>'
+        "<h4>References</h4>"
+        '<p block-type="ListGroup"><ul>'
+        '<li id="ref-1">First.</li><li id="ref-2">Second.</li><li id="ref-3">Third.</li>'
+        "</ul></p>"
+    )
+
+    repaired, count = relink_external_numeric_citation_anchors(html)
+
+    assert count == 2
+    before_refs = repaired.split("<h4>References</h4>")[0]
+    assert "readcube.com" not in before_refs
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in before_refs
+    assert '[<a href="#ref-2" class="z2m-ref-link">2</a>,' in before_refs
+    assert '<a href="#ref-3" class="z2m-ref-link">3</a>]' in before_refs
+
+
+def test_relink_external_numeric_citation_anchors_skips_missing_targets() -> None:
+    html = (
+        '<p>Prior work <a href="https://app.readcube.com/library/item-1">[2,4]</a>.</p>'
+        "<h4>References</h4>"
+        '<ol><li id="ref-2">Second.</li><li id="ref-3">Third.</li></ol>'
+    )
+
+    repaired, count = relink_external_numeric_citation_anchors(html)
+
+    assert count == 0
+    assert repaired == html
 
 
 def test_reference_number_repair_preserves_existing_visible_numbers() -> None:

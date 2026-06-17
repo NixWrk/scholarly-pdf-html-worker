@@ -1522,6 +1522,36 @@ def test_analyze_pair_classifies_p04_with_missing_reference_targets() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_uses_nested_reference_targets_for_p04() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>Prior studies [1, 2] support the method.</p>"
+            "<h4>References</h4>"
+            '<p block-type="ListGroup"><ul>'
+            '<li block-type="ListItem" id="ref-1">First ref.</li>'
+            '<li block-type="ListItem" id="ref-2">Second ref.</li>'
+            "</ul></p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defects_by_id = {defect["id"]: defect for defect in result["defects_found"]}
+        assert "P04N" not in defects_by_id
+        assert "P04" in defects_by_id
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_cli_writes_pair_audit_report() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

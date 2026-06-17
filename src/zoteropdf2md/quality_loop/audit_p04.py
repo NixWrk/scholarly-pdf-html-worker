@@ -37,6 +37,16 @@ SUP_MEASUREMENT_CONTEXT_RE = re.compile(
     r"rest|sd|value|values?)\b",
     re.IGNORECASE,
 )
+SUP_PROJECT_OR_GRANT_CONTEXT_RE = re.compile(
+    r"\b(?:agreement|award|contract|funding|grant|project|programme|program|research)\s+"
+    r"(?:no\.?|number|id)?\s*$",
+    re.IGNORECASE,
+)
+SUP_DIMENSION_UNIT_LEFT_RE = re.compile(
+    r"(?:\b\d+(?:\.\d+)?\s*|[×x]\s*)"
+    r"(?:m|cm|mm|km|ft|in)\s*$",
+    re.IGNORECASE,
+)
 STAT_NUMERIC_CONTEXT_RE = re.compile(
     r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size|"
     r"statistical\s+power|power\s+analysis)\b",
@@ -184,7 +194,14 @@ def sup_numeric_range_is_measurement_value(block: Block, match: re.Match[str]) -
     if SUP_MEASUREMENT_UNIT_RIGHT_RE.match(right_text) is None:
         return False
     left_text = strip_tags(block.raw[max(0, match.start() - 220) : match.start()])
+    if SUP_DIMENSION_UNIT_LEFT_RE.search(left_text):
+        return True
     return SUP_MEASUREMENT_CONTEXT_RE.search(f"{left_text} {right_text}") is not None
+
+
+def sup_numeric_range_is_project_or_grant_number(block: Block, match: re.Match[str]) -> bool:
+    left_text = strip_tags(block.raw[max(0, match.start() - 180) : match.start()])
+    return SUP_PROJECT_OR_GRANT_CONTEXT_RE.search(left_text) is not None
 
 
 def unlinked_sup_numeric_range_matches_footnote_targets(block: Block, footnote_numbers: set[int]) -> bool:
@@ -216,6 +233,8 @@ def has_unlinked_sup_numeric_range(block: Block) -> bool:
         raw = match.group(0)
         if "z2m-ref-link" not in raw:
             if "z2m-footnote-ref" in raw:
+                continue
+            if sup_numeric_range_is_project_or_grant_number(block, match):
                 continue
             if sup_numeric_range_is_software_version(block, match):
                 continue
@@ -273,6 +292,8 @@ def unlinked_citation_candidate_numbers(block: Block) -> list[int]:
     for sup_match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
         raw = sup_match.group(0)
         if "z2m-ref-link" not in raw and "z2m-footnote-ref" not in raw:
+            if sup_numeric_range_is_project_or_grant_number(block, sup_match):
+                continue
             if sup_numeric_range_is_measurement_value(block, sup_match):
                 continue
             return [int(value) for value in re.findall(r"\d+", sup_match.group("body"))]

@@ -31,6 +31,19 @@ def test_pdf_reference_recovery_numbers_skip_body_candidates_when_refs_exist() -
     assert pdf_reference_recovery_numbers(html) == ([], "")
 
 
+def test_pdf_reference_recovery_numbers_reports_missing_body_targets_when_refs_exist() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior work shows higher fall risk [28-30].</p>"
+        "<h2>References</h2><ul>"
+        '<li id="ref-28">Alpha A. Existing source.</li>'
+        '<li id="ref-29">Beta B. Existing source.</li>'
+        "</ul></body></html>"
+    )
+
+    assert pdf_reference_recovery_numbers(html) == ([30], "body_citation_missing_target")
+
+
 def test_enrich_profile_loads_matching_pdf_reference_entries(tmp_path: Path) -> None:
     pdf_path = tmp_path / "paper.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")

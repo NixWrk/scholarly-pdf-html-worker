@@ -1717,16 +1717,22 @@ def _page_link_semantic_kind(html: str, match: re.Match[str]) -> str | None:
     return None
 
 
-def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
+def _reference_numbers_from_blocks(blocks: list[Block]) -> set[int]:
+    numbers: set[int] = set()
+    for block in blocks:
+        id_match = re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE)
+        if id_match is not None:
+            numbers.add(int(id_match.group(1)))
+        for raw_match in re.finditer(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", block.raw, re.IGNORECASE):
+            numbers.add(int(raw_match.group(1)))
+    return numbers
+
+
+def _citation_defects(polish_blocks: list[Block], *, reference_blocks: list[Block] | None = None) -> list[Defect]:
     defects: list[Defect] = []
     references_started = False
     unlinked_range_candidates: dict[str, Block] = {}
-    ref_numbers = {
-        int(match.group(1))
-        for block in polish_blocks
-        for match in (re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE),)
-        if match is not None
-    }
+    ref_numbers = _reference_numbers_from_blocks(reference_blocks or polish_blocks)
     footnote_numbers = {
         int(match.group(1))
         for block in polish_blocks
@@ -2339,7 +2345,7 @@ def analyze_pair(
 
     defects: list[Defect] = []
     defects.extend(_frontmatter_defects(raw_blocks, polish_blocks))
-    defects.extend(_citation_defects(polish_blocks))
+    defects.extend(_citation_defects(polish_blocks, reference_blocks=polish_reference_blocks))
     defects.extend(_reference_identity_defects(polish_reference_blocks))
     defects.extend(_unit_math_defects(raw_html, polish_blocks))
     defects.extend(_equation_table_defects(polish_blocks))

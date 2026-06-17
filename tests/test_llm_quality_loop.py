@@ -2519,6 +2519,56 @@ def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_nume
         assert '<li id="ref-3">[3] Flores, A. Example citation.</li>' in html
 
 
+def test_polish_auto_repair_stage_repairs_external_numeric_citation_anchors(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><body>"
+            '<p>Blindness prevention <a href="https://app.readcube.com/library/item-1">[1]</a> '
+            'and restorative treatments <a href="https://app.readcube.com/library/item-2">[2,3]</a> '
+            "remain active areas.</p>"
+            "<h4>References</h4>"
+            '<p block-type="ListGroup"><ul>'
+            '<li id="ref-1">First reference.</li>'
+            '<li id="ref-2">Second reference.</li>'
+            '<li id="ref-3">Third reference.</li>'
+            "</ul></p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {},
+                    "defects_found": [{"id": "P04N", "extra": {"candidate_numbers": [2, 3]}}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["patched_article_count"] == 1
+    assert report["repair_counts"] == {"P04": 4}
+    for path in (polish_path, audit_tree_path):
+        html = path.read_text(encoding="utf-8")
+        before_refs = html[: html.index("References")]
+        assert "readcube.com" not in before_refs
+        assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in before_refs
+        assert '[<a href="#ref-2" class="z2m-ref-link">2</a>,' in before_refs
+        assert '<a href="#ref-3" class="z2m-ref-link">3</a>]' in before_refs
+
+
 def test_polish_auto_repair_stage_repairs_p59_numeric_labels(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     article = "article_a"

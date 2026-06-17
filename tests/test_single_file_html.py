@@ -1956,6 +1956,33 @@ def test_polish_html_document_recovers_missing_reference_entry_from_pdf_profile(
     assert 'href="#ref-158"' in polished[: polished.index("References")]
 
 
+def test_polish_html_document_recovers_tail_reference_entry_from_pdf_profile() -> None:
+    html = (
+        "<html><body>"
+        "<p>Balance problems increase fall risk [28-30].</p>"
+        "<h4>References</h4><ul>"
+        '<li id="ref-28">Willis JR. Existing reference.</li>'
+        '<li id="ref-29">Wada T. Existing reference.</li>'
+        "</ul></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries": [
+                {"page": 20, "number": 30, "text": "Lee HK, Scudds RJ. Balance comparison. Age and ageing. 2003."}
+            ],
+        },
+    )
+    ref_section = polished[polished.index("References") :]
+    body = polished[: polished.index("References")]
+
+    assert 'id="ref-30"' in ref_section
+    assert "Lee HK, Scudds RJ" in ref_section
+    assert '<a href="#ref-30" class="z2m-ref-link">30</a>' in body
+
+
 def test_polish_html_document_appends_pdf_recovered_reference_section_without_existing_references() -> None:
     html = "<html><body><p>Prior work 1,2.</p></body></html>"
 

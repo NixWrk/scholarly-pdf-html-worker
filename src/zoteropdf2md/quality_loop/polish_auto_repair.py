@@ -50,7 +50,7 @@ AUTHOR_YEAR_AUTHOR_LIST_RIGHT_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
-SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P17", "P55", "P59", "P96", "P97", "P98"}
+SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P04", "P04N", "P17", "P55", "P59", "P96", "P97", "P98"}
 AUTHOR_YEAR_LABEL_STOPWORDS = {
     "appendix",
     "chapter",
@@ -64,6 +64,16 @@ AUTHOR_YEAR_LABEL_STOPWORDS = {
     "section",
     "table",
 }
+REF_ID_RE = re.compile(r"\bid\s*=\s*['\"]ref-(?P<num>\d{1,4})['\"]", re.IGNORECASE)
+EXTERNAL_NUMERIC_CITATION_ANCHOR_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>['\"])(?P<href>[^'\"]+)(?P=quote)[^>]*)>"
+    r"(?P<body>[\s\S]{0,260}?)</a>",
+    re.IGNORECASE,
+)
+BRACKET_NUMERIC_CITATION_LABEL_RE = re.compile(
+    r"^\s*(?P<bracket>\[\s*(?P<body>\d{1,4}(?:\s*(?:[,;]|\-|\u2013|\u2014)\s*\d{1,4}){0,24})\s*\])"
+    r"(?P<trail>[.,;:]?)\s*$"
+)
 
 
 def audit_defect_ids(article: dict[str, Any]) -> set[str]:
@@ -123,6 +133,10 @@ def repair_visible_reference_numbers(html: str) -> tuple[str, int]:
 
     repaired = REF_TARGET_BLOCK_RE.sub(replace, html)
     return repaired, repairs
+
+
+def reference_target_numbers(html: str) -> set[int]:
+    return {int(match.group("num")) for match in REF_ID_RE.finditer(html)}
 
 
 def split_before_references_for_repair(html: str) -> tuple[str, str]:
@@ -211,3 +225,52 @@ def relink_spaced_multipanel_figure_refs(html: str) -> tuple[str, int]:
     if repaired == html:
         return html, 0
     return repaired, max(1, repaired.count("z2m-fig-link") - before_count)
+
+
+def _render_numeric_bracket_citation_label(label: str, ref_numbers: set[int]) -> str | None:
+    match = BRACKET_NUMERIC_CITATION_LABEL_RE.fullmatch(label)
+    if match is None:
+        return None
+    body = match.group("body")
+    tokens = re.findall(r"\d{1,4}", body)
+    if not tokens or any(len(token) > 1 and token.startswith("0") for token in tokens):
+        return None
+    numbers = [int(token) for token in tokens]
+    if any(number not in ref_numbers or 1800 <= number <= 2099 for number in numbers):
+        return None
+
+    def link_number(number_match: re.Match[str]) -> str:
+        number_text = number_match.group(0)
+        number = int(number_text)
+        return f'<a href="#ref-{number}" class="z2m-ref-link">{number_text}</a>'
+
+    if len(numbers) == 1 and body.strip().isdigit():
+        number = numbers[0]
+        return f'<a href="#ref-{number}" class="z2m-ref-link">[{number}]</a>{match.group("trail")}'
+    linked_body = re.sub(r"\d{1,4}", link_number, body)
+    return f'[{linked_body}]{match.group("trail")}'
+
+
+def relink_external_numeric_citation_anchors(html: str) -> tuple[str, int]:
+    ref_numbers = reference_target_numbers(html)
+    if not ref_numbers or "<a" not in html:
+        return html, 0
+    before_references, references_and_after = split_before_references_for_repair(html)
+    repairs = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal repairs
+        href = (match.group("href") or "").strip()
+        if not href or href.startswith("#") or href.lower().startswith("javascript:"):
+            return match.group(0)
+        body = match.group("body")
+        if "#ref-" in body or "z2m-ref-link" in body:
+            return match.group(0)
+        rendered = _render_numeric_bracket_citation_label(visible_html_text(body), ref_numbers)
+        if rendered is None:
+            return match.group(0)
+        repairs += 1
+        return rendered
+
+    repaired_before = EXTERNAL_NUMERIC_CITATION_ANCHOR_RE.sub(replace, before_references)
+    return repaired_before + references_and_after, repairs

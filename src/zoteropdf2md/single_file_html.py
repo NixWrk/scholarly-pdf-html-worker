@@ -8616,9 +8616,54 @@ def _append_pdf_recovered_reference_section_if_safe(
     return f"{html[:body_match.start(3)]}{section}{html[body_match.start(3):]}", max_number
 
 
+def _expand_reference_label_numbers(value: str) -> list[int]:
+    tokens = re.findall(r"\d{1,4}|[,;]|\u2013|\u2014|-", value)
+    numbers: list[int] = []
+    pending_range_from: int | None = None
+    previous_number: int | None = None
+    for token in tokens:
+        if token.isdigit():
+            number = int(token)
+            if not 1 <= number <= 999:
+                pending_range_from = None
+                previous_number = None
+                continue
+            if pending_range_from is not None:
+                if pending_range_from < number and number - pending_range_from <= 50:
+                    numbers.extend(range(pending_range_from + 1, number + 1))
+                else:
+                    numbers.append(number)
+                pending_range_from = None
+            else:
+                numbers.append(number)
+            previous_number = number
+        elif token in {"-", "\u2013", "\u2014"} and previous_number is not None:
+            pending_range_from = previous_number
+        else:
+            pending_range_from = None
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for number in numbers:
+        if number not in seen:
+            seen.add(number)
+            deduped.append(number)
+    return deduped
+
+
+def _body_reference_candidate_numbers_for_recovery(html: str) -> set[int]:
+    heading_match = _references_heading_search(html, allow_notes_heading=True)
+    before_references = html[: heading_match.start()] if heading_match is not None else html
+    numbers: set[int] = set()
+    for match in _BRACKET_CITATION_PATTERN.finditer(_visible_text(before_references)):
+        numbers.update(_expand_reference_label_numbers(match.group(1)))
+    return numbers
+
+
 def _recover_missing_reference_entries_from_profile(
     html: str,
     citation_profile: Any | None,
+    *,
+    body_html: str | None = None,
 ) -> tuple[str, int]:
     entries_by_number = _citation_profile_reference_entries_by_number(citation_profile)
     if not entries_by_number:
@@ -8660,6 +8705,27 @@ def _recover_missing_reference_entries_from_profile(
             recovered_max = max(recovered_max, number)
         if recovered_items:
             insert_after.setdefault(left, []).extend(recovered_items)
+
+    body_reference_numbers = _body_reference_candidate_numbers_for_recovery(body_html or html)
+    if body_reference_numbers:
+        last_existing = existing_ids[-1]
+        recovered_items = []
+        for number in sorted(body_reference_numbers):
+            if number <= last_existing:
+                continue
+            if number - last_existing > _MAX_PROFILE_REFERENCE_GAP_RECOVERY:
+                continue
+            entry_text = entries_by_number.get(number)
+            if not entry_text:
+                continue
+            escaped = html_lib.escape(entry_text, quote=False)
+            recovered_items.append(
+                f'<li block-type="ListItem" id="ref-{number}" data-z2m-pdf-recovered-ref="1">'
+                f"{escaped}</li>"
+            )
+            recovered_max = max(recovered_max, number)
+        if recovered_items:
+            insert_after.setdefault(last_existing, []).extend(recovered_items)
 
     if not insert_after:
         return html, 0
@@ -10153,6 +10219,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     references_with_ids, recovered_ref_index = _recover_missing_reference_entries_from_profile(
         references_with_ids,
         citation_profile,
+        body_html=before_references,
     )
     ref_index = max(ref_index, recovered_ref_index)
     if ref_index == 0:

@@ -153,9 +153,13 @@ def pdf_reference_recovery_numbers(polished_html: str) -> tuple[list[int], str]:
     gap_numbers = reference_id_gap_numbers(polished_html)
     if gap_numbers:
         return gap_numbers, "gap"
-    if ref_ids:
-        return [], ""
     body_numbers = unlinked_body_reference_candidate_numbers(polished_html)
+    if ref_ids:
+        ref_set = set(ref_ids)
+        missing_body_targets = [number for number in body_numbers if number not in ref_set]
+        if missing_body_targets and any(number in ref_set for number in body_numbers):
+            return missing_body_targets, "body_citation_missing_target"
+        return [], ""
     if body_numbers:
         return body_numbers, "body_citation"
     return [], ""

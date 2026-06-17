@@ -75,6 +75,40 @@ def test_unlinked_sup_numeric_range_ignores_measurement_unit_suffix() -> None:
     assert has_unlinked_sup_numeric_range(block) is False
 
 
+def test_unlinked_sup_numeric_range_ignores_project_identifier() -> None:
+    block = _block(
+        "This work used Project Number 24,5 .022.",
+        raw="<p>This work used Project Number <sup>24,5</sup>.022.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+    assert (
+        unlinked_citation_range_kind(
+            block,
+            looks_like_float_or_caption=lambda _block: False,
+            block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+        )
+        == ""
+    )
+
+
+def test_unlinked_sup_numeric_range_ignores_dimension_unit_pair() -> None:
+    block = _block(
+        "The experiment room had 7.7 m 10,5 m of walkable space.",
+        raw="<p>The experiment room had 7.7 m<sup>10,5</sup> m of walkable space.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+    assert (
+        unlinked_citation_range_kind(
+            block,
+            looks_like_float_or_caption=lambda _block: False,
+            block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+        )
+        == ""
+    )
+
+
 def test_unlinked_sup_numeric_range_ignores_software_version() -> None:
     block = _block(
         "The Python version 3, 10 was used.",
