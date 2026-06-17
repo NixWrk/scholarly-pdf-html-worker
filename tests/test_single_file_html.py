@@ -1806,6 +1806,96 @@ def test_polish_html_document_links_sup_citations_to_references() -> None:
     ) in polished
 
 
+def test_polish_html_document_links_bracket_ranges_in_math_like_prose() -> None:
+    html = (
+        "<html><body>"
+        "<p>Public datasets such as ADE20K [1, 2] and SceneNN [3] do not cover door handles.</p>"
+        "<h4>References</h4><ol>"
+        "<li>Dataset one.</li><li>Dataset two.</li><li>Dataset three.</li>"
+        "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-1" class="z2m-ref-link">1</a>' in body
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
+    assert '<a href="#ref-3" class="z2m-ref-link">[3]</a>' in body
+
+
+def test_polish_html_document_retargets_external_cross_tag_bracket_citations() -> None:
+    long_query = "x" * 500
+    html = (
+        "<html><body>"
+        f'<p>The correlations were reported as p <a href="https://example.test/a?{long_query}">[2,</a> '
+        f'<a href="https://example.test/b?{long_query}">8]</a>.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 9))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "https://example.test" not in body
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
+    assert '<a href="#ref-8" class="z2m-ref-link">8</a>' in body
+
+
+def test_polish_html_document_links_sentence_terminal_sup_range_after_unit_phrase() -> None:
+    html = (
+        "<html><body>"
+        "<p>The force was sufficient for operating through a skull that was 1 mm thick.<sup>28-31</sup></p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 32))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "superscript_numeric", "confidence": "high"},
+    )
+    body = polished[: polished.index("References")]
+
+    assert '<a href="#ref-28" class="z2m-ref-link">28</a>' in body
+    assert '<a href="#ref-31" class="z2m-ref-link">31</a>' in body
+
+
+def test_polish_html_document_links_numeric_citation_ranges_inside_tables() -> None:
+    html = (
+        "<html><body>"
+        "<table><tr><td>Designs the questionnaire and analyzes the collected data</td>"
+        "<td>[6, 66, 153]</td></tr>"
+        "<tr><td>Contrast response</td><td>contrast <sup>51-53</sup> studies agreed.</td></tr></table>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 154))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    for ref_id in (6, 51, 53, 66, 153):
+        assert f'href="#ref-{ref_id}"' in body
+
+
+def test_polish_html_document_does_not_link_low_number_table_decimal_artifacts() -> None:
+    html = (
+        "<html><body>"
+        "<table><tr><td>Head vertical transl. <sup>1,2</sup> 8.8</td>"
+        "<td>Distance to the VI User <sup>1,2</sup> Sound Pattern</td></tr></table>"
+        "<h4>References</h4><ol><li>Reference one.</li><li>Reference two.</li></ol>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-2"' not in body
+
+
 def test_polish_html_document_cleans_reference_numbering_artifacts() -> None:
     html = (
         "<html><body>"
@@ -12572,6 +12662,77 @@ def test_polish_html_document_unlinks_author_year_decimal_comma_runs() -> None:
     assert "Qwen2.5 1.5B" in body
     assert "diameters of the five comparison discs were 5.1, 9" in body
     assert "slope of 2.7" in body
+
+
+def test_polish_html_document_unlinks_decimal_comma_value_ref_links() -> None:
+    refs = "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 552))
+    html = (
+        "<html><body>"
+        "<p>The 10-min averages showed dispersion ratio "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a>,'
+        '<a href="#ref-1" class="z2m-ref-link">1</a></sup>, '
+        "a decline over the course of "
+        '<sup><a href="#ref-9" class="z2m-ref-link">9</a>,4</sup>, 10.4, and 31.7 months, '
+        "and molecular weight is "
+        '<sup><a href="#ref-551" class="z2m-ref-link">551</a>,5</sup>).</p>'
+        "<h4>References</h4><ol>"
+        + refs
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "dispersion ratio 3.1" in body
+    assert "course of 9.4, 10.4, and 31.7 months" in body
+    assert "molecular weight is 551.5)" in body
+    assert 'href="#ref-1"' not in body
+    assert 'href="#ref-3"' not in body
+    assert 'href="#ref-9"' not in body
+    assert 'href="#ref-551"' not in body
+
+
+def test_polish_html_document_unlinks_approximate_duration_range_ref_link() -> None:
+    html = (
+        "<html><body>"
+        "<p>The drug has an average tmax of approximately "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a></sup> to 6 hours '
+        "and a half-life of 14 hours.</p>"
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 4))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "approximately 3 to 6 hours" in body
+    assert 'href="#ref-3"' not in body
+
+
+def test_polish_html_document_unlinks_count_of_total_ref_link() -> None:
+    html = (
+        "<html><body>"
+        "<p>Clinical neurosurgeons have performed or supervised "
+        '<sup><a href="#ref-35" class="z2m-ref-link">35</a></sup> of the 78 implants '
+        "in our series since 1999. However "
+        '<sup><a href="#ref-25" class="z2m-ref-link">25</a></sup> of the arrays '
+        "had less than 96 wire-bonded electrodes. One array was failing by day "
+        '<sup><a href="#ref-21" class="z2m-ref-link">21</a></sup>.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 36))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    body = polished[: polished.index("References")]
+
+    assert "supervised 35 of the 78 implants" in body
+    assert "However 25 of the arrays" in body
+    assert "failing by day 21." in body
+    assert 'href="#ref-21"' not in body
+    assert 'href="#ref-25"' not in body
+    assert 'href="#ref-35"' not in body
 
 
 def test_polish_html_document_unlinks_author_year_software_version_refs() -> None:

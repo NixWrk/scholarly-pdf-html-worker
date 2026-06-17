@@ -81,7 +81,13 @@ def looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
         return False
     if any(number == 0 for number in numbers):
         return True
-    left = text[max(0, match.start() - 100) : match.start()].lower()
+    left_raw = text[max(0, match.start() - 100) : match.start()]
+    right = text[match.end() : match.end() + 40]
+    if re.search(r"[A-Za-z]\s*$", left_raw) and re.match(r"^[\s\u200b]*=", right):
+        return True
+    if len(numbers) == 2 and numbers[0] > numbers[1] and re.match(r"^[\s\u200b]*=", right):
+        return True
+    left = left_raw.lower()
     return bool(
         re.search(
             r"\b(?:vector|vectors|array|arrays|assignment|assignments|interval|intervals|"
@@ -199,6 +205,49 @@ def sup_numeric_range_is_measurement_value(block: Block, match: re.Match[str]) -
     return SUP_MEASUREMENT_CONTEXT_RE.search(f"{left_text} {right_text}") is not None
 
 
+DECIMAL_COMMA_VALUE_CONTEXT_RE = re.compile(
+    r"\b(?:coefficient|coordinate|decline|depth|dispersion\s+ratio|equal\s+to|"
+    r"height|length|mean|median|molecular\s+weight|ratio|slope|transl\.?|"
+    r"translation|value|values?|width)\b|"
+    r"\b(?:chi|χ)\s*2\b|p\s*[<=>]",
+    re.IGNORECASE,
+)
+
+
+def sup_numeric_range_is_decimal_comma_value(block: Block, match: re.Match[str]) -> bool:
+    body = match.group("body")
+    if re.search(r"[-\u2013\u2014;]", body):
+        return False
+    parts = [int(value) for value in re.findall(r"\d{1,3}", body)]
+    if len(parts) != 2:
+        return False
+    if parts[1] > 99:
+        return False
+    left_text = strip_tags(block.raw[max(0, match.start() - 220) : match.start()])
+    right_text = strip_tags(block.raw[match.end() : match.end() + 220])
+    if DECIMAL_COMMA_VALUE_CONTEXT_RE.search(f"{left_text} {right_text}"):
+        return True
+    if re.match(r"^\s*(?:[,;)]|\d+(?:\.\d+)?)", right_text):
+        return True
+    return False
+
+
+def sup_numeric_range_is_low_number_table_layout_marker(block: Block, match: re.Match[str]) -> bool:
+    if block.tag != "table" and not re.search(r"<t[dh]\b", block.raw, re.IGNORECASE):
+        return False
+    body = match.group("body")
+    if re.search(r"[-\u2013\u2014;]", body):
+        return False
+    numbers = [int(value) for value in re.findall(r"\d{1,3}", body)]
+    if len(numbers) != 2 or max(numbers) > 5:
+        return False
+    left_text = strip_tags(block.raw[max(0, match.start() - 140) : match.start()])
+    right_text = strip_tags(block.raw[match.end() : match.end() + 140])
+    return bool(
+        re.search(r"\b(?:distance|head|height|sound|pattern|transl\.?|user)\b", f"{left_text} {right_text}", re.IGNORECASE)
+    )
+
+
 def sup_numeric_range_is_project_or_grant_number(block: Block, match: re.Match[str]) -> bool:
     left_text = strip_tags(block.raw[max(0, match.start() - 180) : match.start()])
     return SUP_PROJECT_OR_GRANT_CONTEXT_RE.search(left_text) is not None
@@ -240,6 +289,10 @@ def has_unlinked_sup_numeric_range(block: Block) -> bool:
                 continue
             if sup_numeric_range_is_measurement_value(block, match):
                 continue
+            if sup_numeric_range_is_decimal_comma_value(block, match):
+                continue
+            if sup_numeric_range_is_low_number_table_layout_marker(block, match):
+                continue
             return True
     return False
 
@@ -257,6 +310,20 @@ def unlinked_citation_range_kind(
     has_tagged_range = has_unlinked_tagged_citation_range(block)
     has_sup_range = has_unlinked_sup_numeric_range(block)
     if not has_plain_range and not has_vector_range and not has_tagged_range and not has_sup_range:
+        return ""
+    if (
+        (block.block_type.lower() == "equation" or "z2m-equation-row" in block.classes)
+        and has_unlinked_plain_match
+        and not has_sup_range
+    ):
+        return ""
+    if (
+        has_unlinked_plain_match
+        and match is not None
+        and ("z2m-equation-row" in block.classes or block.block_type.lower() == "equation")
+        and looks_like_numeric_vector(block.text, match)
+        and not has_sup_range
+    ):
         return ""
     if (
         has_unlinked_plain_match
@@ -295,6 +362,10 @@ def unlinked_citation_candidate_numbers(block: Block) -> list[int]:
             if sup_numeric_range_is_project_or_grant_number(block, sup_match):
                 continue
             if sup_numeric_range_is_measurement_value(block, sup_match):
+                continue
+            if sup_numeric_range_is_decimal_comma_value(block, sup_match):
+                continue
+            if sup_numeric_range_is_low_number_table_layout_marker(block, sup_match):
                 continue
             return [int(value) for value in re.findall(r"\d+", sup_match.group("body"))]
     for tagged_match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):

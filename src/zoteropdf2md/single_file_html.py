@@ -259,7 +259,13 @@ _BRACKET_CITATION_PATTERN = re.compile(
     r'(?<!\\)\[\s*(\d{1,3}(?:\s*(?:,|[-\u2013\u2014])\s*\d{1,3})*)\s*\]'
 )
 _CROSS_TAG_BRACKET_CITATION_PATTERN = re.compile(
-    r'(?<!\\)\[\s*(?P<body>(?=[\s\S]*?<)[\s\S]{1,260}?)\s*\]',
+    r'(?<!\\)\[\s*(?P<body>(?=[\s\S]*?<)[\s\S]{1,2000}?)\s*\]',
+    re.IGNORECASE,
+)
+_LINKED_BRACKET_ORPHAN_CLOSE_ANCHOR_PATTERN = re.compile(
+    r"(?P<bracket>\[(?:\s|[,;]|\-|[\u2010-\u2014]|"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d{1,4}['\"][^>]*>\s*\d{1,4}\s*</a>)+\])"
+    r"</a>(?P<trail>[,.;:]?)",
     re.IGNORECASE,
 )
 # Parenthetical reference: "(ref. 30)" / "(ref 30)" / "(см. 30)" → sup link
@@ -938,12 +944,29 @@ _FALSE_SUBJECT_SERIES_LINK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _FALSE_RANGE_START_LINK_PATTERN = re.compile(
-    r'(?P<prefix>\b(?:over|from|for|during|between)\s+)'
+    r'(?P<prefix>\b(?:over|from|for|during|between|approximately|about|around|roughly)\s+)'
     r'<sup\b[^>]*>\s*'
     r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d{1,2})["\'][^>]*>'
     r'\s*(?P<num>\d{1,2})\s*</a>\s*</sup>'
     r'(?=\s+(?:to|and|-|\u2013|\u2014)\s+\d{1,3}(?:\.\d+)?\s*'
     r'(?:minutes?|hours?|days?|weeks?|months?|years?|s|sec|ms|Hz|kHz|MHz|MBq|mg|kg)\b)',
+    re.IGNORECASE,
+)
+_FALSE_COUNT_OF_TOTAL_SUP_REF_PATTERN = re.compile(
+    r'(?P<prefix>)<sup\b[^>]*>\s*'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d{1,3})["\'][^>]*>'
+    r'\s*(?P<num>\d{1,3})\s*</a>\s*</sup>'
+    r'(?=\s+of\s+(?:the\s+)?(?:\d{1,4}\s+)?'
+    r'(?:arrays?|implants?|patients?|participants?|subjects?|animals?|cases?|trials?|'
+    r'samples?|electrodes?|channels?|sessions?|items?|objects?|studies?)\b)',
+    re.IGNORECASE,
+)
+_FALSE_DAY_NUMBER_SUP_REF_PATTERN = re.compile(
+    r'(?P<prefix>\b(?:by|on|at|after|before|until|through)\s+day\s*)'
+    r'<sup\b[^>]*>\s*'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d{1,3})["\'][^>]*>'
+    r'\s*(?P<num>\d{1,3})\s*</a>\s*</sup>'
+    r'(?=\s*(?:[),.;:]|$))',
     re.IGNORECASE,
 )
 _FALSE_SPLIT_YEAR_REF_PATTERN = re.compile(
@@ -999,6 +1022,30 @@ _FALSE_RANGE_ENDPOINT_SUP_REF_PATTERN = re.compile(
     r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d+)["\'][^>]*\bz2m-ref-link\b[^>]*>'
     r'\s*(?P<num>\d{1,3})\s*</a>\s*</sup>'
     r'(?=\s*(?:[.,;)]|\b(?:for|of|in|across|each|with|to)\b))',
+    re.IGNORECASE,
+)
+_LINKED_DECIMAL_COMMA_SUP_VALUE_PATTERN = re.compile(
+    r'<sup(?P<attrs>[^>]*)>\s*(?P<body>'
+    r'(?:'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-\d{1,4}["\'][^>]*>\s*\d{1,4}\s*</a>'
+    r'|\d{1,4}'
+    r')'
+    r'(?:\s*,\s*'
+    r'(?:'
+    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-\d{1,4}["\'][^>]*>\s*\d{1,4}\s*</a>'
+    r'|\d{1,4}'
+    r')){1,4}'
+    r')\s*</sup>',
+    re.IGNORECASE | re.DOTALL,
+)
+_DECIMAL_COMMA_SUP_VALUE_CONTEXT_RE = re.compile(
+    r"\b(?:"
+    r"effect\s+size|logmar|snellen\s+acuity|visual\s+acuity|"
+    r"measurements?\s+of|cohens?\s+d|value|values|score|scores?|"
+    r"coefficient|ratio|mean|median|power|slope|molecular\s+weight|"
+    r"course\s+of|over\s+the\s+course\s+of|diameters?|distances?|"
+    r"version|v"
+    r")\b[\s\S]{0,160}$",
     re.IGNORECASE,
 )
 _FALSE_NUMBERED_SEQUENCE_LEADING_SUP_REF_PATTERN = re.compile(
@@ -4249,6 +4296,18 @@ def _link_bracket_citations(html: str, ref_count: int) -> str:
             return match.group(0)
 
         if "<a " in body.lower():
+            linked_numbers = {
+                int(anchor_match.group("label"))
+                for anchor_match in re.finditer(
+                    r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(?P<target>\d{1,4})["\'][^>]*>'
+                    r'\s*(?P<label>\d{1,4})\s*</a>',
+                    body,
+                    re.IGNORECASE,
+                )
+                if anchor_match.group("target") == anchor_match.group("label")
+            }
+            if numbers and set(numbers).issubset(linked_numbers):
+                return match.group(0)
             normalized_visible = re.sub(r"\s+([,;])", r"\1", visible.strip())
             normalized_visible = re.sub(r"([,;])(?=\S)", r"\1 ", normalized_visible)
             normalized_visible = re.sub(r"\s*([-\u2013\u2014])\s*", r"\1", normalized_visible)
@@ -4342,6 +4401,98 @@ def _link_bracket_citations(html: str, ref_count: int) -> str:
         return "".join(local_out)
 
     return _SENTENCE_NODE_PATTERN.sub(link_plain_brackets_in_node, linked_html)
+
+
+_TABLE_OR_FLOAT_CITATION_NODE_PATTERN = re.compile(
+    r"<table\b[\s\S]*?</table>",
+    re.IGNORECASE,
+)
+
+
+def _link_table_float_numeric_citation_ranges(html: str, ref_count: int) -> str:
+    if ref_count <= 0 or ("<sup" not in html and "[" not in html):
+        return html
+
+    def link_number(match: re.Match[str]) -> str:
+        number = int(match.group(0))
+        return f'<a href="#ref-{number}" class="z2m-ref-link">{match.group(0)}</a>'
+
+    def citation_numbers(label: str) -> list[int]:
+        numbers = _expand_reference_label_numbers(label)
+        if len(numbers) < 2:
+            return []
+        if any(number < 1 or number > ref_count for number in numbers):
+            return []
+        return numbers
+
+    def replace_sup(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if "z2m-unit-exp" in raw or "z2m-footnote-ref" in raw or "<a " in raw.lower():
+            return raw
+        body = match.group(1)
+        numbers = citation_numbers(_visible_text(body))
+        if not numbers or max(numbers) < 10:
+            return raw
+        linked = _link_numeric_superscript_body(body, ref_count)
+        if linked is None:
+            return raw
+        return f"<sup>{linked}</sup>"
+
+    def replace_bracket(match: re.Match[str]) -> str:
+        content = match.group(1)
+        numbers = citation_numbers(content)
+        if not numbers or max(numbers) < 10:
+            return match.group(0)
+        return "[" + re.sub(r"\d{1,3}", link_number, content) + "]"
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = _SUP_PATTERN.sub(replace_sup, match.group(0))
+        parts = _TAG_SPLIT_PATTERN.split(raw)
+        out: list[str] = []
+        skip_stack: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                open_match = _OPEN_TAG_PATTERN.match(part.strip())
+                close_match = _CLOSE_TAG_PATTERN.match(part.strip())
+                if close_match is not None and skip_stack:
+                    tag_name = close_match.group(1).lower()
+                    for idx in range(len(skip_stack) - 1, -1, -1):
+                        if skip_stack[idx] == tag_name:
+                            del skip_stack[idx]
+                            break
+                elif (
+                    open_match is not None
+                    and open_match.group(1).lower() in {"a", "script", "style", "math", "svg"}
+                    and not part.rstrip().endswith("/>")
+                ):
+                    skip_stack.append(open_match.group(1).lower())
+                out.append(part)
+                continue
+            out.append(part if skip_stack else _BRACKET_CITATION_PATTERN.sub(replace_bracket, part))
+        return "".join(out)
+
+    return _TABLE_OR_FLOAT_CITATION_NODE_PATTERN.sub(replace_node, html)
+
+
+def _link_late_numeric_citation_ranges_before_references(html: str, citation_profile: Any | None = None) -> str:
+    if _should_suppress_numeric_ref_links_for_author_year(html, citation_profile):
+        return html
+    ref_ids = [int(value) for value in re.findall(r'\bid\s*=\s*["\']ref-(\d{1,4})["\']', html)]
+    if not ref_ids:
+        return html
+    heading_match = _references_heading_search(html, allow_notes_heading=True)
+    if heading_match is None:
+        first_ref_match = re.search(r'<li\b[^>]*\bid\s*=\s*["\']ref-\d+', html, re.IGNORECASE)
+        split_at = first_ref_match.start() if first_ref_match is not None else len(html)
+    else:
+        split_at = heading_match.start()
+    before = html[:split_at]
+    after = html[split_at:]
+    ref_count = max(ref_ids)
+    before = _link_bracket_citations(before, ref_count)
+    return _link_table_float_numeric_citation_ranges(before + after, ref_count)
 
 
 def _recover_bare_citations(html: str, ref_count: int) -> str:
@@ -6132,6 +6283,30 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
 
 def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
     """Undo known false-positive citation links in decimals and figure labels."""
+    def _unwrap_linked_decimal_comma_sup_values(text: str) -> str:
+        if "#ref-" not in text or "<sup" not in text:
+            return text
+
+        def _replace_decimal_sup(match: re.Match[str]) -> str:
+            body = match.group("body")
+            if "#ref-" not in body:
+                return match.group(0)
+            visible_body = re.sub(r"\s+", "", _visible_text(body))
+            if re.fullmatch(r"\d{1,4}(?:,\d{1,4}){1,4}", visible_body) is None:
+                return match.group(0)
+            numbers = re.findall(r"\d{1,4}", visible_body)
+            if len(numbers) != 2:
+                return match.group(0)
+            left_text = _visible_text(text[max(0, match.start() - 260) : match.start()])
+            right_text = _visible_text(text[match.end() : match.end() + 160])
+            if _DECIMAL_COMMA_SUP_VALUE_CONTEXT_RE.search(left_text) is None:
+                return match.group(0)
+            if re.match(r"^\s*(?:[,;.)\]]|$)", right_text) is None:
+                return match.group(0)
+            return ".".join(numbers)
+
+        return _LINKED_DECIMAL_COMMA_SUP_VALUE_PATTERN.sub(_replace_decimal_sup, text)
+
     def _repair_matching_short_context_sup(match: re.Match[str]) -> str:
         if match.group("target") != match.group("num"):
             return match.group(0)
@@ -6148,6 +6323,15 @@ def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
             _repair_matching_short_context_sup,
             fixed_large,
         )
+        fixed_large = _FALSE_COUNT_OF_TOTAL_SUP_REF_PATTERN.sub(
+            _repair_matching_short_context_sup,
+            fixed_large,
+        )
+        fixed_large = _FALSE_DAY_NUMBER_SUP_REF_PATTERN.sub(
+            _repair_matching_short_context_sup,
+            fixed_large,
+        )
+        fixed_large = _unwrap_linked_decimal_comma_sup_values(fixed_large)
         return fixed_large
 
     def _repair_chemical_formula_sup(match: re.Match[str]) -> str:
@@ -6196,6 +6380,8 @@ def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
     fixed = _FALSE_PH_RANGE_LINK_PATTERN.sub(_repair_ph_range_link, fixed)
     fixed = _FALSE_SUBJECT_SERIES_LINK_PATTERN.sub(_repair_short_numeric_context_link, fixed)
     fixed = _FALSE_RANGE_START_LINK_PATTERN.sub(_repair_short_numeric_context_link, fixed)
+    fixed = _FALSE_COUNT_OF_TOTAL_SUP_REF_PATTERN.sub(_repair_matching_short_context_sup, fixed)
+    fixed = _FALSE_DAY_NUMBER_SUP_REF_PATTERN.sub(_repair_matching_short_context_sup, fixed)
     fixed = _FALSE_SPLIT_YEAR_REF_PATTERN.sub(_repair_split_year_ref, fixed)
     previous = None
     while previous != fixed:
@@ -6214,6 +6400,7 @@ def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
         lambda m: f"{m.group('base')}<sup{m.group('attrs')}>{m.group('exp')}</sup>",
         fixed,
     )
+    fixed = _unwrap_linked_decimal_comma_sup_values(fixed)
     fixed = _LINKED_BASE10_MANTISSA_BEFORE_EXP_PATTERN.sub("10", fixed)
     fixed = _LINKED_ML_PER_SECOND_UNIT_EXPONENT_SUP_PATTERN.sub(
         lambda m: f'{m.group("unit")} s<sup class="z2m-unit-exp">-1</sup>',
@@ -7362,7 +7549,8 @@ def _rewrite_page_linked_bracket_citations(html: str, ref_count: int) -> str:
     current = split_anchor_pattern.sub(replace_split_anchor_run, current)
     current = pattern.sub(replace, current)
     current = open_outside_pattern.sub(replace_open_outside, current)
-    return close_outside_pattern.sub(replace_close_outside, current)
+    current = close_outside_pattern.sub(replace_close_outside, current)
+    return _LINKED_BRACKET_ORPHAN_CLOSE_ANCHOR_PATTERN.sub(r"\g<bracket>\g<trail>", current)
 
 
 def _unlink_supplementary_page_refs(html: str) -> str:
@@ -10068,6 +10256,35 @@ def _link_existing_numeric_superscripts_in_safe_blocks(
     return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
 
 
+_SENTENCE_TERMINAL_SUP_RANGE_PATTERN = re.compile(
+    r"(?P<punct>[.!?])(?P<gap>\s*)"
+    r"<sup\b(?![^>]*\b(?:z2m-unit-exp|z2m-footnote-ref)\b)[^>]*>"
+    r"\s*(?P<body>\d{1,3}\s*[-\u2013\u2014]\s*\d{1,3}"
+    r"(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,3}){0,12})\s*"
+    r"</sup>",
+    re.IGNORECASE,
+)
+
+
+def _link_sentence_terminal_superscript_ranges_in_safe_blocks(html: str, ref_index: int) -> str:
+    if ref_index <= 0 or "<sup" not in html:
+        return html
+
+    def replace_range(match: re.Match[str]) -> str:
+        linked = _link_numeric_superscript_body(match.group("body"), ref_index)
+        if linked is None:
+            return match.group(0)
+        return f"{match.group('punct')}{match.group('gap')}<sup>{linked}</sup>"
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        return _SENTENCE_TERMINAL_SUP_RANGE_PATTERN.sub(replace_range, raw)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
+
+
 def _link_plain_superscript_numeric_groups_in_safe_blocks(
     html: str,
     ref_index: int,
@@ -10585,6 +10802,9 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             or _looks_like_bracket_numeric_document(before_references, ref_index)
         )
     )
+    if not profile_is_author_year and not profile_is_paren_numeric:
+        before_references = _link_bracket_citations(before_references, ref_index)
+        before_references = _link_table_float_numeric_citation_ranges(before_references, ref_index)
 
     page_to_ref = _reference_page_anchor_map(references_with_ids)
     if profile_is_paren_numeric:
@@ -10624,6 +10844,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
             ref_index,
         )
         before_references = _link_existing_numeric_superscripts_in_safe_blocks(before_references, ref_index)
+        before_references = _link_sentence_terminal_superscript_ranges_in_safe_blocks(before_references, ref_index)
         before_references = _recover_flattened_author_superscript_citations(before_references, ref_index)
         before_references = _link_plain_superscript_numeric_groups_in_safe_blocks(
             before_references,
@@ -23391,6 +23612,7 @@ def _polish_phase_references_and_links(state: RawPolishState, context: RawPolish
         polished = _rewrite_existing_page_table_links(polished, found_tables)
         polished = _link_table_refs(polished, found_tables)
         polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
+        polished = _link_late_numeric_citation_ranges_before_references(polished, citation_profile)
         polished = _unwrap_nested_same_href_internal_links(polished)
         polished = _unwrap_unresolved_semantic_page_links(
             polished,
@@ -23420,6 +23642,8 @@ def _polish_phase_references_and_links(state: RawPolishState, context: RawPolish
         polished = _link_table_refs(polished, found_tables)
         polished = _repair_table_ref_links_misclassified_as_refs(polished, found_tables)
         polished = _unwrap_nested_same_href_internal_links(polished)
+    if context.enable_citation_linkify:
+        polished = _link_late_numeric_citation_ranges_before_references(polished, citation_profile)
     return state.with_html(polished)
 
 

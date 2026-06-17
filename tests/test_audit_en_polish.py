@@ -1388,6 +1388,115 @@ def test_analyze_pair_ignores_sup_measurement_value_as_p04m() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_decimal_comma_sup_values_as_p04m() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>The model had data overdispersion (dispersion ratio <sup>4,7</sup>, "
+            "χ2 = 1841.7, p &lt; 0.001).</p>"
+            "<p>The slope of the regression equation (equal to <sup>7,2</sup>) "
+            "matched the literature.</p>"
+            "<p>The synthetic substrate molecular weight is <sup>551,5</sup>) "
+            "and was treated as a small molecule.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 552))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04M" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_low_number_table_decimal_sup_values_as_p04t() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><table><tr>"
+            "<td>Head vertical transl. <sup>1,2</sup> 8.8</td>"
+            "<td>Distance to the VI User <sup>1,2</sup> Sound Pattern</td>"
+            "</tr></table>"
+            "<h4>References</h4><ol><li>Reference one.</li><li>Reference two.</li></ol>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04T" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_float_ranges_without_reference_targets_for_p04t() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body><table><tr><td>"
+            "Training components<sup>92,63</sup> were extracted from a damaged table."
+            "</td></tr></table>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 28))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04T" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_equation_vector_bracket_range_as_p04m() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            '<html><body><div id="eq-1" class="z2m-equation-row">'
+            "X c [ 13 , 1 ] = ( X cam, q cam, v cam, ω cam ) T (1)"
+            "</div></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04M" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_footnote_backed_sup_range_as_p04m() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -2330,6 +2439,30 @@ def test_citation_style_audit_ignores_parenthetical_numeric_dominant_article() -
             *[
                 f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> Reference {idx}.</li>'
                 for idx in range(1, 11)
+            ],
+            "</ol></body></html>",
+        ]
+    )
+
+    defects = audit._citation_style_consistency_defects(html, audit._parse_blocks(html))
+
+    assert [defect.id for defect in defects] == []
+
+
+def test_citation_style_audit_ignores_bracket_numeric_citations_in_author_year_like_article() -> None:
+    audit = _load_audit_module()
+    html = "\n".join(
+        [
+            "<html><body>",
+            "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
+            "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
+            "make this sparse article look author-year.</p>",
+            '<p>Public datasets include ADE20K [<a href="#ref-1" class="z2m-ref-link">1</a>, 2] '
+            'and SceneNN [<a href="#ref-3" class="z2m-ref-link">3</a>].</p>',
+            "<h4>References</h4><ol>",
+            *[
+                f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> Reference {idx}.</li>'
+                for idx in range(1, 4)
             ],
             "</ol></body></html>",
         ]

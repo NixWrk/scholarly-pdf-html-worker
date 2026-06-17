@@ -1857,6 +1857,9 @@ def _citation_defects(polish_blocks: list[Block], *, reference_blocks: list[Bloc
             )
     elif "float" in unlinked_range_candidates:
         block = unlinked_range_candidates["float"]
+        candidate_numbers = _unlinked_citation_candidate_numbers(block)
+        if candidate_numbers and ref_numbers and not any(number in ref_numbers for number in candidate_numbers):
+            return defects
         defects.append(
             _defect(
                 defect_id="P04T",
@@ -1874,6 +1877,9 @@ def _citation_defects(polish_blocks: list[Block], *, reference_blocks: list[Bloc
         )
     elif "math" in unlinked_range_candidates:
         block = unlinked_range_candidates["math"]
+        candidate_numbers = _unlinked_citation_candidate_numbers(block)
+        if candidate_numbers and ref_numbers and not any(number in ref_numbers for number in candidate_numbers):
+            return defects
         if not _unlinked_sup_numeric_range_matches_footnote_targets(block, footnote_numbers):
             defects.append(
                 _defect(
@@ -2029,6 +2035,20 @@ def _paren_numeric_ref_link_count(body_blocks: Iterable[Block]) -> int:
     return count
 
 
+def _ref_anchor_is_bracketed_numeric_citation(block_raw: str, match: re.Match[str]) -> bool:
+    label = _strip_tags(match.group("body")).strip()
+    if not _numeric_ref_label_numbers(label):
+        return False
+    if label.lstrip().startswith("[") or label.rstrip().endswith("]"):
+        return True
+    left_text = _strip_tags(block_raw[max(0, match.start() - 24) : match.start()])
+    right_text = _strip_tags(block_raw[match.end() : match.end() + 36])
+    return (
+        re.search(r"\[\s*$", left_text) is not None
+        and re.match(r"^\s*(?:[,;]\s*\d|\])", right_text) is not None
+    )
+
+
 def _citation_style_consistency_defects(
     polish_html: str,
     polish_blocks: list[Block],
@@ -2080,6 +2100,8 @@ def _citation_style_consistency_defects(
             label = _strip_tags(match.group("body"))
             numbers = _numeric_ref_label_numbers(label)
             if not numbers:
+                continue
+            if _ref_anchor_is_bracketed_numeric_citation(block.raw, match):
                 continue
             text_window = _strip_tags(block.raw[max(0, match.start() - 180) : match.end() + 180])
             if re.search(r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b", text_window, re.IGNORECASE):
