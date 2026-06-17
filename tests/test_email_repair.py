@@ -1,4 +1,4 @@
-from zoteropdf2md.email_repair import repair_split_visible_emails
+from pdf_html_polish.email_repair import repair_split_visible_emails
 
 
 def test_repair_split_visible_emails_joins_labeled_local_dot() -> None:

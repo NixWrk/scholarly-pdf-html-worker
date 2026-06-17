@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from zoteropdf2md.language_detect import (
+from pdf_html_polish.language_detect import (
     detect_language_from_html,
     detect_language_from_pdf,
     language_gate_decision,

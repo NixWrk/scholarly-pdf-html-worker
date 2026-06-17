@@ -1,11 +1,11 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.cached_images import (
+from pdf_html_polish.quality_loop.cached_images import (
     apply_data_image_cache,
     cached_data_image_cache,
     ordered_data_image_cache,
 )
-from zoteropdf2md.quality_loop.run_utils import write_json
+from pdf_html_polish.quality_loop.run_utils import write_json
 
 
 def test_ordered_data_image_cache_uses_source_hints_first() -> None:

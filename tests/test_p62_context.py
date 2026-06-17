@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.p62_context import recovery_snippets
+from pdf_html_polish.quality_loop.p62_context import recovery_snippets
 
 
 def test_recovery_snippets_use_surrounding_context_for_warning_only_sequence_gap() -> None:

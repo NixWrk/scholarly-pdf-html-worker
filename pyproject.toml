@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pdf-html-translator"
+name = "pdf-html-polish"
 version = "0.1.0"
 description = "PDF to polished EN HTML pipeline"
 readme = "README.md"
@@ -29,10 +29,10 @@ math = [
 ]
 
 [project.scripts]
-pdf-html-convert = "pdf_html_translator.cli.convert_file:main"
+pdf-html-polish = "pdf_html_polish.cli.convert_file:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-zoteropdf2md = ["assets/katex/*"]
+pdf_html_polish = ["assets/katex/*"]

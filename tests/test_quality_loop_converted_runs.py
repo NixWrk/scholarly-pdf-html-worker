@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.converted_runs import (
+from pdf_html_polish.quality_loop.converted_runs import (
     POLISH_STAGE,
     RAW_STAGE,
     assess_polish_html,

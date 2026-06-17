@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import Block
-from zoteropdf2md.quality_loop.audit_p04 import (
+from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_p04 import (
     has_unlinked_sup_numeric_range,
     unlinked_citation_candidate_numbers,
     unlinked_citation_range_kind,

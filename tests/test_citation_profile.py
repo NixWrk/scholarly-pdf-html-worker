@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zoteropdf2md.citation_profile import (
+from pdf_html_polish.citation_profile import (
     PdfLinkAnnotation,
     _author_year_reference_hint_count,
     _is_reference_citation_dest,
@@ -12,7 +12,7 @@ from zoteropdf2md.citation_profile import (
     load_zotero_overlay_citations,
     merge_citation_profile_with_zotero_overlays,
 )
-from zoteropdf2md.single_file_html import polish_html_document
+from pdf_html_polish.single_file_html import polish_html_document
 
 
 def _refs(count: int) -> str:

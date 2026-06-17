@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.source_pdf import article_source_pdf_candidates
+from pdf_html_polish.quality_loop.source_pdf import article_source_pdf_candidates
 
 
 def test_source_pdf_candidates_fall_back_to_zotero_title_match(

@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.p62_pdf_assets import (
+from pdf_html_polish.quality_loop.p62_pdf_assets import (
     false_match_hint_blocks_asset_recovery,
     fitz_rect_area,
     fitz_rect_tuple,

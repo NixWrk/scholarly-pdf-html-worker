@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 
-from zoteropdf2md.marker_runner import (
+from pdf_html_polish.marker_runner import (
     MarkerRunner,
     ProgressContext,
     RunResult,

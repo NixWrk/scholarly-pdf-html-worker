@@ -1,6 +1,6 @@
 import pytest
 
-from zoteropdf2md.raw_html_polish import katex
+from pdf_html_polish.raw_html_polish import katex
 
 
 def _ensure_head(html: str) -> str:

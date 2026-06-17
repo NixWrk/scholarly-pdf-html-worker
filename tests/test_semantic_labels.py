@@ -1,4 +1,4 @@
-from zoteropdf2md.semantic_labels import (
+from pdf_html_polish.semantic_labels import (
     extended_data_figure_key_from_visible_number,
     figure_key_from_visible_number,
     normalize_semantic_key,

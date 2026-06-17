@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
-from zoteropdf2md.quality_loop.audit_math_units import (
+from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
+from pdf_html_polish.quality_loop.audit_math_units import (
     equation_table_defects,
     inline_tex_contains_citation_bracket,
     unit_math_defects,

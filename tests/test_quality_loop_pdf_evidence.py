@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.pdf_evidence import (
+from pdf_html_polish.quality_loop.pdf_evidence import (
     attach_pdf_evidence_to_pack,
     problem_snippets_for_evidence,
     write_pdf_problem_evidence_stage,

@@ -1,4 +1,4 @@
-from zoteropdf2md.raw_html_polish.url_autolink import (
+from pdf_html_polish.raw_html_polish.url_autolink import (
     autolink_plain_urls,
     autolink_text_urls,
 )

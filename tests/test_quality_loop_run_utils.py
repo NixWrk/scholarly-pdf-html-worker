@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from zoteropdf2md.quality_loop.run_utils import (
+from pdf_html_polish.quality_loop.run_utils import (
     article_dir_from_stage,
     article_name_from_stage,
     artifact_hint,

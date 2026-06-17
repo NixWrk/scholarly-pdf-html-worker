@@ -31,13 +31,13 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.citation_profile import (  # noqa: E402
+from pdf_html_polish.citation_profile import (  # noqa: E402
     CitationProfile,
     build_citation_profile_from_pdf,
     merge_citation_profile_with_zotero_overlays,
 )
-from zoteropdf2md.html_stages import RAW_STAGE_NAME, article_dir_from_html_stage  # noqa: E402
-from zoteropdf2md.single_file_html import (  # noqa: E402
+from pdf_html_polish.html_stages import RAW_STAGE_NAME, article_dir_from_html_stage  # noqa: E402
+from pdf_html_polish.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
 )

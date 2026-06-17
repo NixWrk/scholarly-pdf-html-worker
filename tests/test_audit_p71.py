@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.audit_p71 import (
+from pdf_html_polish.quality_loop.audit_p71 import (
     known_ocr_token_defects,
     known_ocr_token_is_present_in_pdf_text_layer,
 )

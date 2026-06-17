@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.quality_loop.article_check import build_refactor_article_check  # noqa: E402
+from pdf_html_polish.quality_loop.article_check import build_refactor_article_check  # noqa: E402
 
 
 def _rerun_selected_audit(

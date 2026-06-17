@@ -1,7 +1,7 @@
 import re
 
-from zoteropdf2md.quality_loop.audit_blocks import Block, parse_blocks
-from zoteropdf2md.quality_loop.audit_figure_caption_ux import (
+from pdf_html_polish.quality_loop.audit_blocks import Block, parse_blocks
+from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     CAPTION_TEX_RESIDUE_RE,
     figure_caption_ux_defects,
 )

@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.analysis_prompt import render_llm_prompt
+from pdf_html_polish.quality_loop.analysis_prompt import render_llm_prompt
 
 
 def test_analysis_prompt_includes_required_evidence_and_loop_guards() -> None:

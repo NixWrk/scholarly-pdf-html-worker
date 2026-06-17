@@ -27,22 +27,22 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.single_file_html import (  # noqa: E402
+from pdf_html_polish.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
 )
-from zoteropdf2md.citation_profile import extract_reference_entries_from_pdf  # noqa: E402
-from zoteropdf2md.marker_runner import build_marker_single_command  # noqa: E402
-from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
-from zoteropdf2md.quality_loop import commands as quality_commands  # noqa: E402
-from zoteropdf2md.quality_loop.analysis_prompt import render_llm_prompt as _render_llm_prompt_impl  # noqa: E402
-from zoteropdf2md.quality_loop.cached_images import (  # noqa: E402
+from pdf_html_polish.citation_profile import extract_reference_entries_from_pdf  # noqa: E402
+from pdf_html_polish.marker_runner import build_marker_single_command  # noqa: E402
+from pdf_html_polish.polish_language import resolve_document_polish_language  # noqa: E402
+from pdf_html_polish.quality_loop import commands as quality_commands  # noqa: E402
+from pdf_html_polish.quality_loop.analysis_prompt import render_llm_prompt as _render_llm_prompt_impl  # noqa: E402
+from pdf_html_polish.quality_loop.cached_images import (  # noqa: E402
     apply_data_image_cache as _apply_data_image_cache,
     cached_data_image_cache as _cached_data_image_cache,
     copy_review_html_with_inline_images as _copy_review_html_with_inline_images,
     manifest_article_for as _manifest_article_for,
 )
-from zoteropdf2md.quality_loop.converted_runs import (  # noqa: E402
+from pdf_html_polish.quality_loop.converted_runs import (  # noqa: E402
     POLISH_STAGE,
     RAW_STAGE,
     assessment_totals as _assessment_totals,
@@ -52,24 +52,24 @@ from zoteropdf2md.quality_loop.converted_runs import (  # noqa: E402
     prepare_converted_run,
     visible_html_text as _visible_html_text,
 )
-from zoteropdf2md.quality_loop import gates as quality_gates  # noqa: E402
-from zoteropdf2md.quality_loop import pdf_utils as quality_pdf_utils  # noqa: E402
-from zoteropdf2md.quality_loop import source_pdf as quality_source_pdf  # noqa: E402
-from zoteropdf2md.quality_loop.observations import (  # noqa: E402
+from pdf_html_polish.quality_loop import gates as quality_gates  # noqa: E402
+from pdf_html_polish.quality_loop import pdf_utils as quality_pdf_utils  # noqa: E402
+from pdf_html_polish.quality_loop import source_pdf as quality_source_pdf  # noqa: E402
+from pdf_html_polish.quality_loop.observations import (  # noqa: E402
     compact_observation_text as _compact_observation_text,
     manual_observation_signature,
     record_manual_observation,
     write_manual_observation_summary as _write_manual_observation_summary,
 )
-from zoteropdf2md.quality_loop.pattern_observations import (  # noqa: E402
+from pdf_html_polish.quality_loop.pattern_observations import (  # noqa: E402
     write_pattern_observations as _write_pattern_observations,
 )
-from zoteropdf2md.quality_loop.pdf_evidence import (  # noqa: E402
+from pdf_html_polish.quality_loop.pdf_evidence import (  # noqa: E402
     attach_pdf_evidence_to_pack as _attach_pdf_evidence_to_pack_impl,
     problem_snippets_for_evidence as _problem_snippets_for_evidence_impl,
     write_pdf_problem_evidence_stage as _write_pdf_problem_evidence_stage_impl,
 )
-from zoteropdf2md.quality_loop.pdf_reference_recovery import (  # noqa: E402
+from pdf_html_polish.quality_loop.pdf_reference_recovery import (  # noqa: E402
     enrich_profile_with_pdf_reference_entries_if_needed as _enrich_profile_with_pdf_reference_entries_if_needed_impl,
     expand_reference_candidate_numbers as _expand_reference_candidate_numbers_impl,
     pdf_reference_recovery_numbers as _pdf_reference_recovery_numbers_impl,
@@ -81,7 +81,7 @@ from zoteropdf2md.quality_loop.pdf_reference_recovery import (  # noqa: E402
     reference_recovery_block_is_protected as _reference_recovery_block_is_protected_impl,
     unlinked_body_reference_candidate_numbers as _unlinked_body_reference_candidate_numbers_impl,
 )
-from zoteropdf2md.quality_loop.polish_auto_repair import (  # noqa: E402
+from pdf_html_polish.quality_loop.polish_auto_repair import (  # noqa: E402
     audit_articles_by_auto_repair_need as _audit_articles_by_auto_repair_need_impl,
     audit_defect_ids as _audit_defect_ids_impl,
     relink_external_numeric_citation_anchors as _relink_external_numeric_citation_anchors_impl,
@@ -91,12 +91,12 @@ from zoteropdf2md.quality_loop.polish_auto_repair import (  # noqa: E402
     unwrap_author_year_ref_anchors as _unwrap_author_year_ref_anchors_impl,
     visible_ref_prefix_number as _visible_ref_prefix_number_impl,
 )
-from zoteropdf2md.quality_loop.resolver_decisions import (  # noqa: E402
+from pdf_html_polish.quality_loop.resolver_decisions import (  # noqa: E402
     ARTICLE_SLOT_REPAIR_DECISION_NAMES,
     defect_extra as _defect_extra,
     write_resolver_decisions as _write_resolver_decisions,
 )
-from zoteropdf2md.quality_loop.review_workflow import (  # noqa: E402
+from pdf_html_polish.quality_loop.review_workflow import (  # noqa: E402
     defect_id_counts as _defect_id_counts_impl,
     existing_queue_items as _existing_queue_items_impl,
     relative_review_href as _relative_review_href_impl,
@@ -106,7 +106,7 @@ from zoteropdf2md.quality_loop.review_workflow import (  # noqa: E402
     write_article_review_stage as _write_article_review_stage_impl,
     write_manual_review_queue as _write_manual_review_queue_impl,
 )
-from zoteropdf2md.quality_loop.run_utils import (  # noqa: E402
+from pdf_html_polish.quality_loop.run_utils import (  # noqa: E402
     article_dir_from_stage as _article_dir_from_stage,
     article_name_from_stage as _article_name_from_stage,
     artifact_hint as _artifact_hint,
@@ -121,11 +121,11 @@ from zoteropdf2md.quality_loop.run_utils import (  # noqa: E402
     slug as _slug,
     write_json as _write_json,
 )
-from zoteropdf2md.quality_loop.p62_duplicates import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_duplicates import (  # noqa: E402
     apply_duplicate_figure_image_repairs as _apply_p62_duplicate_figure_image_repairs_impl,
     repair_duplicate_figure_images as _repair_p62_duplicate_figure_images_impl,
 )
-from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_html import (  # noqa: E402
     clean_resolved_missing_unit_classes as _clean_resolved_p62_missing_unit_classes,
     data_url_duplicates_existing_figure_unit as _p62_data_url_duplicates_existing_figure_unit,
     data_url_image_hash as _p62_data_url_image_hash,
@@ -148,15 +148,15 @@ from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     replace_recovery_with_missing_warning as _replace_p62_recovery_with_missing_warning,
     replace_stale_recovery_with_image as _replace_p62_stale_recovery_with_image,
 )
-from zoteropdf2md.quality_loop.p62_marker import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_marker import (  # noqa: E402
     execute_marker_command as _execute_p62_marker_command_impl,
     validate_marker_output as _validate_p62_marker_output_impl,
 )
-from zoteropdf2md.quality_loop.p62_plan import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_plan import (  # noqa: E402
     P62MarkerRecoveryPlanDependencies,
     write_marker_recovery_plan as _write_p62_marker_recovery_plan_impl,
 )
-from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_recovery_stage import (  # noqa: E402
     apply_html_patch_to_targets as _apply_p62_html_patch_to_targets,
     build_p62_image_recovery_report as _build_p62_image_recovery_report,
     P62PatchTargetDependencies,
@@ -164,7 +164,7 @@ from zoteropdf2md.quality_loop.p62_recovery_stage import (  # noqa: E402
     recover_pdf_figure_asset_for_stage as _recover_p62_pdf_figure_asset_for_stage,
     resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
 )
-from zoteropdf2md.quality_loop.p62_pdf_assets import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_pdf_assets import (  # noqa: E402
     external_pdf_tool_inventory as _p62_external_pdf_tool_inventory_impl,
     false_match_hint_blocks_asset_recovery as _p62_false_match_hint_blocks_asset_recovery_impl,
     page_caption_label_rects as _p62_page_caption_label_rects_impl,
@@ -177,7 +177,7 @@ from zoteropdf2md.quality_loop.p62_pdf_assets import (  # noqa: E402
     recover_pdf_figure_asset as _recover_p62_pdf_figure_asset_impl,
     render_fallback_page_number as _p62_render_fallback_page_number_impl,
 )
-from zoteropdf2md.quality_loop.p62_matching import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_matching import (  # noqa: E402
     best_pdf_text_page as _best_pdf_text_page,
     caption_head_present_near_label as _p62_caption_head_present_near_label,
     caption_head_tokens as _p62_caption_head_tokens,
@@ -191,7 +191,7 @@ from zoteropdf2md.quality_loop.p62_matching import (  # noqa: E402
     pdf_page_visual_summaries as _p62_pdf_page_visual_summaries,
     tokenize_evidence_text as _tokenize_evidence_text,
 )
-from zoteropdf2md.quality_loop.p62_context import (  # noqa: E402
+from pdf_html_polish.quality_loop.p62_context import (  # noqa: E402
     P62_MISSING_WARNING_TEXT_RE,
     clean_context_fragment as _clean_p62_context_fragment_impl,
     context_fragment as _p62_context_fragment_impl,
@@ -3310,7 +3310,10 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--converted-roots",
         nargs="+",
         type=Path,
-        help="Production converted roots or direct _z2m_stages files to audit without repolishing.",
+        help=(
+            "Production converted roots or direct HTML stage files to audit without repolishing. "
+            "Both _pdf_html_polish_stages and legacy _z2m_stages are recognized."
+        ),
     )
     observe_parser.add_argument(
         "--repolish-converted-raw",

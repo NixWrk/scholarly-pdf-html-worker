@@ -2,30 +2,30 @@
 
 Current production path in this extraction:
 
-1. `pdf-html-convert --pdf ...`
+1. `pdf-html-polish --pdf ...`
    - receives exact local PDF paths from the caller
    - does not inspect Zotero metadata, collections, WebDAV, or Web API state
 
-2. `zoteropdf2md.pipeline.discover_source_pdfs()`
+2. `pdf_html_polish.pipeline.discover_source_pdfs()`
    - validates that each source is an existing PDF
    - builds in-memory source records for staging
 
-3. `zoteropdf2md.staging.stage_resolved_pdfs()`
+3. `pdf_html_polish.staging.stage_resolved_pdfs()`
    - creates short aliases
    - hardlinks/copies PDFs into a runtime staging directory
 
-4. `zoteropdf2md.marker_runner.MarkerRunner`
+4. `pdf_html_polish.marker_runner.MarkerRunner`
    - `run_batch()` calls `marker`
    - `run_single()` calls `marker_single` fallback
 
-5. `zoteropdf2md.citation_profile.build_citation_profile_from_pdf()`
+5. `pdf_html_polish.citation_profile.build_citation_profile_from_pdf()`
    - reads the original source PDF, not the raw HTML stage
    - extracts PDF links/named destinations for citation, figure, and table
      recovery
    - merges matching Zotero/pdf.js `*.overlays.json` data when supplied through
      `--zotero-overlay-dir`
 
-6. `zoteropdf2md.single_file_html.polish_and_inline_html_file()`
+6. `pdf_html_polish.single_file_html.polish_and_inline_html_file()`
    - inlines image assets
    - calls `polish_html_document(citation_profile=...)`
    - saves `02.en.polish.html` through `html_stages.save_html_stage()`

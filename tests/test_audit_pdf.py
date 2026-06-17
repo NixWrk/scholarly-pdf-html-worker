@@ -2,9 +2,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from zoteropdf2md.quality_loop.audit_pdf import PdfDiagnosticsCache
-from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
-from zoteropdf2md.quality_loop.audit_pdf import pdf_text_layer_defects
+from pdf_html_polish.quality_loop.audit_pdf import PdfDiagnosticsCache
+from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
+from pdf_html_polish.quality_loop.audit_pdf import pdf_text_layer_defects
 
 
 def test_pdf_diagnostics_cache_caches_text_and_link_summaries(tmp_path: Path) -> None:

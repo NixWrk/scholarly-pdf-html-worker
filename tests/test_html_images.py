@@ -1,6 +1,6 @@
 import base64
 
-from zoteropdf2md.html_images import (
+from pdf_html_polish.html_images import (
     data_image_src_looks_renderable,
     decode_data_image_payload,
     html_node_has_broken_data_image,

@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.audit_p35 import replacement_char_defects
+from pdf_html_polish.quality_loop.audit_p35 import replacement_char_defects
 
 
 def test_replacement_char_defects_reports_visible_replacement_character() -> None:

@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.polish_auto_repair import (
+from pdf_html_polish.quality_loop.polish_auto_repair import (
     audit_articles_by_auto_repair_need,
     relink_external_numeric_citation_anchors,
     relink_spaced_multipanel_figure_refs,

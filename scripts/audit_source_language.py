@@ -18,8 +18,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.html_stages import RAW_STAGE_NAME, article_name_from_html_stage
-from zoteropdf2md.language_detect import detect_language_from_html, language_gate_decision
+from pdf_html_polish.html_stages import RAW_STAGE_NAME, article_name_from_html_stage
+from pdf_html_polish.language_detect import detect_language_from_html, language_gate_decision
 
 
 RAW_STAGE = RAW_STAGE_NAME

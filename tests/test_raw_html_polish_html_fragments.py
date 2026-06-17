@@ -1,4 +1,4 @@
-from zoteropdf2md.raw_html_polish.html_fragments import (
+from pdf_html_polish.raw_html_polish.html_fragments import (
     add_body_class,
     add_class_attr,
     add_id_attr,

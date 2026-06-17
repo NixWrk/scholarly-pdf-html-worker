@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.pattern_observations import write_pattern_observations
-from zoteropdf2md.quality_loop.run_utils import write_json
+from pdf_html_polish.quality_loop.pattern_observations import write_pattern_observations
+from pdf_html_polish.quality_loop.run_utils import write_json
 
 
 def _write_run(run_dir: Path, *, run_id: str, article: str, snippet: str) -> None:

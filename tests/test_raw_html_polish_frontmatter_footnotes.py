@@ -1,4 +1,4 @@
-from zoteropdf2md.raw_html_polish.frontmatter_footnotes import (
+from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,

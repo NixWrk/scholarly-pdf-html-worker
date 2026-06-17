@@ -1,5 +1,5 @@
-from zoteropdf2md import single_file_html
-from zoteropdf2md.raw_html_polish.math_units import (
+from pdf_html_polish import single_file_html
+from pdf_html_polish.raw_html_polish.math_units import (
     convert_latex_sup_citations,
     convert_math_tags_to_tex,
     fix_latex_text_commands,

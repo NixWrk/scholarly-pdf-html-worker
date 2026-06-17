@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.observations import (
+from pdf_html_polish.quality_loop.observations import (
     compact_observation_text,
     manual_observation_signature,
     read_jsonl,
     record_manual_observation,
     write_manual_observation_summary,
 )
-from zoteropdf2md.quality_loop.run_utils import write_json
+from pdf_html_polish.quality_loop.run_utils import write_json
 
 
 def test_manual_observation_summary_accumulates_problem_candidates(tmp_path: Path) -> None:

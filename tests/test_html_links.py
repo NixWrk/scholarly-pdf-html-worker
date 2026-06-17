@@ -1,4 +1,4 @@
-from zoteropdf2md.html_links import attr_value, href_attr_literal, replace_href_attr_literal
+from pdf_html_polish.html_links import attr_value, href_attr_literal, replace_href_attr_literal
 
 
 def test_href_attr_literal_preserves_escaped_href_text() -> None:

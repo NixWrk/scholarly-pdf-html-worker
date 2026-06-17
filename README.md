@@ -1,7 +1,8 @@
-# pdf-html-translator
+# pdf-html-polish
 
-A focused `PDF -> Marker HTML -> polished EN HTML` pipeline extracted from
-`ZoteroPDF_2_MD`.
+A focused `PDF -> Marker HTML -> polished EN HTML` pipeline extracted from an
+older Zotero-oriented workflow and now kept as a standalone PDF HTML polish
+tool.
 
 This repository keeps the PDF-to-HTML polish path and its audit/quality-loop
 helpers. It intentionally does not include the former EN-to-RU translation
@@ -43,14 +44,16 @@ The Docker image installs `marker-pdf==1.10.2`, which provides `marker` and
 ## Convert PDF Files To Polished EN HTML
 
 ```powershell
-pdf-html-convert `
+pdf-html-polish `
   --pdf "D:\work\paper.pdf" `
   --output-dir "D:\work\pdf-html-output" `
   --zotero-overlay-dir "D:\work\zotero-overlays" `
   --export-mode html
 ```
 
-Output HTML stages are saved under each article folder in `_z2m_stages`.
+Output HTML stages are saved under each article folder in
+`_pdf_html_polish_stages`. Audit and repolish helpers also recognize the legacy
+`_z2m_stages` name when reading older runs.
 `--zotero-overlay-dir` is optional; when present, matching Zotero/pdf.js
 `*.overlays.json` files are used for citation-link recovery before automatic
 overlay generation is attempted.
@@ -70,28 +73,28 @@ when the run should reuse prebuilt Zotero/pdf.js `*.overlays.json` files.
 Multiple PDFs can be passed by repeating `--pdf`:
 
 ```powershell
-pdf-html-convert `
+pdf-html-polish `
   --pdf "D:\work\paper-1.pdf" `
   --pdf "D:\work\paper-2.pdf" `
   --output-dir "D:\work\pdf-html-output" `
   --export-mode html
 ```
 
-The installed public converter is `pdf-html-convert`.
+The installed public converter is `pdf-html-polish`.
 
 ## Container Notes
 
 The included Dockerfile installs Marker, Node.js, the local overlay probe, and
 the optional math/PDF-text dependencies used by the HTML polish path. For Zotero
 overlay citation recovery, mount or provide a Zotero/pdf.js `generic-legacy`
-build and set `Z2M_ZOTERO_PDFJS_DIR`, or pass prebuilt overlays with
+build and set `PDF_HTML_POLISH_ZOTERO_PDFJS_DIR`, or pass prebuilt overlays with
 `--zotero-overlay-dir`.
 
 ## Source Layout
 
-- `src/zoteropdf2md/` - extracted PDF conversion, EN HTML polish,
+- `src/pdf_html_polish/` - extracted PDF conversion, EN HTML polish,
   quality-loop, Zotero/WebDAV adapter, and audit modules.
-- `src/pdf_html_translator/cli/` - small CLI wrapper for the PDF polish
+- `src/pdf_html_polish/cli/` - small CLI wrapper for the PDF polish
   pipeline.
 - `scripts/` - audit, repolish, and regression helpers for PDF-derived EN HTML.
 - `docs/` - decision/playbook documents kept with the extraction.

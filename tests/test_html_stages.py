@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from zoteropdf2md.html_stages import (
+from pdf_html_polish.html_stages import (
     HTML_STAGE_DIR_NAME,
+    LEGACY_HTML_STAGE_DIR_NAME,
     POLISH_STAGE_NAME,
     RAW_STAGE_NAME,
     article_dir_from_html_stage,
@@ -16,7 +17,9 @@ def test_html_stage_constants_and_article_helpers() -> None:
 
     assert RAW_STAGE_NAME == "01.en.raw.html"
     assert POLISH_STAGE_NAME == "02.en.polish.html"
+    assert HTML_STAGE_DIR_NAME == "_pdf_html_polish_stages"
     assert is_html_stage_path(stage_path)
+    assert is_html_stage_path(Path("root") / "Article Name" / LEGACY_HTML_STAGE_DIR_NAME / RAW_STAGE_NAME)
     assert not is_html_stage_path(flat_path)
     assert article_dir_from_html_stage(stage_path) == Path("root") / "Article Name"
     assert article_name_from_html_stage(stage_path) == "Article Name"

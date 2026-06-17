@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.pdf_utils import (
+from pdf_html_polish.quality_loop.pdf_utils import (
     data_url_from_image_file,
     first_valid_image_path,
     pdf_text_pages,

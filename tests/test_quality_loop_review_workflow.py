@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.review_workflow import (
+from pdf_html_polish.quality_loop.review_workflow import (
     write_article_review_stage,
     write_manual_review_queue,
 )
-from zoteropdf2md.quality_loop.run_utils import write_json
+from pdf_html_polish.quality_loop.run_utils import write_json
 
 
 def test_review_queue_prioritizes_mandatory_changed_articles(tmp_path: Path) -> None:

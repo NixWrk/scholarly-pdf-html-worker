@@ -156,7 +156,8 @@ corpus. For the current branch, EN runs should stay on the default EN target.
 
 ## Observe Production Converted Stages
 
-For Zotero production output under `data/html/converted/.../_z2m_stages`,
+For production output under `data/html/converted/.../_pdf_html_polish_stages`
+(or older runs under `_z2m_stages`),
 observe the existing raw/polish pairs directly. This mode does not repolish; it
 audits the current production artifacts in place, keeps duplicate document
 names separate with stable artifact ids, and writes `manual_review_queue.json`

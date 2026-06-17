@@ -3,17 +3,17 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from zoteropdf2md.export_modes import ExportMode
-from zoteropdf2md.marker_runner import RunResult
-from zoteropdf2md.ocr_quality import (
+from pdf_html_polish.export_modes import ExportMode
+from pdf_html_polish.marker_runner import RunResult
+from pdf_html_polish.ocr_quality import (
     REOCR_QUEUE_NAME,
     REOCR_SUFFIX,
     assess_ocr_quality_from_html,
     enqueue_reocr_candidate,
     load_reocr_queue,
 )
-import zoteropdf2md.pipeline as pipeline_module
-from zoteropdf2md.pipeline import PipelineOptions, _find_zotero_overlay_path, run_pipeline
+import pdf_html_polish.pipeline as pipeline_module
+from pdf_html_polish.pipeline import PipelineOptions, _find_zotero_overlay_path, run_pipeline
 
 
 def _make_temp_dir() -> Path:

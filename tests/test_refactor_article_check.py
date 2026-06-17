@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.article_check import build_refactor_article_check
+from pdf_html_polish.quality_loop.article_check import build_refactor_article_check
 
 
 def _write_json(path: Path, data: object) -> None:

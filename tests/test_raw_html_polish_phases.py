@@ -1,6 +1,6 @@
 import pytest
 
-from zoteropdf2md.raw_html_polish import (
+from pdf_html_polish.raw_html_polish import (
     DEFAULT_POLISH_PHASES,
     ExecutablePolishPhase,
     RawPolishContext,
@@ -8,7 +8,7 @@ from zoteropdf2md.raw_html_polish import (
     default_polish_phase_names,
     run_polish_phases,
 )
-from zoteropdf2md.single_file_html import _raw_html_polish_phases, polish_html_phase_names
+from pdf_html_polish.single_file_html import _raw_html_polish_phases, polish_html_phase_names
 
 
 def test_raw_html_polish_phase_order_is_stable() -> None:

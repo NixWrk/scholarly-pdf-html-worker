@@ -1,5 +1,5 @@
-from zoteropdf2md import single_file_html
-from zoteropdf2md.raw_html_polish.float_units import (
+from pdf_html_polish import single_file_html
+from pdf_html_polish.raw_html_polish.float_units import (
     caption_tail_opens_caption,
     embedded_table_caption_key_from_visible,
     figure_caption_num_from_visible,

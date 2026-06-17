@@ -31,17 +31,18 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.html_images import to_data_url as _to_data_url  # noqa: E402
-from zoteropdf2md.html_images import validate_data_url as _validate_data_url  # noqa: E402
-from zoteropdf2md.html_stages import (  # noqa: E402
+from pdf_html_polish.html_images import to_data_url as _to_data_url  # noqa: E402
+from pdf_html_polish.html_images import validate_data_url as _validate_data_url  # noqa: E402
+from pdf_html_polish.html_stages import (  # noqa: E402
     HTML_STAGE_DIR_NAME,
     POLISH_STAGE_NAME,
     RAW_STAGE_NAME,
     article_dir_from_html_stage,
+    is_html_stage_dir_name,
 )
-from zoteropdf2md.single_file_html import polish_html_document  # noqa: E402
-from zoteropdf2md.polish_language import resolve_document_polish_language  # noqa: E402
-from zoteropdf2md.quality_loop.cached_images import (  # noqa: E402
+from pdf_html_polish.single_file_html import polish_html_document  # noqa: E402
+from pdf_html_polish.polish_language import resolve_document_polish_language  # noqa: E402
+from pdf_html_polish.quality_loop.cached_images import (  # noqa: E402
     apply_data_image_cache as _apply_data_image_cache,
     cached_data_image_cache as _cached_data_image_cache,
     ordered_data_image_cache as _ordered_data_image_cache,
@@ -99,7 +100,7 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
         return [candidate]
 
     search_dirs = [html_path.parent]
-    if html_path.parent.name == HTML_STAGE_DIR_NAME:
+    if is_html_stage_dir_name(html_path.parent.name):
         search_dirs.append(html_path.parent.parent)
     return [(base / decoded).resolve(strict=False) for base in search_dirs]
 

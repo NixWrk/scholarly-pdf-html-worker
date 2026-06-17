@@ -1,7 +1,7 @@
-from zoteropdf2md.abbreviations import RU_ABBREV_TO_LATIN
-from zoteropdf2md.raw_html_polish.presentation import (
+from pdf_html_polish.abbreviations import RU_ABBREV_TO_LATIN
+from pdf_html_polish.raw_html_polish.presentation import (
     cleanup_empty_html_blocks,
-    fix_heading_translation_breaks,
+    fix_heading_inline_abbreviation_breaks,
     inject_default_styles,
     inject_utf8_charset,
     restore_abbreviations,
@@ -39,7 +39,7 @@ def test_presentation_replaces_existing_readable_style() -> None:
 def test_presentation_cleans_empty_blocks_and_heading_breaks() -> None:
     html = "<h1>Новая схема. <i>LC</i> датчик</h1><p> </p><br><br><br><br>"
 
-    polished = cleanup_empty_html_blocks(fix_heading_translation_breaks(html))
+    polished = cleanup_empty_html_blocks(fix_heading_inline_abbreviation_breaks(html))
 
     assert "<i>LC</i>-датчика" in polished
     assert "<p>" not in polished

@@ -1,7 +1,7 @@
 import re
 
-from zoteropdf2md.quality_loop.audit_blocks import Block
-from zoteropdf2md.quality_loop.audit_p45 import roman_word_split_defects
+from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_p45 import roman_word_split_defects
 
 
 REFERENCES_HEADING_RE = re.compile(r"^\s*references\s*$", re.IGNORECASE)

@@ -21,8 +21,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.html_stages import HTML_STAGE_DIR_NAME, POLISH_STAGE_NAME, RAW_STAGE_NAME
-from zoteropdf2md.quality_loop.audit_blocks import (
+from pdf_html_polish.html_stages import HTML_STAGE_DIR_NAME, POLISH_STAGE_NAME, RAW_STAGE_NAME, is_html_stage_dir_name
+from pdf_html_polish.quality_loop.audit_blocks import (
     Block,
     Defect,
     attrs as _attrs,
@@ -45,13 +45,13 @@ from zoteropdf2md.quality_loop.audit_blocks import (
     visible_ref_number_from_match as _visible_ref_number_from_match,
     word_sequence_match as _word_sequence_match,
 )
-from zoteropdf2md.quality_loop.audit_diagnostics import make_defect
-from zoteropdf2md.quality_loop.audit_frontmatter import (
+from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
+from pdf_html_polish.quality_loop.audit_frontmatter import (
     FRONTMATTER_OCR_RE,
     block_looks_like_frontmatter_affiliation_table as _block_looks_like_frontmatter_affiliation_table,
     frontmatter_defects as _frontmatter_defects,
 )
-from zoteropdf2md.quality_loop.audit_figure_caption_ux import (
+from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     BIORENDER_CAPTION_SPLIT_RE,
     BIORENDER_CAPTION_URL_RE,
     CAPTION_INTRUSION_RE,
@@ -61,7 +61,7 @@ from zoteropdf2md.quality_loop.audit_figure_caption_ux import (
     TABLE_CAPTION_NODE_RE,
     figure_caption_ux_defects as _figure_caption_ux_defects_base,
 )
-from zoteropdf2md.quality_loop.audit_reference_identity import (
+from pdf_html_polish.quality_loop.audit_reference_identity import (
     DOI_ONLY_METADATA_RE,
     EMBEDDED_REF_BOUNDARY_RE,
     LOCAL_ABSTRACT_SECTION_HEADING_RE,
@@ -76,10 +76,10 @@ from zoteropdf2md.quality_loop.audit_reference_identity import (
     numbered_reference_block_is_likely_non_bibliographic as _numbered_reference_block_is_likely_non_bibliographic,
     reference_identity_defects as _reference_identity_defects,
 )
-from zoteropdf2md.quality_loop.audit_manual_patterns import (
+from pdf_html_polish.quality_loop.audit_manual_patterns import (
     looks_like_affiliation_label_roman_boundary as _looks_like_affiliation_label_roman_boundary,
 )
-from zoteropdf2md.quality_loop.audit_manual_recent import (
+from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
     MeineRecentLinkDeps,
     MeineRecentTextDeps,
@@ -87,7 +87,7 @@ from zoteropdf2md.quality_loop.audit_manual_recent import (
     meine_recent_link_structure_defects as _meine_recent_link_structure_defects_base,
     meine_recent_text_ocr_defects as _meine_recent_text_ocr_defects_base,
 )
-from zoteropdf2md.quality_loop.audit_math_units import (
+from pdf_html_polish.quality_loop.audit_math_units import (
     DEGREE_DEFECT_RE,
     DISPLAY_MATH_OCR_RE,
     EQUATION_ABSORB_RE,
@@ -102,7 +102,7 @@ from zoteropdf2md.quality_loop.audit_math_units import (
     unit_math_defects as _unit_math_defects,
     unit_match_is_repaired_in_raw as _unit_match_is_repaired_in_raw,
 )
-from zoteropdf2md.quality_loop.audit_report import (
+from pdf_html_polish.quality_loop.audit_report import (
     add_corpus_hit_counts as _add_corpus_hit_counts,
     assemble_report,
     corpus_totals as _corpus_totals,
@@ -112,7 +112,7 @@ from zoteropdf2md.quality_loop.audit_report import (
     observed_corpus_hit_counts as _observed_corpus_hit_counts,
     write_json_report as _write_json_report,
 )
-from zoteropdf2md.quality_loop.audit_pdf import (
+from pdf_html_polish.quality_loop.audit_pdf import (
     article_name_from_stage as _article_name_from_stage,
     extract_pdf_text as _extract_pdf_text,
     first_path_value as _first_path_value,
@@ -125,21 +125,21 @@ from zoteropdf2md.quality_loop.audit_pdf import (
     section_order_pdf_defects as _section_order_pdf_defects_impl,
     source_pdf_path,
 )
-from zoteropdf2md.quality_loop.audit_p04 import (
+from pdf_html_polish.quality_loop.audit_p04 import (
     looks_like_math_or_measurement_range as _looks_like_math_or_measurement_range,
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
     unlinked_sup_numeric_range_matches_footnote_targets as _unlinked_sup_numeric_range_matches_footnote_targets,
 )
-from zoteropdf2md.quality_loop.audit_p35 import replacement_char_defects as _replacement_char_defects
-from zoteropdf2md.quality_loop.audit_p45 import roman_word_split_defects as _roman_word_split_defects
-from zoteropdf2md.quality_loop.audit_p61 import (
+from pdf_html_polish.quality_loop.audit_p35 import replacement_char_defects as _replacement_char_defects
+from pdf_html_polish.quality_loop.audit_p45 import roman_word_split_defects as _roman_word_split_defects
+from pdf_html_polish.quality_loop.audit_p61 import (
     figure_target_keys as _figure_target_keys,
     figure_target_numbers as _figure_target_numbers,
     visible_figure_target_defects as _visible_figure_target_defects,
 )
-from zoteropdf2md.quality_loop.audit_p71 import known_ocr_token_defects as _known_ocr_token_defects
-from zoteropdf2md.quality_loop.audit_p62 import (
+from pdf_html_polish.quality_loop.audit_p71 import known_ocr_token_defects as _known_ocr_token_defects
+from pdf_html_polish.quality_loop.audit_p62 import (
     classify_missing_figure_warning as _classify_missing_figure_warning_base,
     figure_label_from_id as _figure_label_from_id,
     figure_label_from_text as _figure_label_from_text,
@@ -944,7 +944,7 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
         return [candidate]
 
     search_dirs = [html_path.parent]
-    if html_path.parent.name == HTML_STAGE_DIR_NAME:
+    if is_html_stage_dir_name(html_path.parent.name):
         search_dirs.append(html_path.parent.parent)
     return [(base / decoded).resolve(strict=False) for base in search_dirs]
 

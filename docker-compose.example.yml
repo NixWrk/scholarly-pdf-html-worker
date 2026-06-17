@@ -1,9 +1,9 @@
 ﻿services:
-  pdf-html-translator:
+  pdf-html-polish:
     build: .
-    image: pdf-html-translator:local
+    image: pdf-html-polish:local
     volumes:
       - ./output:/output
       # Mount the folder that contains source PDFs when running conversion.
       # - D:/work/pdfs:/pdfs:ro
-    command: ["pdf-html-convert", "--help"]
+    command: ["pdf-html-polish", "--help"]

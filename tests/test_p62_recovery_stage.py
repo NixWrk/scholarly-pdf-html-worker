@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from zoteropdf2md.quality_loop.p62_recovery_stage import (
+from pdf_html_polish.quality_loop.p62_recovery_stage import (
     P62PatchTargetDependencies,
     apply_html_patch_to_targets,
     build_p62_image_recovery_report,

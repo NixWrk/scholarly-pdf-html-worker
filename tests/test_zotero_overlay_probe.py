@@ -7,7 +7,7 @@ import subprocess
 import uuid
 from unittest.mock import patch
 
-from zoteropdf2md import zotero_overlay_probe
+from pdf_html_polish import zotero_overlay_probe
 
 
 def _workspace_tmp() -> Path:

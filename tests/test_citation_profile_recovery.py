@@ -1,4 +1,4 @@
-from zoteropdf2md.citation_profile_recovery import (
+from pdf_html_polish.citation_profile_recovery import (
     citation_profile_has_zotero_reference_evidence,
     citation_profile_is_author_year,
     citation_profile_reference_entries_by_number,

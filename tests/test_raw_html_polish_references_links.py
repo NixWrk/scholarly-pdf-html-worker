@@ -1,5 +1,5 @@
-from zoteropdf2md import single_file_html
-from zoteropdf2md.raw_html_polish.references_links import (
+from pdf_html_polish import single_file_html
+from pdf_html_polish.raw_html_polish.references_links import (
     normalize_standalone_reference_paragraph_prefix,
     reference_visible_number,
     references_heading_match,

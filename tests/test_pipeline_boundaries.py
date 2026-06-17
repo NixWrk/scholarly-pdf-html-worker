@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from zoteropdf2md import pipeline as pipeline_module
-from zoteropdf2md import pipeline_zotero
-from zoteropdf2md.pipeline_discovery import discover_source_pdfs
-from zoteropdf2md.pipeline_options import PipelineOptions
-from zoteropdf2md.pipeline_webdav import upload_webdav_mirror_if_configured
+from pdf_html_polish import pipeline as pipeline_module
+from pdf_html_polish import pipeline_zotero
+from pdf_html_polish.pipeline_discovery import discover_source_pdfs
+from pdf_html_polish.pipeline_options import PipelineOptions
+from pdf_html_polish.pipeline_webdav import upload_webdav_mirror_if_configured
 
 
 def test_pipeline_module_keeps_compatibility_reexports() -> None:

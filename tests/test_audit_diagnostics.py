@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import Block
-from zoteropdf2md.quality_loop.audit_diagnostics import (
+from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_diagnostics import (
     DIAGNOSTIC_SPECS,
     diagnostic_spec,
     make_defect,

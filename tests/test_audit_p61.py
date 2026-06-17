@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import Block
-from zoteropdf2md.quality_loop.audit_p61 import (
+from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_p61 import (
     figure_key_from_visible_number,
     figure_target_keys,
     visible_figure_target_defects,

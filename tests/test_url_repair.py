@@ -1,4 +1,4 @@
-from zoteropdf2md.url_repair import (
+from pdf_html_polish.url_repair import (
     compact_visible_url_fragment,
     repair_broken_visible_url_text,
     split_url_fragment_text_prose_tail,

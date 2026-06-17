@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from zoteropdf2md.quality_loop.pdf_reference_recovery import (
+from pdf_html_polish.quality_loop.pdf_reference_recovery import (
     enrich_profile_with_pdf_reference_entries_if_needed,
     pdf_reference_recovery_numbers,
 )

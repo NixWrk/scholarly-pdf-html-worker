@@ -2,7 +2,7 @@ import json
 import sys
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.commands import run_test_command, write_gate_report
+from pdf_html_polish.quality_loop.commands import run_test_command, write_gate_report
 
 
 def _write_json(path: Path, data: object) -> None:

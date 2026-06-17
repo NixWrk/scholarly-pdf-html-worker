@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.resolver_decisions import write_resolver_decisions
-from zoteropdf2md.quality_loop.run_utils import write_json
+from pdf_html_polish.quality_loop.resolver_decisions import write_resolver_decisions
+from pdf_html_polish.quality_loop.run_utils import write_json
 
 
 def test_resolver_decisions_split_telemetry_repair_and_quality_defects(tmp_path: Path) -> None:

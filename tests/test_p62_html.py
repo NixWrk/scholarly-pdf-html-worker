@@ -1,7 +1,7 @@
 import base64
 import hashlib
 
-from zoteropdf2md.quality_loop.p62_html import (
+from pdf_html_polish.quality_loop.p62_html import (
     data_url_duplicates_existing_figure_unit,
     data_url_image_hash,
     extract_html_figure_units,

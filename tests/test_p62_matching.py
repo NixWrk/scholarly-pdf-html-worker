@@ -1,4 +1,4 @@
-from zoteropdf2md.quality_loop.p62_matching import (
+from pdf_html_polish.quality_loop.p62_matching import (
     best_pdf_text_page,
     caption_head_present_near_label,
     caption_head_tokens,

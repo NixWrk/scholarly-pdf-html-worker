@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import parse_blocks, parse_overlapping_blocks
-from zoteropdf2md.quality_loop.audit_p62 import (
+from pdf_html_polish.quality_loop.audit_blocks import parse_blocks, parse_overlapping_blocks
+from pdf_html_polish.quality_loop.audit_p62 import (
     classify_missing_figure_warning,
     figure_label_from_text,
     nearby_image_offsets,

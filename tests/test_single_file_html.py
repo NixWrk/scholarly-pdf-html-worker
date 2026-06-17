@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from zoteropdf2md.single_file_html import (
+from pdf_html_polish.single_file_html import (
     _add_figure_anchors,
     _add_section_anchors,
     _figure_caption_num_from_visible,

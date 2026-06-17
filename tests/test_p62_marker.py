@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import sys
 
-from zoteropdf2md.quality_loop.p62_marker import execute_marker_command, validate_marker_output
+from pdf_html_polish.quality_loop.p62_marker import execute_marker_command, validate_marker_output
 
 
 def test_execute_marker_command_skips_missing_command() -> None:

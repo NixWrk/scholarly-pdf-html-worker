@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-from zoteropdf2md.quality_loop.p62_plan import (
+from pdf_html_polish.quality_loop.p62_plan import (
     P62MarkerRecoveryPlanDependencies,
     write_marker_recovery_plan,
 )
-from zoteropdf2md.quality_loop.run_utils import write_json
+from pdf_html_polish.quality_loop.run_utils import write_json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

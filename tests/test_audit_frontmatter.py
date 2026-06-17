@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
-from zoteropdf2md.quality_loop.audit_frontmatter import (
+from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
+from pdf_html_polish.quality_loop.audit_frontmatter import (
     block_looks_like_frontmatter_affiliation_table,
     frontmatter_defects,
     frontmatter_ocr_repaired_by_polish,

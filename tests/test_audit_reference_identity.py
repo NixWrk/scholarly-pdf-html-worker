@@ -1,5 +1,5 @@
-from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
-from zoteropdf2md.quality_loop.audit_reference_identity import (
+from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
+from pdf_html_polish.quality_loop.audit_reference_identity import (
     is_references_block,
     looks_like_local_abstract_reference_block,
     numbered_reference_block_is_likely_non_bibliographic,

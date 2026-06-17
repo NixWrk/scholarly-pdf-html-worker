@@ -2,7 +2,7 @@ import base64
 from pathlib import Path
 from typing import Any
 
-from zoteropdf2md.quality_loop.p62_duplicates import repair_duplicate_figure_images
+from pdf_html_polish.quality_loop.p62_duplicates import repair_duplicate_figure_images
 
 
 def _duplicate_figure_html() -> str:

@@ -21,7 +21,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from zoteropdf2md.html_stages import RAW_STAGE_NAME, article_name_from_html_stage  # noqa: E402
+from pdf_html_polish.html_stages import RAW_STAGE_NAME, article_name_from_html_stage  # noqa: E402
 
 
 STAGE_NAME = RAW_STAGE_NAME

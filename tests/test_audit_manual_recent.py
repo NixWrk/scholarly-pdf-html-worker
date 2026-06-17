@@ -2,8 +2,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
-from zoteropdf2md.quality_loop.audit_blocks import parse_blocks
-from zoteropdf2md.quality_loop.audit_manual_recent import (
+from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
+from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
     manual_blind_spot_defects,
     meine_recent_text_ocr_defects,

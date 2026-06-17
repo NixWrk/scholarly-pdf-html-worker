@@ -15,12 +15,12 @@ RUN apt-get update \
 # zotero-pdfjs checkout. Its node_modules contains Windows native packages, so
 # keep the Linux canvas binding inside the image and point @napi-rs/canvas at it.
 RUN --mount=type=cache,target=/root/.npm \
-    mkdir -p /opt/z2m-node \
-    && cd /opt/z2m-node \
+    mkdir -p /opt/pdf-html-polish-node \
+    && cd /opt/pdf-html-polish-node \
     && npm init -y \
     && npm install --omit=dev @napi-rs/canvas-linux-x64-gnu@0.1.100
 
-ENV NAPI_RS_NATIVE_LIBRARY_PATH=/opt/z2m-node/node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node
+ENV NAPI_RS_NATIVE_LIBRARY_PATH=/opt/pdf-html-polish-node/node_modules/@napi-rs/canvas-linux-x64-gnu/skia.linux-x64-gnu.node
 
 COPY pyproject.toml README.md ./
 
@@ -46,4 +46,4 @@ COPY docs ./docs
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-deps -e .
 
-CMD ["pdf-html-convert", "--help"]
+CMD ["pdf-html-polish", "--help"]

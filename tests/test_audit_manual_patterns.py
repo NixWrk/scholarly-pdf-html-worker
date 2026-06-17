@@ -1,7 +1,7 @@
 import re
 
-from zoteropdf2md.quality_loop.audit_blocks import Block
-from zoteropdf2md.quality_loop.audit_manual_patterns import (
+from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_manual_patterns import (
     looks_like_affiliation_label_roman_boundary,
     replacement_chars_are_pdf_source_noise,
 )
