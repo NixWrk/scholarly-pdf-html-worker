@@ -9,6 +9,7 @@ from zoteropdf2md.quality_loop.p62_html import (
     html_has_recovery_for_label,
     html_has_stale_page_render_for_label,
     insert_recovered_figure_unit_for_visible_reference,
+    move_p61_recovered_units_after_sentence_continuation,
     replace_figure_unit_target_with_missing_warning,
     replace_missing_warning_with_image,
     replace_recovery_with_missing_warning,
@@ -154,6 +155,49 @@ def test_insert_recovered_figure_unit_for_p61_allows_ordinary_table_links_in_blo
     assert replacements == 1
     assert 'id="fig-3"' in patched
     assert "z2m-table-link" in patched
+
+
+def test_insert_recovered_figure_unit_for_p61_does_not_split_sentence_continuation() -> None:
+    html = (
+        "<main>"
+        "<p>The proposed robot (<b>Figure 2</b>) contains a sensor tower for mounting all the sensors, "
+        "including a depth camera and an</p>"
+        "<p>mmWave module. The mounted sensors are used by the perception system.</p>"
+        "<p>The next paragraph starts here.</p>"
+        "</main>"
+    )
+
+    patched, replacements = insert_recovered_figure_unit_for_visible_reference(
+        html,
+        target_figure_key="2",
+        visible_label="Figure 2",
+        snippet="The robot contains all the sensors, including a depth camera and an mmWave module.",
+        data_url=_DATA_URL,
+        source="pdf_figure_region_render",
+        source_detail="fig2.png",
+    )
+
+    assert replacements == 1
+    assert patched.index("mmWave module") < patched.index('id="fig-2"')
+    assert patched.index('id="fig-2"') < patched.index("The next paragraph starts here")
+
+
+def test_move_p61_recovered_units_after_sentence_continuation_repairs_existing_split() -> None:
+    html = (
+        "<main>"
+        "<p>The robot contains a sensor tower, including a camera and an</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit" '
+        'data-z2m-origin="p61-source-pdf-recovery">'
+        f'<p class="z2m-figure-target z2m-p62-recovered-target"><img src="{_DATA_URL}"/></p>'
+        "</div>"
+        "<p>mmWave module. The mounted sensors are used by the perception system.</p>"
+        "</main>"
+    )
+
+    patched, replacements = move_p61_recovered_units_after_sentence_continuation(html)
+
+    assert replacements == 1
+    assert patched.index("mmWave module") < patched.index('id="fig-2"')
 
 
 def test_data_url_duplicates_existing_figure_unit_ignores_same_target() -> None:

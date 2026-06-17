@@ -43,6 +43,20 @@ P_OR_H_ELEMENT_RE = re.compile(
     r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>[\s\S]*?</(?P=tag)>",
     re.IGNORECASE,
 )
+P61_RECOVERED_UNIT_PATTERN = (
+    r"<div\b"
+    r"(?=[^>]*\bz2m-figure-unit\b)"
+    r"(?=[^>]*\bdata-z2m-origin\s*=\s*[\"']p61-source-pdf-recovery[\"'])"
+    r"[^>]*>[\s\S]*?</div>"
+)
+P61_RECOVERED_SENTENCE_SPLIT_RE = re.compile(
+    r"(?P<before><p\b[^>]*>[\s\S]*?</p>)"
+    r"(?P<space_before>\s*)"
+    rf"(?P<unit>{P61_RECOVERED_UNIT_PATTERN})"
+    r"(?P<space_after>\s*)"
+    r"(?P<after><p\b[^>]*>[\s\S]*?</p>)",
+    re.IGNORECASE,
+)
 
 
 def _visible_html_text(fragment: str) -> str:
@@ -112,6 +126,66 @@ def _snippet_tokens(value: str) -> set[str]:
         for token in re.findall(r"[A-Za-z0-9]{4,}", _visible_html_text(str(value or "")).casefold())
         if not token.isdigit()
     }
+
+
+def _ends_like_sentence_fragment(text: str) -> bool:
+    text = text.strip()
+    if len(text) < 24 or re.search(r"[.!?:;\]\)]\s*$", text):
+        return False
+    match = re.search(r"([A-Za-z][A-Za-z-]*)\s*$", text)
+    if match is None:
+        return False
+    word = match.group(1)
+    return word.islower() or word.lower() in {
+        "and",
+        "or",
+        "with",
+        "of",
+        "the",
+        "to",
+        "for",
+        "than",
+        "daytime",
+        "post-operative",
+        "pre-operative",
+    }
+
+
+def _starts_like_sentence_continuation(text: str) -> bool:
+    return bool(re.match(r"^(?:[a-z]|\(?[a-z])", text.strip()))
+
+
+def move_p61_recovered_units_after_sentence_continuation(html: str) -> tuple[str, int]:
+    """Move recovered P61 float units out of paragraph fragments they split."""
+
+    replacements = 0
+    patched = html
+    while True:
+        moved = False
+
+        def replace(match: re.Match[str]) -> str:
+            nonlocal moved, replacements
+            before = match.group("before")
+            after = match.group("after")
+            if not _ends_like_sentence_fragment(_visible_html_text(before)):
+                return match.group(0)
+            if not _starts_like_sentence_continuation(_visible_html_text(after)):
+                return match.group(0)
+            moved = True
+            replacements += 1
+            return (
+                before
+                + match.group("space_before")
+                + match.group("space_after")
+                + after
+                + match.group("space_before")
+                + match.group("unit")
+            )
+
+        patched = P61_RECOVERED_SENTENCE_SPLIT_RE.sub(replace, patched)
+        if not moved:
+            break
+    return patched, replacements
 
 
 def _reference_pattern_for_key(target_figure_key: str, visible_label: str = "") -> re.Pattern[str] | None:
@@ -198,7 +272,9 @@ def insert_recovered_figure_unit_for_visible_reference(
         f"{recovered_target}</div>"
     )
     insert_at = fallback_match.end()
-    return html[:insert_at] + unit + html[insert_at:], 1
+    patched = html[:insert_at] + unit + html[insert_at:]
+    patched, _ = move_p61_recovered_units_after_sentence_continuation(patched)
+    return patched, 1
 
 
 def replace_missing_warning_with_image(

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from zoteropdf2md.quality_loop.p62_plan import (
@@ -5,6 +6,9 @@ from zoteropdf2md.quality_loop.p62_plan import (
     write_marker_recovery_plan,
 )
 from zoteropdf2md.quality_loop.run_utils import write_json
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write_p62_audit(run_dir: Path) -> None:
@@ -141,6 +145,12 @@ def test_write_marker_recovery_plan_ignores_p61_by_default(tmp_path: Path) -> No
 
     assert report["status"] == "not_required"
     assert report["candidate_count"] == 0
+
+
+def test_default_gate_config_includes_p61_marker_recovery() -> None:
+    config = json.loads((REPO_ROOT / "configs" / "llm_quality_gates.json").read_text(encoding="utf-8"))
+
+    assert config["p62_marker_recovery_include_p61"] is True
 
 
 def test_write_marker_recovery_plan_can_include_p61_source_backed_item(tmp_path: Path) -> None:

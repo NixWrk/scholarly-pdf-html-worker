@@ -136,6 +136,7 @@ from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     id_matches_figure_label as _p62_id_matches_figure_label,
     insert_recovered_figure_unit_for_visible_reference as _insert_p62_recovered_figure_unit_for_visible_reference,
     missing_warning_target_html as _p62_missing_warning_target_html,
+    move_p61_recovered_units_after_sentence_continuation as _move_p61_recovered_units_after_sentence_continuation,
     recovered_target_matches_label as _p62_recovered_target_matches_label,
     recovered_target_source as _p62_recovered_target_source,
     recovery_target_html as _p62_recovery_target_html,
@@ -2000,6 +2001,9 @@ def write_p62_image_recovery_stage(
                             source=insert_source,
                             source_detail=insert_detail,
                         )
+                if str(record.get("defect_id") or "") == "P61":
+                    patched, moved_recovered_units = _move_p61_recovered_units_after_sentence_continuation(patched)
+                    replacements += moved_recovered_units
                 return patched, replacements
 
             result = _apply_p62_html_patch_to_targets(targets, patch_recovered_image)
