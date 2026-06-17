@@ -8650,13 +8650,160 @@ def _expand_reference_label_numbers(value: str) -> list[int]:
     return deduped
 
 
+_BODY_PLAIN_REFERENCE_CANDIDATE_RE = re.compile(
+    r"(?<![\w.])(?P<body>\d{1,3}\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}"
+    r"(?:\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}){0,12})"
+    r"(?!\s*(?:%|\u2030|cm|mm|m\b|kg|g\b|mg|hz|khz|mhz|ghz|s\b|min\b|h\b|"
+    r"years?\b|months?\b|days?\b))",
+    re.IGNORECASE,
+)
+
+
+def _plain_body_reference_candidate_is_safe_for_recovery(text: str, match: re.Match[str]) -> bool:
+    start, end = match.span("body")
+    prefix = text[max(0, start - 80) : start].lower()
+    suffix = text[end : min(len(text), end + 18)].lower()
+    if re.match(r"\s*(?:%|\u2030|percent|cm|mm|m\b|kg|g\b|mg|hz|khz|mhz|ghz|s\b|min\b|h\b)", suffix):
+        return False
+    if re.search(
+        r"(?:fig(?:ure)?|table|section|sec|eq(?:uation)?|page|pages|pp|volume|vol|issue|"
+        r"range|distance|frequency|values?|sample|n\s*=|aged?|years?|months?|days?|"
+        r"cm|mm|kg|mg|hz|mhz|mpa|\u00b0|\u00b1|\u00d7|x)\s*$",
+        prefix,
+    ):
+        return False
+    return re.search(r"[a-z][a-z),.;:'\"\s-]{0,60}$", prefix, re.IGNORECASE) is not None
+
+
 def _body_reference_candidate_numbers_for_recovery(html: str) -> set[int]:
     heading_match = _references_heading_search(html, allow_notes_heading=True)
     before_references = html[: heading_match.start()] if heading_match is not None else html
+    text = _visible_text(before_references)
     numbers: set[int] = set()
-    for match in _BRACKET_CITATION_PATTERN.finditer(_visible_text(before_references)):
+    for match in _BRACKET_CITATION_PATTERN.finditer(text):
         numbers.update(_expand_reference_label_numbers(match.group(1)))
+    for match in _BODY_PLAIN_REFERENCE_CANDIDATE_RE.finditer(text):
+        if not _plain_body_reference_candidate_is_safe_for_recovery(text, match):
+            continue
+        numbers.update(_expand_reference_label_numbers(match.group("body")))
     return numbers
+
+
+def _profile_reference_entry_looks_bibliographic(text: str) -> bool:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) < 24:
+        return False
+    lower = text.lower()
+    has_affiliation_signal = re.search(
+        r"\b(?:department|faculty|foundation|institute|laborator(?:y|ies)|school|university)\b|"
+        r"\b(?:fax|tel|e-?mail)\s*:",
+        lower,
+    )
+    has_reference_signal = re.search(
+        r"\b(?:18|19|20)\d{2}[a-z]?\b|"
+        r"\b(?:doi|journal|proc\.?|proceedings|conference|publisher|press|patent|arxiv|"
+        r"science|nature|chem\.?|med\.?|physiol\.?|nano|anal\.?|vol\.?|pp\.?)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if has_affiliation_signal and has_reference_signal is None:
+        return False
+    return has_reference_signal is not None
+
+
+def _citation_profile_with_body_reference_recovery_numbers(html: str, citation_profile: Any | None) -> Any | None:
+    if not isinstance(citation_profile, dict):
+        return citation_profile
+    entries_by_number = _citation_profile_reference_entries_by_number(citation_profile)
+    if not entries_by_number:
+        return citation_profile
+    if _citation_profile_reference_recovery_numbers(citation_profile) and _contiguous_profile_reference_recovery_numbers(
+        citation_profile,
+        entries_by_number,
+    ):
+        return citation_profile
+    body_numbers = sorted(_body_reference_candidate_numbers_for_recovery(html))
+    matched_numbers = [
+        number
+        for number in body_numbers
+        if number in entries_by_number and _profile_reference_entry_looks_bibliographic(entries_by_number[number])
+    ]
+    if not matched_numbers:
+        return citation_profile
+    max_number = max(matched_numbers)
+    if any(
+        number not in entries_by_number
+        or not _profile_reference_entry_looks_bibliographic(entries_by_number[number])
+        for number in range(1, max_number + 1)
+    ):
+        return citation_profile
+    updated = dict(citation_profile)
+    updated["reference_entries_recovery_numbers"] = list(range(1, max_number + 1))
+    updated["reference_entries_recovery_trigger"] = "body_citation_existing_profile"
+    return updated
+
+
+_SENTENCE_TRAILING_PLAIN_NUMERIC_CITATION_RE = re.compile(
+    r"(?P<punct>[.!?])\s+"
+    r"(?P<label>\d{1,3}(?:\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}){1,12})"
+    r"(?P<trail>[,;:]?)\s+"
+    r"(?P<next>(?:<[^>]+>\s*)*[A-Z][A-Za-z])",
+    re.IGNORECASE,
+)
+_SENTENCE_TRAILING_SUP_NUMERIC_CITATION_RE = re.compile(
+    r"(?P<punct>[.!?])\s*"
+    r"<sup\b[^>]*>\s*"
+    r"(?P<label>\d{1,3}(?:\s*(?:,|;|-|\u2013|\u2014)\s*\d{1,3}){1,12})"
+    r"\s*</sup>\s*"
+    r"(?P<next>(?:<[^>]+>\s*)*[A-Z][A-Za-z])",
+    re.IGNORECASE,
+)
+
+
+def _link_sentence_trailing_plain_numeric_citations(html: str, ref_count: int) -> str:
+    if ref_count <= 0:
+        return html
+
+    def link_label(label: str) -> str | None:
+        numbers = _expand_reference_label_numbers(label)
+        if len(numbers) < 2:
+            return None
+        if any(number < 1 or number > ref_count for number in numbers):
+            return None
+
+        def replace_number(match: re.Match[str]) -> str:
+            number = int(match.group(0))
+            return f'<a href="#ref-{number}" class="z2m-ref-link">{match.group(0)}</a>'
+
+        return re.sub(r"\d{1,3}", replace_number, label)
+
+    def replace_node(match: re.Match[str]) -> str:
+        open_tag = match.group("open")
+        raw = match.group(0)
+        if re.search(
+            r"\b(?:z2m-front-matter|z2m-figure|z2m-table|z2m-equation|katex|math)\b",
+            raw,
+            re.IGNORECASE,
+        ):
+            return raw
+        body = match.group("body") or ""
+
+        def replace_plain(label_match: re.Match[str]) -> str:
+            linked = link_label(label_match.group("label"))
+            if linked is None:
+                return label_match.group(0)
+            return (
+                f"{label_match.group('punct')}<sup>{linked}</sup> "
+                f"{label_match.group('next')}"
+            )
+
+        linked_body = _SENTENCE_TRAILING_SUP_NUMERIC_CITATION_RE.sub(replace_plain, body)
+        linked_body = _SENTENCE_TRAILING_PLAIN_NUMERIC_CITATION_RE.sub(replace_plain, linked_body)
+        if linked_body == body:
+            return raw
+        return f"{open_tag}{linked_body}{match.group('close')}"
+
+    return _P_BLOCK_PATTERN.sub(replace_node, html)
 
 
 def _recover_missing_reference_entries_from_profile(
@@ -10183,6 +10330,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     else:
         split_at = _unheaded_reference_list_start(html)
         if split_at is None:
+            citation_profile = _citation_profile_with_body_reference_recovery_numbers(html, citation_profile)
             html, recovered_ref_index = _append_pdf_recovered_reference_section_if_safe(html, citation_profile)
             if recovered_ref_index == 0:
                 return html
@@ -10224,6 +10372,9 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     ref_index = max(ref_index, recovered_ref_index)
     if ref_index == 0:
         return html
+    if "data-z2m-pdf-recovered-references" in references_with_ids:
+        before_references = _link_sentence_trailing_plain_numeric_citations(before_references, ref_index)
+        before_references = _link_plain_superscript_numeric_groups_in_safe_blocks(before_references, ref_index)
 
     profile_is_author_year = _citation_profile_is_author_year(citation_profile)
     profile_is_paren_numeric = _citation_profile_is_high_confidence_paren_numeric(citation_profile)

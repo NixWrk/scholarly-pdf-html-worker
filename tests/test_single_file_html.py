@@ -2009,6 +2009,84 @@ def test_polish_html_document_appends_pdf_recovered_reference_section_without_ex
     assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
 
 
+def test_polish_html_document_appends_existing_profile_references_for_plain_body_citations() -> None:
+    html = (
+        "<html><body>"
+        "<p>The particles were below 10 nm. 1,2 Owing to fluorescence, signals were stable.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries": [
+                {"page": 10, "number": 1, "text": "Zhu D. Physiology. People Health Publishing Company, 2009."},
+                {"page": 10, "number": 2, "text": "Yao T. Physiology. People Health Publishing Company, 2004."},
+            ],
+        },
+    )
+    ref_section = polished[polished.index("References") :]
+    body = polished[: polished.index("References")]
+
+    assert 'data-z2m-pdf-recovered-references="1"' in ref_section
+    assert 'id="ref-1"' in ref_section
+    assert '<a href="#ref-1" class="z2m-ref-link">1</a>' in body
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
+    assert "nm.<sup>" in body
+
+
+def test_polish_html_document_does_not_append_affiliation_profile_entries_as_references() -> None:
+    html = "<html><body><p>Communication after stroke was difficult 1,2.</p></body></html>"
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries": [
+                {
+                    "page": 1,
+                    "number": 1,
+                    "text": "Wallace H. Coulter Department of Biomedical Engineering, Emory University, Atlanta, GA, USA",
+                },
+                {
+                    "page": 1,
+                    "number": 2,
+                    "text": "Department of Neurosurgery, Emory University, Atlanta, GA, USA",
+                },
+            ],
+        },
+    )
+
+    assert 'data-z2m-pdf-recovered-references="1"' not in polished
+    assert 'id="ref-1"' not in polished
+    assert 'href="#ref-1"' not in polished
+
+
+def test_polish_html_document_links_superscript_citations_after_profile_reference_recovery() -> None:
+    html = (
+        "<html><body>"
+        "<p>The particles were below 10 nm.<sup>1,2</sup>Owing to fluorescence, signals were stable.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={
+            "reference_entries": [
+                {"page": 7, "number": 1, "text": "Fang Y. Carbon dots. ACS Nano, 2012."},
+                {"page": 7, "number": 2, "text": "Baker SN. Carbon nanomaterials. Angew. Chem. Int. Ed., 2010."},
+            ],
+        },
+    )
+    body = polished[: polished.index("References")]
+
+    assert '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,' in body
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a></sup>' in body
+    assert "<sup>1,2</sup>" not in body
+
+
 def test_polish_html_document_appends_pdf_recovered_prefix_for_later_body_citation_range() -> None:
     html = "<html><body><p>Settings were described in [6, 7].</p></body></html>"
 
