@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 import re
 
+from zoteropdf2md.single_file_html import (
+    _current_figure_target_keys,
+    _link_spaced_multipanel_figure_refs,
+)
+
 from .converted_runs import visible_html_text
 
 
@@ -45,7 +50,7 @@ AUTHOR_YEAR_AUTHOR_LIST_RIGHT_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
-SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P55", "P59", "P96", "P97", "P98"}
+SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P17", "P55", "P59", "P96", "P97", "P98"}
 AUTHOR_YEAR_LABEL_STOPWORDS = {
     "appendix",
     "chapter",
@@ -195,3 +200,14 @@ def unwrap_author_year_ref_anchors(html: str) -> tuple[str, int]:
 
     repaired_before = AUTHOR_YEAR_REF_ANCHOR_RE.sub(replace, before_references)
     return repaired_before + references_and_after, repairs
+
+
+def relink_spaced_multipanel_figure_refs(html: str) -> tuple[str, int]:
+    figure_targets = _current_figure_target_keys(html)
+    if not figure_targets:
+        return html, 0
+    before_count = html.count("z2m-fig-link")
+    repaired = _link_spaced_multipanel_figure_refs(html, figure_targets)
+    if repaired == html:
+        return html, 0
+    return repaired, max(1, repaired.count("z2m-fig-link") - before_count)

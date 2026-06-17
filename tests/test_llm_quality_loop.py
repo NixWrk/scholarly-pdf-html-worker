@@ -2564,6 +2564,47 @@ def test_polish_auto_repair_stage_repairs_p59_numeric_labels(tmp_path: Path) -> 
         assert '<li id="ref-1">[1] Real bibliography entry.</li>' in html
 
 
+def test_polish_auto_repair_stage_repairs_p17_spaced_multipanel_refs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    html = (
+        "<html><body>"
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-caption">Figure 7. Panels.</p>'
+        "</div>"
+        "<p>The origin is located at the top left corner (see Figure \n 7 (b)).</p>"
+        "</body></html>"
+    )
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(html, encoding="utf-8")
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {},
+                    "defects_found": [{"id": "P17"}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["patched_article_count"] == 1
+    assert report["repair_counts"] == {"P17": 2}
+    for path in (polish_path, audit_tree_path):
+        repaired = path.read_text(encoding="utf-8")
+        assert '<a href="#fig-7" class="z2m-fig-link">Figure\xa07</a> (b)' in repaired
+
+
 def test_polish_auto_repair_stage_repairs_plain_duplicate_figure_visuals(
     tmp_path: Path,
     monkeypatch,

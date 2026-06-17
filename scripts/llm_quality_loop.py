@@ -84,6 +84,7 @@ from zoteropdf2md.quality_loop.pdf_reference_recovery import (  # noqa: E402
 from zoteropdf2md.quality_loop.polish_auto_repair import (  # noqa: E402
     audit_articles_by_auto_repair_need as _audit_articles_by_auto_repair_need_impl,
     audit_defect_ids as _audit_defect_ids_impl,
+    relink_spaced_multipanel_figure_refs as _relink_spaced_multipanel_figure_refs_impl,
     repair_visible_reference_numbers as _repair_visible_reference_numbers_impl,
     unwrap_author_year_numeric_ref_links as _unwrap_author_year_numeric_ref_links_impl,
     unwrap_author_year_ref_anchors as _unwrap_author_year_ref_anchors_impl,
@@ -1166,6 +1167,10 @@ def _repair_visible_reference_numbers(html: str) -> tuple[str, int]:
     return _repair_visible_reference_numbers_impl(html)
 
 
+def _relink_spaced_multipanel_figure_refs(html: str) -> tuple[str, int]:
+    return _relink_spaced_multipanel_figure_refs_impl(html)
+
+
 def _unwrap_author_year_numeric_ref_links(html: str) -> tuple[str, int]:
     return _unwrap_author_year_numeric_ref_links_impl(html)
 
@@ -1262,6 +1267,33 @@ def write_polish_auto_repair_stage(
                         "source_pdf_path": str(pdf_path),
                         "selected_pdf_candidate": selected_candidate or {},
                         "source_pdf_candidates": source_pdf_candidates[:8],
+                    }
+                )
+
+        if "P17" in defect_ids and apply_patches:
+            for target_path in targets:
+                try:
+                    html = target_path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                patched, p17_repairs = _relink_spaced_multipanel_figure_refs(html)
+                if patched == html:
+                    continue
+                try:
+                    target_path.write_text(patched, encoding="utf-8")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                repair_counts["P17"] += p17_repairs
+                patched_article_ids.add(article_id)
+                article_report["patched"] = True
+                target_patch_counts[str(target_path)] += 1
+                article_report["repairs"].append(
+                    {
+                        "id": "P17",
+                        "path": str(target_path),
+                        "spaced_multipanel_links": p17_repairs,
                     }
                 )
 

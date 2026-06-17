@@ -1,5 +1,6 @@
 from zoteropdf2md.quality_loop.polish_auto_repair import (
     audit_articles_by_auto_repair_need,
+    relink_spaced_multipanel_figure_refs,
     repair_visible_reference_numbers,
     unwrap_author_year_numeric_ref_links,
     unwrap_author_year_ref_anchors,
@@ -12,7 +13,7 @@ def test_audit_articles_by_auto_repair_need_selects_supported_ids() -> None:
             {"article": "a", "defects_found": [{"id": "P55"}, {"id": "P04N"}]},
             {"article": "b", "defects": [{"id": "P96"}, {"id": "P98"}]},
             {"article": "c", "defects_found": [{"id": "P59"}]},
-            {"article": "d", "defects_found": [{"id": "P62"}]},
+            {"article": "d", "defects_found": [{"id": "P17"}, {"id": "P62"}]},
         ]
     }
 
@@ -21,7 +22,21 @@ def test_audit_articles_by_auto_repair_need_selects_supported_ids() -> None:
     assert selected["a"]["defect_ids"] == ["P55"]
     assert selected["b"]["defect_ids"] == ["P96", "P98"]
     assert selected["c"]["defect_ids"] == ["P59"]
-    assert "d" not in selected
+    assert selected["d"]["defect_ids"] == ["P17"]
+
+
+def test_relink_spaced_multipanel_figure_refs_uses_existing_targets() -> None:
+    html = (
+        '<div id="fig-7" class="z2m-figure-unit">'
+        '<p class="z2m-figure-caption">Figure 7. Panels.</p>'
+        "</div>"
+        "<p>The feature point is shown in Figure \n 7 (b)).</p>"
+    )
+
+    repaired, count = relink_spaced_multipanel_figure_refs(html)
+
+    assert count == 1
+    assert '<a href="#fig-7" class="z2m-fig-link">Figure\xa07</a> (b)' in repaired
 
 
 def test_reference_number_repair_preserves_existing_visible_numbers() -> None:
