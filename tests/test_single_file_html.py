@@ -7106,6 +7106,73 @@ def test_polish_html_document_detects_unheaded_reference_list_after_acknowledgme
     assert 'href="#page-10-3"' not in body
 
 
+def test_polish_html_document_splits_zotero_reference_tail_from_backmatter_paragraph() -> None:
+    html = (
+        "<html><body>"
+        "<p>Brainstem stroke communication was difficult 1,2.</p>"
+        "<h2>Declaration of interests</h2>"
+        '<p block-type="Text">The center has a research agreement; cha '
+        '<a href="https://www.zotero.org/google-docs/?abc">1</a> '
+        '<a href="https://www.zotero.org/google-docs/?abc">Searls DE, Pazdera L, Korbel E, Vysata O, Caplan LR.</a> '
+        '<a href="https://www.zotero.org/google-docs/?abc">Symptoms and Signs of Posterior Circulation Ischemia.</a> '
+        "<i>Arch Neurol</i> 2012; <b>69</b>: 346-51.</p>"
+        '<p block-type="ListGroup" class="has-continuation"><ul>'
+        '<li block-type="ListItem"><a href="https://www.zotero.org/google-docs/?abc">2</a> '
+        '<a href="https://www.zotero.org/google-docs/?abc">Teasell R, Foley N, Doherty T, Finestone H.</a> '
+        "<i>Arch Phys Med Rehabil</i> 2002; <b>83</b>: 1013-6.</li>"
+        '<li block-type="ListItem"><a href="https://www.zotero.org/google-docs/?abc">3</a> '
+        '<a href="https://www.zotero.org/google-docs/?abc">Stavisky SD. Restoring Speech Using Brain-Computer Interfaces.</a> '
+        "<i>Annu Rev Biomed Eng</i> 2025; <b>27</b>: 29-54.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    ref_section = polished[polished.index("References") :]
+    body = polished[: polished.index("References")]
+
+    assert 'id="ref-1"' in ref_section
+    assert 'id="ref-2"' in ref_section
+    assert 'id="ref-3"' in ref_section
+    assert "zotero.org/google-docs" not in ref_section
+    assert '<a href="#ref-1" class="z2m-ref-link">1</a>' in body
+    assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in body
+
+
+def test_polish_html_document_splits_embedded_reference_list_after_conclusion_items() -> None:
+    html = (
+        "<html><body>"
+        "<p>The widely held opinion 1-3 that Galilean systems are unsuitable is incorrect.</p>"
+        "<h4>CONCLUSION</h4>"
+        "<p>1. When working in twilight, mark brightness must be adjusted.</p>"
+        '<p block-type="ListGroup"><ul>'
+        "<li>2. When minimizing weight and size outweighs other requirements, "
+        "preference can be given to a Galilean viewfinder.</li>"
+        "<li>1A. I. Tudorovski, <i>Theory of Optical Devices</i>, part 2 (Akad. Nauk SSSR, Moscow, 1952).</li>"
+        "<li>2G. G. Slyusarev, <i>Calculations for Optical Systems</i> (Mashinostroenie, Leningrad, 1975).</li>"
+        "<li>3V. N. Churilovski, <i>Theory of Optical Devices</i> (Mashinostroenie, Moscow, 1966).</li>"
+        "<li><sup>4</sup> I. A. Turygin, <i>Applied Optics</i> (Mashinostroenie, Moscow, 1965).</li>"
+        "<li>5B. N. Begunov and N. P. Zakaznov, <i>The Theory of Optical Systems</i> (Moscow, 1973).</li>"
+        "<li>6M. I. Apenko and A. S. Dubovik, <i>Applied Optics</i> (Nauka, Moscow, 1971). "
+        "7M. M. Rusinov, <i>The Makeup of Optical Systems</i> (Leningrad, 1989).</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    conclusion = polished[polished.index("CONCLUSION") : polished.index("References")]
+    ref_section = polished[polished.index("References") :]
+    body = polished[: polished.index("CONCLUSION")]
+
+    assert "preference can be given to a Galilean viewfinder" in conclusion
+    assert 'id="ref-2"' not in conclusion
+    for ref_id in range(1, 8):
+        assert f'id="ref-{ref_id}"' in ref_section
+    assert "Rusinov" in re.search(r'<li id="ref-7"[\s\S]*?</li>', ref_section).group(0)
+    assert 'href="#ref-1"' in body
+    assert 'href="#ref-3"' in body
+
+
 def test_polish_html_document_keeps_unnumbered_reference_entry_from_previous_ref() -> None:
     html = (
         "<html><body>"

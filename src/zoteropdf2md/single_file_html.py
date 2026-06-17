@@ -7705,6 +7705,135 @@ def _unheaded_reference_list_start(html: str) -> int | None:
     return None
 
 
+_EMBEDDED_REFERENCES_HEADING_HTML = '<h2 data-z2m-embedded-references="1">References</h2>'
+_ZOTERO_GOOGLE_DOCS_ANCHOR_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*(['\"])https://www\.zotero\.org/google-docs/[^'\"]+\1[^>]*>"
+    r"(?P<body>[\s\S]*?)</a>",
+    re.IGNORECASE,
+)
+
+
+def _unwrap_zotero_google_docs_reference_anchors(html: str) -> str:
+    if "zotero.org/google-docs" not in html:
+        return html
+    return _ZOTERO_GOOGLE_DOCS_ANCHOR_RE.sub(lambda match: match.group("body"), html)
+
+
+def _reference_candidate_visible_number(body: str) -> int | None:
+    return _reference_visible_number(_unwrap_zotero_google_docs_reference_anchors(body))
+
+
+def _reference_candidate_body_looks_bibliographic(body: str) -> bool:
+    unwrapped = _unwrap_zotero_google_docs_reference_anchors(body)
+    if _reference_visible_number(unwrapped) is None:
+        return False
+    if _looks_reference_front_matter_list_item(unwrapped):
+        return False
+    return _looks_like_standalone_reference_paragraph_body(unwrapped)
+
+
+def _reference_list_suffix_start(li_matches: list[re.Match[str]]) -> int | None:
+    for start in range(len(li_matches)):
+        numbers: list[int] = []
+        bibliographic_hits = 0
+        for li_match in li_matches[start : start + 6]:
+            body = li_match.group(2) or ""
+            number = _reference_candidate_visible_number(body)
+            if number is None:
+                break
+            numbers.append(number)
+            if _reference_candidate_body_looks_bibliographic(body):
+                bibliographic_hits += 1
+            if len(numbers) >= 3:
+                break
+        if numbers[:3] == [1, 2, 3] and bibliographic_hits >= 2:
+            return start
+    return None
+
+
+def _next_list_block_starts_with_reference_number(html: str, start_at: int, number: int) -> bool:
+    scan_limit = min(len(html), start_at + 12000)
+    for match in _P_BLOCK_PATTERN.finditer(html, start_at):
+        if match.start() > scan_limit:
+            break
+        raw = match.group(0)
+        if not _visible_text(raw).strip():
+            continue
+        if "<ul" not in raw.lower():
+            return False
+        first_li = _LI_BLOCK_PATTERN.search(raw)
+        if first_li is None:
+            return False
+        return _reference_candidate_visible_number(first_li.group(2) or "") == number
+    return False
+
+
+def _split_embedded_zotero_reference_tail_paragraph(html: str) -> tuple[str, bool]:
+    if "zotero.org/google-docs" not in html:
+        return html, False
+    for match in _P_BLOCK_PATTERN.finditer(html):
+        body = match.group("body") or ""
+        for anchor_match in _ZOTERO_GOOGLE_DOCS_ANCHOR_RE.finditer(body):
+            if _visible_text(anchor_match.group("body")).strip() != "1":
+                continue
+            ref_body = body[anchor_match.start() :].strip()
+            if _reference_candidate_visible_number(ref_body) != 1:
+                continue
+            if not _reference_candidate_body_looks_bibliographic(ref_body):
+                continue
+            if not _next_list_block_starts_with_reference_number(html, match.end(), 2):
+                continue
+            prefix_body = body[: anchor_match.start()].rstrip()
+            prefix = ""
+            if _visible_text(prefix_body).strip():
+                prefix = f"{match.group('open')}{prefix_body}{match.group('close')}"
+            ref_list = (
+                f"{_EMBEDDED_REFERENCES_HEADING_HTML}"
+                '<p block-type="ListGroup" data-z2m-embedded-reference-tail="1"><ul>'
+                f'<li block-type="ListItem">{ref_body}</li>'
+                "</ul></p>"
+            )
+            return html[: match.start()] + prefix + ref_list + html[match.end() :], True
+    return html, False
+
+
+def _split_embedded_reference_list_suffix(html: str) -> tuple[str, bool]:
+    for match in _P_BLOCK_PATTERN.finditer(html):
+        body = match.group("body") or ""
+        if "<ul" not in body.lower():
+            continue
+        ul_match = _UL_OPEN_PATTERN.search(body)
+        if ul_match is None:
+            continue
+        li_matches = list(_LI_BLOCK_PATTERN.finditer(body))
+        if len(li_matches) < 3:
+            continue
+        suffix_start = _reference_list_suffix_start(li_matches)
+        if suffix_start is None:
+            continue
+        ul_open = ul_match.group(0)
+        prefix_items = " ".join(li.group(0) for li in li_matches[:suffix_start])
+        suffix_items = " ".join(li.group(0) for li in li_matches[suffix_start:])
+        if not suffix_items:
+            continue
+        prefix = ""
+        if prefix_items and _visible_text(prefix_items).strip():
+            prefix = f"{match.group('open')}{ul_open} {prefix_items} </ul>{match.group('close')}"
+        suffix = f"{_EMBEDDED_REFERENCES_HEADING_HTML}{match.group('open')}{ul_open} {suffix_items} </ul>{match.group('close')}"
+        return html[: match.start()] + prefix + suffix + html[match.end() :], True
+    return html, False
+
+
+def _split_embedded_unheaded_reference_section(html: str) -> str:
+    if _references_heading_search(html, allow_notes_heading=True) is not None:
+        return html
+    repaired, changed = _split_embedded_zotero_reference_tail_paragraph(html)
+    if changed:
+        return repaired
+    repaired, changed = _split_embedded_reference_list_suffix(html)
+    return repaired if changed else html
+
+
 def _looks_reference_continuation_body(body: str) -> bool:
     without_visible_number = _strip_reference_visible_number(body)
     without_line_number = _strip_leading_reference_line_number_only(without_visible_number)
@@ -7920,8 +8049,7 @@ _COLLAPSED_REFERENCE_SEPARATOR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _NUMBERED_REFERENCE_BOUNDARY_PATTERN = re.compile(
-    r"\s+(?P<num>\d{1,4})\.\s+"
-    r"(?=(?:<[^>]+>\s*)*(?:[A-Z\u00c0-\u00de]|\d{1,3}\s+[A-Z\u00c0-\u00de]))",
+    r"\s+(?P<num>\d{1,4})(?:\.\s+|(?=(?:<[^>]+>\s*)*[A-Z]\.)|(?=\s+(?:<[^>]+>\s*)*[A-Z]\.))",
     re.IGNORECASE,
 )
 
@@ -7988,6 +8116,11 @@ def _looks_like_numbered_reference_boundary_tail(tail: str) -> bool:
     text = _VISIBLE_LEADING_REFERENCE_AUTHOR_LINE_NUMBER_ARTIFACT_PATTERN.sub("", text, count=1)
     if len(text) < 16:
         return False
+    if re.match(
+        r"^(?:[A-Z]\.\s*){1,4}[A-Z][A-Za-z\u00c0-\u024f'\u2019.-]+(?:,|\s+(?:and|&)\b)",
+        text,
+    ):
+        return True
     if re.match(
         r"^(?:The\s+)?[A-Z][A-Za-z0-9&'’().,\- ]{3,90}\.\s+Available\s+online\b",
         text,
@@ -8673,6 +8806,44 @@ def _plain_body_reference_candidate_is_safe_for_recovery(text: str, match: re.Ma
     ):
         return False
     return re.search(r"[a-z][a-z),.;:'\"\s-]{0,60}$", prefix, re.IGNORECASE) is not None
+
+
+def _link_plain_body_reference_candidate_ranges_in_safe_blocks(html: str, ref_count: int) -> str:
+    if ref_count <= 0:
+        return html
+
+    def replace_candidate(match: re.Match[str]) -> str:
+        body = match.group("body")
+        numbers = _expand_reference_label_numbers(body)
+        if len(numbers) < 2:
+            return match.group(0)
+        if any(number < 1 or number > ref_count for number in numbers):
+            return match.group(0)
+        if not _plain_body_reference_candidate_is_safe_for_recovery(match.string, match):
+            return match.group(0)
+        linked = _link_numeric_superscript_body(body, ref_count)
+        if linked is None:
+            return match.group(0)
+        return f"<sup>{linked}</sup>"
+
+    def replace_node(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if _node_protects_citations(raw):
+            return raw
+        parts = _TAG_SPLIT_PATTERN.split(raw)
+        out: list[str] = []
+        skip_stack: list[str] = []
+        for part in parts:
+            if not part:
+                continue
+            if part.startswith("<"):
+                _update_citation_skip_stack(part, skip_stack)
+                out.append(part)
+                continue
+            out.append(part if skip_stack else _BODY_PLAIN_REFERENCE_CANDIDATE_RE.sub(replace_candidate, part))
+        return "".join(out)
+
+    return _SENTENCE_NODE_PATTERN.sub(replace_node, html)
 
 
 def _body_reference_candidate_numbers_for_recovery(html: str) -> set[int]:
@@ -10320,6 +10491,7 @@ def _repair_backmatter_interleaved_in_references(html: str) -> str:
 
 
 def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | None = None) -> str:
+    html = _split_embedded_unheaded_reference_section(html)
     html = _repair_backmatter_interleaved_in_references(html)
     heading_match = _references_heading_search(
         html,
@@ -10344,6 +10516,10 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
                 split_at = _unheaded_reference_list_start(html)
                 if split_at is None:
                     return html
+    embedded_reference_recovery = (
+        heading_match is not None
+        and "data-z2m-embedded-references" in heading_match.group(0)
+    )
     before_references = html[:split_at]
     references_and_after = html[split_at:]
     before_references = _mark_front_matter_paragraphs(before_references)
@@ -10352,6 +10528,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     before_references = _mark_footnote_paragraphs_and_refs(before_references)
     before_references = _strip_reference_links_in_protected_blocks(before_references)
 
+    references_and_after = _unwrap_zotero_google_docs_reference_anchors(references_and_after)
     references_and_after = _flatten_nested_reference_list_items(references_and_after)
     references_and_after = _repair_reference_author_group_glue(references_and_after)
     references_and_after = _strip_leading_reference_line_number_pairs_in_list_items(references_and_after)
@@ -10375,6 +10552,8 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
     if "data-z2m-pdf-recovered-references" in references_with_ids:
         before_references = _link_sentence_trailing_plain_numeric_citations(before_references, ref_index)
         before_references = _link_plain_superscript_numeric_groups_in_safe_blocks(before_references, ref_index)
+    if embedded_reference_recovery:
+        before_references = _link_plain_body_reference_candidate_ranges_in_safe_blocks(before_references, ref_index)
 
     profile_is_author_year = _citation_profile_is_author_year(citation_profile)
     profile_is_paren_numeric = _citation_profile_is_high_confidence_paren_numeric(citation_profile)

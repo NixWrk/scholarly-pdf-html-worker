@@ -29,13 +29,15 @@ PAGE_ANCHOR_BRACKET_REF_TRAILING_PUNCT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 VISIBLE_REF_NUM_PATTERN = re.compile(
-    r'^\s*(?:<[^>]+>\s*)*'
+    r'^\s*(?:(?!</?sup\b)<[^>]+>\s*)*'
     r'(?:'
-    r'\[(?P<bracket>\d{1,4})\]'
+    r'<sup\b[^>]*>\s*(?P<sup>\d{1,4})\s*</sup>'
+    r'|\[(?P<bracket>\d{1,4})\]'
     r'|(?P<dot>\d{1,4})\.'
     r'|(?P<glued>\d{1,4})(?=[A-Z]\.)'
     r'|(?P<gluedword>\d{1,4})(?=[A-Z][A-Za-z])'
     r'|(?P<spaced>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z]\.)'
+    r'|(?P<spacedword>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z][A-Za-z])'
     r')\s*',
     re.IGNORECASE,
 )
@@ -102,11 +104,13 @@ def reference_visible_number(body: str) -> int | None:
     if match is None:
         return None
     value = (
-        match.group("bracket")
+        match.group("sup")
+        or match.group("bracket")
         or match.group("dot")
         or match.group("glued")
         or match.group("gluedword")
         or match.group("spaced")
+        or match.group("spacedword")
     )
     if value is None:
         return None

@@ -25,6 +25,15 @@ def test_reference_visible_number_handles_line_number_prefixes() -> None:
     assert strip_reference_visible_number(body) == "Bourne A."
 
 
+def test_reference_visible_number_handles_spaced_author_and_sup_prefixes() -> None:
+    assert reference_visible_number("2 Teasell R, Foley N. Journal 2002.") == 2
+    assert strip_reference_visible_number("2 Teasell R, Foley N. Journal 2002.") == "Teasell R, Foley N. Journal 2002."
+
+    sup_body = "<sup>4</sup> I. A. Turygin, Applied Optics."
+    assert reference_visible_number(sup_body) == 4
+    assert strip_reference_visible_number(sup_body) == "I. A. Turygin, Applied Optics."
+
+
 def test_strip_leading_reference_line_number_pair() -> None:
     assert strip_leading_reference_line_number_pair("899 1. Bourne A.") == "1. Bourne A."
 
