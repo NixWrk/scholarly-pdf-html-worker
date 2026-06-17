@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
 from typing import Any
 
 from zoteropdf2md.marker_runner import build_marker_single_command
+from zoteropdf2md.quality_loop.audit_blocks import Block, parse_blocks
+from zoteropdf2md.quality_loop.audit_p61 import (
+    figure_target_keys as p61_figure_target_keys,
+    visible_figure_target_defects,
+)
 from zoteropdf2md.quality_loop.observations import compact_observation_text
 from zoteropdf2md.quality_loop.resolver_decisions import defect_extra
 from zoteropdf2md.quality_loop.run_utils import load_json, now, slug, write_json
@@ -16,6 +21,10 @@ from zoteropdf2md.quality_loop.source_pdf import manifest_article_by_id
 
 DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
 DEFAULT_MARKER_RECOVERY_DEFECT_IDS = {"P62", "P62A"}
+P61_PLAN_CAPTION_RE = re.compile(
+    r"^(?:Extended\s+Data\s+)?(?:Fig\.?|Figure)\s+\d|^Table\s+\d",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,33 @@ def marker_recovery_defect_ids(gate_config: dict[str, Any]) -> set[str]:
     return defect_ids
 
 
+def _looks_like_p61_plan_float_or_caption(block: Block) -> bool:
+    return (
+        block.has_figure_visual
+        or bool(
+            block.classes
+            & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"}
+        )
+        or block.tag in {"table", "figure", "figcaption"}
+        or P61_PLAN_CAPTION_RE.match(block.text.strip()) is not None
+    )
+
+
+def _all_p61_defects_from_polish_html(html: str, *, stage: str) -> list[dict[str, Any]]:
+    if not html:
+        return []
+    blocks = parse_blocks(html)
+    targets = p61_figure_target_keys(html)
+    defects = visible_figure_target_defects(
+        blocks,
+        targets,
+        looks_like_float_or_caption=_looks_like_p61_plan_float_or_caption,
+        stage=stage,
+        max_defects=None,
+    )
+    return [asdict(defect) for defect in defects]
+
+
 def write_marker_recovery_plan(
     run_dir: Path,
     *,
@@ -120,6 +156,49 @@ def write_marker_recovery_plan(
         for defect_index, defect in enumerate(article.get("defects_found") or [], start=1):
             if isinstance(defect, dict) and str(defect.get("id") or "") in recovery_defect_ids:
                 p62_items.append((article, defect, defect_index))
+
+    if "P61" in recovery_defect_ids:
+        expanded_items: list[tuple[dict[str, Any], dict[str, Any], int]] = []
+        for article, defect, defect_index in p62_items:
+            if str(defect.get("id") or "") != "P61":
+                expanded_items.append((article, defect, defect_index))
+                continue
+            article_id = str(article.get("article") or "")
+            manifest_article = manifest_by_article.get(article_id, {})
+            polish_path, _polish_path_source = dependencies.find_polish_stage_path_for_article(
+                run_dir,
+                article_id,
+                article,
+                manifest_article,
+                polish_index,
+            )
+            if polish_path is None:
+                expanded_items.append((article, defect, defect_index))
+                continue
+            try:
+                polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                expanded_items.append((article, defect, defect_index))
+                continue
+            expanded_defects = _all_p61_defects_from_polish_html(
+                polish_html,
+                stage=str(defect.get("first_broken_stage") or "02.en.polish.html"),
+            )
+            if not expanded_defects:
+                expanded_items.append((article, defect, defect_index))
+                continue
+            seen_p61_keys: set[str] = set()
+            for offset, expanded_defect in enumerate(expanded_defects, start=1):
+                expanded_figure_label = figure_label_for_recovery_defect(expanded_defect)
+                expanded_target_key = figure_target_key_for_recovery_defect(
+                    expanded_defect,
+                    expanded_figure_label,
+                )
+                if expanded_target_key in seen_p61_keys:
+                    continue
+                seen_p61_keys.add(expanded_target_key)
+                expanded_items.append((article, expanded_defect, defect_index * 1000 + offset))
+        p62_items = expanded_items
 
     selected_items = p62_items[:max_items] if max_items > 0 else p62_items
     pdf_text_cache: dict[str, tuple[str, list[str], str | None]] = {}

@@ -93,6 +93,21 @@ def test_visible_figure_target_defects_reports_missing_target() -> None:
     }
 
 
+def test_visible_figure_target_defects_can_collect_all_missing_targets() -> None:
+    defects = visible_figure_target_defects(
+        [
+            _block("The first result is summarized in Figure 3.", index=0),
+            _block("The second result is summarized in Figure 4.", index=1),
+        ],
+        set(),
+        looks_like_float_or_caption=lambda _block: False,
+        stage="02.en.polish.html",
+        max_defects=None,
+    )
+
+    assert [defect.extra["visible_label"] for defect in defects] == ["Figure 3", "Figure 4"]
+
+
 def test_visible_figure_target_defects_accepts_existing_target() -> None:
     assert _defects(_block("The result is summarized in Figure 3."), {"3"}) == []
 

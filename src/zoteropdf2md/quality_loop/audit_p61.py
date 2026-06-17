@@ -192,9 +192,11 @@ def visible_figure_target_defects(
     *,
     looks_like_float_or_caption: Callable[[Block], bool],
     stage: str,
+    max_defects: int | None = 1,
 ) -> list[Defect]:
     target_numbers = figure_target_numbers_from_keys(fig_targets)
     blocks = list(body_blocks)
+    defects: list[Defect] = []
     for index, block in enumerate(blocks):
         if looks_like_float_or_caption(block):
             continue
@@ -217,7 +219,7 @@ def visible_figure_target_defects(
                 continue
             if has_nearby_fig_link(block, figure_key, match.start()):
                 continue
-            return [
+            defects.append(
                 make_defect(
                     defect_id="P61",
                     cc_class="CC-03/CC-08/CC-10",
@@ -239,8 +241,10 @@ def visible_figure_target_defects(
                         "quality_counted": False,
                     },
                 )
-            ]
-    return []
+            )
+            if max_defects is not None and len(defects) >= max_defects:
+                return defects
+    return defects
 
 
 def figure_target_numbers_from_keys(fig_targets: set[str]) -> set[int]:
