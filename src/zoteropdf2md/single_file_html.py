@@ -3962,7 +3962,19 @@ def _mark_footnote_paragraphs_and_refs(html: str) -> str:
                 return sup_raw
             inner = _visible_text(sup_match.group(1))
             if not re.fullmatch(r"\d{1,2}", inner):
-                return sup_raw
+                range_numbers = [int(value) for value in re.findall(r"\d{1,2}", inner)]
+                if (
+                    len(range_numbers) < 2
+                    or not re.fullmatch(r"\s*\d{1,2}(?:\s*(?:[,;\-\u2013\u2014])\s*\d{1,2}){1,12}\s*", inner)
+                    or any(number not in footnote_keywords for number in range_numbers)
+                    or not _numeric_superscript_context_allows_citation(body, sup_match.start(), sup_match.end())
+                ):
+                    return sup_raw
+                open_end = sup_raw.find(">")
+                if open_end < 0:
+                    return sup_raw
+                sup_open = _add_class_attr(sup_raw[: open_end + 1], "z2m-footnote-ref")
+                return f"{sup_open}{sup_match.group(1)}</sup>"
             number = int(inner)
             keywords = footnote_keywords.get(number)
             if not keywords:
@@ -7500,6 +7512,23 @@ _POST_REFERENCES_NON_BIBLIOGRAPHY_HEADING_TEXT_PATTERN = re.compile(
     r"\b(?:data\s+sheet|datasheet|program\s+codes?|related\s+products|features|description)\b",
     re.IGNORECASE,
 )
+_POST_REFERENCE_ALLOWED_HEADING_RE = re.compile(
+    r"^(?:"
+    r"acknowledg(?:e)?ments?|appendix|appendices|author\s+contributions?|"
+    r"competing\s+interests?|conflicts?\s+of\s+interest|data\s+availability|"
+    r"ethics?|figure\s+legends?|funding|notes?|references?|bibliography|"
+    r"supplementary|supporting\s+information"
+    r")\b",
+    re.IGNORECASE,
+)
+_POST_REFERENCE_BIBLIOGRAPHIC_SIGNAL_RE = re.compile(
+    r"\b(?:"
+    r"Ann\.|J\.|Journal|Lond\.|Nature|Organs|Physiol\.|Press|Proc\.|Science|"
+    r"Soc\.|Springer|Trans\.|Vol\."
+    r")\b",
+    re.IGNORECASE,
+)
+_DOCUMENT_CLOSING_SUFFIX_RE = re.compile(r"\s*</body>\s*</html>\s*$", re.IGNORECASE)
 
 
 def _has_post_references_non_bibliography_heading(html: str, end: int) -> bool:
@@ -7513,6 +7542,46 @@ def _has_post_references_non_bibliography_heading(html: str, end: int) -> bool:
         if _POST_REFERENCES_NON_BIBLIOGRAPHY_HEADING_TEXT_PATTERN.search(heading_text) is not None:
             return True
     return False
+
+
+def _reference_list_tail_before_heading_looks_bibliographic(left_html: str) -> bool:
+    window = left_html[-5000:]
+    if re.search(r"</(?:ul|ol)>\s*</p>\s*$", window, re.IGNORECASE) is None:
+        return False
+    list_start = max(window.rfind("<ul"), window.rfind("<ol"))
+    if list_start < 0:
+        return False
+    list_html = window[list_start:]
+    list_text = _visible_text(list_html)
+    if len(list_text) < 120:
+        return False
+    year_count = len(re.findall(r"\b(?:18|19|20)\d{2}\b", list_text))
+    if year_count >= 2 and _POST_REFERENCE_BIBLIOGRAPHIC_SIGNAL_RE.search(list_text) is not None:
+        return True
+    numbered_author_count = len(re.findall(r"(?:^|\s)\d{1,3}\s+[A-Z][A-Za-z'.-]+", list_text))
+    return year_count >= 2 and numbered_author_count >= 2
+
+
+def _trim_adjacent_article_tail_after_references(html: str) -> tuple[str, int]:
+    """Drop a second article that Marker appended after the current references."""
+
+    if "<h" not in html.lower() or ("<ul" not in html.lower() and "<ol" not in html.lower()):
+        return html, 0
+    earliest_boundary = int(len(html) * 0.35)
+    for heading_match in _HTML_HEADING_BLOCK_PATTERN.finditer(html):
+        if heading_match.start() < earliest_boundary:
+            continue
+        heading_text = _visible_text(heading_match.group(0)).strip()
+        if not heading_text or _POST_REFERENCE_ALLOWED_HEADING_RE.match(heading_text):
+            continue
+        if not _reference_list_tail_before_heading_looks_bibliographic(html[: heading_match.start()]):
+            continue
+        suffix_match = _DOCUMENT_CLOSING_SUFFIX_RE.search(html)
+        suffix = ""
+        if suffix_match is not None and suffix_match.start() >= heading_match.start():
+            suffix = suffix_match.group(0)
+        return html[: heading_match.start()].rstrip() + suffix, 1
+    return html, 0
 
 
 def _find_matching_html_tag(html: str, open_start: int, tag_name: str) -> tuple[int, int] | None:
@@ -11699,6 +11768,7 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
     skip_stack: list[str] = []
     scan_text = ""
     protected_figure_tag: str | None = None
+    current_section_chapter: str | None = None
 
     def _opens_protected_figure_text(raw_tag: str) -> str | None:
         open_match = _OPEN_TAG_PATTERN.match(raw_tag)
@@ -11711,6 +11781,19 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             return tag_name
         return None
 
+    def _section_chapter_from_heading_tag(raw_tag: str) -> str | None:
+        open_match = _OPEN_TAG_PATTERN.match(raw_tag)
+        if open_match is None or not re.fullmatch(r"h[1-6]", open_match.group(1), re.IGNORECASE):
+            return None
+        section_id = re.search(r'\bid\s*=\s*["\']section-(\d{1,3})(?:[-"\'])', raw_tag, re.IGNORECASE)
+        return section_id.group(1) if section_id is not None else None
+
+    def _chapter_local_figure_key(key: str, suffix: str) -> str | None:
+        if not suffix or current_section_chapter is None:
+            return None
+        local_key = f"{current_section_chapter}-{key}"
+        return local_key if local_key in found_figures else None
+
     def _replace(m: re.Match[str]) -> str:
         prefix = m.group(1)
         num = m.group(2)
@@ -11718,6 +11801,9 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
         key = _figure_key_from_visible_number(num)
         if scan_text and _is_inside_fig_link(scan_text, m.start(), m.end()):
             return m.group(0)
+        local_key = _chapter_local_figure_key(key, suffix)
+        if key not in found_figures and local_key is not None:
+            return f'<a href="#fig-{local_key}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
         if key not in found_figures:
             return m.group(0)
         return f'<a href="#fig-{key}" class="z2m-fig-link">{prefix}\xa0{num}{suffix}</a>'
@@ -11760,6 +11846,9 @@ def _link_figure_refs(html: str, found_figures: set[str]) -> str:
             continue
         if part.startswith("<"):
             raw_tag = part.strip().lower()
+            section_chapter = _section_chapter_from_heading_tag(part)
+            if section_chapter is not None:
+                current_section_chapter = section_chapter
             close_match = _CLOSE_TAG_PATTERN.match(raw_tag)
             if close_match is not None and close_match.group(1).lower() == protected_figure_tag:
                 protected_figure_tag = None
@@ -20691,13 +20780,198 @@ def _split_leading_image_from_duplicate_caption_successor_units(html: str) -> st
     return "".join(out_parts)
 
 
+def _split_leading_image_run_from_first_sequence_unit(html: str) -> str:
+    """Split a multi-image first unit when it also carries earlier missing figures."""
+    if "z2m-figure-unit" not in html or "<img" not in html.lower():
+        return html
+
+    existing_ids = {
+        match.group("id").lower()
+        for match in re.finditer(r'\bid\s*=\s*(["\'])(?P<id>fig-[A-Za-z0-9-]+)\1', html, re.IGNORECASE)
+    }
+
+    def _context_mentions_figure(left_html: str, key: str) -> bool:
+        left_text = _visible_text(left_html[-7000:])
+        return (
+            re.search(
+                rf"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*{re.escape(key)}(?!\d)(?:[A-Z])?\b",
+                left_text,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+
+    search_pos = 0
+    while True:
+        match = _FIGURE_UNIT_OPEN_TAG_PATTERN.search(html, search_pos)
+        if match is None:
+            return html
+        close_span = _matching_div_close_span(html, match.end())
+        if close_span is None:
+            search_pos = match.end()
+            continue
+        unit_match = re.fullmatch(r"fig-(\d{1,3})", match.group("id"), re.IGNORECASE)
+        if unit_match is None:
+            search_pos = close_span[1]
+            continue
+        first_key = unit_match.group(1)
+        first_num = int(first_key)
+        break
+
+    if first_num <= 2:
+        return html
+
+    missing_keys = [str(num) for num in range(1, first_num)]
+    if any(f"fig-{key}".lower() in existing_ids for key in missing_keys):
+        return html
+    if any(not _context_mentions_figure(html[: match.start()], key) for key in missing_keys):
+        return html
+
+    body = html[match.end():close_span[0]]
+    caption_nodes = [
+        node
+        for node in _P_OR_H_BLOCK_PATTERN.finditer(body)
+        if _node_has_class(node.group("open"), "z2m-figure-caption")
+    ]
+    if not caption_nodes:
+        return html
+    first_caption = caption_nodes[0]
+    caption_num = _figure_caption_num_from_visible(_visible_text(first_caption.group(0)))
+    if caption_num != first_key:
+        return html
+
+    leading_images = [
+        node
+        for node in _P_OR_H_BLOCK_PATTERN.finditer(body[: first_caption.start()])
+        if _node_has_class(node.group("open"), "z2m-figure-target")
+        and re.search(r"<img\b", node.group(0), re.IGNORECASE)
+    ]
+    if len(leading_images) != first_num:
+        return html
+
+    predecessor_images = leading_images[: len(missing_keys)]
+    successor_body_parts: list[str] = []
+    cursor = 0
+    for image_node in predecessor_images:
+        successor_body_parts.append(body[cursor:image_node.start()])
+        cursor = image_node.end()
+    successor_body_parts.append(body[cursor:])
+    successor_body = "".join(successor_body_parts)
+
+    predecessor_wrappers = "".join(
+        f'<div id="fig-{missing_key}" class="z2m-float-unit z2m-figure-unit">'
+        f"{image_node.group(0)}</div>"
+        for missing_key, image_node in zip(missing_keys, predecessor_images)
+    )
+    replacement = f'{predecessor_wrappers}{match.group(0)}{successor_body}</div>'
+    return html[: match.start()] + replacement + html[close_span[1]:]
+
+
+def _recover_unique_bare_source_named_figure_units(html: str) -> str:
+    """Wrap a unique bare image whose source filename identifies a missing figure."""
+    if "<img" not in html.lower():
+        return html
+
+    existing_keys = {
+        match.group("key").lower()
+        for match in re.finditer(r'\bid\s*=\s*(["\'])fig-(?P<key>[A-Za-z0-9-]+)\1', html, re.IGNORECASE)
+    }
+    doc_text = _visible_text(html)
+    mentioned_keys = {
+        _figure_key_from_visible_number(match.group("num")).lower()
+        for match in re.finditer(
+            r"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*(?P<num>\d{1,3})(?!\d)(?:[A-Z])?\b",
+            doc_text,
+            re.IGNORECASE,
+        )
+    }
+    missing_keys = {key for key in mentioned_keys if key.isdigit() and key not in existing_keys}
+    if not missing_keys:
+        return html
+    existing_numeric_keys = {key for key in existing_keys if key.isdigit()}
+    recovery_keys = set(missing_keys)
+    if not existing_numeric_keys and len(missing_keys) > 1:
+        recovery_keys = {str(min(int(key) for key in missing_keys))}
+
+    def _image_source(raw: str) -> str:
+        match = re.search(r'\bdata-z2m-src\s*=\s*(["\'])(?P<src>[^"\']+)\1', raw, re.IGNORECASE)
+        if match is not None:
+            return match.group("src")
+        match = re.search(r'\bsrc\s*=\s*(["\'])(?P<src>[^"\']+)\1', raw, re.IGNORECASE)
+        return match.group("src") if match is not None else ""
+
+    def _figure_key_from_image_source(src: str) -> str | None:
+        match = re.search(r"(?:^|[_\-/])Figure[_\-. ]*(?P<num>\d{1,3})(?!\d)", src, re.IGNORECASE)
+        if match is None:
+            return None
+        return str(int(match.group("num")))
+
+    candidates_by_key: dict[str, list[re.Match[str]]] = {key: [] for key in recovery_keys}
+    for node_match in _P_OR_H_BLOCK_PATTERN.finditer(html):
+        raw = node_match.group(0)
+        if len(re.findall(r"<img\b", raw, re.IGNORECASE)) != 1:
+            continue
+        if _visible_text(raw).strip():
+            continue
+        if (
+            _node_has_class(node_match.group("open"), "z2m-figure-target")
+            or _node_has_class(node_match.group("open"), "z2m-figure-caption")
+            or _node_has_class(node_match.group("open"), "z2m-missing-figure-warning")
+            or _node_has_class(node_match.group("open"), "z2m-front-matter")
+        ):
+            continue
+        key = _figure_key_from_image_source(_image_source(raw))
+        if key in candidates_by_key:
+            candidates_by_key[key].append(node_match)
+
+    replacements: list[tuple[int, int, str]] = []
+    for key, candidates in candidates_by_key.items():
+        if len(candidates) != 1:
+            continue
+        image_node = candidates[0]
+        image_html = _strip_node_id_and_add_class(image_node.group(0), "z2m-figure-target")
+        replacements.append(
+            (
+                image_node.start(),
+                image_node.end(),
+                f'<div id="fig-{key}" class="z2m-float-unit z2m-figure-unit">{image_html}</div>',
+            )
+        )
+
+    if not replacements:
+        return html
+
+    out_parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in sorted(replacements, key=lambda item: item[0]):
+        out_parts.append(html[cursor:start])
+        out_parts.append(replacement)
+        cursor = end
+    out_parts.append(html[cursor:])
+    return "".join(out_parts)
+
+
 def _recover_sequence_gap_bare_image_figure_units(html: str) -> str:
     """Wrap a bare image as the missing figure between adjacent numbered units."""
     if "z2m-figure-unit" not in html or "<img" not in html.lower():
         return html
 
     figure_units: list[tuple[int, int, int]] = []
-    semantic_keys: set[str] = set()
+    semantic_keys: set[str] = {
+        match.group("key")
+        for match in re.finditer(r'\bid\s*=\s*(["\'])fig-(?P<key>\d{1,3})\1', html, re.IGNORECASE)
+    }
+    caption_label_pattern = re.compile(
+        r"\b(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*"
+        r"(?P<num>\d{1,3})(?!\d)(?![.-]\d)"
+        r"(?:\s*(?:[\.:|]|[-\u2010\u2011\u2012\u2013\u2014]))",
+        re.IGNORECASE,
+    )
+    skip_caption_label_left_context = re.compile(
+        r"\b(?:as|see|shown|showing|participant|panel|panels?|same|in|of|from|with|"
+        r"extended\s+data|supplementary|supplemental)\s+$",
+        re.IGNORECASE,
+    )
     search_pos = 0
 
     while True:
@@ -20720,13 +20994,19 @@ def _recover_sequence_gap_bare_image_figure_units(html: str) -> str:
         for caption_match in _P_OR_H_BLOCK_PATTERN.finditer(body):
             if not _node_has_class(caption_match.group("open"), "z2m-figure-caption"):
                 continue
-            caption_num = _figure_caption_num_from_visible(_visible_text(caption_match.group("body")))
+            caption_visible = _visible_text(caption_match.group("body"))
+            caption_num = _figure_caption_num_from_visible(caption_visible)
             if caption_num is not None:
                 semantic_keys.add(_figure_key_from_visible_number(caption_num).lower())
+            for label_match in caption_label_pattern.finditer(caption_visible):
+                left_context = caption_visible[max(0, label_match.start() - 36):label_match.start()]
+                if skip_caption_label_left_context.search(left_context):
+                    continue
+                semantic_keys.add(_figure_key_from_visible_number(label_match.group("num")).lower())
 
         search_pos = close_span[1]
 
-    if len(figure_units) < 2:
+    if not figure_units:
         return html
 
     doc_text = _visible_text(html)
@@ -20737,9 +21017,21 @@ def _recover_sequence_gap_bare_image_figure_units(html: str) -> str:
                 rf"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*{re.escape(key)}(?!\d)(?:[A-Z])?\b",
                 doc_text,
                 re.IGNORECASE,
-            )
-            is not None
         )
+        is not None
+    )
+
+    def _trailing_float_search_html(gap_html: str) -> str:
+        for node_match in _P_OR_H_BLOCK_PATTERN.finditer(gap_html):
+            raw = node_match.group(0)
+            visible = _visible_text(raw).strip()
+            if _node_has_class(node_match.group("open"), "z2m-front-matter"):
+                return gap_html[: node_match.start()]
+            if _references_heading_match(visible) is not None:
+                return gap_html[: node_match.start()]
+            if re.match(r"(?i)^(?:acknowledg(?:e)?ments?|received\b|references\b|bibliography\b)", visible):
+                return gap_html[: node_match.start()]
+        return gap_html
 
     def _bare_image_nodes(gap_html: str) -> list[re.Match[str]]:
         nodes: list[re.Match[str]] = []
@@ -20759,30 +21051,72 @@ def _recover_sequence_gap_bare_image_figure_units(html: str) -> str:
         return nodes
 
     replacements: list[tuple[int, int, str]] = []
+    first_num, first_start, _first_end = figure_units[0]
+    if first_num > 1:
+        leading_missing_keys = [str(num) for num in range(1, first_num)]
+        if not any(missing_key in semantic_keys for missing_key in leading_missing_keys) and all(
+            _document_mentions_figure(missing_key) for missing_key in leading_missing_keys
+        ):
+            leading_gap_html = html[:first_start]
+            leading_image_nodes = _bare_image_nodes(leading_gap_html)
+            if len(leading_image_nodes) == len(leading_missing_keys):
+                for missing_key, image_node in zip(leading_missing_keys, leading_image_nodes):
+                    image_html = _strip_node_id_and_add_class(image_node.group(0), "z2m-figure-target")
+                    wrapper = (
+                        f'<div id="fig-{missing_key}" class="z2m-float-unit z2m-figure-unit">'
+                        f"{image_html}</div>"
+                    )
+                    replacements.append((image_node.start(), image_node.end(), wrapper))
+                    semantic_keys.add(missing_key)
+
     for left_unit, right_unit in zip(figure_units, figure_units[1:]):
         left_num, _left_start, left_end = left_unit
         right_num, right_start, _right_end = right_unit
-        if right_num - left_num != 2:
+        if right_num - left_num < 2:
             continue
-        missing_key = str(left_num + 1)
-        if missing_key in semantic_keys:
+        missing_keys = [str(num) for num in range(left_num + 1, right_num)]
+        if any(missing_key in semantic_keys for missing_key in missing_keys):
             continue
-        if not _document_mentions_figure(missing_key):
+        if any(not _document_mentions_figure(missing_key) for missing_key in missing_keys):
             continue
 
         gap_html = html[left_end:right_start]
         image_nodes = _bare_image_nodes(gap_html)
-        if len(image_nodes) != 1:
+        if len(image_nodes) != len(missing_keys):
             continue
 
-        image_node = image_nodes[0]
-        image_html = _strip_node_id_and_add_class(image_node.group(0), "z2m-figure-target")
-        wrapper = (
-            f'<div id="fig-{missing_key}" class="z2m-float-unit z2m-figure-unit">'
-            f"{image_html}</div>"
-        )
-        replacements.append((left_end + image_node.start(), left_end + image_node.end(), wrapper))
-        semantic_keys.add(missing_key)
+        for missing_key, image_node in zip(missing_keys, image_nodes):
+            image_html = _strip_node_id_and_add_class(image_node.group(0), "z2m-figure-target")
+            wrapper = (
+                f'<div id="fig-{missing_key}" class="z2m-float-unit z2m-figure-unit">'
+                f"{image_html}</div>"
+            )
+            replacements.append((left_end + image_node.start(), left_end + image_node.end(), wrapper))
+            semantic_keys.add(missing_key)
+
+    last_num, _last_start, last_end = figure_units[-1]
+    trailing_gap_html = _trailing_float_search_html(html[last_end:])
+    trailing_image_nodes = _bare_image_nodes(trailing_gap_html)
+    if trailing_image_nodes:
+        trailing_missing_keys: list[str] = []
+        next_num = last_num + 1
+        while _document_mentions_figure(str(next_num)):
+            missing_key = str(next_num)
+            if missing_key in semantic_keys:
+                break
+            trailing_missing_keys.append(missing_key)
+            if len(trailing_missing_keys) > len(trailing_image_nodes):
+                break
+            next_num += 1
+        if trailing_missing_keys and len(trailing_missing_keys) == len(trailing_image_nodes):
+            for missing_key, image_node in zip(trailing_missing_keys, trailing_image_nodes):
+                image_html = _strip_node_id_and_add_class(image_node.group(0), "z2m-figure-target")
+                wrapper = (
+                    f'<div id="fig-{missing_key}" class="z2m-float-unit z2m-figure-unit">'
+                    f"{image_html}</div>"
+                )
+                replacements.append((last_end + image_node.start(), last_end + image_node.end(), wrapper))
+                semantic_keys.add(missing_key)
 
     if not replacements:
         return html
@@ -20795,6 +21129,327 @@ def _recover_sequence_gap_bare_image_figure_units(html: str) -> str:
         cursor = end
     out_parts.append(html[cursor:])
     return "".join(out_parts)
+
+
+def _sequence_gap_missing_figure_warning_html(
+    fig_num: str,
+    *,
+    figure_caption_language: str = "en",
+) -> str:
+    warning_html = _missing_figure_warning_html(
+        fig_num,
+        figure_caption_language=figure_caption_language,
+    )
+    warning_html = re.sub(
+        r"^<p\b",
+        '<p data-z2m-origin="sequence-gap-missing-target"',
+        warning_html,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    warning_html = re.sub(
+        r'\bclass\s*=\s*(["\'])z2m-missing-figure-warning\1',
+        r'class=\1z2m-missing-figure-warning z2m-figure-target\1',
+        warning_html,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return (
+        f'<div id="fig-{fig_num}" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        f"{warning_html}</div>"
+    )
+
+
+def _insert_sequence_gap_missing_figure_units(
+    html: str,
+    *,
+    figure_caption_language: str = "en",
+) -> tuple[str, int]:
+    """Add explicit missing-figure units for numbered gaps with no recoverable HTML visual."""
+    if "z2m-figure-unit" not in html:
+        return html, 0
+
+    figure_units: list[tuple[int, int, int]] = []
+    semantic_keys: set[str] = set()
+    caption_label_pattern = re.compile(
+        r"\b(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*"
+        r"(?P<num>\d{1,3})(?!\d)(?![.-]\d)"
+        r"(?:\s*(?:[\.:|]|[-\u2010\u2011\u2012\u2013\u2014]))",
+        re.IGNORECASE,
+    )
+    skip_caption_label_left_context = re.compile(
+        r"\b(?:as|see|shown|showing|participant|panel|panels?|same|in|of|from|with|"
+        r"extended\s+data|supplementary|supplemental)\s+$",
+        re.IGNORECASE,
+    )
+    search_pos = 0
+    while True:
+        match = _FIGURE_UNIT_OPEN_TAG_PATTERN.search(html, search_pos)
+        if match is None:
+            break
+        close_span = _matching_div_close_span(html, match.end())
+        if close_span is None:
+            search_pos = match.end()
+            continue
+        unit_match = re.fullmatch(r"fig-(\d{1,3})", match.group("id"), re.IGNORECASE)
+        if unit_match is not None:
+            unit_num = int(unit_match.group(1))
+            figure_units.append((unit_num, match.start(), close_span[1]))
+            semantic_keys.add(str(unit_num))
+
+        body = html[match.end():close_span[0]]
+        for caption_match in _P_OR_H_BLOCK_PATTERN.finditer(body):
+            if not _node_has_class(caption_match.group("open"), "z2m-figure-caption"):
+                continue
+            caption_visible = _visible_text(caption_match.group("body"))
+            caption_num = _figure_caption_num_from_visible(caption_visible)
+            if caption_num is not None:
+                semantic_keys.add(_figure_key_from_visible_number(caption_num).lower())
+            for label_match in caption_label_pattern.finditer(caption_visible):
+                left_context = caption_visible[max(0, label_match.start() - 36):label_match.start()]
+                if skip_caption_label_left_context.search(left_context):
+                    continue
+                semantic_keys.add(_figure_key_from_visible_number(label_match.group("num")).lower())
+
+        search_pos = close_span[1]
+
+    if not figure_units:
+        return html, 0
+
+    def _mentioned_numbers_in_text(text: str) -> set[int]:
+        return {
+            int(match.group("num"))
+            for match in re.finditer(
+                r"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*(?P<num>\d{1,3})(?!\d)(?:[A-Z])?\b",
+                text,
+                re.IGNORECASE,
+            )
+        }
+
+    doc_text = _visible_text(html)
+    doc_blocks = [_visible_text(match.group(0)) for match in _P_OR_H_BLOCK_PATTERN.finditer(html)]
+    mentioned_numbers = _mentioned_numbers_in_text(doc_text)
+
+    def _all_missing_keys_are_mentioned(missing_keys: list[str]) -> bool:
+        return all(key.isdigit() and int(key) in mentioned_numbers for key in missing_keys)
+
+    def _has_independent_figure_mention(key: str, left_num: int, right_num: int | None) -> bool:
+        label_re = re.compile(
+            rf"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*{re.escape(key)}(?!\d)(?:[A-Z])?\b",
+            re.IGNORECASE,
+        )
+        neighbor_label = r"(?:Fig(?:ure)?|FIG(?:URE)?)\.?"
+        for block_text in doc_blocks:
+            for match in label_re.finditer(block_text):
+                left_context = block_text[max(0, match.start() - 90):match.start()]
+                right_context = block_text[match.end():match.end() + 90]
+                joint_with_left = (
+                    re.search(
+                        rf"\b{neighbor_label}\s*{left_num}(?!\d)(?:[A-Z])?\s*(?:,|and|or|&)\s*$",
+                        left_context,
+                        re.IGNORECASE,
+                    )
+                    is not None
+                )
+                joint_with_right = (
+                    right_num is not None
+                    and re.match(
+                        rf"^\s*(?:,|and|or|&)\s*{neighbor_label}\s*{right_num}(?!\d)(?:[A-Z])?\b",
+                        right_context,
+                        re.IGNORECASE,
+                    )
+                    is not None
+                )
+                if not joint_with_left and not joint_with_right:
+                    return True
+        return False
+
+    def _gap_has_visual_or_float(gap_html: str) -> bool:
+        return re.search(r"<img\b|<table\b|\bz2m-float-unit\b", gap_html, re.IGNORECASE) is not None
+
+    def _trailing_float_search_html(gap_html: str) -> str:
+        for node_match in _P_OR_H_BLOCK_PATTERN.finditer(gap_html):
+            visible = _visible_text(node_match.group(0)).strip()
+            if _node_has_class(node_match.group("open"), "z2m-front-matter"):
+                return gap_html[: node_match.start()]
+            if _references_heading_match(visible) is not None:
+                return gap_html[: node_match.start()]
+            if re.match(r"(?i)^(?:acknowledg(?:e)?ments?|received\b|references\b|bibliography\b)", visible):
+                return gap_html[: node_match.start()]
+        return gap_html
+
+    def _leading_missing_search_html(gap_html: str) -> str:
+        last_visual_match: re.Match[str] | None = None
+        for last_visual_match in re.finditer(r"<img\b|<table\b|\bz2m-float-unit\b", gap_html, re.IGNORECASE):
+            pass
+        if last_visual_match is None:
+            return gap_html
+        close_match = re.search(r"</(?:p|div|figure|table)>", gap_html[last_visual_match.end():], re.IGNORECASE)
+        if close_match is None:
+            return gap_html[last_visual_match.end():]
+        return gap_html[last_visual_match.end() + close_match.end():]
+
+    def _image_source_figure_key(img_html: str) -> str | None:
+        for attr_name in ("data-z2m-src", "src"):
+            attr_match = re.search(
+                rf'\b{attr_name}\s*=\s*(["\'])(?P<src>[^"\']+)\1',
+                img_html,
+                re.IGNORECASE,
+            )
+            if attr_match is None:
+                continue
+            source_match = re.search(
+                r"(?:^|[/\\_. -])Figure[/\\_. -]*(?P<num>\d{1,3})(?!\d)",
+                attr_match.group("src"),
+                re.IGNORECASE,
+            )
+            if source_match is not None:
+                return str(int(source_match.group("num")))
+        return None
+
+    def _first_unit_images_allow_leading_missing(first_unit_html: str, missing_keys: list[str]) -> bool:
+        image_nodes = list(re.finditer(r"<img\b[^>]*>", first_unit_html, re.IGNORECASE))
+        if len(image_nodes) <= 1:
+            return True
+        image_source_keys = [_image_source_figure_key(image_node.group(0)) for image_node in image_nodes]
+        return all(key is not None and key not in missing_keys for key in image_source_keys)
+
+    insertions: list[tuple[int, str]] = []
+    first_num, first_start, _first_end = figure_units[0]
+    if first_num == 2:
+        leading_missing_nums = list(range(1, first_num))
+        leading_missing_keys = [str(num) for num in leading_missing_nums]
+        raw_leading_gap_html = html[:first_start]
+        leading_gap_html = _leading_missing_search_html(raw_leading_gap_html)
+        leading_mentions = _mentioned_numbers_in_text(_visible_text(leading_gap_html))
+        first_unit_html = html[first_start:_first_end]
+        if (
+            all(num in leading_mentions for num in leading_missing_nums)
+            and not any(missing_key in semantic_keys for missing_key in leading_missing_keys)
+            and _first_unit_images_allow_leading_missing(first_unit_html, leading_missing_keys)
+            and not _gap_has_visual_or_float(leading_gap_html)
+            and all(
+                _has_independent_figure_mention(missing_key, 0, first_num)
+                for missing_key in leading_missing_keys
+            )
+        ):
+            insertions.append(
+                (
+                    first_start,
+                    "".join(
+                        _sequence_gap_missing_figure_warning_html(
+                            missing_key,
+                            figure_caption_language=figure_caption_language,
+                        )
+                        for missing_key in leading_missing_keys
+                    ),
+                )
+            )
+            semantic_keys.update(leading_missing_keys)
+
+    for left_unit, right_unit in zip(figure_units, figure_units[1:]):
+        left_num, _left_start, left_end = left_unit
+        right_num, right_start, _right_end = right_unit
+        if right_num - left_num < 2:
+            continue
+        missing_keys = [str(num) for num in range(left_num + 1, right_num)]
+        if any(missing_key in semantic_keys for missing_key in missing_keys):
+            continue
+        if not _all_missing_keys_are_mentioned(missing_keys):
+            continue
+        if any(
+            not _has_independent_figure_mention(missing_key, left_num, right_num)
+            for missing_key in missing_keys
+        ):
+            continue
+        if _gap_has_visual_or_float(html[left_end:right_start]):
+            continue
+        insertions.append(
+            (
+                left_end,
+                "".join(
+                    _sequence_gap_missing_figure_warning_html(
+                        missing_key,
+                        figure_caption_language=figure_caption_language,
+                    )
+                    for missing_key in missing_keys
+                ),
+            )
+        )
+        semantic_keys.update(missing_keys)
+
+    last_num, _last_start, last_end = figure_units[-1]
+    raw_trailing_gap_html = html[last_end:]
+    trailing_gap_html = _trailing_float_search_html(raw_trailing_gap_html)
+    trailing_starts_at_terminal_section = (
+        trailing_gap_html != raw_trailing_gap_html and not trailing_gap_html.strip()
+    )
+    trailing_text = _visible_text(trailing_gap_html)
+    trailing_mentioned_numbers = {
+        int(match.group("num"))
+        for match in re.finditer(
+            r"\b(?:Fig(?:ure)?|FIG(?:URE)?)\.?\s*(?P<num>\d{1,3})(?!\d)(?:[A-Z])?\b",
+            trailing_text,
+            re.IGNORECASE,
+        )
+    }
+    trailing_mentions = sorted(num for num in trailing_mentioned_numbers if num > last_num)
+    if trailing_mentions and not _gap_has_visual_or_float(trailing_gap_html):
+        trailing_missing_nums = list(range(last_num + 1, trailing_mentions[-1] + 1))
+        trailing_missing_keys = [str(num) for num in trailing_missing_nums]
+        if (
+            all(num in trailing_mentioned_numbers for num in trailing_missing_nums)
+            and not any(missing_key in semantic_keys for missing_key in trailing_missing_keys)
+            and all(
+                _has_independent_figure_mention(missing_key, last_num, None)
+                for missing_key in trailing_missing_keys
+            )
+        ):
+            insertions.append(
+                (
+                    last_end,
+                    "".join(
+                        _sequence_gap_missing_figure_warning_html(
+                            missing_key,
+                            figure_caption_language=figure_caption_language,
+                        )
+                        for missing_key in trailing_missing_keys
+                    ),
+                )
+            )
+            semantic_keys.update(trailing_missing_keys)
+
+    next_final_key = str(last_num + 1)
+    if (
+        next_final_key not in semantic_keys
+        and last_num + 1 in mentioned_numbers
+        and not any(pos == last_end for pos, _insertion in insertions)
+        and not _gap_has_visual_or_float(trailing_gap_html)
+        and not trailing_starts_at_terminal_section
+        and _has_independent_figure_mention(next_final_key, last_num, None)
+    ):
+        insertions.append(
+            (
+                last_end,
+                _sequence_gap_missing_figure_warning_html(
+                    next_final_key,
+                    figure_caption_language=figure_caption_language,
+                ),
+            )
+        )
+        semantic_keys.add(next_final_key)
+
+    if not insertions:
+        return html, 0
+
+    out_parts: list[str] = []
+    cursor = 0
+    for pos, insertion in sorted(insertions, key=lambda item: item[0]):
+        out_parts.append(html[cursor:pos])
+        out_parts.append(insertion)
+        cursor = pos
+    out_parts.append(html[cursor:])
+    return "".join(out_parts), len(insertions)
 
 
 def _drop_unbacked_foreign_figure_aliases(html: str) -> str:
@@ -22403,7 +23058,13 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _split_leading_image_run_from_first_sequence_unit(polished)
+    polished = _recover_unique_bare_source_named_figure_units(polished)
     polished = _recover_sequence_gap_bare_image_figure_units(polished)
+    polished, _ = _insert_sequence_gap_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     polished = _drop_unbacked_foreign_figure_aliases(polished)
     polished = _mark_missing_figure_units(polished)
     polished = _repair_remaining_table_caption_units(polished)
@@ -22413,7 +23074,13 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _split_leading_image_run_from_first_sequence_unit(polished)
+    polished = _recover_unique_bare_source_named_figure_units(polished)
     polished = _recover_sequence_gap_bare_image_figure_units(polished)
+    polished, _ = _insert_sequence_gap_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     polished = _drop_unbacked_foreign_figure_aliases(polished)
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished, _ = _repair_sentence_breaks_at_page_boundaries(polished)
@@ -22435,7 +23102,13 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _split_leading_image_run_from_first_sequence_unit(polished)
+    polished = _recover_unique_bare_source_named_figure_units(polished)
     polished = _recover_sequence_gap_bare_image_figure_units(polished)
+    polished, _ = _insert_sequence_gap_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     polished = _drop_unbacked_foreign_figure_aliases(polished)
     polished = _add_aliases_for_embedded_figure_caption_labels(polished)
     polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
@@ -22509,7 +23182,13 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _split_leading_image_run_from_first_sequence_unit(polished)
+    polished = _recover_unique_bare_source_named_figure_units(polished)
     polished = _recover_sequence_gap_bare_image_figure_units(polished)
+    polished, _ = _insert_sequence_gap_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     polished, _ = _repair_sentence_breaks_around_float_units(polished)
     polished = _strip_leading_reference_line_number_pairs_in_list_items(polished)
     polished = _repair_nested_reference_links(polished)
@@ -22522,7 +23201,13 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished = _split_figure_units_at_body_tail(polished)
     polished = _split_distinct_nested_figure_units(polished)
     polished = _split_leading_image_from_duplicate_caption_successor_units(polished)
+    polished = _split_leading_image_run_from_first_sequence_unit(polished)
+    polished = _recover_unique_bare_source_named_figure_units(polished)
     polished = _recover_sequence_gap_bare_image_figure_units(polished)
+    polished, _ = _insert_sequence_gap_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     if not _should_suppress_numeric_ref_links_for_author_year(polished, citation_profile):
         polished = _link_flattened_et_al_numeric_citations_to_existing_refs(polished)
         polished = _link_unlinked_numeric_superscripts_to_existing_refs(polished)
@@ -22580,6 +23265,7 @@ def _polish_phase_katex_and_final_repairs(state: RawPolishState, context: RawPol
             polished = _unwrap_nested_same_href_internal_links(polished)
             polished = _normalize_spacing_after_z2m_links(polished)
     polished = _unwrap_broken_internal_semantic_links(polished)
+    polished, _ = _trim_adjacent_article_tail_after_references(polished)
     return state.with_html(polished)
 
 

@@ -17,6 +17,11 @@ from .run_utils import article_dir_from_stage, load_json
 
 IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\s+src\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
 DATA_Z2M_SRC_RE = re.compile(r"\bdata-z2m-src\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
+FIGURE_UNIT_RE = re.compile(
+    r'<div\b(?=[^>]*\bid\s*=\s*(["\'])(?P<id>fig-\d{1,3})\1)'
+    r'(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+    re.IGNORECASE,
+)
 
 
 def is_inline_or_remote_src(src: str) -> bool:
@@ -44,6 +49,36 @@ def source_hinted_data_images(html: str) -> dict[str, str]:
     return mapping
 
 
+def figure_unit_data_image_cache(raw_html: str, previous_polish_html: str) -> dict[str, str]:
+    previous_by_figure: dict[str, list[str]] = {}
+    for unit_match in FIGURE_UNIT_RE.finditer(previous_polish_html):
+        data_srcs = [
+            src
+            for src in img_srcs(unit_match.group(0))
+            if src.lower().startswith("data:image/")
+        ]
+        if data_srcs:
+            previous_by_figure[unit_match.group("id").lower()] = data_srcs
+
+    mapping: dict[str, str] = {}
+    if not previous_by_figure:
+        return mapping
+
+    for unit_match in FIGURE_UNIT_RE.finditer(raw_html):
+        raw_local_srcs = [
+            src
+            for src in img_srcs(unit_match.group(0))
+            if not is_inline_or_remote_src(src)
+        ]
+        if not raw_local_srcs:
+            continue
+        data_srcs = previous_by_figure.get(unit_match.group("id").lower()) or []
+        if len(data_srcs) != len(raw_local_srcs):
+            continue
+        mapping.update(zip(raw_local_srcs, data_srcs))
+    return mapping
+
+
 def ordered_data_image_cache(raw_html: str, previous_polish_html: str) -> dict[str, str]:
     """Map raw local image refs to data URLs from an older polish copy."""
 
@@ -53,6 +88,8 @@ def ordered_data_image_cache(raw_html: str, previous_polish_html: str) -> dict[s
 
     hinted = source_hinted_data_images(previous_polish_html)
     mapping = {src: hinted[src] for src in raw_local_srcs if src in hinted}
+    figure_scoped = figure_unit_data_image_cache(raw_html, previous_polish_html)
+    mapping.update({src: figure_scoped[src] for src in raw_local_srcs if src not in mapping and src in figure_scoped})
     missing_srcs = [src for src in raw_local_srcs if src not in mapping]
     if not missing_srcs:
         return mapping

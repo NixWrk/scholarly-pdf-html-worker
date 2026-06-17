@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from .p62_html import (
     P62_LOW_FIDELITY_RECOVERY_SOURCES,
+    data_url_image_hash,
     extract_html_figure_units,
     replace_figure_unit_target_with_image,
 )
@@ -223,6 +224,25 @@ def repair_duplicate_figure_images(
                         "duplicate_hash": duplicate_hash,
                         "repair_mode": repair_mode,
                         "candidate_recovery_sources": candidate_recovery_sources,
+                        "resolver": resolver,
+                    }
+                )
+                continue
+            recovered_hash = data_url_image_hash(f'<img src="{data_url}"/>')
+            if duplicate_hash and recovered_hash == duplicate_hash:
+                repairs.append(
+                    {
+                        "figure_label": label,
+                        "status": "unresolved",
+                        "reason": "recovered_asset_matches_duplicate_hash",
+                        "source_pdf_page_number": page_number,
+                        "duplicate_labels": labels,
+                        "duplicate_hash": duplicate_hash,
+                        "repair_mode": repair_mode,
+                        "candidate_recovery_sources": candidate_recovery_sources,
+                        "asset_path": str(asset_path),
+                        "asset_source": asset.get("source") or "",
+                        "asset_status": asset.get("status") or "",
                         "resolver": resolver,
                     }
                 )

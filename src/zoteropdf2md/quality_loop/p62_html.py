@@ -39,6 +39,10 @@ P62_PDF_DERIVED_RECOVERY_SOURCES = {
     "pdf_native_image",
     "pdf_detached_plate_region_render",
 }
+P_OR_H_ELEMENT_RE = re.compile(
+    r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>[\s\S]*?</(?P=tag)>",
+    re.IGNORECASE,
+)
 
 
 def _visible_html_text(fragment: str) -> str:
@@ -100,6 +104,101 @@ def recovery_target_html(
         f'src="{_escape_html_attr(data_url)}"/>'
         "</p>"
     )
+
+
+def _snippet_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[A-Za-z0-9]{4,}", _visible_html_text(str(value or "")).casefold())
+        if not token.isdigit()
+    }
+
+
+def _reference_pattern_for_key(target_figure_key: str, visible_label: str = "") -> re.Pattern[str] | None:
+    key = str(target_figure_key or "").strip()
+    if not key:
+        return None
+    visible_match = re.search(
+        r"\b(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*(?P<label>\d{1,3}[A-Za-z]?)\b",
+        str(visible_label or ""),
+        re.IGNORECASE,
+    )
+    label = visible_match.group("label") if visible_match is not None else key
+    label_match = re.fullmatch(r"(?P<num>\d{1,3})(?P<panel>[A-Za-z])?", label)
+    if label_match is not None:
+        number = re.escape(label_match.group("num"))
+        panel = re.escape(label_match.group("panel") or "")
+        panel_pattern = panel if panel else r"[A-Za-z]?"
+        return re.compile(
+            rf"\b(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*{number}{panel_pattern}\b",
+            re.IGNORECASE,
+        )
+    return re.compile(
+        rf"\b(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*{re.escape(key)}\b",
+        re.IGNORECASE,
+    )
+
+
+def insert_recovered_figure_unit_for_visible_reference(
+    html: str,
+    *,
+    target_figure_key: str,
+    visible_label: str,
+    snippet: str,
+    data_url: str,
+    source: str,
+    source_detail: str,
+) -> tuple[str, int]:
+    key = str(target_figure_key or "").strip()
+    if not key or not data_url:
+        return html, 0
+    if re.search(rf"\bid\s*=\s*([\"'])fig-{re.escape(key)}\1", html, re.IGNORECASE):
+        return html, 0
+
+    reference_re = _reference_pattern_for_key(key, visible_label)
+    if reference_re is None:
+        return html, 0
+
+    snippet_tokens = _snippet_tokens(snippet)
+    fallback_match: re.Match[str] | None = None
+    for block_match in P_OR_H_ELEMENT_RE.finditer(html):
+        raw = block_match.group(0)
+        if re.search(
+            r"\bz2m-(?:(?:figure|table)-(?:unit|target|caption)|missing-figure-warning)\b",
+            raw,
+            re.IGNORECASE,
+        ):
+            continue
+        visible = _visible_html_text(raw)
+        if reference_re.search(visible) is None:
+            continue
+        if not snippet_tokens:
+            fallback_match = block_match
+            break
+        block_tokens = _snippet_tokens(visible)
+        if len(snippet_tokens & block_tokens) >= min(4, max(1, len(snippet_tokens) // 4)):
+            fallback_match = block_match
+            break
+        if fallback_match is None:
+            fallback_match = block_match
+
+    if fallback_match is None:
+        return html, 0
+
+    recovered_target = recovery_target_html(
+        data_url,
+        figure_label=visible_label or key,
+        source=source,
+        source_detail=source_detail,
+    )
+    unit = (
+        f'<div id="fig-{escape(key, quote=True)}" '
+        'class="z2m-float-unit z2m-figure-unit" '
+        'data-z2m-origin="p61-source-pdf-recovery">'
+        f"{recovered_target}</div>"
+    )
+    insert_at = fallback_match.end()
+    return html[:insert_at] + unit + html[insert_at:], 1
 
 
 def replace_missing_warning_with_image(
@@ -322,6 +421,24 @@ def data_url_image_hash(raw: str) -> str:
     except Exception:
         return hashlib.sha256(raw_data.encode("utf-8", errors="replace")).hexdigest()
     return hashlib.sha256(data).hexdigest()
+
+
+def data_url_duplicates_existing_figure_unit(
+    html: str,
+    data_url: str,
+    *,
+    target_figure_key: str,
+) -> bool:
+    image_hash = data_url_image_hash(f'<img src="{data_url}"/>')
+    if not image_hash:
+        return False
+    target = str(target_figure_key or "").strip()
+    for unit in extract_html_figure_units(html):
+        if str(unit.get("label") or "") == target:
+            continue
+        if image_hash in set(unit.get("image_hashes") or []):
+            return True
+    return False
 
 
 def figure_label_from_unit_id(raw_id: str) -> str:

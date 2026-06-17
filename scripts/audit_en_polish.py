@@ -129,6 +129,7 @@ from zoteropdf2md.quality_loop.audit_p04 import (
     looks_like_math_or_measurement_range as _looks_like_math_or_measurement_range,
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
+    unlinked_sup_numeric_range_matches_footnote_targets as _unlinked_sup_numeric_range_matches_footnote_targets,
 )
 from zoteropdf2md.quality_loop.audit_p35 import replacement_char_defects as _replacement_char_defects
 from zoteropdf2md.quality_loop.audit_p45 import roman_word_split_defects as _roman_word_split_defects
@@ -1726,6 +1727,12 @@ def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
         for match in (re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE),)
         if match is not None
     }
+    footnote_numbers = {
+        int(match.group(1))
+        for block in polish_blocks
+        for match in (re.match(r"^footnote-(\d+)$", block.id, re.IGNORECASE),)
+        if match is not None
+    }
     saw_false_positive = False
     saw_ocr_citation = False
     saw_latex_sup = False
@@ -1861,21 +1868,22 @@ def _citation_defects(polish_blocks: list[Block]) -> list[Defect]:
         )
     elif "math" in unlinked_range_candidates:
         block = unlinked_range_candidates["math"]
-        defects.append(
-            _defect(
-                defect_id="P04M",
-                cc_class="CC-02/CC-05",
-                check="Citation-like numeric range/list remains in math or measurement context",
-                severity="warning",
-                block=block,
-                snippet=block.text,
-                stage=POLISH_STAGE,
-                hypothesis="Math, statistical, vector, or measurement notation resembles citation ranges and needs separate classification.",
-                proposed_fix_layer="EN audit P04 math/measurement classifier",
-                regression_test="Numeric vectors, parameter intervals, and measurement ranges must not inflate body P04 counts.",
-                extra={"quality_counted": False},
+        if not _unlinked_sup_numeric_range_matches_footnote_targets(block, footnote_numbers):
+            defects.append(
+                _defect(
+                    defect_id="P04M",
+                    cc_class="CC-02/CC-05",
+                    check="Citation-like numeric range/list remains in math or measurement context",
+                    severity="warning",
+                    block=block,
+                    snippet=block.text,
+                    stage=POLISH_STAGE,
+                    hypothesis="Math, statistical, vector, or measurement notation resembles citation ranges and needs separate classification.",
+                    proposed_fix_layer="EN audit P04 math/measurement classifier",
+                    regression_test="Numeric vectors, parameter intervals, and measurement ranges must not inflate body P04 counts.",
+                    extra={"quality_counted": False},
+                )
             )
-        )
     return defects
 
 

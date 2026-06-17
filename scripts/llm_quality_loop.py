@@ -125,6 +125,7 @@ from zoteropdf2md.quality_loop.p62_duplicates import (  # noqa: E402
 )
 from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     clean_resolved_missing_unit_classes as _clean_resolved_p62_missing_unit_classes,
+    data_url_duplicates_existing_figure_unit as _p62_data_url_duplicates_existing_figure_unit,
     data_url_image_hash as _p62_data_url_image_hash,
     extract_html_figure_units as _p62_extract_html_figure_units,
     figure_label_from_unit_id as _p62_figure_label_from_unit_id,
@@ -133,6 +134,7 @@ from zoteropdf2md.quality_loop.p62_html import (  # noqa: E402
     html_has_recovery_for_label as _html_has_p62_recovery_for_label,
     html_has_stale_page_render_for_label as _html_has_p62_stale_page_render_for_label,
     id_matches_figure_label as _p62_id_matches_figure_label,
+    insert_recovered_figure_unit_for_visible_reference as _insert_p62_recovered_figure_unit_for_visible_reference,
     missing_warning_target_html as _p62_missing_warning_target_html,
     recovered_target_matches_label as _p62_recovered_target_matches_label,
     recovered_target_source as _p62_recovered_target_source,
@@ -697,6 +699,84 @@ def _p62_record_allows_page_render_fallback(record: dict[str, Any]) -> bool:
         return True
     label_pages = record.get("figure_label_pdf_page_candidates")
     return bool(label_pages)
+
+
+def _render_p61_nonduplicate_page_recovery(
+    *,
+    pdf_path: Path,
+    source_page_number: int,
+    figure_label: str,
+    target_figure_key: str,
+    artifact_dir: Path,
+    render_zoom: float,
+    html: str,
+) -> dict[str, Any]:
+    fallback_page, fallback_reason = _p62_render_fallback_page_number(
+        pdf_path,
+        source_page_number,
+        figure_label,
+    )
+    candidate_pages: list[tuple[int, str]] = []
+    seen_pages: set[int] = set()
+    for page_number, reason in (
+        (fallback_page, fallback_reason),
+        (source_page_number, "source_pdf_page"),
+        (source_page_number - 1, "previous_source_pdf_page"),
+        (source_page_number + 1, "next_source_pdf_page"),
+    ):
+        page_number = int(page_number or 0)
+        if page_number <= 0 or page_number in seen_pages:
+            continue
+        seen_pages.add(page_number)
+        candidate_pages.append((page_number, reason))
+
+    attempts: list[dict[str, Any]] = []
+    for page_number, reason in candidate_pages:
+        render_path = (
+            artifact_dir
+            / f"fig_{_slug(figure_label or 'unknown', max_len=20)}_dedupe_{_slug(reason, max_len=32)}_"
+            f"pdf_page_{page_number:04d}.png"
+        )
+        render = _render_pdf_evidence_page(pdf_path, page_number, render_path, zoom=render_zoom)
+        rendered_path = Path(str(render.get("path") or "")) if render.get("path") else None
+        rendered_data_url = _data_url_from_image_file(rendered_path) if rendered_path is not None else ""
+        duplicates_existing = bool(
+            rendered_data_url
+            and _p62_data_url_duplicates_existing_figure_unit(
+                html,
+                rendered_data_url,
+                target_figure_key=target_figure_key,
+            )
+        )
+        attempt = {
+            "page_number": page_number,
+            "selection_reason": reason,
+            "status": render.get("status") or "unknown",
+            "path": render.get("path") or "",
+            "error": render.get("error") or "",
+            "duplicates_existing_figure": duplicates_existing,
+        }
+        attempts.append(attempt)
+        if render.get("status") == "rendered" and rendered_path is not None and rendered_data_url and not duplicates_existing:
+            return {
+                "status": "rendered",
+                "path": str(rendered_path),
+                "page_number": page_number,
+                "selection_reason": reason,
+                "error": "",
+                "data_url": rendered_data_url,
+                "attempts": attempts,
+            }
+
+    return {
+        "status": "all_render_candidates_duplicate_or_unavailable",
+        "path": "",
+        "page_number": 0,
+        "selection_reason": "",
+        "error": "",
+        "data_url": "",
+        "attempts": attempts,
+    }
 
 
 def _p62_false_match_hint_blocks_asset_recovery(
@@ -1444,6 +1524,8 @@ def write_p62_image_recovery_stage(
                         f"{index}/{len(records)} article={_console_text(article_id)} fig={figure_label or '?'}",
                         flush=True,
                     )
+                elif str(record.get("defect_id") or "") == "P61":
+                    pass
                 else:
                     duplicate_repair = (
                         _apply_p62_duplicate_figure_image_repairs(
@@ -1861,6 +1943,63 @@ def write_p62_image_recovery_stage(
                     )
                     if replacements:
                         item["existing_page_render_upgrade"] = recovery_source not in P62_LOW_FIDELITY_RECOVERY_SOURCES
+                if not replacements and str(record.get("defect_id") or "") == "P61":
+                    target_figure_key = str(record.get("target_figure_key") or figure_label or resolved_figure_label)
+                    insert_data_url = data_url
+                    insert_source = recovery_source
+                    insert_detail = recovery_detail
+                    if _p62_data_url_duplicates_existing_figure_unit(
+                        html,
+                        insert_data_url,
+                        target_figure_key=target_figure_key,
+                    ):
+                        render = _render_p61_nonduplicate_page_recovery(
+                            pdf_path=pdf_path,
+                            source_page_number=source_page_number,
+                            figure_label=resolved_figure_label or figure_label,
+                            target_figure_key=target_figure_key,
+                            artifact_dir=artifact_dir,
+                            render_zoom=render_zoom,
+                            html=html,
+                        )
+                        item.update(
+                            {
+                                "page_render_status": render.get("status"),
+                                "page_render_path": render.get("path") or "",
+                                "page_render_page_number": render.get("page_number") or 0,
+                                "page_render_selection_reason": (
+                                    f"p61_duplicate_asset:{render.get('selection_reason') or ''}"
+                                ),
+                                "page_render_error": render.get("error") or "",
+                                "page_render_attempts": render.get("attempts") or [],
+                            }
+                        )
+                        rendered_data_url = str(render.get("data_url") or "")
+                        if rendered_data_url:
+                            insert_data_url = rendered_data_url
+                            insert_source = "pdf_page_render"
+                            insert_detail = str(render.get("path") or "")
+                        else:
+                            item["unresolved_reason"] = "p61_duplicate_asset_no_nonduplicate_page_render"
+                            return html, 0
+                    if re.search(rf"\bid\s*=\s*([\"'])fig-{re.escape(target_figure_key)}\1", html, re.IGNORECASE):
+                        patched, replacements = _replace_p62_figure_unit_target_with_image(
+                            html,
+                            figure_label=target_figure_key,
+                            data_url=insert_data_url,
+                            source=insert_source,
+                            source_detail=insert_detail,
+                        )
+                    else:
+                        patched, replacements = _insert_p62_recovered_figure_unit_for_visible_reference(
+                            html,
+                            target_figure_key=target_figure_key,
+                            visible_label=str(record.get("visible_label") or f"Figure {figure_label or resolved_figure_label}"),
+                            snippet=str(record.get("snippet") or " ".join(record.get("problem_snippets") or [])),
+                            data_url=insert_data_url,
+                            source=insert_source,
+                            source_detail=insert_detail,
+                        )
                 return patched, replacements
 
             result = _apply_p62_html_patch_to_targets(targets, patch_recovered_image)

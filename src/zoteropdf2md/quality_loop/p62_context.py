@@ -40,9 +40,10 @@ def context_fragment(html: str, position: int, *, radius: int) -> str:
     if div_start >= 0 and div_end >= 0 and div_end - position <= max(radius * 2, 20000):
         candidate = html[div_start : div_end + len("</div>")]
         if "z2m-missing" in candidate[: min(len(candidate), position - div_start + 2000)].casefold():
-            return candidate
+            if clean_context_fragment(candidate):
+                return candidate
 
-    before = min(600, max(200, radius // 5))
+    before = min(1400, max(600, radius // 2))
     return html[max(0, position - before) : min(len(html), position + radius)]
 
 

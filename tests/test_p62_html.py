@@ -2,11 +2,13 @@ import base64
 import hashlib
 
 from zoteropdf2md.quality_loop.p62_html import (
+    data_url_duplicates_existing_figure_unit,
     data_url_image_hash,
     extract_html_figure_units,
     html_has_missing_warning_for_figure_unit,
     html_has_recovery_for_label,
     html_has_stale_page_render_for_label,
+    insert_recovered_figure_unit_for_visible_reference,
     replace_figure_unit_target_with_missing_warning,
     replace_missing_warning_with_image,
     replace_recovery_with_missing_warning,
@@ -82,3 +84,85 @@ def test_recovery_source_filtering_and_hash_extraction() -> None:
     assert units[0]["caption"] == "Figure 8. Caption text."
     assert units[0]["image_hashes"] == [hashlib.sha256(b"fig").hexdigest()]
     assert data_url_image_hash(f'<img src="{_DATA_URL}"/>') == hashlib.sha256(b"fig").hexdigest()
+
+
+def test_insert_recovered_figure_unit_for_p61_panel_reference_uses_base_target_key() -> None:
+    html = (
+        "<main>"
+        "<p>The robot was trapped in the area indicated by Figure 11b.</p>"
+        "<p>Discussion resumes.</p>"
+        "</main>"
+    )
+
+    patched, replacements = insert_recovered_figure_unit_for_visible_reference(
+        html,
+        target_figure_key="11",
+        visible_label="Figure 11b",
+        snippet="The robot was trapped in the area indicated by Figure 11b.",
+        data_url=_DATA_URL,
+        source="pdf_figure_region_render",
+        source_detail="fig11b.png",
+    )
+
+    assert replacements == 1
+    assert 'id="fig-11"' in patched
+    assert "Figure 11b" in patched
+    assert 'data-z2m-origin="p61-source-pdf-recovery"' in patched
+    assert patched.index('id="fig-11"') < patched.index("Discussion resumes")
+
+
+def test_insert_recovered_figure_unit_for_p61_does_not_duplicate_existing_target() -> None:
+    html = (
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="fig1.png"/></p>'
+        "</div>"
+        "<p>The result is shown in Figure 1.</p>"
+    )
+
+    patched, replacements = insert_recovered_figure_unit_for_visible_reference(
+        html,
+        target_figure_key="1",
+        visible_label="Figure 1",
+        snippet="The result is shown in Figure 1.",
+        data_url=_DATA_URL,
+        source="pdf_native_image",
+        source_detail="fig1.png",
+    )
+
+    assert replacements == 0
+    assert patched == html
+
+
+def test_insert_recovered_figure_unit_for_p61_allows_ordinary_table_links_in_block() -> None:
+    html = (
+        "<main>"
+        '<p>Based on <a href="#table-2" class="z2m-table-link">Table 2</a>, '
+        "the visual field correlation is significant (Fig. 3).</p>"
+        "</main>"
+    )
+
+    patched, replacements = insert_recovered_figure_unit_for_visible_reference(
+        html,
+        target_figure_key="3",
+        visible_label="Fig. 3",
+        snippet="visual field correlation is significant (Fig. 3)",
+        data_url=_DATA_URL,
+        source="pdf_native_image",
+        source_detail="fig3.png",
+    )
+
+    assert replacements == 1
+    assert 'id="fig-3"' in patched
+    assert "z2m-table-link" in patched
+
+
+def test_data_url_duplicates_existing_figure_unit_ignores_same_target() -> None:
+    html = (
+        '<div id="fig-1" class="z2m-figure-unit">'
+        '<p class="z2m-figure-target z2m-p62-recovered-target">'
+        f'<img src="{_DATA_URL}"/></p>'
+        "</div>"
+    )
+
+    assert data_url_duplicates_existing_figure_unit(html, _DATA_URL, target_figure_key="2") is True
+    assert data_url_duplicates_existing_figure_unit(html, _DATA_URL, target_figure_key="1") is False

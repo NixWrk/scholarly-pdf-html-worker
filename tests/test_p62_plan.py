@@ -28,6 +28,56 @@ def _write_p62_audit(run_dir: Path) -> None:
     write_json(run_dir / "manifest.json", {"articles": []})
 
 
+def _write_p62a_audit(run_dir: Path) -> None:
+    write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "Article One",
+                    "defects_found": [
+                        {
+                            "id": "P62A",
+                            "snippet": "Stale missing Figure 3 warning",
+                            "extra": {
+                                "figure_label": "3",
+                                "warning_index": 1,
+                                "p62_subtype": "same_label_image_near_warning",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    write_json(run_dir / "manifest.json", {"articles": []})
+
+
+def _write_p61_audit(run_dir: Path) -> None:
+    write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "Article With P61",
+                    "defects_found": [
+                        {
+                            "id": "P61",
+                            "snippet": "The robot became trapped in Figure 11b.",
+                            "extra": {
+                                "figure": "11",
+                                "figure_key": "11",
+                                "visible_label": "Figure 11b",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    write_json(run_dir / "manifest.json", {"articles": []})
+
+
 def _deps(
     *,
     selected_pdf: dict | None = None,
@@ -64,6 +114,62 @@ def test_write_marker_recovery_plan_reports_unavailable_source_pdf(tmp_path: Pat
     assert report["status"] == "partial"
     assert report["status_counts"] == {"source_pdf_unavailable": 1}
     assert report["articles"][0]["figure_label"] == "2"
+
+
+def test_write_marker_recovery_plan_includes_p62a_missing_warning(tmp_path: Path) -> None:
+    _write_p62a_audit(tmp_path)
+
+    report = write_marker_recovery_plan(
+        tmp_path,
+        gate_config={},
+        dependencies=_deps(),
+    )
+
+    assert report["candidate_count"] == 1
+    assert report["articles"][0]["figure_label"] == "3"
+    assert report["articles"][0]["warning_origin"] == "same_label_image_near_warning"
+
+
+def test_write_marker_recovery_plan_ignores_p61_by_default(tmp_path: Path) -> None:
+    _write_p61_audit(tmp_path)
+
+    report = write_marker_recovery_plan(
+        tmp_path,
+        gate_config={},
+        dependencies=_deps(),
+    )
+
+    assert report["status"] == "not_required"
+    assert report["candidate_count"] == 0
+
+
+def test_write_marker_recovery_plan_can_include_p61_source_backed_item(tmp_path: Path) -> None:
+    _write_p61_audit(tmp_path)
+    pdf_path = tmp_path / "source.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    report = write_marker_recovery_plan(
+        tmp_path,
+        gate_config={"p62_marker_recovery_include_p61": True},
+        dependencies=_deps(
+            selected_pdf={"path": str(pdf_path), "source": "test", "exists": True},
+            pages=["Figure 11b caption and visual evidence"],
+            resolver={
+                "page_number": 1,
+                "match_score": 0.9,
+                "label_pages": [1],
+                "candidates": [{"page_number": 1, "score": 0.9}],
+            },
+        ),
+    )
+
+    record = report["articles"][0]
+    assert report["status"] == "ready"
+    assert report["candidate_count"] == 1
+    assert record["defect_id"] == "P61"
+    assert record["figure_label"] == "11b"
+    assert record["target_figure_key"] == "11"
+    assert record["marker_page_range"] == "0"
 
 
 def test_write_marker_recovery_plan_builds_ready_single_page_record(tmp_path: Path) -> None:

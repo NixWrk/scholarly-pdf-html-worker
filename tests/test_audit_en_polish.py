@@ -1361,6 +1361,63 @@ def test_analyze_pair_reports_unlinked_sup_citation_range_in_math_context_as_p04
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_ignores_sup_measurement_value_as_p04m() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>This means that impedance cardiography may be <sup>4,11</sup>. "
+            "min<sup>-1</sup> below Fick at rest.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 12))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04M" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_ignores_footnote_backed_sup_range_as_p04m() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>The flow depends on volume. Several investigators used the same principle"
+            "<sup>7-11</sup> In 1967 a new method was described.</p>"
+            '<p class="z2m-footnote" id="footnote-7"><sup>7</sup> Backman reference.</p>'
+            '<p class="z2m-footnote" id="footnote-8"><sup>8</sup> Garrelts reference.</p>'
+            '<p class="z2m-footnote" id="footnote-9"><sup>9</sup> Kaufman reference.</p>'
+            '<p class="z2m-footnote" id="footnote-10"><sup>10</sup> Kaufman reference.</p>'
+            '<p class="z2m-footnote" id="footnote-11"><sup>11</sup> Klein reference.</p>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P04M" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_coordinate_points_as_p04m() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

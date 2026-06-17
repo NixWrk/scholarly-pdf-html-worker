@@ -23,6 +23,20 @@ SUP_NUMERIC_RANGE_RE = re.compile(
     r"</sup>",
     re.IGNORECASE,
 )
+SUP_MEASUREMENT_UNIT_RIGHT_RE = re.compile(
+    r"^\s*(?:[.)]\s*)?"
+    r"(?:"
+    r"(?:l|L|ml|mL|min|s|sec|kg|g|mg|m|cm|mm|um|A|V|Hz|bpm|mmHg)"
+    r"(?:\b|[\s.\u00b7*/^-])|"
+    r"(?:[munp\u00b5\u03bc]?m|[munp\u00b5\u03bc]?A|[munp\u00b5\u03bc]?V)\b"
+    r")",
+    re.IGNORECASE,
+)
+SUP_MEASUREMENT_CONTEXT_RE = re.compile(
+    r"\b(?:above|below|difference|differences|exercise|fick|mean|measured|measurement|"
+    r"rest|sd|value|values?)\b",
+    re.IGNORECASE,
+)
 STAT_NUMERIC_CONTEXT_RE = re.compile(
     r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size|"
     r"statistical\s+power|power\s+analysis)\b",
@@ -163,6 +177,29 @@ def sup_numeric_range_is_software_version(block: Block, match: re.Match[str]) ->
     return False
 
 
+def sup_numeric_range_is_measurement_value(block: Block, match: re.Match[str]) -> bool:
+    """Detect OCR-raised decimal/list values that are followed by physical units."""
+
+    right_text = strip_tags(block.raw[match.end() : match.end() + 260])
+    if SUP_MEASUREMENT_UNIT_RIGHT_RE.match(right_text) is None:
+        return False
+    left_text = strip_tags(block.raw[max(0, match.start() - 220) : match.start()])
+    return SUP_MEASUREMENT_CONTEXT_RE.search(f"{left_text} {right_text}") is not None
+
+
+def unlinked_sup_numeric_range_matches_footnote_targets(block: Block, footnote_numbers: set[int]) -> bool:
+    if not footnote_numbers:
+        return False
+    for match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
+        raw = match.group(0)
+        if "z2m-ref-link" in raw:
+            continue
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", match.group("body"))]
+        if numbers and all(number in footnote_numbers for number in numbers):
+            return True
+    return False
+
+
 def has_unlinked_tagged_citation_range(block: Block) -> bool:
     for match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):
         body = match.group("body")
@@ -176,8 +213,13 @@ def has_unlinked_tagged_citation_range(block: Block) -> bool:
 
 def has_unlinked_sup_numeric_range(block: Block) -> bool:
     for match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
-        if "z2m-ref-link" not in match.group(0):
+        raw = match.group(0)
+        if "z2m-ref-link" not in raw:
+            if "z2m-footnote-ref" in raw:
+                continue
             if sup_numeric_range_is_software_version(block, match):
+                continue
+            if sup_numeric_range_is_measurement_value(block, match):
                 continue
             return True
     return False
@@ -229,7 +271,10 @@ def unlinked_citation_candidate_numbers(block: Block) -> list[int]:
     if match is not None:
         return [int(value) for value in re.findall(r"\d+", match.group(0))]
     for sup_match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
-        if "z2m-ref-link" not in sup_match.group(0):
+        raw = sup_match.group(0)
+        if "z2m-ref-link" not in raw and "z2m-footnote-ref" not in raw:
+            if sup_numeric_range_is_measurement_value(block, sup_match):
+                continue
             return [int(value) for value in re.findall(r"\d+", sup_match.group("body"))]
     for tagged_match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):
         body = tagged_match.group("body")

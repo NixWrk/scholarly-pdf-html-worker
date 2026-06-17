@@ -1239,6 +1239,48 @@ def test_p62_page_resolver_uses_visual_strength_to_break_caption_ties(
     assert (resolver["candidates"] or [])[0]["visual_score"] > (resolver["candidates"] or [])[1]["visual_score"]
 
 
+def test_p61_nonduplicate_page_recovery_skips_duplicate_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    pdf_path.write_bytes(b"%PDF")
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_p62_render_fallback_page_number",
+        lambda *_args, **_kwargs: (4, "caption_near_page_top_previous_page"),
+    )
+
+    def fake_render(_pdf_path: Path, page_number: int, out_path: Path, *, zoom: float) -> dict[str, str]:
+        return {"status": "rendered", "path": str(out_path), "error": ""}
+
+    def fake_data_url(path: Path) -> str:
+        return f"data:image/png;base64,page-{path.stem[-4:]}"
+
+    def fake_duplicates(_html: str, data_url: str, *, target_figure_key: str) -> bool:
+        return data_url.endswith("0004")
+
+    monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fake_render)
+    monkeypatch.setattr(llm_quality_loop, "_data_url_from_image_file", fake_data_url)
+    monkeypatch.setattr(llm_quality_loop, "_p62_data_url_duplicates_existing_figure_unit", fake_duplicates)
+
+    result = llm_quality_loop._render_p61_nonduplicate_page_recovery(
+        pdf_path=pdf_path,
+        source_page_number=5,
+        figure_label="7",
+        target_figure_key="7",
+        artifact_dir=tmp_path / "artifacts",
+        render_zoom=1.0,
+        html="<html></html>",
+    )
+
+    assert result["status"] == "rendered"
+    assert result["page_number"] == 5
+    assert result["selection_reason"] == "source_pdf_page"
+    assert [attempt["duplicates_existing_figure"] for attempt in result["attempts"]] == [True, False]
+
+
 def test_p62_page_resolver_does_not_treat_accepted_article_header_as_backmatter(
     tmp_path: Path,
     monkeypatch,

@@ -38,6 +38,13 @@ RIGHT_AUTHOR_YEAR_FIGURE_CONTEXT_RE = re.compile(
     r"(?:,?\s*\((?:19|20)\d{2}[a-z]?\)|,?\s+(?:19|20)\d{2}[a-z]?)",
     re.IGNORECASE,
 )
+DANGLING_RIGHT_AUTHOR_CONTEXT_RE = re.compile(
+    r"^\s*(?:[,;:]\s*)?"
+    r"(?:(?:subject|panel|image|plot|curve|data|model|table)\s+\d{1,3}\s+)?"
+    r"(?:of\s+|from\s+|in\s+)?"
+    r"[A-Z][A-Za-z'`\-]+(?:\s+et\s+al\.)?\s*,?\s*$",
+    re.IGNORECASE,
+)
 EXTERNAL_COPYRIGHT_FIGURE_CONTEXT_RE = re.compile(
     r"\b(?:copyright\s+constraints?|copyright|cannot\s+replicate|not\s+replicated|"
     r"not\s+reproduced|permission|adapted\s+from|reprinted\s+from)\b",
@@ -105,7 +112,16 @@ def has_nearby_fig_link(block: Block, figure_key: str, text_pos: int) -> bool:
         raw_window = block.raw
     else:
         raw_window = block.raw[max(0, text_pos - 180) : text_pos + 220]
-    return re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_key)}['\"]", raw_window, re.IGNORECASE) is not None
+    if re.search(rf"href\s*=\s*['\"]#fig-{re.escape(figure_key)}['\"]", raw_window, re.IGNORECASE):
+        return True
+    return (
+        re.search(
+            rf"href\s*=\s*['\"]#fig-\d{{1,3}}-{re.escape(figure_key)}['\"]",
+            raw_window,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def is_existing_target_with_glued_numeric_suffix(
@@ -127,14 +143,33 @@ def is_existing_target_with_glued_numeric_suffix(
     return int(visible_number) > max(target_numbers)
 
 
-def is_external_author_year_figure_ref(block: Block, match: re.Match[str]) -> bool:
+def is_standalone_panel_label_ref(block: Block, match: re.Match[str]) -> bool:
+    if not match.group("letter"):
+        return False
+    left = block.text[: match.start()].strip()
+    right = block.text[match.end():].strip()
+    return not left and re.fullmatch(r"[\)\]\.:;\-\u2010-\u2014]*", right) is not None
+
+
+def normalized_inline_context(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_external_author_year_figure_ref(
+    block: Block, match: re.Match[str], next_block: Block | None = None
+) -> bool:
     left = block.text[max(0, match.start() - 120) : match.start()]
     if AUTHOR_YEAR_FIGURE_PREFIX_RE.search(left):
         return True
 
     right = block.text[match.end() : min(len(block.text), match.end() + 220)]
-    if RIGHT_AUTHOR_YEAR_FIGURE_CONTEXT_RE.search(right):
+    right_context = normalized_inline_context(right)
+    if RIGHT_AUTHOR_YEAR_FIGURE_CONTEXT_RE.search(right_context):
         return True
+    if next_block is not None and DANGLING_RIGHT_AUTHOR_CONTEXT_RE.search(right_context):
+        split_right = normalized_inline_context(f"{right_context} {next_block.text[:120]}")
+        if RIGHT_AUTHOR_YEAR_FIGURE_CONTEXT_RE.search(split_right):
+            return True
     if EXTERNAL_COPYRIGHT_FIGURE_CONTEXT_RE.search(right):
         return True
 
@@ -159,16 +194,22 @@ def visible_figure_target_defects(
     stage: str,
 ) -> list[Defect]:
     target_numbers = figure_target_numbers_from_keys(fig_targets)
-    for block in body_blocks:
+    blocks = list(body_blocks)
+    for index, block in enumerate(blocks):
         if looks_like_float_or_caption(block):
             continue
+        next_block = blocks[index + 1] if index + 1 < len(blocks) else None
+        if next_block is not None and looks_like_float_or_caption(next_block):
+            next_block = None
         for match in VISIBLE_FIGURE_REF_RE.finditer(block.text):
             figure_key = figure_key_from_visible_match(match)
             if is_external_supplementary_figure_ref(match):
                 continue
-            if is_external_author_year_figure_ref(block, match):
+            if is_external_author_year_figure_ref(block, match, next_block):
                 continue
             if figure_key in fig_targets:
+                continue
+            if is_standalone_panel_label_ref(block, match):
                 continue
             if is_existing_target_with_glued_numeric_suffix(match, figure_key, fig_targets, target_numbers):
                 continue

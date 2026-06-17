@@ -52,6 +52,29 @@ def test_unlinked_citation_range_kind_splits_math_sup_range() -> None:
     assert unlinked_citation_candidate_numbers(block) == [28, 31]
 
 
+def test_unlinked_sup_numeric_range_ignores_footnote_ref_range() -> None:
+    block = _block(
+        "Several investigators used refinements. 7-11 In 1967.",
+        raw='<p>Several investigators used refinements.<sup class="z2m-footnote-ref">7-11</sup> In 1967.</p>',
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+    assert unlinked_citation_range_kind(
+        block,
+        looks_like_float_or_caption=lambda _block: False,
+        block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+    ) == ""
+
+
+def test_unlinked_sup_numeric_range_ignores_measurement_unit_suffix() -> None:
+    block = _block(
+        "The value may be 4,11 min-1 below Fick.",
+        raw="<p>The value may be <sup>4,11</sup>. min<sup>-1</sup> below Fick.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+
+
 def test_unlinked_sup_numeric_range_ignores_software_version() -> None:
     block = _block(
         "The Python version 3, 10 was used.",

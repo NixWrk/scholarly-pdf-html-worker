@@ -19,6 +19,15 @@ def _defects(block: Block, targets: set[str] | None = None):
     )
 
 
+def _defects_for_blocks(blocks: list[Block], targets: set[str] | None = None):
+    return visible_figure_target_defects(
+        blocks,
+        targets or set(),
+        looks_like_float_or_caption=lambda _block: False,
+        stage="02.en.polish.html",
+    )
+
+
 def test_figure_key_from_visible_number_normalizes_ranges_and_panels() -> None:
     assert figure_key_from_visible_number("3D") == "3d"
     assert figure_key_from_visible_number("4 - 5") == "4-5"
@@ -108,6 +117,19 @@ def test_visible_figure_target_defects_accepts_nearby_existing_link() -> None:
     assert _defects(block) == []
 
 
+def test_visible_figure_target_defects_accepts_nearby_chapter_local_link() -> None:
+    block = _block(
+        "The CED output in the plain environment (Figure 4B) matched the target.",
+        raw=(
+            '<p>The CED output in the plain environment '
+            '(<a href="#fig-2-4" class="z2m-fig-link">Figure 4B</a>) matched the target.</p>'
+        ),
+    )
+
+    assert _defects(block, {"2-4"}) == []
+    assert [defect.id for defect in _defects(_block(block.text), {"2-4"})] == ["P61"]
+
+
 def test_visible_figure_target_defects_ignores_external_author_year_figure_citation() -> None:
     block = _block(
         "Perusal of published distributions (Fiorani et al., 1992, Fig. 5; "
@@ -124,6 +146,24 @@ def test_visible_figure_target_defects_ignores_right_author_year_figure_citation
     )
 
     assert _defects(block) == []
+
+
+def test_visible_figure_target_defects_ignores_split_right_author_year_figure_citation() -> None:
+    blocks = [
+        _block("The model is consistent with prior reconstructions (see Fig. 9A in Albus,", index=0),
+        _block("1975). The local observations are discussed below.", index=1),
+    ]
+
+    assert _defects_for_blocks(blocks) == []
+
+
+def test_visible_figure_target_defects_keeps_split_local_figure_without_author_year() -> None:
+    blocks = [
+        _block("The local result is summarized in Fig. 9A in Appendix,", index=0),
+        _block("where the measurement procedure is documented.", index=1),
+    ]
+
+    assert [defect.id for defect in _defects_for_blocks(blocks)] == ["P61"]
 
 
 def test_visible_figure_target_defects_ignores_unreplicated_copyright_figure() -> None:
@@ -157,6 +197,12 @@ def test_visible_figure_target_defects_keeps_real_missing_large_figure_number() 
     block = _block("No further screenshot of the parameter Figure 50: The info screen is in the appendix.")
 
     assert [defect.id for defect in _defects(block, {"5", "49", "51", "52", "66"})] == ["P61"]
+
+
+def test_visible_figure_target_defects_ignores_standalone_panel_label() -> None:
+    assert _defects(_block("FIG. 2D")) == []
+    assert _defects(_block("Fig. 7A.")) == []
+    assert [defect.id for defect in _defects(_block("FIG. 2D depicts a top view."))] == ["P61"]
 
 
 def test_visible_figure_target_defects_keeps_local_figure_after_author_year_sentence() -> None:

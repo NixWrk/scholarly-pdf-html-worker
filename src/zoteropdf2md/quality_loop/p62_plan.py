@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from zoteropdf2md.marker_runner import build_marker_single_command
@@ -14,6 +15,7 @@ from zoteropdf2md.quality_loop.source_pdf import manifest_article_by_id
 
 
 DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
+DEFAULT_MARKER_RECOVERY_DEFECT_IDS = {"P62", "P62A"}
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,50 @@ class P62MarkerRecoveryPlanDependencies:
     pdf_text_pages: Callable[..., tuple[str, list[str], str | None]]
     resolve_pdf_page_for_figure: Callable[..., dict[str, Any]]
     validate_marker_output: Callable[[Path, str], dict[str, Any]]
+
+
+def _visible_label_from_p61_defect(defect: dict[str, Any]) -> str:
+    extra = defect_extra(defect)
+    visible_label = str(extra.get("visible_label") or "").strip()
+    if visible_label:
+        match = re.search(
+            r"\b(?:Fig(?:ure)?\.?|FIG(?:URE)?\.?)\s*(?P<label>\d{1,3}[A-Za-z]?)\b",
+            visible_label,
+            re.IGNORECASE,
+        )
+        if match is not None:
+            return match.group("label")
+    return str(extra.get("figure_key") or extra.get("figure") or "").strip()
+
+
+def figure_label_for_recovery_defect(defect: dict[str, Any]) -> str:
+    extra = defect_extra(defect)
+    figure_label = str(extra.get("figure_label") or "").strip()
+    if figure_label:
+        return figure_label
+    if str(defect.get("id") or "") == "P61":
+        return _visible_label_from_p61_defect(defect)
+    return ""
+
+
+def figure_target_key_for_recovery_defect(defect: dict[str, Any], figure_label: str) -> str:
+    extra = defect_extra(defect)
+    if str(defect.get("id") or "") == "P61":
+        target_key = str(extra.get("figure_key") or extra.get("figure") or "").strip()
+        if target_key:
+            return target_key
+    label = str(figure_label or "").strip()
+    label_match = re.fullmatch(r"(?P<num>\d{1,3})(?P<panel>[A-Za-z])?", label)
+    if label_match is not None:
+        return label_match.group("num")
+    return label
+
+
+def marker_recovery_defect_ids(gate_config: dict[str, Any]) -> set[str]:
+    defect_ids = set(DEFAULT_MARKER_RECOVERY_DEFECT_IDS)
+    if gate_config.get("p62_marker_recovery_include_p61"):
+        defect_ids.add("P61")
+    return defect_ids
 
 
 def write_marker_recovery_plan(
@@ -60,6 +106,7 @@ def write_marker_recovery_plan(
     retry_full_pdf_on_label_miss = bool(
         gate_config.get("p62_marker_recovery_retry_full_pdf_on_label_miss", True)
     )
+    recovery_defect_ids = marker_recovery_defect_ids(gate_config)
 
     audit = load_json(run_dir / "audit_full_checks.json", default={"articles": []})
     manifest = load_json(run_dir / "manifest.json", default={})
@@ -71,7 +118,7 @@ def write_marker_recovery_plan(
         if not isinstance(article, dict):
             continue
         for defect_index, defect in enumerate(article.get("defects_found") or [], start=1):
-            if isinstance(defect, dict) and str(defect.get("id") or "") == "P62":
+            if isinstance(defect, dict) and str(defect.get("id") or "") in recovery_defect_ids:
                 p62_items.append((article, defect, defect_index))
 
     selected_items = p62_items[:max_items] if max_items > 0 else p62_items
@@ -82,7 +129,8 @@ def write_marker_recovery_plan(
         article_id = str(article.get("article") or f"article_{index}")
         manifest_article = manifest_by_article.get(article_id, {})
         extra = defect_extra(defect)
-        figure_label = str(extra.get("figure_label") or "").strip()
+        figure_label = figure_label_for_recovery_defect(defect)
+        target_figure_key = figure_target_key_for_recovery_defect(defect, figure_label)
         article_dir = output_root / f"{index:03d}_{slug(article_id, max_len=72)}"
         if figure_label:
             article_dir = article_dir / f"fig_{slug(figure_label, max_len=20)}"
@@ -124,7 +172,10 @@ def write_marker_recovery_plan(
             "article": article_id,
             "source_article": article.get("source_article") or article_id,
             "defect_index": defect_index,
+            "defect_id": defect.get("id"),
             "figure_label": figure_label,
+            "target_figure_key": target_figure_key,
+            "visible_label": extra.get("visible_label") or "",
             "resolved_figure_label": resolved_figure_label,
             "warning_index": extra.get("warning_index"),
             "warning_origin": extra.get("warning_origin") or extra.get("p62_subtype"),

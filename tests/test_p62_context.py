@@ -1,44 +1,31 @@
-from zoteropdf2md.quality_loop.p62_context import (
-    clean_context_fragment,
-    recovery_snippets,
-    warning_context_from_html,
-)
+from zoteropdf2md.quality_loop.p62_context import recovery_snippets
 
 
-def test_clean_context_fragment_removes_missing_warning_boilerplate_and_images() -> None:
-    fragment = (
-        "<p>Figure 2 image was not extracted into this HTML. "
-        "Please check the original PDF for the missing visual content.</p>"
-        "<p><img src='data:image/png;base64,AAAA'> Real caption text.</p>"
-    )
-
-    assert clean_context_fragment(fragment) == "[image] Real caption text."
-
-
-def test_warning_context_from_html_selects_matching_label_and_warning_index() -> None:
+def test_recovery_snippets_use_surrounding_context_for_warning_only_sequence_gap() -> None:
     html = (
-        "<div><p>Figure 1 image was not extracted into this HTML.</p>"
-        "<p>Wrong nearby context.</p></div>"
-        "<div class='z2m-missing'><p>Figure 2 image was not extracted into this HTML.</p>"
-        "<p>Expected nearby context.</p></div>"
+        "<html><body>"
+        "<p>The directional control pattern is shown in Figure 3 and depends on bearing angle.</p>"
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p data-z2m-origin="sequence-gap-missing-target" '
+        'class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 3 image was not extracted into this HTML. "
+        "Please check the original PDF for the missing visual content."
+        "</p>"
+        "</div>"
+        "<p>The rotational control is shown later.</p>"
+        "</body></html>"
     )
-    defect = {"extra": {"figure_label": "2", "warning_index": 1}}
 
-    context, source = warning_context_from_html(html, defect, radius=800)
+    snippets, context, source = recovery_snippets(
+        html,
+        {
+            "snippet": "Figure 3 image was not extracted into this HTML.",
+            "extra": {"figure_label": "3", "warning_index": 1},
+        },
+        context_chars=1000,
+    )
 
     assert source == "warning_text_regex"
-    assert "Expected nearby context" in context
-    assert "Wrong nearby context" not in context
-
-
-def test_recovery_snippets_falls_back_to_defect_snippet_when_warning_missing() -> None:
-    defect = {
-        "snippet": "Figure 4 missing visual near the methods section",
-        "extra": {"figure_label": "4"},
-    }
-
-    snippets, context, source = recovery_snippets("", defect, context_chars=1200)
-
-    assert context == ""
-    assert source == "html_unavailable"
-    assert snippets == ["Figure 4 missing visual near the methods section"]
+    assert "directional control pattern" in context
+    assert "Figure 3 image was not extracted" not in context
+    assert "Fig. 3" in snippets

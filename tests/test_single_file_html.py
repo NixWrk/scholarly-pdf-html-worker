@@ -20,6 +20,7 @@ from zoteropdf2md.single_file_html import (
     _repair_latin_detached_accent_artifacts_in_visible_text,
     _repair_sentence_breaks_around_float_units,
     _repair_sup_figure_chain_continuations,
+    _recover_unique_bare_source_named_figure_units,
     _split_table_units_before_section_headings,
     _to_data_url,
     _validate_data_url,
@@ -673,6 +674,510 @@ def test_polish_html_document_wraps_bare_image_in_sequence_gap() -> None:
     assert fig3_match is not None
     assert "learning-trends.jpg" in fig3_match.group(0)
     assert "z2m-figure-target" in fig3_match.group(0)
+
+
+def test_polish_html_document_wraps_leading_bare_image_before_first_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        "<p>The route guidance task is shown in Figure 1.</p>"
+        '<p><img src="route-guidance-task.jpg"/></p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="training-performance.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Training performance.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    assert "route-guidance-task.jpg" in fig1_match.group(0)
+    assert "z2m-figure-target" in fig1_match.group(0)
+
+
+def test_polish_html_document_does_not_wrap_leading_gap_with_image_count_mismatch() -> None:
+    html = (
+        "<html><body>"
+        "<p>The participant flow is shown in Figure 1.</p>"
+        '<p><img src="flow-diagram.jpg"/></p>'
+        '<p><img src="publisher-logo.jpg"/></p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="outcomes.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Outcomes.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    assert "flow-diagram.jpg" in polished
+    assert "publisher-logo.jpg" in polished
+    assert "Figure 1 image was not extracted" not in polished
+
+
+def test_polish_html_document_marks_leading_gap_without_image_as_missing_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        "<p>The scanning sequence is summarized in Figure 1.</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="task.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Spatial task.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    assert 'data-z2m-origin="sequence-gap-missing-target"' in fig1_match.group(0)
+    assert "Figure 1 image was not extracted" in fig1_match.group(0)
+    assert polished.index('id="fig-1"') < polished.index('id="fig-2"')
+
+
+def test_polish_html_document_does_not_mark_leading_gap_when_mention_precedes_visuals() -> None:
+    html = (
+        "<html><body>"
+        "<p>The participant flow is shown in Figure 1.</p>"
+        '<p><img src="flow-diagram.jpg"/></p>'
+        '<p><img src="publisher-logo.jpg"/></p>'
+        "<p>The later task is shown below.</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="outcomes.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Outcomes.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    assert "Figure 1 image was not extracted" not in polished
+
+
+def test_polish_html_document_does_not_wrap_partial_leading_image_gap() -> None:
+    html = (
+        "<html><body>"
+        "<p>The baseline endoscopy is shown in Figure 1.</p>"
+        "<p>The preoperative scan is shown in Figure 2.</p>"
+        "<p>The postoperative scan is shown in Figure 3.</p>"
+        '<p><img src="baseline-endoscopy.jpg"/></p>'
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="follow-up.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Follow-up findings.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    assert 'id="fig-2"' not in polished
+    assert 'id="fig-3"' not in polished
+    assert "baseline-endoscopy.jpg" in polished
+
+
+def test_polish_html_document_does_not_wrap_distant_frontmatter_image_as_partial_leading_gap() -> None:
+    html = (
+        "<html><body>"
+        '<p><img src="journal-cover.jpg"/></p>'
+        f"<p>{'Front matter text. ' * 260}</p>"
+        "<p>The baseline endoscopy is shown in Figure 1.</p>"
+        "<p>The preoperative scan is shown in Figure 2.</p>"
+        "<p>The postoperative scan is shown in Figure 3.</p>"
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="follow-up.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Follow-up findings.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    assert 'id="fig-2"' not in polished
+    assert 'id="fig-3"' not in polished
+    assert "journal-cover.jpg" in polished
+
+
+def test_polish_html_document_splits_leading_image_run_from_first_sequence_unit() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 1 shows the baseline exam. Figure 2 shows the CT scan. "
+        "Figure 3 shows navigation setup.</p>"
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="baseline.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="ct-scan.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="navigation.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="eye-position.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Eye position before surgery.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    for fig_num, image in [
+        ("1", "baseline.jpg"),
+        ("2", "ct-scan.jpg"),
+        ("3", "navigation.jpg"),
+        ("4", "eye-position.jpg"),
+    ]:
+        fig_match = re.search(
+            rf'<div\b(?=[^>]*\bid="fig-{fig_num}")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+            polished,
+        )
+        assert fig_match is not None
+        assert image in fig_match.group(0)
+
+    fig4_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-4")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig4_match is not None
+    assert "baseline.jpg" not in fig4_match.group(0)
+    assert "Figure 4. Eye position before surgery." in fig4_match.group(0)
+
+
+def test_polish_html_document_does_not_split_two_image_first_unit_as_missing_predecessor() -> None:
+    html = (
+        "<html><body>"
+        "<p>Figure 1 describes the MRI acquisition protocol.</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="maze-visible-platform.jpg"/></p>'
+        '<p class="z2m-figure-target"><img src="maze-hidden-platform.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Screenshots of the virtual maze task.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-1"' not in polished
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig2_match is not None
+    assert "maze-visible-platform.jpg" in fig2_match.group(0)
+    assert "maze-hidden-platform.jpg" in fig2_match.group(0)
+
+
+def test_polish_html_document_marks_leading_gap_when_first_unit_images_are_source_named() -> None:
+    html = (
+        "<html><body>"
+        "<p>The scan workflow is summarized in Figure 1.</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img data-z2m-src="_page_3_Figure_2.jpeg" src="fig2a.jpg"/></p>'
+        '<p class="z2m-figure-target"><img data-z2m-src="_page_3_Figure_3.jpeg" src="fig2b.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Screenshots of the navigation task.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    assert "Figure 1 image was not extracted" in fig1_match.group(0)
+
+
+def test_polish_html_document_wraps_unique_bare_source_named_figure() -> None:
+    html = (
+        "<html><body>"
+        "<p>The stimulation setup is summarized in Figure 1.</p>"
+        '<p><img src="_page_3_Figure_1.jpeg"/></p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="_page_4_Figure_2.jpeg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Outcome comparison.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    assert "_page_3_Figure_1.jpeg" in fig1_match.group(0)
+    assert "z2m-figure-target" in fig1_match.group(0)
+
+
+def test_polish_html_document_wraps_minimal_source_named_figure_without_existing_units() -> None:
+    html = (
+        "<html><body>"
+        "<p>The trial flowchart is shown in Fig. 1.</p>"
+        '<p><img src="_page_3_Figure_1.jpeg"/></p>'
+        "<p>The navigation setup is shown in Fig. 2.</p>"
+        '<p><img src="_page_4_Picture_11.jpeg"/></p>'
+        "</body></html>"
+    )
+
+    polished = _recover_unique_bare_source_named_figure_units(html)
+
+    fig1_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-1")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig1_match is not None
+    assert "_page_3_Figure_1.jpeg" in fig1_match.group(0)
+    assert 'id="fig-2"' not in polished
+
+
+def test_polish_html_document_does_not_wrap_ambiguous_bare_source_named_figures() -> None:
+    html = (
+        "<html><body>"
+        "<p>The stimulation setup is summarized in Figure 1.</p>"
+        '<p><img src="_page_3_Figure_1.jpeg"/></p>'
+        "<p>Additional page artwork was extracted separately.</p>"
+        '<p><img src="_page_4_Figure_1.jpeg"/></p>'
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="_page_4_Figure_2.jpeg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Outcome comparison.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = _recover_unique_bare_source_named_figure_units(html)
+
+    assert 'id="fig-1"' not in polished
+    assert "_page_3_Figure_1.jpeg" in polished
+    assert "_page_4_Figure_1.jpeg" in polished
+
+
+def test_polish_html_document_wraps_multiple_bare_images_in_sequence_gap() -> None:
+    html = (
+        "<html><body>"
+        "<p>Bipolar stimulation is summarized in Figure 9.</p>"
+        "<p>The dynamic operation image is shown in Figure 10.</p>"
+        '<div id="fig-8" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="sequential-map.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 8. Sequential stimulation map.</p>'
+        "</div>"
+        '<p><img src="bipolar-stimulation.jpg"/></p>'
+        "<p>Dynamic operation test</p>"
+        '<p><img src="dynamic-operation.jpg"/></p>'
+        '<div id="fig-11" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="real-time-test.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 11. Real time dynamic operation.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig9_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-9")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    fig10_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-10")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig9_match is not None
+    assert fig10_match is not None
+    assert "bipolar-stimulation.jpg" in fig9_match.group(0)
+    assert "dynamic-operation.jpg" in fig10_match.group(0)
+    assert "z2m-figure-target" in fig9_match.group(0)
+    assert "z2m-figure-target" in fig10_match.group(0)
+
+
+def test_polish_html_document_does_not_wrap_multi_sequence_gap_with_image_count_mismatch() -> None:
+    html = (
+        "<html><body>"
+        "<p>Bipolar stimulation is summarized in Figure 9.</p>"
+        "<p>The dynamic operation image is shown in Figure 10.</p>"
+        '<div id="fig-8" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="sequential-map.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 8. Sequential stimulation map.</p>'
+        "</div>"
+        '<p><img src="ambiguous-gap-image.jpg"/></p>'
+        '<div id="fig-11" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="real-time-test.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 11. Real time dynamic operation.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-9"' not in polished
+    assert 'id="fig-10"' not in polished
+    assert "ambiguous-gap-image.jpg" in polished
+
+
+def test_polish_html_document_marks_sequence_gap_without_image_as_missing_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="controller.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Guidance system architecture.</p>'
+        "</div>"
+        "<p>The directional control pattern is shown in Figure 3.</p>"
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="direction-signal.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Continuous direction signal.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig3_match is not None
+    fig3 = fig3_match.group(0)
+    assert 'data-z2m-origin="sequence-gap-missing-target"' in fig3
+    assert "Figure 3 image was not extracted" in fig3
+    assert "z2m-figure-target" in fig3
+
+
+def test_polish_html_document_does_not_mark_unmentioned_sequence_gap_as_missing() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="controller.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Guidance system architecture.</p>'
+        "</div>"
+        "<p>The next section describes the direction signal.</p>"
+        '<div id="fig-4" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="direction-signal.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 4. Continuous direction signal.</p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-3"' not in polished
+    assert "Figure 3 image was not extracted" not in polished
+
+
+def test_polish_html_document_wraps_trailing_bare_image_after_last_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        "<p>A detailed map (Fig. 2) of the relative position of each phosphene was prepared.</p>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="electrode-array.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 1 Array of electrodes.</p>'
+        "</div>"
+        "<p>Consequently, as indicated in Fig. 2, six phosphenes were selected.</p>"
+        '<p><img src="phosphene-map.jpg"/></p>'
+        "<p>by the intrinsic phosphene flicker.</p>"
+        '<p class="z2m-front-matter">We thank the patient and his family.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig2_match is not None
+    assert "phosphene-map.jpg" in fig2_match.group(0)
+    assert "z2m-figure-target" in fig2_match.group(0)
+
+
+def test_polish_html_document_does_not_wrap_trailing_bare_image_after_backmatter() -> None:
+    html = (
+        "<html><body>"
+        "<p>A detailed map (Fig. 2) of the relative position of each phosphene was prepared.</p>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="electrode-array.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 1 Array of electrodes.</p>'
+        "</div>"
+        '<p class="z2m-front-matter">We thank the patient and his family.</p>'
+        '<p><img src="publisher-mark.jpg"/></p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-2"' not in polished
+    assert "publisher-mark.jpg" in polished
+
+
+def test_polish_html_document_marks_trailing_gap_without_image_as_missing_figure_unit() -> None:
+    html = (
+        "<html><body>"
+        "<p>The final phosphene map is summarized in Fig. 2.</p>"
+        '<div id="fig-1" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="electrode-array.jpg"/></p>'
+        '<p class="z2m-figure-caption">Fig. 1 Array of electrodes.</p>'
+        "</div>"
+        "<p>Consequently, Fig. 2 identified the selected phosphenes.</p>"
+        "<h2>References</h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig2_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-2")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig2_match is not None
+    assert "Figure 2 image was not extracted" in fig2_match.group(0)
+
+
+def test_polish_html_document_marks_final_next_gap_mentioned_before_last_unit_as_missing() -> None:
+    html = (
+        "<html><body>"
+        "<p>The camera rig is shown in Figure 2. Two array layouts are shown in Figure 3.</p>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="camera-rig.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 2. Camera rig used for the experiment.</p>'
+        "</div>"
+        "<h2>Methods</h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    fig3_match = re.search(
+        r'<div\b(?=[^>]*\bid="fig-3")(?=[^>]*\bz2m-missing-figure-unit\b)[^>]*>[\s\S]*?</div>',
+        polished,
+    )
+    assert fig3_match is not None
+    assert "Figure 3 image was not extracted" in fig3_match.group(0)
+    assert polished.index('id="fig-2"') < polished.index('id="fig-3"')
+
+
+def test_polish_html_document_does_not_mark_nonconsecutive_trailing_gap_as_missing() -> None:
+    html = (
+        "<html><body>"
+        "<p>The final result appears in Figure 9.</p>"
+        '<div id="fig-6" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-target"><img src="figure-6.jpg"/></p>'
+        '<p class="z2m-figure-caption">Figure 6. Last extracted result.</p>'
+        "</div>"
+        "<p>Figure 9 compares the held-out condition.</p>"
+        "<h2>References</h2>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="fig-7"' not in polished
+    assert 'id="fig-8"' not in polished
+    assert 'id="fig-9"' not in polished
+    assert "image was not extracted into this HTML" not in polished
 
 
 def test_polish_html_document_does_not_wrap_sequence_gap_without_visible_reference() -> None:
@@ -5693,6 +6198,26 @@ def test_polish_html_document_protects_page_footnote_marker_from_ref_linking() -
     assert 'href="#ref-2"' in body
 
 
+def test_polish_html_document_marks_footnote_range_refs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Several investigators have used the same principle with various refinements.<sup>7-11</sup> "
+        "In 1967 a new technique was described.</p>"
+        '<p><sup>7</sup> Backman, K. A. and Von Garrelts, B.: Apparatus for recording micturition.</p>'
+        '<p><sup>8</sup> Von Garrelts, B.: Analysis of micturition.</p>'
+        '<p><sup>9</sup> Kaufman, J. J.: A new recording uroflowmeter.</p>'
+        '<p><sup>10</sup> Kaufman, J. J.: Uroflowmetry in urological diagnosis.</p>'
+        '<p><sup>11</sup> Klein, G. and Collins, W. E.: A uroflowmeter for clinical use.</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'id="footnote-7"' in polished
+    assert 'id="footnote-11"' in polished
+    assert '<sup class="z2m-footnote-ref">7-11</sup>' in polished
+
+
 def test_polish_html_document_repairs_url_footnotes_split_as_page_links() -> None:
     html = (
         "<html><body>"
@@ -6630,6 +7155,31 @@ def test_polish_html_document_recovers_rsc_line_numbered_reference_ids() -> None
     assert '<li id="ref-28"><span class="z2m-ref-num">28.</span> S. Mishra' in ref_section
     assert "55 10 X. He" not in ref_section
     assert "75 21 X. Chen" not in ref_section
+
+
+def test_polish_html_document_trims_adjacent_article_after_references() -> None:
+    html = (
+        "<html><body>"
+        "<h2>'Braille' reading by a blind volunteer by visual cortex stimulation</h2>"
+        "<p>Received October 20; accepted November 4, 1975.</p>"
+        '<p block-type="ListGroup" class="z2m-front-matter"><ul>'
+        "<li>Brindley, G. S., and Lewin, W., J. Physiol., Lond., 196, 479-493 (1968). "
+        "Brindley, G. S., Handbook of Sensory Physiology, 7, 583-594 "
+        "(Springer-Verlag, New York, 1973). Dobelle, W. H., Science, 183, 440-444 (1974). "
+        "Mladejovsky, M. G., Dobelle, W. H., and Brackmann, D. E., "
+        "Trans. Am. Soc. Artif. Int. Organs, 21, 1-6 (1975).</li>"
+        "</ul></p>"
+        "<h2><b>Ethylene-induced volatile</b> inhibitors causing soil fungistasis</h2>"
+        "<p>THE phenomenon of soil fungistasis<sup>1-3</sup> was described elsewhere.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Mladejovsky" in polished
+    assert "Ethylene-induced" not in polished
+    assert "fungistasis" not in polished
+    assert polished.rstrip().endswith("</body></html>")
 
 
 def test_polish_html_document_retargets_author_year_page_links_to_reference_ids() -> None:
@@ -7792,6 +8342,27 @@ def test_link_figure_refs_wraps_decimal_and_chapter_style_numbers() -> None:
     assert '<a href="#fig-57-5" class="z2m-fig-link">Figure\xa057-5</a>' in linked
     assert 'href="#fig-3"' not in linked
     assert 'href="#fig-57"' not in linked
+
+
+def test_link_figure_refs_links_chapter_local_panel_ref_from_section_context() -> None:
+    html = (
+        '<h3 id="section-2-4-3">2.4.3. Discussion</h3>'
+        "<p>The CED output in the plain environment (Figure 4B) matched the target.</p>"
+    )
+
+    linked = _link_figure_refs(html, {"2-4", "3-4", "4-1"})
+
+    assert '<a href="#fig-2-4" class="z2m-fig-link">Figure\xa04B</a>' in linked
+    assert 'href="#fig-4"' not in linked
+
+
+def test_link_figure_refs_does_not_link_chapter_local_panel_without_section_context() -> None:
+    html = "<p>The CED output in the plain environment (Figure 4B) matched the target.</p>"
+
+    linked = _link_figure_refs(html, {"2-4", "3-4", "4-1"})
+
+    assert "z2m-fig-link" not in linked
+    assert "Figure 4B" in linked
 
 
 def test_link_figure_refs_links_supplementary_refs_to_supplementary_targets() -> None:
