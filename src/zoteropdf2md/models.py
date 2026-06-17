@@ -60,10 +60,6 @@ class PipelineSummary:
     zotero_html_failed_total: int = 0
     zotero_html_queued_total: int = 0
     zotero_pending_total: int = 0
-    translated_html_total: int = 0
-    translated_html_failed_total: int = 0
-    translated_html_language_code: str = ""
-    translated_html_language_name: str = ""
     webdav_uploaded_total: int = 0
     webdav_failed_total: int = 0
     webdav_queued_total: int = 0

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .export_modes import ExportMode, parse_export_mode
-from .translation.languages import DEFAULT_GEMMA_MODEL
 from .models import ResolvedAttachment
 from .staging import DEFAULT_MAX_BASE_LEN
 
@@ -29,20 +28,6 @@ class PipelineOptions:
     # Comma-separated export modes, e.g. "classic" or "classic,llm_bundle".
     # Multiple modes sharing the same marker_output_format run with one Marker call.
     export_mode: str = ExportMode.CLASSIC.value
-    # Legacy GUI flag. Package automation should run pdf-html-translate after conversion.
-    translate_html_with_gemma: bool = False
-    translation_target_language_code: str = "ru"
-    translation_source_language: str = "English"
-    translation_backend: str = "lmstudio"
-    translation_model_ref: str = DEFAULT_GEMMA_MODEL
-    translation_hf_token: str | None = None
-    translation_max_input_tokens: int = 1800
-    translation_enable_heading_oov_guard: bool = False
-    translation_context_window_segments: int = 8
-    translation_context_overlap_segments: int = 1
-    translation_context_max_window_chars: int = 40_000
-    translation_enable_en_residual_quality_gate: bool = True
-    translation_en_residual_quality_gate_max_segments: int = 8
     zotero_overlay_dir: str | None = None
     webdav_upload_enabled: bool = False
     webdav_config_path: str | None = None

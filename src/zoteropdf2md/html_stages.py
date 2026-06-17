@@ -9,7 +9,6 @@ HTML_STAGE_DIR_NAME = "_z2m_stages"
 HTML_STAGE_LOG_NAME = "stage.log"
 RAW_STAGE_NAME = "01.en.raw.html"
 POLISH_STAGE_NAME = "02.en.polish.html"
-TRANSLATE_STAGE_NAME = "03.ru.translate.html"
 
 
 @dataclass(frozen=True)

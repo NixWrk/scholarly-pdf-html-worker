@@ -19,11 +19,6 @@ from .output_state import detect_existing_results, normalize_source_path
 from .paths import resolve_zotero_data_dir
 from .pipeline_discovery import discover_collection_pdfs, discover_source_pdfs
 from .pipeline_options import PdfDiscoveryResult, PipelineOptions
-from .pipeline_translation import (
-    log_externalized_translation_notice,
-    log_legacy_translation_config,
-    log_non_html_translation_skip,
-)
 from .pipeline_webdav import (
     resolve_webdav_config_path,
     retry_pending_webdav_exports,
@@ -425,7 +420,6 @@ def run_pipeline(
             log(f"WebDAV mirror: enabled (config={resolve_webdav_config_path(options.webdav_config_path)})")
             if marker_output_format != "html":
                 log("WebDAV mirror: current output group is not HTML; upload skipped.")
-        log_legacy_translation_config(options, log)
 
         staged_source_bytes = 0
         for staged_file in stage.staged_files:
@@ -566,11 +560,6 @@ def run_pipeline(
             ocr_quality_failed_total = 0
             reocr_queued_total = 0
             reocr_pending_total = len(load_reocr_queue(output_dir))
-            translated_html_total = 0
-            translated_html_failed_total = 0
-            translated_html_language_code = ""
-            translated_html_language_name = ""
-            translated_html_by_source: dict[str, Path] = {}
             history_paths = list(converted_source_paths)
 
             def mirror_webdav_html(html_path: Path) -> None:
@@ -613,7 +602,7 @@ def run_pipeline(
                     f"(md={llm_bundle_result.markdown_files}, images={llm_bundle_result.image_files})"
                 )
 
-            # Level 4: inline images into EN HTML files (before translation).
+            # Level 4: polish and inline images into EN HTML files.
             if converted_source_paths and marker_output_format == "html":
                 started_at = perf_counter()
                 inlined_files = 0
@@ -689,15 +678,6 @@ def run_pipeline(
                 _log_elapsed(log, "pipeline.inline_en_images", started_at)
                 log(f"Inlined images in EN HTML: files={inlined_files}, images={total_inlined_images}")
 
-            if converted_source_paths and marker_output_format == "html" and options.translate_html_with_gemma:
-                started_at = perf_counter()
-                translation_status = log_externalized_translation_notice(options, log)
-                translated_html_language_code = translation_status.language_code
-                translated_html_language_name = translation_status.language_name
-                _log_elapsed(log, "pipeline.gemma_html", started_at)
-            elif options.translate_html_with_gemma and marker_output_format != "html":
-                log_non_html_translation_skip(log)
-
             if converted_source_paths and ExportMode.ZOTERO in export_modes_list:
                 started_at = perf_counter()
                 zotero_dir = zotero_dir_for_mode or resolve_zotero_data_dir(options.zotero_data_dir)
@@ -705,10 +685,6 @@ def run_pipeline(
                 history_paths = []
 
                 def html_artifact_for(item: StagedFile) -> Path:
-                    source_norm = normalize_source_path(item.source_pdf_path)
-                    translated = translated_html_by_source.get(source_norm)
-                    if translated is not None and translated.is_file():
-                        return translated
                     return expected_output_artifact_path(output_dir, item.alias_base_name, ".html")
 
                 def queue_entries_from(staged_items: list, error_message: str) -> None:
@@ -815,7 +791,6 @@ def run_pipeline(
             marker_failed_total = len(stage.staged_files) - len(converted_source_paths)
             failed_total = (
                 marker_failed_total
-                + translated_html_failed_total
                 + zotero_html_failed_total
             )
 
@@ -838,10 +813,6 @@ def run_pipeline(
                 zotero_html_failed_total=zotero_html_failed_total,
                 zotero_html_queued_total=zotero_html_queued_total,
                 zotero_pending_total=zotero_pending_total,
-                translated_html_total=translated_html_total,
-                translated_html_failed_total=translated_html_failed_total,
-                translated_html_language_code=translated_html_language_code,
-                translated_html_language_name=translated_html_language_name,
                 webdav_uploaded_total=webdav_uploaded_total,
                 webdav_failed_total=webdav_failed_total,
                 webdav_queued_total=webdav_queued_total,

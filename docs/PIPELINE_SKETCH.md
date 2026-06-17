@@ -30,13 +30,9 @@ Current production path in this extraction:
    - calls `polish_html_document(citation_profile=...)`
    - saves `02.en.polish.html` through `html_stages.save_html_stage()`
 
-7. `pdf-html-translate` / `zoteropdf2md.translation`
-   - finds `02.en.polish.html`
-   - calls `zoteropdf2md.gemma_html.translate_html_text_nodes()`
-   - writes `03.ru.translate.html`
-
-Some legacy extraction modules still exist in the source tree, but the public
-automation boundary is file-based: PDF in, HTML out.
+The former EN-to-RU translation runner and publisher web-HTML polish commands
+are intentionally outside this repository. The public automation boundary is
+file-based: PDF in, polished EN HTML out.
 
 `01.en.raw.html` is not enough to reproduce production citation/internal-link
 behavior. Use `scripts/pdf_profile_lab.py` plus `_source_filename_map.csv` for

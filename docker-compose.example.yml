@@ -2,9 +2,6 @@
   pdf-html-translator:
     build: .
     image: pdf-html-translator:local
-    environment:
-      # Use host.docker.internal when LM Studio runs on the host.
-      LMSTUDIO_BASE_URL: "http://host.docker.internal:1234/v1"
     volumes:
       - ./output:/output
       # Mount the folder that contains source PDFs when running conversion.

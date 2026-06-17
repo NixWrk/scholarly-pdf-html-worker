@@ -41,7 +41,6 @@ RUN --mount=type=cache,target=/root/.cache/marker \
 
 COPY src ./src
 COPY tools ./tools
-COPY experiments/lmstudio_instruct_translation ./experiments/lmstudio_instruct_translation
 COPY docs ./docs
 
 RUN --mount=type=cache,target=/root/.cache/pip \

@@ -66,7 +66,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         disable_batch_multiprocessing=args.disable_batch_multiprocessing,
         zotero_overlay_dir=args.zotero_overlay_dir,
         export_mode=args.export_mode,
-        translate_html_with_gemma=False,
     )
     try:
         summary = run_pipeline(options, runner, _log, lambda: False)

@@ -6,11 +6,6 @@ from zoteropdf2md import pipeline as pipeline_module
 from zoteropdf2md import pipeline_zotero
 from zoteropdf2md.pipeline_discovery import discover_source_pdfs
 from zoteropdf2md.pipeline_options import PipelineOptions
-from zoteropdf2md.pipeline_translation import (
-    log_externalized_translation_notice,
-    log_legacy_translation_config,
-    log_non_html_translation_skip,
-)
 from zoteropdf2md.pipeline_webdav import upload_webdav_mirror_if_configured
 
 
@@ -65,18 +60,3 @@ def test_zotero_write_lock_adapter_detects_only_lock_errors(monkeypatch: pytest.
     monkeypatch.setattr(pipeline_zotero, "check_zotero_write_access", other_error)
     with pytest.raises(RuntimeError, match="unexpected sqlite failure"):
         pipeline_zotero.zotero_write_lock_detected(tmp_path)
-
-
-def test_translation_legacy_adapter_logs_external_runner_notice() -> None:
-    options = PipelineOptions(translate_html_with_gemma=True, translation_target_language_code="ru")
-    logs: list[str] = []
-
-    log_legacy_translation_config(options, logs.append)
-    status = log_externalized_translation_notice(options, logs.append)
-    log_non_html_translation_skip(logs.append)
-
-    assert status.language_code == "ru"
-    assert status.language_name
-    assert any("Gemma config" in message for message in logs)
-    assert any("pdf-html-translate" in message for message in logs)
-    assert any("current group output format is not HTML" in message for message in logs)

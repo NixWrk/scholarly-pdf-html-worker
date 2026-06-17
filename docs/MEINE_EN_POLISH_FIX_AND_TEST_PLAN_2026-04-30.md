@@ -53,7 +53,7 @@ that are useful across articles and future PDFs.
 The first two workstreams have the biggest blast radius and should be committed
 separately.
 
-## Workstream 0: Source-Language Gate And Translation Handoff
+## Workstream 0: Source-Language Gate
 
 ### Evidence
 
@@ -63,11 +63,8 @@ separately.
 - `015_meine_0030_7ddd815634` is a German book scan
   (`Die Photographie mit dem Kollodiumverfahren`, 1927) and is also classified
   as `detected_language=en`, `language_confidence=0.99` in the review index.
-- Future runs will use different marker settings for different source
-  languages, so language must be determined before the marker stage.
-- The later translation stage must not infer source language again from polished
-  HTML. It must receive the already diagnosed source language from the run
-  metadata.
+- Future runs may use different marker settings for different source languages,
+  so language must be determined before the marker stage.
 
 ### Implementation
 
@@ -80,8 +77,6 @@ separately.
   - gate decision for the requested run language.
 - Use `source_language` to select marker/profile settings for the source
   language before any raw HTML is generated.
-- Pass the same `source_language` forward to translation along with the separate
-  `target_language`.
 - Treat mixed or unknown language as an explicit queue decision: skip, route to
   manual review, or run with a deliberately selected source-language profile.
 - Keep post-marker HTML language audit as a diagnostic cross-check only; it
@@ -96,9 +91,6 @@ separately.
   script and no English body text is skipped for an English marker/polish run.
 - Add a metadata regression proving that the pre-marker `source_language` is
   written to the article/run manifest.
-- Add a translation-queue regression proving that translation receives
-  `source_language` from manifest metadata and `target_language` from the user
-  request/config, without re-detecting source language from polished HTML.
 - Add an audit warning for pre-marker/post-marker language disagreement.
 
 ## Workstream 1: Article-Level Citation Strategy

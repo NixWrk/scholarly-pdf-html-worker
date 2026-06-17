@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pdf-html-translator"
 version = "0.1.0"
-description = "PDF to polished EN HTML and Gemma LM Studio RU HTML pipeline"
+description = "PDF to polished EN HTML pipeline"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -24,25 +24,12 @@ pdf-text-detect = [
   "pymupdf>=1.24",
   "pypdf>=4",
 ]
-ru-quality = [
-  "pymorphy3>=2.0",
-]
 math = [
   "mini-racer>=0.12",
 ]
 
 [project.scripts]
 pdf-html-convert = "pdf_html_translator.cli.convert_file:main"
-pdf-html-translate = "pdf_html_translator.cli.translate_html:main"
-pdf-html-polish-web = "zoteropdf2md.web_polish.cli:main"
-pdf-html-polish-web-arxiv = "zoteropdf2md.web_polish.cli:main_arxiv"
-pdf-html-polish-web-pmc = "zoteropdf2md.web_polish.cli:main_pmc"
-pdf-html-polish-web-taylor-francis = "zoteropdf2md.web_polish.cli:main_taylor_francis"
-pdf-html-polish-web-springer-nature = "zoteropdf2md.web_polish.cli:main_springer_nature"
-pdf-html-polish-web-iop = "zoteropdf2md.web_polish.cli:main_iop"
-pdf-html-polish-web-researchgate = "zoteropdf2md.web_polish.cli:main_researchgate"
-pdf-html-polish-web-ojs = "zoteropdf2md.web_polish.cli:main_ojs"
-pdf-html-polish-web-sciendo = "zoteropdf2md.web_polish.cli:main_sciendo"
 
 [tool.setuptools.packages.find]
 where = ["src"]

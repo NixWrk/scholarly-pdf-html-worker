@@ -2,7 +2,7 @@
 
 This plan fixes the staged-debugging rule for `01.en.raw.html` artifacts.
 The EN raw stage is the boundary between Marker/PDF extraction and our own
-HTML polish or RU translation code.
+HTML polish code.
 
 ## Scope
 
@@ -33,10 +33,7 @@ Every article-quality investigation starts at `01.en.raw.html`.
 1. If the defect exists in EN raw, classify it as Marker/PDF extraction or
    source-structure damage.
 2. If EN raw is clean and `02.en.polish.html` is broken, debug EN polish.
-3. If EN polish is clean and `03.ru.translate.html` is broken, debug
-   Gemma segmentation, masks, context, or recovery.
-4. If RU translate is clean and `04.ru.polish.html` is broken, debug RU polish.
-5. Do not patch RU translation to hide an EN raw defect unless the patch is an
+3. Do not patch EN polish to hide an EN raw defect unless the patch is an
    explicit fallback policy with a recorded tradeoff.
 
 ## EN Raw Test Matrix
@@ -60,7 +57,7 @@ Run every check on all canonical EN raw files.
 | R13 | Detect suspicious all-caps figure/table text inside headings | Figure/table panel OCR leakage | Classify as raw extraction defect |
 | R14 | Detect raw pipeline sentinels: `Z2M`, `<z2m` | Should never exist in EN raw | Fail immediately |
 | R15 | Detect existing anchors/links and escaped anchors | Raw link baseline | Ensure polish is idempotent |
-| R16 | Compare raw text length, image count, figure label count with previous run | Regression guard | Investigate before translation |
+| R16 | Compare raw text length, image count, figure label count with previous run | Regression guard | Investigate before EN polish |
 
 ## Required Per-Article Report
 
@@ -101,7 +98,7 @@ Use this order for each defect class:
 5. Write the smallest detector or unit test for the systemic pattern.
 6. Implement only the layer-specific fix.
 7. Re-run the detector on all seven EN raw files.
-8. If EN polish or RU output is affected, continue upward stage by stage.
+8. If EN polish output is affected, continue upward stage by stage.
 
 ## Initial EN Raw Hypotheses To Test
 
@@ -112,15 +109,15 @@ Use this order for each defect class:
 3. Li roman suffix glue: raw may contain table/footnote suffixes glued to words;
    EN polish should normalize only systematic cases.
 4. Table text fragmentation: raw table cells may contain broken line joins that
-   later harm RU translation.
+   later harm EN polish.
 5. Formula/unit fragmentation: raw OCR may split `Вµm`, dimensions, and labels
-   before translation.
+   before EN polish.
 6. Figure/table label baseline: raw has no `fig-*` ids yet, so any later link/id
    defects belong to EN polish, not Marker.
 
 ## Suggested Detector Command
 
-Use a read-only detector first; do not run translation for EN raw triage.
+Use a read-only detector first; do not run conversion or polish for EN raw triage.
 
 ```powershell
 $Root = "D:\Git_Code\ZoteroPDF_2_MD"
@@ -135,5 +132,5 @@ python scripts\audit_en_raw.py `
 
 If `scripts/audit_en_raw.py` does not exist yet, create it before the next
 manual article audit. The script should be read-only and should not call Marker,
-Gemma, Zotero, or WebDAV.
+Zotero, or WebDAV.
 
