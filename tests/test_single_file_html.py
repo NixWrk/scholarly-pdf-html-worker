@@ -7444,6 +7444,37 @@ def test_polish_html_document_trims_adjacent_article_after_references() -> None:
     assert polished.rstrip().endswith("</body></html>")
 
 
+def test_polish_html_document_keeps_reference_list_continuation_after_heading() -> None:
+    filler = " ".join(["Body prose before references."] * 80)
+    html = (
+        "<html><body>"
+        f"<p>{filler}</p>"
+        "<h2>References</h2>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>1. Arago, F. Journal of Applied Photography, 1839, 9, 824.</li>"
+        "<li>2. Barger, M. S. and White, W. B. University Press, 2000.</li>"
+        "</ul></p>"
+        "<h2>Robinson and Vicenzi Southworth and Hawes Daguerreotypes</h2>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>3. Robinson, M. Journal of Photographic History, 2008, 12, 55.</li>"
+        "<li>4. Romer, G. Science and Photography Press, 2014.</li>"
+        "</ul></p>"
+        "<h1>Bibliography</h1>"
+        "<p block-type=\"ListGroup\"><ul>"
+        "<li>5. Wood, J. The Daguerreotype. University of Iowa Press, 1989.</li>"
+        "</ul></p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Southworth and Hawes Daguerreotypes" in polished
+    assert "Journal of Photographic History" in polished
+    assert "The Daguerreotype" in polished
+    assert 'id="ref-3"' in polished
+    assert 'id="ref-5"' in polished
+
+
 def test_polish_html_document_retargets_author_year_page_links_to_reference_ids() -> None:
     html = (
         "<html><body>"

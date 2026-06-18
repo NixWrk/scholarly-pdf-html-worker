@@ -7750,6 +7750,33 @@ def _reference_list_tail_before_heading_looks_bibliographic(left_html: str) -> b
     return year_count >= 2 and numbered_author_count >= 2
 
 
+def _last_reference_list_number_before_heading(left_html: str) -> int | None:
+    window = left_html[-12000:]
+    last_number: int | None = None
+    for match in _LI_BLOCK_PATTERN.finditer(window):
+        number = _reference_visible_number(match.group(2) or "")
+        if number is not None and number > 0:
+            last_number = number
+    return last_number
+
+
+def _first_reference_list_number_after_heading(right_html: str) -> int | None:
+    search_window = right_html[:12000]
+    match = _LI_BLOCK_PATTERN.search(search_window)
+    if match is None:
+        return None
+    number = _reference_visible_number(match.group(2) or "")
+    return number if number is not None and number > 0 else None
+
+
+def _heading_continues_sequential_reference_list(html: str, heading_match: re.Match[str]) -> bool:
+    """Return True when a heading is an intra-bibliography divider, not a new article."""
+
+    previous_number = _last_reference_list_number_before_heading(html[: heading_match.start()])
+    next_number = _first_reference_list_number_after_heading(html[heading_match.end() :])
+    return previous_number is not None and next_number == previous_number + 1
+
+
 def _trim_adjacent_article_tail_after_references(html: str) -> tuple[str, int]:
     """Drop a second article that Marker appended after the current references."""
 
@@ -7763,6 +7790,8 @@ def _trim_adjacent_article_tail_after_references(html: str) -> tuple[str, int]:
         if not heading_text or _POST_REFERENCE_ALLOWED_HEADING_RE.match(heading_text):
             continue
         if not _reference_list_tail_before_heading_looks_bibliographic(html[: heading_match.start()]):
+            continue
+        if _heading_continues_sequential_reference_list(html, heading_match):
             continue
         suffix_match = _DOCUMENT_CLOSING_SUFFIX_RE.search(html)
         suffix = ""
