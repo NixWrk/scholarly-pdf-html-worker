@@ -11,6 +11,55 @@ Baseline run:
 - Gate state after metric recheck: fail only on `mandatory_review_pending=571`
 - P62 image recovery: `selected=181`, `patched=171`, `unresolved=10`
 
+## Context: Why This Work Exists
+
+The repository cleanup removed the old translation path and the web-HTML polish
+path so the project now focuses on one production workflow: PDF-derived raw
+HTML to polished HTML. That cleanup was intentionally narrow, but it forced a
+full regression proof over the real corpus. The resulting queue and P62 tail
+should not be read as "the cleanup created hundreds of new bugs." They are the
+result of running the stricter quality loop over all accepted English articles
+and comparing the new corpus run with the previous baseline.
+
+Before this run, many fixes were validated on targeted articles or on a subset
+of defect families. The full loop does more:
+
+- repolishes every accepted English cached raw article;
+- restores image caches and applies P62 recovery;
+- runs full audit with PDF diagnostics;
+- runs auto-repair;
+- records quality history and lower-is-better metric deltas;
+- builds a manual review queue for changed articles;
+- evaluates the gate against strict policy limits.
+
+That broader loop exposed latent corpus conditions that already existed or were
+previously not modeled sharply enough:
+
+- changed polish HTML with no worse quality score;
+- source-PDF figure records where the PDF contains caption lists,
+  placeholders, or prose references but no recoverable embedded target visual;
+- duplicate Zotero/source records that multiply the same underlying issue;
+- audit metrics that are intentionally conservative until they have an explicit
+  terminal state or auto-review evidence.
+
+The current work is therefore necessary for two reasons.
+
+First, the gate is currently stricter than the queue model. The config requires
+`max_pending_mandatory_reviews=0`, while the queue marks every changed article
+with unchanged score as mandatory. That was safe during early development, but
+on a full corpus it converts normal, non-regressive HTML churn into a blocking
+manual-review backlog. The fix is not to weaken the gate. The fix is to teach
+the queue to distinguish high-risk changes from deterministic auto-verified
+changes and to store the evidence behind that decision.
+
+Second, the P62 tail needs a truthful terminal state. The remaining records are
+not failed arbitrary-page renders; they are cases where the source PDF evidence
+says the target visual is unavailable. Leaving them as `unresolved` makes the
+pipeline look as if more recovery code is required, and it keeps pressure on the
+system to invent a visual from weak evidence. The correct behavior is to record
+`source_visual_unavailable` explicitly, keep visible/auditable metadata, and
+exclude only those complete terminal cases from the actionable unresolved count.
+
 ## Problem Split
 
 The remaining gate failure is not one problem.
