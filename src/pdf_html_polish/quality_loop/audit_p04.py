@@ -47,6 +47,11 @@ SUP_DIMENSION_UNIT_LEFT_RE = re.compile(
     r"(?:m|cm|mm|km|ft|in)\s*$",
     re.IGNORECASE,
 )
+SUP_COUNT_OR_OPTION_CONTEXT_RE = re.compile(
+    r"\b(?:chair|chairs|choice|choices|item|items|option|options|question|questions|"
+    r"response|responses|target|targets)\b",
+    re.IGNORECASE,
+)
 STAT_NUMERIC_CONTEXT_RE = re.compile(
     r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size|"
     r"statistical\s+power|power\s+analysis)\b",
@@ -173,8 +178,11 @@ def looks_like_software_version_context(text: str, start: int) -> bool:
     left = text[max(0, start - 160) : start]
     return (
         re.search(
-            r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|opencv|numpy|scipy|driver)\s+"
-            r"(?:driver\s+)?version\s*$|\bversion\s*$",
+            r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|unity|opencv|numpy|scipy|"
+            r"excel|photoshop)\s*$|"
+            r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|unity|opencv|numpy|scipy|"
+            r"excel|photoshop|driver)\s+(?:driver\s+)?version\s*$|"
+            r"\bversion\s*$",
             left,
             re.IGNORECASE,
         )
@@ -230,6 +238,28 @@ def sup_numeric_range_is_decimal_comma_value(block: Block, match: re.Match[str])
     if re.match(r"^\s*(?:[,;)]|\d+(?:\.\d+)?)", right_text):
         return True
     return False
+
+
+def sup_numeric_range_is_count_or_option_value(block: Block, match: re.Match[str]) -> bool:
+    left_text = strip_tags(block.raw[max(0, match.start() - 220) : match.start()])
+    right_text = strip_tags(block.raw[match.end() : match.end() + 120])
+    near_text = f"{left_text} {right_text}"
+    if SUP_COUNT_OR_OPTION_CONTEXT_RE.search(near_text) is None:
+        return False
+    if re.match(
+        r"^\s*(?:or\s+\d+\s+)?(?:chair|chairs|choice|choices|item|items|option|options|"
+        r"question|questions|response|responses|target|targets)\b",
+        right_text,
+        re.IGNORECASE,
+    ):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:number\s+of|contained?|total|varied|conditional)\b",
+            near_text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def sup_numeric_range_is_low_number_table_layout_marker(block: Block, match: re.Match[str]) -> bool:
@@ -290,6 +320,8 @@ def has_unlinked_sup_numeric_range(block: Block) -> bool:
             if sup_numeric_range_is_measurement_value(block, match):
                 continue
             if sup_numeric_range_is_decimal_comma_value(block, match):
+                continue
+            if sup_numeric_range_is_count_or_option_value(block, match):
                 continue
             if sup_numeric_range_is_low_number_table_layout_marker(block, match):
                 continue
@@ -364,6 +396,8 @@ def unlinked_citation_candidate_numbers(block: Block) -> list[int]:
             if sup_numeric_range_is_measurement_value(block, sup_match):
                 continue
             if sup_numeric_range_is_decimal_comma_value(block, sup_match):
+                continue
+            if sup_numeric_range_is_count_or_option_value(block, sup_match):
                 continue
             if sup_numeric_range_is_low_number_table_layout_marker(block, sup_match):
                 continue

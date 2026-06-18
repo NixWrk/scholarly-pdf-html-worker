@@ -1169,6 +1169,7 @@ _TRAILING_TABLE_NOTE_BODY_PATTERN = re.compile(
     r"Sentinel\s+lymph\s+node\s+biopsy|Axillary\s+lymph\s+node\s+dissection|"
     r"Indocyanine\s+green|Methylene\s+blue|Radioisotope)\.?|"
     r"Positivity\s+was\s+defined\s+as[\s\S]{0,240}|"
+    r"Bolded\s+rows\s+show\s+the\s+distribution\s+across\s+all\s+sites\.?|"
     r"Significant,\s*(?:<[^>]+>\s*)*p[\s\S]{0,90}?0\.05\.?)\s*)$",
     re.IGNORECASE,
 )
@@ -1182,6 +1183,7 @@ _TRAILING_TABLE_NOTE_MARKERS = (
     "methylene",
     "radioisotope",
     "positivity was defined",
+    "bolded rows show",
     "significant,",
 )
 _TRAILING_TABLE_CAPTION_BODY_PATTERN = re.compile(
@@ -6283,6 +6285,60 @@ def _mark_unit_exponent_superscripts(html: str) -> str:
 
 def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
     """Undo known false-positive citation links in decimals and figure labels."""
+    def _unwrap_linked_numeric_value_superscripts(text: str) -> str:
+        if "#ref-" not in text or "<sup" not in text:
+            return text
+
+        def _replace_value_sup(match: re.Match[str]) -> str:
+            raw = match.group(0)
+            if "z2m-ref-link" not in raw:
+                return raw
+            body = match.group(1)
+            visible = re.sub(r"\s+", " ", _visible_text(body)).strip()
+            if re.fullmatch(r"\d{1,4}(?:\s*(?:[,;]|\u2013|\u2014|-)\s*\d{1,4}){1,4}", visible) is None:
+                return raw
+            linked_refs = re.findall(
+                r'<a\b[^>]*\bhref\s*=\s*["\']#ref-(\d+)["\'][^>]*\bz2m-ref-link\b[^>]*>\s*(\d{1,4})\s*</a>',
+                body,
+                re.IGNORECASE,
+            )
+            if not linked_refs or any(target != label for target, label in linked_refs):
+                return raw
+            left_text = _visible_text(text[max(0, match.start() - 220): match.start()])
+            right_text = _visible_text(text[match.end(): match.end() + 180])
+            left_value_context = re.search(
+                r"(?:\b(?:ages?|aged|at|between|can\s+last|delay|distance|duration|from|interval|jittered|last|lasting)\s*$"
+                r"|\b(?:left|right)\s+at\s*$"
+                r"|\bclosest\s+obstacle\s*\([^)]*$"
+                r"|[\(,;]\s*$)",
+                left_text,
+                re.IGNORECASE,
+            ) is not None
+            right_value_context = re.match(
+                r"^\s*(?:"
+                r"\d+\s*(?:mm|cm|m|s|ms|sec(?:onds?)?|seconds?|years?|yrs?|months?|days?|hours?)\b|"
+                r"(?:or|and|to)\s+\d+(?:\.\d+)?\s*(?:mm|cm|m|s|ms|sec(?:onds?)?|seconds?|years?|months?|days?|hours?)?\b|"
+                r"\)\s*(?:participated|were|was|[,.;]|\b)"
+                r")",
+                right_text,
+                re.IGNORECASE,
+            ) is not None
+            if not (left_value_context and right_value_context):
+                return raw
+            value = re.sub(r"\s*([\u2013\u2014-])\s*", r"\1", visible)
+            if re.match(
+                r"^\s*\d+\s*(?:mm|cm|m|s|ms|sec(?:onds?)?|seconds?|years?|yrs?|months?|days?|hours?)\b",
+                right_text,
+                re.IGNORECASE,
+            ):
+                value = re.sub(r"\s*,\s*", ",", value)
+            else:
+                value = re.sub(r"\s*,\s*", ", ", value)
+            value = re.sub(r"\s*;\s*", "; ", value)
+            return value
+
+        return _SUP_PATTERN.sub(_replace_value_sup, text)
+
     def _unwrap_linked_decimal_comma_sup_values(text: str) -> str:
         if "#ref-" not in text or "<sup" not in text:
             return text
@@ -6331,6 +6387,7 @@ def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
             _repair_matching_short_context_sup,
             fixed_large,
         )
+        fixed_large = _unwrap_linked_numeric_value_superscripts(fixed_large)
         fixed_large = _unwrap_linked_decimal_comma_sup_values(fixed_large)
         return fixed_large
 
@@ -6400,6 +6457,7 @@ def _fix_false_sup_citations_in_decimals_and_figure_labels(html: str) -> str:
         lambda m: f"{m.group('base')}<sup{m.group('attrs')}>{m.group('exp')}</sup>",
         fixed,
     )
+    fixed = _unwrap_linked_numeric_value_superscripts(fixed)
     fixed = _unwrap_linked_decimal_comma_sup_values(fixed)
     fixed = _LINKED_BASE10_MANTISSA_BEFORE_EXP_PATTERN.sub("10", fixed)
     fixed = _LINKED_ML_PER_SECOND_UNIT_EXPONENT_SUP_PATTERN.sub(
@@ -8574,6 +8632,45 @@ def _looks_like_standalone_reference_paragraph_body(body: str) -> bool:
     )
 
 
+def _looks_like_duplicate_number_doi_footer_reference(
+    body: str,
+    visible_number: int,
+    expected_number: int | None = None,
+) -> bool:
+    text = re.sub(r"\s+", " ", _visible_text(body)).strip()
+    if not text:
+        return False
+    match = re.match(rf"^{visible_number}\.?\s+{visible_number}\b(?P<tail>[\s\S]*)$", text)
+    if match is not None:
+        tail = match.group("tail").strip()
+        if re.match(r"^(?:https?://(?:dx\.)?doi\.org/|doi\b|10\.\d{4,9}/)", tail, re.IGNORECASE):
+            return True
+    if (
+        expected_number is not None
+        and expected_number > 0
+        and visible_number >= 500
+        and visible_number > expected_number + 100
+    ):
+        tail = re.sub(r"\s+", " ", _visible_text(_strip_reference_visible_number(body))).strip()
+        if re.match(r"^(?:https?://(?:dx\.)?doi\.org/|doi\b|10\.\d{4,9}/)", tail, re.IGNORECASE):
+            return True
+    if visible_number >= 500:
+        tail = re.sub(r"\s+", " ", _visible_text(_strip_reference_visible_number(body))).strip()
+        if (
+            len(tail) <= 220
+            and re.match(r"^(?:https?://(?:dx\.)?doi\.org/|doi\b|10\.\d{4,9}/)", tail, re.IGNORECASE)
+            and re.search(r"\b(?:journal|press|publisher|clinical|ophthalmology)\b", tail, re.IGNORECASE)
+        ):
+            return True
+    return False
+
+
+def _looks_like_numbered_page_footer_doi_paragraph(body: str, visible_number: int, expected_number: int | None) -> bool:
+    if _looks_like_duplicate_number_doi_footer_reference(body, visible_number, expected_number):
+        return True
+    return False
+
+
 def _add_reference_ids_to_standalone_reference_paragraphs(html: str) -> tuple[str, int]:
     used_ids = {int(match.group(1)) for match in _LI_ID_PATTERN.finditer(html)}
     max_ref_id = max(used_ids, default=0)
@@ -8594,8 +8691,11 @@ def _add_reference_ids_to_standalone_reference_paragraphs(html: str) -> tuple[st
             max_ref_id + 1 if max_ref_id > 0 else None,
         )
         body = _strip_leading_reference_line_number_pair(body)
+        expected_number = max_ref_id + 1 if max_ref_id > 0 else None
         visible_number = _reference_visible_number(body)
         if visible_number is None or visible_number <= 0 or visible_number in used_ids:
+            return match.group(0)
+        if _looks_like_numbered_page_footer_doi_paragraph(body, visible_number, expected_number):
             return match.group(0)
         if not _looks_like_standalone_reference_paragraph_body(body):
             return match.group(0)
@@ -13838,6 +13938,68 @@ def _unwrap_author_year_page_links(html: str) -> str:
     if "#page-" not in html:
         return html
 
+    name_token = (
+        r"(?:[A-Z]\.\s*)?"
+        r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    )
+    blocked_fragments = {
+        "appendix",
+        "chapter",
+        "eq",
+        "eqn",
+        "equation",
+        "fig",
+        "figure",
+        "method",
+        "methods",
+        "page",
+        "pages",
+        "pp",
+        "results",
+        "section",
+        "table",
+    }
+
+    def _looks_like_author_year_page_fragment(label: str, left_text: str, right_text: str) -> bool:
+        cleaned = re.sub(r"\s+", " ", html_lib.unescape(label).strip("([;, ")).strip()
+        if not cleaned or re.search(r"\d{4}", cleaned):
+            return False
+        if cleaned.casefold().rstrip(".") in blocked_fragments:
+            return False
+        right_context = re.sub(r"\s+", " ", html_lib.unescape(right_text)).strip()
+        if not right_context or re.match(r"^(?:of|for|in|to)\b", right_context, re.IGNORECASE):
+            return False
+        split_et_al_continuation = re.fullmatch(rf"{name_token}\s+et", cleaned, re.IGNORECASE) is not None and re.match(
+            r"^al\.?\s*\(?\d{4}[a-z]?\)?",
+            right_context,
+            re.IGNORECASE,
+        ) is not None
+        split_surname_continuation = re.fullmatch(r"\(?[A-Z][A-Za-z]{2,6}", cleaned) is not None and re.match(
+            r"^[a-z]{1,10}\s+et\s+al\.?\s*\(?\d{4}[a-z]?\)?",
+            right_context,
+            re.IGNORECASE,
+        ) is not None
+        citation_context = (
+            re.search(r"[\(;]\s*$", html_lib.unescape(left_text)) is not None
+            or re.search(r"\bby\s*$", html_lib.unescape(left_text), re.IGNORECASE) is not None
+            or label.lstrip().startswith("(")
+            or right_context.startswith((",", ";", ")", "&"))
+            or re.match(r"^(?:&|and|al\.?|et\s+al\.?|\(?\d{4})\b", right_context, re.IGNORECASE)
+            is not None
+            or split_et_al_continuation
+            or split_surname_continuation
+        )
+        if not citation_context:
+            return False
+        candidate = re.sub(r"\s+", " ", f"{cleaned} {right_context[:120]}").strip()
+        if _AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(candidate):
+            return True
+        if split_et_al_continuation:
+            return True
+        if split_surname_continuation:
+            return True
+        return False
+
     def _replace(match: re.Match[str]) -> str:
         label = _visible_text(match.group("body"))
         label_for_pattern = re.sub(r"(\d{4}[a-z]?)[\),.;:]+$", r"\1", label.strip(), flags=re.IGNORECASE)
@@ -13865,7 +14027,8 @@ def _unwrap_author_year_page_links(html: str) -> str:
                 )
                 is not None
             )
-            if not (year_continuation or flexible_year_continuation):
+            author_fragment_continuation = _looks_like_author_year_page_fragment(label, left_text, right_text)
+            if not (year_continuation or flexible_year_continuation or author_fragment_continuation):
                 return match.group(0)
         return match.group("body")
 

@@ -1,8 +1,10 @@
 from pdf_html_polish.quality_loop.polish_auto_repair import (
+    assessment_articles_by_broken_internal_links,
     audit_articles_by_auto_repair_need,
     relink_external_numeric_citation_anchors,
     relink_spaced_multipanel_figure_refs,
     repair_visible_reference_numbers,
+    unwrap_broken_internal_links,
     unwrap_author_year_numeric_ref_links,
     unwrap_author_year_ref_anchors,
 )
@@ -24,6 +26,36 @@ def test_audit_articles_by_auto_repair_need_selects_supported_ids() -> None:
     assert selected["b"]["defect_ids"] == ["P96", "P98"]
     assert selected["c"]["defect_ids"] == ["P59"]
     assert selected["d"]["defect_ids"] == ["P17"]
+
+
+def test_assessment_articles_by_broken_internal_links_selects_link_regressions() -> None:
+    assessment = {
+        "articles": [
+            {"article": "a", "href_counts": {"broken_internal_links": 2}},
+            {"article": "b", "href_counts": {"broken_internal_links": 0}},
+            {"article": "c", "href_counts": {}},
+        ]
+    }
+
+    assert assessment_articles_by_broken_internal_links(assessment) == {"a": 2}
+
+
+def test_unwrap_broken_internal_links_keeps_valid_targets() -> None:
+    html = (
+        '<p><a href="#fig-1" class="z2m-fig-link">Figure 1</a> '
+        'and <a href="#fig-2" class="z2m-fig-link">Figure 2</a> '
+        'plus <sup><a href="#ref-9" class="z2m-ref-link">9</a></sup>.</p>'
+        '<div id="fig-1"></div>'
+    )
+
+    repaired, count = unwrap_broken_internal_links(html)
+
+    assert count == 2
+    assert '<a href="#fig-1" class="z2m-fig-link">Figure 1</a>' in repaired
+    assert '<a href="#fig-2"' not in repaired
+    assert '<a href="#ref-9"' not in repaired
+    assert "Figure 2" in repaired
+    assert "<sup>9</sup>" in repaired
 
 
 def test_relink_spaced_multipanel_figure_refs_uses_existing_targets() -> None:

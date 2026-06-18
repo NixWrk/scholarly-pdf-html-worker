@@ -82,11 +82,13 @@ from pdf_html_polish.quality_loop.pdf_reference_recovery import (  # noqa: E402
     unlinked_body_reference_candidate_numbers as _unlinked_body_reference_candidate_numbers_impl,
 )
 from pdf_html_polish.quality_loop.polish_auto_repair import (  # noqa: E402
+    assessment_articles_by_broken_internal_links as _assessment_articles_by_broken_internal_links_impl,
     audit_articles_by_auto_repair_need as _audit_articles_by_auto_repair_need_impl,
     audit_defect_ids as _audit_defect_ids_impl,
     relink_external_numeric_citation_anchors as _relink_external_numeric_citation_anchors_impl,
     relink_spaced_multipanel_figure_refs as _relink_spaced_multipanel_figure_refs_impl,
     repair_visible_reference_numbers as _repair_visible_reference_numbers_impl,
+    unwrap_broken_internal_links as _unwrap_broken_internal_links_impl,
     unwrap_author_year_numeric_ref_links as _unwrap_author_year_numeric_ref_links_impl,
     unwrap_author_year_ref_anchors as _unwrap_author_year_ref_anchors_impl,
     visible_ref_prefix_number as _visible_ref_prefix_number_impl,
@@ -1160,6 +1162,10 @@ def _audit_articles_by_auto_repair_need(audit_report: dict[str, Any]) -> dict[st
     return _audit_articles_by_auto_repair_need_impl(audit_report)
 
 
+def _assessment_articles_by_broken_internal_links(assessment: dict[str, Any]) -> dict[str, int]:
+    return _assessment_articles_by_broken_internal_links_impl(assessment)
+
+
 def _visible_ref_prefix_number(text: str) -> int | None:
     return _visible_ref_prefix_number_impl(text)
 
@@ -1170,6 +1176,10 @@ def _repair_visible_reference_numbers(html: str) -> tuple[str, int]:
 
 def _relink_spaced_multipanel_figure_refs(html: str) -> tuple[str, int]:
     return _relink_spaced_multipanel_figure_refs_impl(html)
+
+
+def _unwrap_broken_internal_links(html: str) -> tuple[str, int]:
+    return _unwrap_broken_internal_links_impl(html)
 
 
 def _relink_external_numeric_citation_anchors(html: str) -> tuple[str, int]:
@@ -1197,9 +1207,14 @@ def write_polish_auto_repair_stage(
     out_path = out_path or (run_dir / DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME)
     repair_root = run_dir / "polish_auto_repair"
     audit_report = _load_json(run_dir / "audit_full_checks.json", default={})
+    assessment = _load_json(run_dir / "assessment.json", default={})
     manifest = _load_json(run_dir / "manifest.json", default={})
     manifest_by_article = _manifest_article_by_id(manifest)
     repair_articles = _audit_articles_by_auto_repair_need(audit_report)
+    for article_id, broken_count in _assessment_articles_by_broken_internal_links(assessment).items():
+        repair_articles.setdefault(article_id, {"article": {}, "defect_ids": []})[
+            "broken_internal_links"
+        ] = broken_count
     zoom = float(gate_config.get("polish_auto_repair_render_zoom") or gate_config.get("p62_image_recovery_render_zoom") or 1.5)
     apply_patches = bool(gate_config.get("polish_auto_repair_apply_patches", True))
 
@@ -1227,6 +1242,7 @@ def write_polish_auto_repair_stage(
             "index": index,
             "article": article_id,
             "defect_ids": sorted(defect_ids),
+            "broken_internal_links": int(item.get("broken_internal_links") or 0),
             "targets": [str(path) for path in targets],
             "repairs": [],
             "patched": False,
@@ -1379,6 +1395,33 @@ def write_polish_auto_repair_stage(
                             "p98_numeric_link_unwraps": p98_repairs,
                         }
                     )
+
+        if item.get("broken_internal_links") and apply_patches:
+            for target_path in targets:
+                try:
+                    html = target_path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                patched, broken_link_repairs = _unwrap_broken_internal_links(html)
+                if patched == html:
+                    continue
+                try:
+                    target_path.write_text(patched, encoding="utf-8")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                repair_counts["broken_internal_links"] += broken_link_repairs
+                patched_article_ids.add(article_id)
+                article_report["patched"] = True
+                target_patch_counts[str(target_path)] += 1
+                article_report["repairs"].append(
+                    {
+                        "id": "broken_internal_links",
+                        "path": str(target_path),
+                        "unwrapped_links": broken_link_repairs,
+                    }
+                )
 
         report_articles.append(article_report)
 

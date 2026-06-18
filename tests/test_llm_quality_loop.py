@@ -2569,6 +2569,52 @@ def test_polish_auto_repair_stage_repairs_external_numeric_citation_anchors(tmp_
         assert '<a href="#ref-3" class="z2m-ref-link">3</a>]' in before_refs
 
 
+def test_polish_auto_repair_stage_unwraps_broken_internal_links_from_assessment(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_a"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><body>"
+            '<p><a href="#fig-1" class="z2m-fig-link">Figure 1</a> remains valid, '
+            'but <a href="#fig-2" class="z2m-fig-link">Figure 2</a> is stale and '
+            '<a href="#ref-9" class="z2m-ref-link">9</a> is also stale.</p>'
+            '<div id="fig-1" class="z2m-figure-unit">Figure 1.</div>'
+            "</body></html>",
+            encoding="utf-8",
+        )
+    _write_json(run_dir / "audit_full_checks.json", {"articles": []})
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(
+        run_dir / "assessment.json",
+        {
+            "article_count": 1,
+            "totals": {"broken_internal_links": 2},
+            "articles": [
+                {
+                    "article": article,
+                    "href_counts": {"broken_internal_links": 2},
+                    "broken_targets": ["fig-2", "ref-9"],
+                }
+            ],
+        },
+    )
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["candidate_count"] == 1
+    assert report["repair_counts"] == {"broken_internal_links": 4}
+    for path in (polish_path, audit_tree_path):
+        html = path.read_text(encoding="utf-8")
+        assert '<a href="#fig-1" class="z2m-fig-link">Figure 1</a>' in html
+        assert 'href="#fig-2"' not in html
+        assert 'href="#ref-9"' not in html
+        assert "Figure 2" in html
+
+
 def test_polish_auto_repair_stage_repairs_p59_numeric_labels(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     article = "article_a"

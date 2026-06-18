@@ -5,7 +5,9 @@ from pdf_html_polish.quality_loop.p62_pdf_assets import (
     fitz_rects_intersect,
     fitz_union_rect,
     fitz_x_overlap_ratio,
+    select_graphic_rects_for_caption,
     simple_numeric_figure_index,
+    trim_region_away_from_caption,
 )
 
 
@@ -50,3 +52,25 @@ def test_simple_numeric_figure_index_accepts_only_plain_positive_numbers() -> No
     assert simple_numeric_figure_index("3") == 3
     assert simple_numeric_figure_index("0") == 0
     assert simple_numeric_figure_index("3A") == 0
+
+
+def test_select_graphic_rects_ignores_caption_rule_before_real_figure_region() -> None:
+    page = FakeRect(0, 0, 600, 800)
+    caption = FakeRect(72, 320, 220, 338)
+    caption_rule = {"kind": "drawing", "rect": FakeRect(60, 312, 540, 314)}
+    figure = {"kind": "image", "xref": 12, "rect": FakeRect(90, 120, 510, 300)}
+
+    selected = select_graphic_rects_for_caption(page, [caption_rule, figure], caption)
+
+    assert selected == [figure]
+
+
+def test_trim_region_away_from_caption_keeps_larger_side_for_top_caption() -> None:
+    page = FakeRect(0, 0, 600, 800)
+    region = FakeRect(40, 30, 550, 220)
+    caption = FakeRect(52, 58, 180, 68)
+
+    trimmed = trim_region_away_from_caption(region, page, caption)
+
+    assert trimmed.y0 > caption.y1
+    assert trimmed.y1 == 220

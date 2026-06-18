@@ -5543,6 +5543,30 @@ def test_polish_html_document_strips_page_linked_bracket_prefix_from_standalone_
     assert '<a href="#ref-2" class="z2m-ref-link">2</a>' in polished[: polished.index("References")]
 
 
+def test_polish_html_document_does_not_id_duplicate_number_doi_footer_as_reference() -> None:
+    html = (
+        "<html><body>"
+        "<p>Screening outcomes followed the prior study [96].</p>"
+        "<h4>References</h4>"
+        "<p>95. Richardson J. Clinical vision screening. Ophthalmology. 2023.</p>"
+        '<p>978 <a href="https://doi.org/10.2147/OPTH.S442430">'
+        "https://doi.org/10.2147/OPTH.S442430</a> DovePress Clinical Ophthalmology 2024:18</p>"
+        "<p>96. Papadopoulos A. Accessibility outcome measures. Clin Ophthalmol. 2024.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+    ref_section = polished[polished.index("References") :]
+
+    assert 'id="ref-978"' not in ref_section
+    assert '<p id="ref-96">96. Papadopoulos A.' in ref_section
+    assert '<a href="#ref-96" class="z2m-ref-link">[96]</a>' in polished[: polished.index("References")]
+
+
 def test_polish_html_document_keeps_post_reference_lists_out_of_ref_ids() -> None:
     html = (
         "<html><body>"
@@ -11524,6 +11548,31 @@ def test_polish_html_document_keeps_working_page_anchor_links() -> None:
     assert 'href="#page-11-0"' in polished
 
 
+def test_polish_html_document_unwraps_working_author_year_page_fragment_links() -> None:
+    html = (
+        "<html><body>"
+        '<span id="page-14-0"></span>'
+        '<p>Retinotopic studies <a href="#page-14-0">(Bandettini,</a> 2009) '
+        'and (<a href="#page-14-0">Allman</a> &amp; Kaas, 1971) are cited.</p>'
+        '<p>Diffusion work (<a href="#page-14-0">(Basser &amp;</a> Jones, 2002) '
+        'and <a href="#page-14-0">Adam et</a> al. (2001) remained author-year text.</p>'
+        '<p>Encoding followed (<a href="#page-14-0">Ama</a>no et al. (2009).</p>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+    compact = re.sub(r"\s+", " ", polished)
+    visible = compact.replace("&amp;", "&")
+
+    assert 'id="page-14-0"' in polished
+    assert 'href="#page-14-0"' not in polished
+    assert "(Bandettini, 2009)" in visible
+    assert "(Allman & Kaas, 1971)" in visible
+    assert "(Basser & Jones, 2002)" in visible
+    assert "Adam et al. (2001)" in visible
+    assert "Amano et al. (2009)" in visible
+
+
 def test_polish_html_document_unwraps_ru_page_reference_page_links() -> None:
     html = (
         "<html><body>"
@@ -12721,6 +12770,42 @@ def test_polish_html_document_unlinks_decimal_comma_value_ref_links() -> None:
     assert 'href="#ref-3"' not in body
     assert 'href="#ref-9"' not in body
     assert 'href="#ref-551"' not in body
+
+
+def test_polish_html_document_unlinks_numeric_value_sup_ref_runs_in_bracket_docs() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior navigation work used standard methods [1].</p>"
+        "<p>The closest obstacle (left at "
+        '<sup><a href="#ref-4" class="z2m-ref-link">4</a>,'
+        '<a href="#ref-18" class="z2m-ref-link">18</a></sup>8 mm) was highlighted.</p>'
+        "<p>The retrieval interval can last "
+        '<sup><a href="#ref-3" class="z2m-ref-link">3</a>, '
+        '<a href="#ref-6" class="z2m-ref-link">6</a></sup> or 9 seconds.</p>'
+        "<p>Observers (ages "
+        '<sup><a href="#ref-18" class="z2m-ref-link">18</a>\u2013'
+        '<a href="#ref-28" class="z2m-ref-link">28</a></sup>) participated.</p>'
+        "<h4>References</h4><ol>"
+        + "".join(f"<li>Reference {idx}.</li>" for idx in range(1, 29))
+        + "</ol></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "bracket_numeric", "confidence": "medium"},
+    )
+    body = polished[: polished.index("References")]
+
+    assert "left at 4,188 mm" in body
+    assert "can last 3, 6 or 9 seconds" in body
+    assert "ages 18\u201328" in body
+    assert 'href="#ref-3"' not in body
+    assert 'href="#ref-4"' not in body
+    assert 'href="#ref-6"' not in body
+    assert 'href="#ref-18"' not in body
+    assert 'href="#ref-28"' not in body
+    assert '<a href="#ref-1" class="z2m-ref-link">[1]</a>' in body
 
 
 def test_polish_html_document_unlinks_approximate_duration_range_ref_link() -> None:

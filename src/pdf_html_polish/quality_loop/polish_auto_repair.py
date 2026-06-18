@@ -74,6 +74,12 @@ BRACKET_NUMERIC_CITATION_LABEL_RE = re.compile(
     r"^\s*(?P<bracket>\[\s*(?P<body>\d{1,4}(?:\s*(?:[,;]|\-|\u2013|\u2014)\s*\d{1,4}){0,24})\s*\])"
     r"(?P<trail>[.,;:]?)\s*$"
 )
+ID_ATTR_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
+INTERNAL_ANCHOR_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>[\"'])#(?P<target>[^\"']+)(?P=quote)[^>]*)>"
+    r"(?P<body>[\s\S]*?)</a>",
+    re.IGNORECASE,
+)
 
 
 def audit_defect_ids(article: dict[str, Any]) -> set[str]:
@@ -98,6 +104,24 @@ def audit_articles_by_auto_repair_need(audit_report: dict[str, Any]) -> dict[str
         if not selected:
             continue
         articles[article_id] = {"article": article, "defect_ids": sorted(selected)}
+    return articles
+
+
+def assessment_articles_by_broken_internal_links(assessment: dict[str, Any]) -> dict[str, int]:
+    articles: dict[str, int] = {}
+    for article in assessment.get("articles") or []:
+        if not isinstance(article, dict):
+            continue
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        href_counts = article.get("href_counts") if isinstance(article.get("href_counts"), dict) else {}
+        try:
+            broken_count = int(href_counts.get("broken_internal_links") or 0)
+        except (TypeError, ValueError):
+            broken_count = 0
+        if broken_count > 0:
+            articles[article_id] = broken_count
     return articles
 
 
@@ -225,6 +249,28 @@ def relink_spaced_multipanel_figure_refs(html: str) -> tuple[str, int]:
     if repaired == html:
         return html, 0
     return repaired, max(1, repaired.count("z2m-fig-link") - before_count)
+
+
+def unwrap_broken_internal_links(html: str) -> tuple[str, int]:
+    """Remove same-document anchors that still point at missing targets."""
+
+    if 'href="#' not in html and "href='#" not in html:
+        return html, 0
+    targets = {match.group("id") for match in ID_ATTR_RE.finditer(html)}
+    if not targets:
+        return html, 0
+    repairs = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal repairs
+        target = match.group("target")
+        if target in targets:
+            return match.group(0)
+        repairs += 1
+        return match.group("body")
+
+    repaired = INTERNAL_ANCHOR_RE.sub(replace, html)
+    return repaired, repairs
 
 
 def _render_numeric_bracket_citation_label(label: str, ref_numbers: set[int]) -> str | None:

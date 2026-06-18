@@ -14,8 +14,10 @@ from .p62_html import (
 )
 
 
-P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES = {"marker_image"} | P62_LOW_FIDELITY_RECOVERY_SOURCES
 P62_REGION_REPAIR_SOURCES = {"pdf_figure_region_render", "pdf_detached_plate_region_render"}
+P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES = (
+    {"marker_image"} | P62_LOW_FIDELITY_RECOVERY_SOURCES | P62_REGION_REPAIR_SOURCES
+)
 
 PdfTextPages = Callable[..., tuple[str, list[str], str | None]]
 ResolvePdfPage = Callable[..., dict[str, Any]]

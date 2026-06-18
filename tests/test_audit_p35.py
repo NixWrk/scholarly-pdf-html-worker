@@ -22,3 +22,20 @@ def test_replacement_char_defects_marks_pdf_source_noise_non_quality() -> None:
             "replacement characters align with source PDF text-layer symbol/OCR loss"
         ),
     }
+
+
+def test_replacement_char_defects_marks_single_numeric_table_ocr_noise_non_quality() -> None:
+    html = (
+        "<table><tbody>"
+        + "".join(f"<tr><td>{idx}</td><td>{idx + 1}</td><td>{idx + 2}</td></tr>" for idx in range(1, 6))
+        + "<tr><td>67 \ufffd</td><td>68</td><td>69</td></tr>"
+        "</tbody></table>"
+    )
+
+    defects = replacement_char_defects(
+        html,
+        "1 2 3 4\n5 6 7 8\n9 10 11 12\n13 14 15 16",
+        stage="02.en.polish.html",
+    )
+
+    assert defects[0].extra["quality_counted"] is False

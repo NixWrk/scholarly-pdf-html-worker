@@ -49,6 +49,30 @@ def test_assess_polish_html_counts_navigation_and_citation_style_signals() -> No
     assert assessment["missing_warning_count"] == 1
 
 
+def test_assess_polish_html_ignores_table_reference_column_brackets_for_mixed_style() -> None:
+    html = """
+    <html><body>
+      <p id="ref-21">[21] First reference</p>
+      <p><sup><a href="#ref-1">1</a></sup> superscript body citation.</p>
+      <table>
+        <tr><th>Reference</th><th>Method</th></tr>
+        <tr><td><a href="#ref-21">[21]</a></td><td>Sequence matching.</td></tr>
+      </table>
+    </body></html>
+    """
+
+    assessment = assess_polish_html(
+        "article",
+        html,
+        {"status": "ok", "style": "unknown", "confidence": "low"},
+    )
+
+    assert assessment["href_counts"]["ref_links"] == 2
+    assert assessment["sup_ref_links"] == 1
+    assert assessment["bracket_ref_links"] == 0
+    assert assessment["mixed_citation_style"] is False
+
+
 def test_assess_polish_html_counts_remaining_same_document_absolute_links() -> None:
     html = """
     <html><body>

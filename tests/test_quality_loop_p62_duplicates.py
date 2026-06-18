@@ -20,20 +20,20 @@ def _duplicate_figure_html() -> str:
     )
 
 
-def _recovered_duplicate_figure_html() -> str:
+def _recovered_duplicate_figure_html(source: str = "pdf_page_render") -> str:
     duplicated_payload = base64.b64encode(b"same-recovered-visual").decode("ascii")
     duplicated_data_url = f"data:image/png;base64,{duplicated_payload}"
     return (
         '<div class="z2m-figure-unit" id="fig-1">'
         '<p class="z2m-figure-target z2m-p62-recovered-target">'
-        '<img data-z2m-recovery-source="pdf_page_render" '
+        f'<img data-z2m-recovery-source="{source}" '
         f'alt="Recovered Figure 1 visual from source PDF" src="{duplicated_data_url}"/>'
         "</p>"
         '<p class="z2m-figure-caption">Figure 1. First caption.</p>'
         "</div>"
         '<div class="z2m-figure-unit" id="fig-2">'
         '<p class="z2m-figure-target z2m-p62-recovered-target">'
-        '<img data-z2m-recovery-source="pdf_page_render" '
+        f'<img data-z2m-recovery-source="{source}" '
         f'alt="Recovered Figure 2 visual from source PDF" src="{duplicated_data_url}"/>'
         "</p>"
         '<p class="z2m-figure-caption">Figure 2. Second caption.</p>'
@@ -140,3 +140,43 @@ def test_duplicate_repair_rejects_asset_with_same_duplicate_hash(tmp_path: Path)
     assert patched == html
     assert {repair["figure_label"] for repair in repairs} == {"1", "2"}
     assert {repair["reason"] for repair in repairs} == {"recovered_asset_matches_duplicate_hash"}
+
+
+def test_duplicate_repair_patches_region_render_duplicate_targets(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "source.pdf"
+    pdf_path.write_bytes(b"%PDF")
+    html = _recovered_duplicate_figure_html(source="pdf_figure_region_render")
+
+    def recover_asset(
+        _pdf_path: Path,
+        _page_number: int,
+        label: str,
+        out_dir: Path,
+        **_kwargs: Any,
+    ) -> dict[str, str]:
+        return {
+            "path": str(out_dir / f"fig-{label}.png"),
+            "source": "pdf_figure_region_render",
+            "status": "region_rendered",
+        }
+
+    def data_url_from_image_file(path: Path) -> str:
+        payload = base64.b64encode(f"fresh-{path.stem}".encode("ascii")).decode("ascii")
+        return f"data:image/png;base64,{payload}"
+
+    patched, repairs = repair_duplicate_figure_images(
+        html,
+        pdf_path=pdf_path,
+        artifact_dir=tmp_path / "artifacts",
+        zoom=1.0,
+        pdf_text_pages=lambda *_args, **_kwargs: ("ok", ["Figure 1", "Figure 2"], None),
+        resolve_pdf_page_for_figure=lambda *_args, **_kwargs: {"page_number": 1},
+        recover_detached_pdf_figure_plate_asset=lambda *_args, **_kwargs: {},
+        recover_pdf_figure_asset=recover_asset,
+        data_url_from_image_file=data_url_from_image_file,
+        slug=lambda value, **_kwargs: str(value),
+    )
+
+    assert [repair["status"] for repair in repairs] == ["patched", "patched"]
+    assert {repair["repair_mode"] for repair in repairs} == {"recovered_duplicate_target"}
+    assert patched != html

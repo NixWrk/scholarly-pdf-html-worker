@@ -1610,7 +1610,8 @@ def _figure_caption_numbers_from_caption_node(raw_body: str) -> set[int]:
 def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelated: list[int]) -> bool:
     if not unrelated:
         return False
-    if len(re.findall(r"<img\b", body, re.IGNORECASE)) != 1:
+    image_count = len(re.findall(r"<img\b", body, re.IGNORECASE))
+    if image_count < 1:
         return False
     float_alias_nums = {
         int(number)
@@ -1629,6 +1630,8 @@ def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelate
     if not expected.issubset(float_alias_nums) or not expected.issubset(caption_nums):
         return False
     all_caption_nums = sorted(caption_nums | {wrapper_num})
+    if image_count > len(all_caption_nums):
+        return False
     return all_caption_nums == list(range(min(all_caption_nums), max(all_caption_nums) + 1))
 
 

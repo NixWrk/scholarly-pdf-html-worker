@@ -116,3 +116,38 @@ def test_unlinked_sup_numeric_range_ignores_software_version() -> None:
     )
 
     assert has_unlinked_sup_numeric_range(block) is False
+
+
+def test_unlinked_sup_numeric_range_ignores_unity_version() -> None:
+    block = _block(
+        "Unity 5,6 .1f1 was used to generate 3D cartoons.",
+        raw="<p>Unity <sup>5,6</sup>.1f1 was used to generate 3D cartoons.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+    assert (
+        unlinked_citation_range_kind(
+            block,
+            looks_like_float_or_caption=lambda _block: False,
+            block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+        )
+        == ""
+    )
+
+
+def test_unlinked_sup_numeric_range_ignores_question_count_range() -> None:
+    block = _block(
+        "It contained 35-58 questions in total.",
+        raw="<p>It contained <sup>35-58</sup> questions in total.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+
+
+def test_unlinked_sup_numeric_range_ignores_target_option_count() -> None:
+    block = _block(
+        "The number of targets varied and it could be 3, 4 or 5 chairs.",
+        raw="<p>The number of targets varied and it could be <sup>3, 4</sup> or 5 chairs.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False

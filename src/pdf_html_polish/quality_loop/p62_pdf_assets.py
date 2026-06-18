@@ -634,6 +634,8 @@ def select_graphic_rects_for_caption(
         area = fitz_rect_area(rect)
         if area < max(4.0, page_area * 0.00005):
             continue
+        rect_width = max(0.0, float(rect.width))
+        rect_height = max(0.0, float(rect.height))
         x_overlap = fitz_x_overlap_ratio(rect, caption_rect)
         y_overlap = fitz_y_overlap_ratio(rect, caption_rect)
         horizontal_gap = max(
@@ -645,6 +647,13 @@ def select_graphic_rects_for_caption(
             or abs(float(rect.y0) - float(caption_rect.y0)) <= page_height * 0.08
             or abs(float(rect.y1) - float(caption_rect.y1)) <= page_height * 0.08
         )
+        caption_rule_like = (
+            same_vertical_band
+            and rect_width >= page_width * 0.65
+            and rect_height <= max(3.0, page_height * 0.01)
+        )
+        if caption_rule_like:
+            continue
         if same_vertical_band and horizontal_gap <= page_width * 0.72:
             side_aligned.append((horizontal_gap - min(0.5, y_overlap) * 40.0, item))
             continue
@@ -754,7 +763,16 @@ def trim_region_away_from_caption(region: Any, page_rect: Any, caption_rect: Any
         caption_y0 = float(caption_rect.y0)
         caption_y1 = float(caption_rect.y1)
         margin = max(2.0, min(float(page_rect.width), float(page_rect.height)) * 0.003)
-        if y0 < caption_y0 < y1:
+        if y0 < caption_y0 and caption_y1 < y1:
+            above_y1 = max(y0 + 1.0, caption_y0 - margin)
+            below_y0 = min(y1 - 1.0, caption_y1 + margin)
+            above_height = max(0.0, above_y1 - y0)
+            below_height = max(0.0, y1 - below_y0)
+            if below_height >= above_height:
+                y0 = below_y0
+            else:
+                y1 = above_y1
+        elif y0 < caption_y0 < y1:
             trimmed_y1 = max(y0 + 1.0, caption_y0 - margin)
             if trimmed_y1 < y1:
                 y1 = trimmed_y1

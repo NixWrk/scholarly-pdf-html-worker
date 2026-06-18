@@ -429,6 +429,8 @@ def looks_table_note_text(visible: str) -> bool:
         return True
     if lower.startswith("this list includes") or "not exhaustive" in lower:
         return True
+    if re.match(r"^bolded\s+rows?\s+show\b", lower):
+        return True
     if re.match(r"^\\[\(\[]", text) and re.search(
         r"\b(?:is|are)\s+(?:the\s+)?(?:function|value|parameter|term)\b|\bdescribes?\b",
         lower,

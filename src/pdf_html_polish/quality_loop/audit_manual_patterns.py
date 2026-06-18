@@ -50,6 +50,18 @@ def replacement_chars_are_pdf_source_noise(polish_html: str, pdf_text: str) -> b
         or len(re.findall(r"\b\d\s+\d\s+\d\s+\d\b", pdf_text)) >= 8
     ):
         return True
+    if polish_html.count("\ufffd") <= 3 and re.search(
+        r"<t[dh]\b[^>]*>\s*[\d\s.,'\"*+\-:;()/\u2022]*\ufffd[\d\s.,'\"*+\-:;()/\u2022]*</t[dh]>",
+        polish_html,
+        re.IGNORECASE,
+    ):
+        numeric_cells = re.findall(
+            r"<t[dh]\b[^>]*>\s*[\d\s.,'\"*+\-:;()/\u2022]{1,32}</t[dh]>",
+            polish_html,
+            re.IGNORECASE,
+        )
+        if len(numeric_cells) >= 12 or len(re.findall(r"\b\d\s+\d\s+\d\s+\d\b", pdf_text)) >= 4:
+            return True
     return False
 
 

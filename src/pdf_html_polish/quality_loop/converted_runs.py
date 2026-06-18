@@ -73,11 +73,53 @@ def _is_data_availability_reference_number(ref_match: re.Match[str], html: str) 
     return bool(REFERENCE_NUMBER_BRACKET_RE.search(near_text) and DATA_AVAILABILITY_CONTEXT_RE.search(near_text))
 
 
+def _is_table_reference_column_link(ref_match: re.Match[str], html: str) -> bool:
+    body_text = visible_html_text(ref_match.group("body"))
+    if not BRACKET_NUMERIC_REF_TEXT_RE.fullmatch(body_text):
+        return False
+    cell_start = max(
+        html.rfind("<td", 0, ref_match.start()),
+        html.rfind("<th", 0, ref_match.start()),
+    )
+    if cell_start < 0:
+        return False
+    previous_cell_close = max(
+        html.rfind("</td>", 0, ref_match.start()),
+        html.rfind("</th>", 0, ref_match.start()),
+    )
+    if previous_cell_close > cell_start:
+        return False
+    cell_end_candidates = [
+        index
+        for index in (
+            html.find("</td>", ref_match.end()),
+            html.find("</th>", ref_match.end()),
+        )
+        if index >= 0
+    ]
+    if not cell_end_candidates:
+        return False
+    cell_end = min(cell_end_candidates)
+    if visible_html_text(html[cell_start: cell_end + 5]) != body_text:
+        return False
+    table_start = html.rfind("<table", 0, ref_match.start())
+    if table_start < 0 or html.rfind("</table>", 0, ref_match.start()) > table_start:
+        return False
+    header_end = html.find("</tr>", table_start)
+    if header_end < 0 or header_end > ref_match.start():
+        return False
+    header_text = visible_html_text(html[table_start: header_end])
+    return bool(re.search(r"\breferences?\b", header_text, re.IGNORECASE))
+
+
 def _is_bracket_ref_link_for_style(ref_match: re.Match[str], html: str) -> bool:
     body_text = visible_html_text(ref_match.group("body"))
     if "[" not in body_text or "]" not in body_text:
         return False
-    return not _is_data_availability_reference_number(ref_match, html)
+    return not (
+        _is_data_availability_reference_number(ref_match, html)
+        or _is_table_reference_column_link(ref_match, html)
+    )
 
 
 def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, Any]:
