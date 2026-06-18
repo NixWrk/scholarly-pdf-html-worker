@@ -21,12 +21,6 @@ from pdf_html_polish.quality_loop.source_pdf import manifest_article_by_id
 
 DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME = "p62_marker_recovery_plan.json"
 DEFAULT_MARKER_RECOVERY_DEFECT_IDS = {"P62", "P62A"}
-P61_PLAN_CAPTION_RE = re.compile(
-    r"^(?:Extended\s+Data\s+)?(?:Fig\.?|Figure)\s+\d|^Table\s+\d",
-    re.IGNORECASE,
-)
-
-
 @dataclass(frozen=True)
 class P62MarkerRecoveryPlanDependencies:
     index_polish_stage_files: Callable[[Path], list[Path]]
@@ -97,7 +91,6 @@ def _looks_like_p61_plan_float_or_caption(block: Block) -> bool:
             & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"}
         )
         or block.tag in {"table", "figure", "figcaption"}
-        or P61_PLAN_CAPTION_RE.match(block.text.strip()) is not None
     )
 
 

@@ -33,6 +33,7 @@ def test_resolve_p62_image_recovery_stage_config_defaults() -> None:
     config = resolve_p62_image_recovery_stage_config({})
 
     assert config.max_items == 0
+    assert config.jobs == 1
     assert config.execute_marker is True
     assert config.apply_patches is True
     assert config.render_zoom == 1.5
@@ -49,6 +50,7 @@ def test_resolve_p62_image_recovery_stage_config_uses_gate_values_and_fallback_z
     config = resolve_p62_image_recovery_stage_config(
         {
             "p62_image_recovery_max_articles": 7,
+            "document_jobs": 9,
             "p62_image_recovery_execute_marker": False,
             "p62_image_recovery_apply_patches": False,
             "pdf_problem_evidence_render_zoom": 2.25,
@@ -63,6 +65,7 @@ def test_resolve_p62_image_recovery_stage_config_uses_gate_values_and_fallback_z
     )
 
     assert config.max_items == 7
+    assert config.jobs == 9
     assert config.execute_marker is False
     assert config.apply_patches is False
     assert config.render_zoom == 2.25
@@ -83,11 +86,13 @@ def test_resolve_p62_image_recovery_stage_config_call_overrides_gate_values() ->
             "p62_image_recovery_apply_patches": True,
         },
         max_items=3,
+        jobs=5,
         execute_marker=False,
         apply_patches=False,
     )
 
     assert config.max_items == 3
+    assert config.jobs == 5
     assert config.execute_marker is False
     assert config.apply_patches is False
     assert config.probe_marker_for_unavailable is False

@@ -193,6 +193,7 @@ def test_write_marker_recovery_plan_expands_all_p61_refs_in_polish_html(tmp_path
         "<p>The first local result is shown in Figure 2.</p>"
         "<p>The same local result is discussed again in FIGURE 2.</p>"
         "<p>The second local result is shown in Figure 3.</p>"
+        "<p>Fig. 4 shows the third local result.</p>"
         "</body></html>",
         encoding="utf-8",
     )
@@ -203,7 +204,10 @@ def test_write_marker_recovery_plan_expands_all_p61_refs_in_polish_html(tmp_path
         dependencies=_deps(
             selected_pdf={"path": str(pdf_path), "source": "test", "exists": True},
             polish_path=polish_path,
-            pages=["Figure 2 caption and visual evidence. Figure 3 caption and visual evidence."],
+            pages=[
+                "Figure 2 caption and visual evidence. Figure 3 caption and visual evidence. "
+                "Figure 4 caption and visual evidence."
+            ],
             resolver={
                 "page_number": 1,
                 "match_score": 0.9,
@@ -213,9 +217,9 @@ def test_write_marker_recovery_plan_expands_all_p61_refs_in_polish_html(tmp_path
         ),
     )
 
-    assert report["candidate_count"] == 2
-    assert [record["visible_label"] for record in report["articles"]] == ["Figure 2", "Figure 3"]
-    assert [record["target_figure_key"] for record in report["articles"]] == ["2", "3"]
+    assert report["candidate_count"] == 3
+    assert [record["visible_label"] for record in report["articles"]] == ["Figure 2", "Figure 3", "Fig. 4"]
+    assert [record["target_figure_key"] for record in report["articles"]] == ["2", "3", "4"]
 
 
 def test_write_marker_recovery_plan_builds_ready_single_page_record(tmp_path: Path) -> None:

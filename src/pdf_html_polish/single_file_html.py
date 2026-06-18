@@ -16258,7 +16258,10 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "PdetQma",
         "sys-",
         "DirectX-",
-        "pv0:05",
+        "pv0:",
+        "seperable",
+        "E clarity",
+        "b5223",
         "0.999 0995",
         "r=0.9 ",
         "left)999",
@@ -16268,6 +16271,15 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "thev",
         "flow flow flow flow",
         "BOO i",
+        "BOO <",
+        "Routeledge",
+        "Build-in sensors",
+        "Shepadex",
+        "sequence4",
+        "room temperation",
+        "purposed work",
+        "425 cmH2O",
+        "Archelological",
         "Appel's Sir i",
         "14 C-beled",
         "secondsmm-2",
@@ -16319,7 +16331,10 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
     html = re.sub(rf"\bsys-\s*{page_anchor}tem\b", "system", html, flags=re.IGNORECASE)
     html = re.sub(rf"\bDirectX-\s*{sup_r}", "DirectX-R", html)
 
-    html = re.sub(r"\bpv0:05\b", "p<0.05", html)
+    html = re.sub(r"\bpv0:(\d+)\b", lambda m: f"p<0.{m.group(1)}", html)
+    html = re.sub(r"\bseperable\b", "separable", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bE\s+clarity\s+of\b", "The clarity of", html)
+    html = re.sub(r"\bb5223\b", "b=223", html)
     html = re.sub(r"\b0\.999\s+0995\b", "0.999 0.995", html)
     html = re.sub(r"\br=0\.9\s+(840|526)\b", r"r=0.9\1", html)
     html = re.sub(r"\bleft\)999\b", "left). .999", html)
@@ -16345,6 +16360,21 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
     html = re.sub(r"\band\s+thev\s+have\b", "and they have", html, flags=re.IGNORECASE)
     html = re.sub(r"\bflow\s+flow\s+flow\s+flow\b", "flow", html, flags=re.IGNORECASE)
     html = re.sub(r"\bBOO\s+i\b", "BOOI", html)
+    html = re.sub(
+        r"\bBOO\s*<(?:i|em|span|sup|sub)\b[^>]*>\s*i\s*</(?:i|em|span|sup|sub)>",
+        "BOOI",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(r"\bRouteledge\b", "Routledge", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bBuild-in\s+sensors\b", "Built-in sensors", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bShep(?:a|ha)dex\b", "Sephadex", html)
+    html = re.sub(r"\bsequence4\b", "sequence 4", html, flags=re.IGNORECASE)
+    html = re.sub(r"\broom\s+temperation\b", "room temperature", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bpurposed\s+work\b", "proposed work", html, flags=re.IGNORECASE)
+    html = re.sub(r"\b425\s+cmH2O\b", ">25 cmH2O", html)
+    html = re.sub(r"\b460\s+bpm\b", ">60 bpm", html)
+    html = re.sub(r"\bArchelological\b", "Archaeological", html, flags=re.IGNORECASE)
     html = re.sub(r"\bAppel's\s+Sir\s+i\b", "Apple's Siri", html, flags=re.IGNORECASE)
     html = re.sub(r"\b14\s+C-beled\b", "14C-labeled", html)
     html = re.sub(r"\bsecondsmm-2\b", "s/mm2", html)

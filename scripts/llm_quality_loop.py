@@ -1201,6 +1201,9 @@ def write_polish_auto_repair_stage(
     *,
     gate_config: dict[str, Any] | None = None,
     out_path: Path | None = None,
+    jobs: int | None = None,
+    article_ids: Iterable[str] | None = None,
+    refresh_assessment: bool = True,
 ) -> dict[str, Any]:
     """Apply source-backed local repairs promoted from post-audit defect checks."""
 
@@ -1217,17 +1220,115 @@ def write_polish_auto_repair_stage(
         repair_articles.setdefault(article_id, {"article": {}, "defect_ids": []})[
             "broken_internal_links"
         ] = broken_count
-    zoom = float(gate_config.get("polish_auto_repair_render_zoom") or gate_config.get("p62_image_recovery_render_zoom") or 1.5)
+    article_filter = {str(article_id) for article_id in (article_ids or []) if str(article_id)}
+    if article_filter:
+        repair_articles = {
+            article_id: item
+            for article_id, item in repair_articles.items()
+            if article_id in article_filter
+        }
+    zoom = float(
+        gate_config.get("polish_auto_repair_render_zoom")
+        or gate_config.get("p62_image_recovery_render_zoom")
+        or 1.5
+    )
     apply_patches = bool(gate_config.get("polish_auto_repair_apply_patches", True))
+    worker_count = max(
+        1,
+        int(
+            jobs
+            if jobs is not None
+            else (gate_config.get("polish_auto_repair_jobs") or gate_config.get("document_jobs") or 1)
+        ),
+    )
 
     report_articles: list[dict[str, Any]] = []
     patched_article_ids: set[str] = set()
     repair_counts: Counter[str] = Counter()
     target_patch_counts: Counter[str] = Counter()
 
+    if worker_count > 1 and len(repair_articles) > 1 and not article_filter:
+        parallel_root = repair_root / "_parallel_article_reports"
+        parallel_root.mkdir(parents=True, exist_ok=True)
+        repair_items = sorted(repair_articles.items())
+        article_order = {article_id: index for index, (article_id, _item) in enumerate(repair_items, start=1)}
+        print(
+            "Polish auto repair parallel dispatch: "
+            f"articles={len(repair_items)} jobs={worker_count} apply_patches={apply_patches}",
+            flush=True,
+        )
+
+        def process_article_repair(group_index: int, article_id: str) -> dict[str, Any]:
+            report_path = parallel_root / f"{group_index:03d}_{_slug(article_id, max_len=72)}.report.json"
+            return write_polish_auto_repair_stage(
+                run_dir,
+                gate_config=gate_config,
+                out_path=report_path,
+                jobs=1,
+                article_ids=[article_id],
+                refresh_assessment=False,
+            )
+
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(process_article_repair, index, article_id): article_id
+                for index, (article_id, _item) in enumerate(repair_items, start=1)
+            }
+            for future in as_completed(futures):
+                article_id = futures[future]
+                group_report = future.result()
+                completed_count += 1
+                patched_article_ids.update(str(article) for article in (group_report.get("patched_articles") or []))
+                repair_counts.update(
+                    {str(key): int(value) for key, value in (group_report.get("repair_counts") or {}).items()}
+                )
+                target_patch_counts.update(
+                    {str(key): int(value) for key, value in (group_report.get("patched_targets") or {}).items()}
+                )
+                for article_report in group_report.get("articles") or []:
+                    if not isinstance(article_report, dict):
+                        continue
+                    article_report = dict(article_report)
+                    article_report["index"] = article_order.get(str(article_report.get("article") or article_id), 0)
+                    report_articles.append(article_report)
+                print(
+                    "Polish auto repair article complete: "
+                    f"{completed_count}/{len(repair_items)} article={_console_text(article_id)} "
+                    f"patched_articles={group_report.get('patched_article_count', 0)}",
+                    flush=True,
+                )
+
+        report_articles.sort(key=lambda item: int(item.get("index") or 0))
+        if patched_article_ids and refresh_assessment:
+            _refresh_assessment_for_articles(run_dir, patched_article_ids)
+        report = {
+            "generated_at": _now(),
+            "run_dir": str(run_dir),
+            "path": str(out_path),
+            "status": "patched" if patched_article_ids else "no_changes",
+            "candidate_count": len(repair_articles),
+            "patched_article_count": len(patched_article_ids),
+            "patched_articles": sorted(patched_article_ids),
+            "repair_counts": dict(sorted(repair_counts.items())),
+            "patched_targets": dict(sorted(target_patch_counts.items())),
+            "apply_patches": apply_patches,
+            "render_zoom": zoom,
+            "jobs": worker_count,
+            "articles": report_articles,
+        }
+        _write_json(out_path, report)
+        print(
+            "Polish auto repair complete: "
+            f"status={report['status']} patched_articles={len(patched_article_ids)} "
+            f"repairs={dict(sorted(repair_counts.items()))}",
+            flush=True,
+        )
+        return report
+
     print(
         "Polish auto repair started: "
-        f"articles={len(repair_articles)} apply_patches={apply_patches}",
+        f"articles={len(repair_articles)} apply_patches={apply_patches} jobs={worker_count}",
         flush=True,
     )
     for index, (article_id, item) in enumerate(sorted(repair_articles.items()), start=1):
@@ -1427,7 +1528,7 @@ def write_polish_auto_repair_stage(
 
         report_articles.append(article_report)
 
-    if patched_article_ids:
+    if patched_article_ids and refresh_assessment:
         _refresh_assessment_for_articles(run_dir, patched_article_ids)
 
     report = {
@@ -1442,6 +1543,7 @@ def write_polish_auto_repair_stage(
         "patched_targets": dict(sorted(target_patch_counts.items())),
         "apply_patches": apply_patches,
         "render_zoom": zoom,
+        "jobs": worker_count,
         "articles": report_articles,
     }
     _write_json(out_path, report)
@@ -1464,6 +1566,8 @@ def write_p62_image_recovery_stage(
     apply_patches: bool | None = None,
     allow_external_paths: bool = False,
     max_items: int | None = None,
+    jobs: int | None = None,
+    refresh_assessment: bool = True,
 ) -> dict[str, Any]:
     """Recover P62 missing-figure visuals through marker, then PDF page render fallback."""
 
@@ -1480,13 +1584,20 @@ def write_p62_image_recovery_stage(
         execute_marker=execute_marker,
         apply_patches=apply_patches,
         max_items=max_items,
+        jobs=jobs,
     )
     max_items = stage_config.max_items
     if max_items and max_items > 0:
         records = records[:max_items]
+    indexed_records = [
+        {**record, "recovery_index": int(record.get("recovery_index") or index)}
+        for index, record in enumerate(records, start=1)
+    ]
+    records = indexed_records
 
     execute_marker = stage_config.execute_marker
     apply_patches = stage_config.apply_patches
+    worker_count = max(1, int(stage_config.jobs or 1))
     render_zoom = stage_config.render_zoom
     marker_timeout = stage_config.marker_timeout
     probe_source_visual_unavailable = stage_config.probe_source_visual_unavailable
@@ -1501,9 +1612,105 @@ def write_p62_image_recovery_stage(
     recovery_root = run_dir / "p62_image_recovery"
     recovered_records: list[dict[str, Any]] = []
     patched_article_ids: set[str] = set()
+    if worker_count > 1 and len(records) > 1:
+        article_groups: dict[str, list[dict[str, Any]]] = {}
+        for index, record in enumerate(records, start=1):
+            article_id = str(record.get("article") or f"article_{index}")
+            article_groups.setdefault(article_id, []).append(record)
+        if len(article_groups) > 1:
+            parallel_root = recovery_root / "_parallel_article_plans"
+            parallel_root.mkdir(parents=True, exist_ok=True)
+            group_items = list(article_groups.items())
+            print(
+                "P62 image recovery parallel dispatch: "
+                f"records={len(records)} articles={len(group_items)} jobs={worker_count}",
+                flush=True,
+            )
+
+            def process_article_group(
+                group_index: int,
+                article_id: str,
+                group_records: list[dict[str, Any]],
+            ) -> dict[str, Any]:
+                group_slug = f"{group_index:03d}_{_slug(article_id, max_len=72)}"
+                group_plan_path = parallel_root / f"{group_slug}.plan.json"
+                group_report_path = parallel_root / f"{group_slug}.report.json"
+                group_plan = dict(plan)
+                group_plan["articles"] = group_records
+                group_plan["selected_count"] = len(group_records)
+                _write_json(group_plan_path, group_plan)
+                return write_p62_image_recovery_stage(
+                    run_dir,
+                    gate_config=gate_config,
+                    plan_path=group_plan_path,
+                    out_path=group_report_path,
+                    execute_marker=execute_marker,
+                    apply_patches=apply_patches,
+                    allow_external_paths=allow_external_paths,
+                    max_items=0,
+                    jobs=1,
+                    refresh_assessment=False,
+                )
+
+            reports_by_group: list[dict[str, Any] | None] = [None] * len(group_items)
+            completed_records = 0
+            completed_groups = 0
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = {
+                    executor.submit(process_article_group, group_index, article_id, group_records): (
+                        group_index,
+                        article_id,
+                        len(group_records),
+                    )
+                    for group_index, (article_id, group_records) in enumerate(group_items, start=1)
+                }
+                for future in as_completed(futures):
+                    group_index, article_id, group_record_count = futures[future]
+                    group_report = future.result()
+                    reports_by_group[group_index - 1] = group_report
+                    completed_records += group_record_count
+                    completed_groups += 1
+                    print(
+                        "P62 image recovery article complete: "
+                        f"articles={completed_groups}/{len(group_items)} "
+                        f"records={completed_records}/{len(records)} "
+                        f"article={_console_text(article_id)} "
+                        f"asset_ready={group_report.get('asset_ready_count', 0)} "
+                        f"patched={group_report.get('patched_warning_count', 0)}",
+                        flush=True,
+                    )
+
+            for group_report in reports_by_group:
+                if not isinstance(group_report, dict):
+                    continue
+                recovered_records.extend(
+                    item for item in (group_report.get("articles") or []) if isinstance(item, dict)
+                )
+                patched_article_ids.update(str(article) for article in (group_report.get("patched_articles") or []))
+            recovered_records.sort(key=lambda item: int(item.get("record_index") or 0))
+
+            if patched_article_ids and refresh_assessment:
+                _refresh_assessment_for_articles(run_dir, patched_article_ids)
+
+            report = _build_p62_image_recovery_report(
+                generated_at=_now(),
+                run_dir=run_dir,
+                out_path=out_path,
+                plan_path=plan_path,
+                recovery_root=recovery_root,
+                plan_candidate_count=int(plan.get("candidate_count") or 0),
+                selected_count=len(records),
+                recovered_records=recovered_records,
+                patched_article_ids=patched_article_ids,
+                stage_config=stage_config,
+                allow_external_paths=allow_external_paths,
+            )
+            _write_json(out_path, report)
+            return report
+
     print(
         "P62 image recovery started: "
-        f"records={len(records)} execute_marker={execute_marker} apply_patches={apply_patches}",
+        f"records={len(records)} execute_marker={execute_marker} apply_patches={apply_patches} jobs={worker_count}",
         flush=True,
     )
 
@@ -1511,7 +1718,8 @@ def write_p62_image_recovery_stage(
         article_id = str(record.get("article") or f"article_{index}")
         figure_label = str(record.get("figure_label") or "").strip()
         resolved_figure_label = str(record.get("resolved_figure_label") or figure_label).strip()
-        artifact_dir = recovery_root / f"{index:03d}_{_slug(article_id, max_len=72)}"
+        record_index = int(record.get("recovery_index") or index)
+        artifact_dir = recovery_root / f"{record_index:03d}_{_slug(article_id, max_len=72)}"
         if figure_label:
             artifact_dir = artifact_dir / f"fig_{_slug(figure_label, max_len=20)}"
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -1527,7 +1735,9 @@ def write_p62_image_recovery_stage(
         )
         item: dict[str, Any] = {
             "article": article_id,
+            "record_index": record_index,
             "source_article": record.get("source_article") or article_id,
+            "defect_id": record.get("defect_id") or "",
             "figure_label": figure_label,
             "resolved_figure_label": resolved_figure_label,
             "warning_index": record.get("warning_index"),
@@ -1763,6 +1973,8 @@ def write_p62_image_recovery_stage(
                             hashlib.sha1(str(pdf_path.resolve(strict=False)).encode("utf-8")).hexdigest()[:12]
                             + "_"
                             + _slug(pdf_path.stem, max_len=48)
+                            + "_"
+                            + _slug(article_id, max_len=24)
                         )
                     )
                     if probe_marker_for_unavailable
@@ -1900,6 +2112,8 @@ def write_p62_image_recovery_stage(
                             hashlib.sha1(str(pdf_path.resolve(strict=False)).encode("utf-8")).hexdigest()[:12]
                             + "_"
                             + _slug(pdf_path.stem, max_len=48)
+                            + "_"
+                            + _slug(article_id, max_len=24)
                         )
                     )
                     if probe_marker_for_unavailable
@@ -2157,7 +2371,7 @@ def write_p62_image_recovery_stage(
                 flush=True,
             )
 
-    if patched_article_ids:
+    if patched_article_ids and refresh_assessment:
         _refresh_assessment_for_articles(run_dir, patched_article_ids)
 
     report = _build_p62_image_recovery_report(
@@ -3057,6 +3271,7 @@ def build_analysis_pack(
             "probe_marker_for_unavailable": p62_image_recovery_report.get("probe_marker_for_unavailable"),
             "execute_marker": p62_image_recovery_report.get("execute_marker"),
             "apply_patches": p62_image_recovery_report.get("apply_patches"),
+            "jobs": p62_image_recovery_report.get("jobs"),
         },
         "polish_auto_repair_stage": {
             "path": polish_auto_repair_report.get("path")
@@ -3066,6 +3281,7 @@ def build_analysis_pack(
             "patched_article_count": polish_auto_repair_report.get("patched_article_count", 0),
             "repair_counts": polish_auto_repair_report.get("repair_counts", {}),
             "apply_patches": polish_auto_repair_report.get("apply_patches"),
+            "jobs": polish_auto_repair_report.get("jobs"),
         },
         "pattern_observations": {
             "history_path": pattern_observations.get("history_path"),
@@ -3321,6 +3537,7 @@ def observe(args: argparse.Namespace) -> int:
                 execute_marker=bool(gate_config.get("p62_image_recovery_execute_marker", True)),
                 apply_patches=bool(gate_config.get("p62_image_recovery_apply_patches", True)),
                 max_items=args.p62_recovery_max_items,
+                jobs=args.p62_recovery_jobs,
             )
             if int(recovery_report.get("patched_warning_count") or 0) > 0 and bool(
                 gate_config.get("p62_image_recovery_rerun_audit", True)
@@ -3332,7 +3549,11 @@ def observe(args: argparse.Namespace) -> int:
             and not audit_existing_converted
         )
         if run_polish_auto_repair:
-            auto_repair_report = write_polish_auto_repair_stage(run_dir, gate_config=gate_config)
+            auto_repair_report = write_polish_auto_repair_stage(
+                run_dir,
+                gate_config=gate_config,
+                jobs=args.polish_auto_repair_jobs,
+            )
             if int(auto_repair_report.get("patched_article_count") or 0) > 0 and bool(
                 gate_config.get("polish_auto_repair_rerun_audit", True)
             ):
@@ -3561,6 +3782,16 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         type=int,
         help="Limit P62 image recovery records for this observe run; omitted or zero means all.",
     )
+    observe_parser.add_argument(
+        "--p62-recovery-jobs",
+        type=int,
+        help="Article-level worker count for the P62 image recovery stage; defaults to gate config.",
+    )
+    observe_parser.add_argument(
+        "--polish-auto-repair-jobs",
+        type=int,
+        help="Article-level worker count for the polish auto-repair stage; defaults to gate config.",
+    )
     observe_parser.add_argument("--skip-history", action="store_true")
     observe_parser.add_argument("--no-append-history", action="store_true")
     observe_parser.add_argument("--fail-on-gate", action="store_true")
@@ -3590,6 +3821,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     recover_parser.add_argument("--plan", type=Path)
     recover_parser.add_argument("--out", type=Path)
     recover_parser.add_argument("--max-items", type=int)
+    recover_parser.add_argument(
+        "--jobs",
+        type=int,
+        help="Article-level worker count for P62 image recovery; defaults to gate config.",
+    )
     marker_mode = recover_parser.add_mutually_exclusive_group()
     marker_mode.add_argument(
         "--run-marker",
@@ -3694,6 +3930,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             execute_marker=args.execute_marker,
             apply_patches=args.apply_patches,
             max_items=args.max_items,
+            jobs=args.jobs,
         )
         if args.rerun_audit and int(report.get("patched_warning_count") or 0) > 0:
             pdf_map_path = args.run_dir / DEFAULT_SOURCE_PDF_MAP_NAME

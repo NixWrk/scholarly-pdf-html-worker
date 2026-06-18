@@ -2461,6 +2461,100 @@ def test_p62_image_recovery_stage_repairs_duplicate_marker_recovered_figures(
     assert len(hashes) == 2
 
 
+def test_p62_image_recovery_stage_parallelizes_by_article_and_preserves_record_order(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    for article in ("article_a", "article_b"):
+        for path in (
+            run_dir / "polish" / f"{article}.02.en.polish.html",
+            run_dir / "audit_tree" / article / "02.en.polish.html",
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f'<html><body><div id="fig-1">Figure 1. Already present for {article}.</div></body></html>',
+                encoding="utf-8",
+            )
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 3,
+            "articles": [
+                {"article": "article_a", "figure_label": "1", "status": "ready"},
+                {"article": "article_b", "figure_label": "1", "status": "ready"},
+                {"article": "article_a", "figure_label": "2", "status": "ready"},
+            ],
+        },
+    )
+    _write_json(
+        run_dir / "manifest.json",
+        {"articles": [{"article_id": "article_a"}, {"article_id": "article_b"}]},
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 2, "totals": {}, "articles": []})
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={
+            "p62_image_recovery_jobs": 2,
+            "p62_image_recovery_repair_duplicate_figure_images": False,
+        },
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["jobs"] == 2
+    assert report["selected_count"] == 3
+    assert [article["record_index"] for article in report["articles"]] == [1, 2, 3]
+    assert [article["article"] for article in report["articles"]] == ["article_a", "article_b", "article_a"]
+    assert report["status_counts"] == {"already_patched": 3}
+
+
+def test_polish_auto_repair_stage_parallelizes_by_article_and_merges_reports(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    audit_articles = []
+    for article, ref_number in (("article_a", 1), ("article_b", 2)):
+        for path in (
+            run_dir / "polish" / f"{article}.02.en.polish.html",
+            run_dir / "audit_tree" / article / "02.en.polish.html",
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "<html><body>"
+                f'<p>External citation <a href="https://app.readcube.com/item-{ref_number}">[{ref_number}]</a>.</p>'
+                "<h4>References</h4>"
+                f'<ol><li id="ref-{ref_number}">Reference {ref_number}.</li></ol>'
+                "</body></html>",
+                encoding="utf-8",
+            )
+        audit_articles.append(
+            {
+                "article": article,
+                "summary": {},
+                "defects_found": [{"id": "P04N", "extra": {"candidate_numbers": [ref_number]}}],
+            }
+        )
+    _write_json(run_dir / "audit_full_checks.json", {"articles": audit_articles})
+    _write_json(
+        run_dir / "manifest.json",
+        {"articles": [{"article_id": "article_a"}, {"article_id": "article_b"}]},
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 2, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={"polish_auto_repair_jobs": 2})
+
+    assert report["status"] == "patched"
+    assert report["jobs"] == 2
+    assert report["patched_article_count"] == 2
+    assert report["patched_articles"] == ["article_a", "article_b"]
+    assert [article["index"] for article in report["articles"]] == [1, 2]
+    assert set(report["repair_counts"]) == {"P04"}
+    for article, ref_number in (("article_a", 1), ("article_b", 2)):
+        html = (run_dir / "polish" / f"{article}.02.en.polish.html").read_text(encoding="utf-8")
+        assert f'href="#ref-{ref_number}"' in html
+
+
 def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_numeric_links(
     tmp_path: Path,
 ) -> None:

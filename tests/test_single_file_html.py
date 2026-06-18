@@ -13989,6 +13989,11 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
         "with a plent of samples at 31.6 8 C. IPelvic organ prolapse, agumentation, "
         "DWT values -2 mm, \u0399mproving access, form eBDtheque, enzymelinked assays, "
         "p, pj]of triangles, Ote this: DO: 10.1039/example, and If inal remained.</p>"
+        "<p>Residual P71 tokens included pv0:001, linearly seperable data, "
+        "E clarity of their design, b5223 magnification, Routeledge, Build-in sensors, "
+        "Shepadex columns, sequence4 acquisition, room temperation, purposed work, "
+        "425 cmH2O, 460 bpm, and Archelological exploration.</p>"
+        "<p>Split italic residue kept BOO <i>i</i> in a table-like row.</p>"
         '<p>Reference split reached r=0.9 <a href="#ref-9">526 30 31 33 52)</a>. '
         "Solid .999 fine silver sheet (left)999 fine silver clad copper (right). "
         "The symptom hispareunia stayed in the abstract.</p>"
@@ -14035,6 +14040,11 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
     assert "p, pj] of triangles, Cite this: doi:" in polished
     assert "10.1039/example" in polished
     assert "and I_final remained" in polished
+    assert "p<0.001, linearly separable data" in polished
+    assert "The clarity of their design, b=223 magnification, Routledge, Built-in sensors" in polished
+    assert "Sephadex columns, sequence 4 acquisition, room temperature, proposed work" in polished
+    assert ">25 cmH2O, >60 bpm, and Archaeological exploration" in polished
+    assert "kept BOOI in a table-like row" in polished
     assert "r=0.9526 30 31 33 52)" in polished
     assert "sheet (left). .999 fine silver clad copper" in polished
     assert "symptom dyspareunia stayed in the abstract" in polished

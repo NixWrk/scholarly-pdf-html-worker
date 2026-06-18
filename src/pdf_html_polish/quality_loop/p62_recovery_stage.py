@@ -12,6 +12,7 @@ from typing import Any
 @dataclass(frozen=True)
 class P62ImageRecoveryStageConfig:
     max_items: int
+    jobs: int
     execute_marker: bool
     apply_patches: bool
     render_zoom: float
@@ -65,6 +66,7 @@ def resolve_p62_image_recovery_stage_config(
     execute_marker: bool | None = None,
     apply_patches: bool | None = None,
     max_items: int | None = None,
+    jobs: int | None = None,
 ) -> P62ImageRecoveryStageConfig:
     resolved_max_items = (
         int(gate_config.get("p62_image_recovery_max_articles") or 0)
@@ -87,11 +89,17 @@ def resolve_p62_image_recovery_stage_config(
         or 1.5
     )
     marker_timeout = int(gate_config.get("p62_image_recovery_marker_timeout_seconds") or 300)
+    resolved_jobs = (
+        int(gate_config.get("p62_image_recovery_jobs") or gate_config.get("document_jobs") or 1)
+        if jobs is None
+        else jobs
+    )
     probe_marker_for_unavailable = bool(
         gate_config.get("p62_image_recovery_probe_marker_for_unavailable", resolved_execute_marker)
     )
     return P62ImageRecoveryStageConfig(
         max_items=resolved_max_items,
+        jobs=max(1, resolved_jobs),
         execute_marker=resolved_execute_marker,
         apply_patches=resolved_apply_patches,
         render_zoom=render_zoom,
@@ -401,6 +409,7 @@ def build_p62_image_recovery_report(
         "unresolved_count": unresolved_count,
         "execute_marker": stage_config.execute_marker,
         "apply_patches": stage_config.apply_patches,
+        "jobs": stage_config.jobs,
         "allow_external_paths": allow_external_paths,
         "replace_page_render": stage_config.replace_page_render,
         "remove_false_match_recovery": stage_config.remove_false_match_recovery,
