@@ -8,6 +8,7 @@ import functools
 import html as html_lib
 from pathlib import Path
 import re
+import threading
 from typing import Any
 
 from ..html_links import escape_html_attr_literal
@@ -32,6 +33,7 @@ KATEX_STYLE_MARKER = 'data-z2m-style="katex"'
 STATIC_DISPLAY_TEX_PATTERN = re.compile(r"\\\[(?P<body>[\s\S]*?)\\\]")
 STATIC_INLINE_TEX_PATTERN = re.compile(r"\\\((?P<body>[\s\S]*?)\\\)")
 KATEX_PLACEHOLDER_PATTERN = re.compile(r"\ue000Z2MK([0-9]+)\ue001")
+KATEX_CONTEXT_LOCK = threading.RLock()
 MATHJAX_SCRIPT_TAG_PATTERN = re.compile(
     r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*>[\s\S]*?</script>|'
     r'<script\b[^>]*\bid\s*=\s*["\']MathJax-script["\'][^>]*/?>',
@@ -69,21 +71,22 @@ def katex_v8_context() -> Any:
 def close_katex_v8_context() -> None:
     """Close the cached MiniRacer context so CLI processes can exit cleanly."""
 
-    if katex_v8_context.cache_info().currsize == 0:
-        return
+    with KATEX_CONTEXT_LOCK:
+        if katex_v8_context.cache_info().currsize == 0:
+            return
 
-    try:
-        ctx = katex_v8_context()
-    except Exception:
-        katex_v8_context.cache_clear()
-        return
+        try:
+            ctx = katex_v8_context()
+        except Exception:
+            katex_v8_context.cache_clear()
+            return
 
-    try:
-        close = getattr(ctx, "close", None)
-        if callable(close):
-            close()
-    finally:
-        katex_v8_context.cache_clear()
+        try:
+            close = getattr(ctx, "close", None)
+            if callable(close):
+                close()
+        finally:
+            katex_v8_context.cache_clear()
 
 
 atexit.register(close_katex_v8_context)
@@ -157,13 +160,13 @@ def render_katex_html(html: str, *, ensure_head: Callable[[str], str]) -> str:
         return original
 
     try:
-        ctx = katex_v8_context()
+        with KATEX_CONTEXT_LOCK:
+            ctx = katex_v8_context()
+            rendered = ctx.call(
+                "__z2m_katex", [{"t": tex, "d": display} for tex, display in jobs]
+            )
     except ImportError:
         return inject_mathjax(original, ensure_head=ensure_head)
-
-    rendered = ctx.call(
-        "__z2m_katex", [{"t": tex, "d": display} for tex, display in jobs]
-    )
 
     def expand(match: re.Match[str]) -> str:
         job_index = int(match.group(1))

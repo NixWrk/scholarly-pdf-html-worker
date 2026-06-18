@@ -3352,6 +3352,28 @@ def test_observe_runs_configured_tests_by_default() -> None:
     assert args.run_tests is False
 
 
+def test_observe_accepts_parallel_document_job_overrides() -> None:
+    args = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            "source_run",
+            "--out-dir",
+            "out_run",
+            "--jobs",
+            "64",
+            "--repolish-jobs",
+            "32",
+            "--audit-jobs",
+            "48",
+        ]
+    )
+
+    assert args.jobs == 64
+    assert args.repolish_jobs == 32
+    assert args.audit_jobs == 48
+
+
 def test_observe_accepts_converted_raw_repolish_mode() -> None:
     args = parse_args(
         [
@@ -3807,9 +3829,12 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
     (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish.</p></body></html>", encoding="utf-8")
     audit_calls: list[dict[str, object]] = []
+    repolish_calls: list[dict[str, object]] = []
     repair_calls: list[str] = []
 
     gate_config = {
+        "repolish_jobs": 3,
+        "audit_jobs": 2,
         "require_pdf_text_layer_diagnostics": False,
         "targeted_repair_audit_enabled": True,
         "run_p62_image_recovery_stage": True,
@@ -3822,6 +3847,7 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     }
 
     def fake_repolish(*args: object, **kwargs: object) -> dict[str, object]:
+        repolish_calls.append({"args": args, "kwargs": kwargs})
         return {"raw_count": 1, "article_count": 1, "skipped_count": 0, "changed_count": 1}
 
     def fake_run_audit(*args: object, **kwargs: object) -> None:
@@ -3887,7 +3913,10 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
 
     assert llm_quality_loop.observe(args) == 0
     assert repair_calls == ["p62_plan", "p62_recovery", "polish_auto_repair"]
+    assert repolish_calls[0]["kwargs"]["jobs"] == 3
     assert len(audit_calls) == 2
+    assert audit_calls[0]["kwargs"]["jobs"] == 2
+    assert audit_calls[1]["kwargs"]["jobs"] == 2
     assert audit_calls[0]["kwargs"].get("merge_previous_report_path") is None
     assert audit_calls[1]["kwargs"]["roots"] == [stage_dir]
     assert audit_calls[1]["kwargs"]["merge_previous_report_path"] == run_dir / "audit_full_checks.json"
@@ -3971,7 +4000,7 @@ def test_write_manual_review_queue_prioritizes_changed_articles_without_quality_
                     "article": "article_b",
                     "raw_stage_path": "raw_b.html",
                     "polish_stage_path": "polish_b.html",
-                    "defects_found": [{"id": "P67", "severity": "warning", "check": "Text residue"}],
+                    "defects_found": [],
                 },
             ]
         },
@@ -4133,6 +4162,31 @@ def test_repolish_cached_run_auto_policy_keeps_en_corpus_only(tmp_path: Path) ->
     assert manifest["skipped_articles"][0]["skip_reason"] == "detected_ru_not_en"
     assert (tmp_path / "run" / "audit_tree" / "en_doc" / "02.en.polish.html").is_file()
     assert not (tmp_path / "run" / "audit_tree" / "ru_doc").exists()
+
+
+def test_repolish_cached_run_parallel_jobs_keep_manifest_order(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    raw_cache = source / "raw_cache"
+    profiles = source / "profiles"
+    raw_cache.mkdir(parents=True)
+    profiles.mkdir(parents=True)
+    for article in ("alpha", "beta", "gamma"):
+        (raw_cache / f"{article}.01.en.raw.html").write_text(
+            "<html><body><p>This article describes methods, results, and discussion.</p></body></html>",
+            encoding="utf-8",
+        )
+        _write_json(
+            profiles / f"{article}.citation_profile.json",
+            {"status": "ok", "style": "unknown", "confidence": "low"},
+        )
+
+    manifest = repolish_cached_run(source, tmp_path / "run", jobs=3)
+    assessment = json.loads((tmp_path / "run" / "assessment.json").read_text(encoding="utf-8"))
+
+    assert manifest["jobs"] == 3
+    assert manifest["article_count"] == 3
+    assert [article["article"] for article in manifest["articles"]] == ["alpha", "beta", "gamma"]
+    assert [article["article"] for article in assessment["articles"]] == ["alpha", "beta", "gamma"]
 
 
 def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Path, monkeypatch) -> None:

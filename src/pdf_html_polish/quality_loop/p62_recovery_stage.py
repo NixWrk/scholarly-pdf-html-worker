@@ -243,6 +243,92 @@ def recover_pdf_figure_asset_for_stage(
     )
 
 
+def _source_visual_probe_status(item: dict[str, Any]) -> str:
+    probe = item.get("source_visual_probe")
+    if isinstance(probe, dict):
+        return str(item.get("source_visual_probe_status") or probe.get("status") or "")
+    return str(item.get("source_visual_probe_status") or "")
+
+
+def has_terminal_source_visual_unavailable_evidence(item: dict[str, Any]) -> bool:
+    """Return true only when source-unavailable P62 evidence is complete enough."""
+
+    if item.get("asset_status") == "ready":
+        return False
+
+    plan_status = str(item.get("plan_status") or "")
+    item_status = str(item.get("status") or "")
+    if "source_visual_unavailable" not in {plan_status, item_status}:
+        return False
+    if not str(item.get("source_visual_unavailable_reason") or "").strip():
+        return False
+    if _source_visual_probe_status(item) != "not_found":
+        return False
+
+    probe = item.get("source_visual_probe")
+    if not isinstance(probe, dict) or str(probe.get("status") or "") != "not_found":
+        return False
+
+    has_label_probe = bool(probe.get("label_pages") or probe.get("attempts"))
+    visual_inventory = probe.get("visual_inventory")
+    pypdf_image_inventory = probe.get("pypdf_image_inventory")
+    has_visual_inventory = isinstance(visual_inventory, dict) and str(
+        visual_inventory.get("status") or ""
+    ) in {"ready", "empty"}
+    has_pypdf_inventory = isinstance(pypdf_image_inventory, dict) and str(
+        pypdf_image_inventory.get("status") or ""
+    ) in {"ready", "empty"}
+    return has_label_probe and has_visual_inventory and has_pypdf_inventory
+
+
+def _normalize_p62_image_recovery_record(item: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(item)
+    if has_terminal_source_visual_unavailable_evidence(normalized):
+        normalized["status"] = "source_visual_unavailable"
+        normalized.setdefault("terminal_status_reason", "source_visual_unavailable")
+    return normalized
+
+
+def _source_visual_unavailable_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in records:
+        if str(item.get("status") or "") != "source_visual_unavailable":
+            continue
+        source_pdf_path = str(item.get("source_pdf_path") or "")
+        figure_label = str(item.get("resolved_figure_label") or item.get("figure_label") or "")
+        reason = str(item.get("source_visual_unavailable_reason") or "unknown")
+        key = (source_pdf_path, figure_label, reason)
+        group = groups.setdefault(
+            key,
+            {
+                "source_pdf_path": source_pdf_path,
+                "figure_label": figure_label,
+                "source_visual_unavailable_reason": reason,
+                "raw_record_count": 0,
+                "_articles": set(),
+            },
+        )
+        group["raw_record_count"] += 1
+        article = str(item.get("article") or "")
+        if article:
+            group["_articles"].add(article)
+
+    result: list[dict[str, Any]] = []
+    for group in groups.values():
+        articles = sorted(group.pop("_articles"))
+        group["article_count"] = len(articles)
+        group["affected_article_ids"] = articles
+        result.append(group)
+    result.sort(
+        key=lambda item: (
+            str(item.get("source_pdf_path") or ""),
+            str(item.get("figure_label") or ""),
+            str(item.get("source_visual_unavailable_reason") or ""),
+        )
+    )
+    return result
+
+
 def build_p62_image_recovery_report(
     *,
     generated_at: str,
@@ -257,25 +343,31 @@ def build_p62_image_recovery_report(
     stage_config: P62ImageRecoveryStageConfig,
     allow_external_paths: bool,
 ) -> dict[str, Any]:
-    status_counts = Counter(str(item.get("status") or "unknown") for item in recovered_records)
-    source_counts = Counter(str(item.get("recovery_source") or "unresolved") for item in recovered_records)
-    source_visual_probe_status_counts = Counter(
-        str(item.get("source_visual_probe_status") or "not_run") for item in recovered_records
+    report_records = [_normalize_p62_image_recovery_record(item) for item in recovered_records]
+    status_counts = Counter(str(item.get("status") or "unknown") for item in report_records)
+    source_counts = Counter(
+        str(item.get("recovery_source") or item.get("status") or "unresolved")
+        for item in report_records
     )
-    asset_ready_count = sum(1 for item in recovered_records if item.get("asset_status") == "ready")
-    patched_warning_count = sum(int(item.get("patch_replacement_count") or 0) for item in recovered_records)
-    page_render_upgrade_count = sum(1 for item in recovered_records if item.get("existing_page_render_upgrade"))
+    source_visual_probe_status_counts = Counter(
+        str(item.get("source_visual_probe_status") or "not_run") for item in report_records
+    )
+    asset_ready_count = sum(1 for item in report_records if item.get("asset_status") == "ready")
+    source_visual_unavailable_count = int(status_counts.get("source_visual_unavailable", 0))
+    source_visual_unavailable_groups = _source_visual_unavailable_groups(report_records)
+    patched_warning_count = sum(int(item.get("patch_replacement_count") or 0) for item in report_records)
+    page_render_upgrade_count = sum(1 for item in report_records if item.get("existing_page_render_upgrade"))
     page_render_recovery_removed_count = sum(
-        1 for item in recovered_records if item.get("page_render_recovery_removed")
+        1 for item in report_records if item.get("page_render_recovery_removed")
     )
     false_match_recovery_removed_count = sum(
-        1 for item in recovered_records if item.get("false_match_recovery_removed")
+        1 for item in report_records if item.get("false_match_recovery_removed")
     )
     duplicate_visual_repair_count = sum(
-        int(item.get("duplicate_visual_repair_count") or 0) for item in recovered_records
+        int(item.get("duplicate_visual_repair_count") or 0) for item in report_records
     )
     patch_missed_count = int(status_counts.get("asset_ready_patch_missed", 0))
-    unresolved_count = len(recovered_records) - asset_ready_count
+    unresolved_count = len(report_records) - asset_ready_count - source_visual_unavailable_count
     if selected_count == 0 and plan_candidate_count == 0:
         status = "not_required"
     elif unresolved_count == 0 and patch_missed_count == 0:
@@ -303,6 +395,9 @@ def build_p62_image_recovery_report(
         "false_match_recovery_removed_count": false_match_recovery_removed_count,
         "duplicate_visual_repair_count": duplicate_visual_repair_count,
         "patch_missed_count": patch_missed_count,
+        "source_visual_unavailable_count": source_visual_unavailable_count,
+        "source_visual_unavailable_group_count": len(source_visual_unavailable_groups),
+        "source_visual_unavailable_groups": source_visual_unavailable_groups,
         "unresolved_count": unresolved_count,
         "execute_marker": stage_config.execute_marker,
         "apply_patches": stage_config.apply_patches,
@@ -318,5 +413,5 @@ def build_p62_image_recovery_report(
         "status_counts": dict(sorted(status_counts.items())),
         "recovery_source_counts": dict(sorted(source_counts.items())),
         "source_visual_probe_status_counts": dict(sorted(source_visual_probe_status_counts.items())),
-        "articles": recovered_records,
+        "articles": report_records,
     }

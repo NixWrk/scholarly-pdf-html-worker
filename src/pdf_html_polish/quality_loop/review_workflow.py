@@ -7,12 +7,25 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 import urllib.parse
 
+from .p62_recovery_stage import has_terminal_source_visual_unavailable_evidence
 from .run_utils import load_json, now, slug, write_json
 
 
 ComparisonByArticle = Callable[[dict[str, Any]], dict[str, dict[str, Any]]]
 ManifestArticleById = Callable[[dict[str, Any]], dict[str, dict[str, Any]]]
 CopyReviewHtml = Callable[[Path, Path], dict[str, Any]]
+
+TOP_LEVEL_DELTA_METRICS = ("score", "defects", "errors", "warnings")
+DEFAULT_LOWER_IS_BETTER_METRICS = (
+    "broken_internal_links",
+    "external_page_query_links",
+    "internal_page_anchor_links",
+    "missing_local_images",
+    "mixed_citation_style",
+    "polish_missing_local_images",
+    "polish_replacement_chars",
+    "table_units_with_section_ids",
+)
 
 
 def defect_id_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
@@ -31,6 +44,241 @@ def severity_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def defect_quality_counted(defect: dict[str, Any]) -> bool:
+    extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+    return extra.get("quality_counted") is not False
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _metric_value(record: dict[str, Any], metric: str) -> float:
+    metrics = record.get("metrics") if isinstance(record.get("metrics"), dict) else {}
+    if metric in metrics:
+        return _as_float(metrics.get(metric))
+    return _as_float(record.get(metric))
+
+
+def _comparison_delta(comparison_item: dict[str, Any], metric: str) -> float:
+    if metric in TOP_LEVEL_DELTA_METRICS:
+        return _as_float(comparison_item.get(f"{metric}_delta"))
+    metrics_delta = (
+        comparison_item.get("metrics_delta")
+        if isinstance(comparison_item.get("metrics_delta"), dict)
+        else {}
+    )
+    if metric in metrics_delta:
+        return _as_float(metrics_delta.get(metric))
+    return _as_float(comparison_item.get(f"{metric}_delta"))
+
+
+def _positive_delta_evidence(
+    comparison_item: dict[str, Any],
+    gate_config: dict[str, Any],
+) -> dict[str, float]:
+    metrics = set(DEFAULT_LOWER_IS_BETTER_METRICS)
+    metrics.update(str(metric) for metric in (gate_config.get("max_total_deltas") or {}).keys())
+    deltas: dict[str, float] = {}
+    for metric in tuple(TOP_LEVEL_DELTA_METRICS) + tuple(sorted(metrics)):
+        delta = _comparison_delta(comparison_item, metric)
+        if delta > 0:
+            deltas[metric] = delta
+    return deltas
+
+
+def _selected_delta_evidence(
+    comparison_item: dict[str, Any],
+    gate_config: dict[str, Any],
+) -> dict[str, float]:
+    metrics = set(DEFAULT_LOWER_IS_BETTER_METRICS)
+    metrics.update(str(metric) for metric in (gate_config.get("max_total_deltas") or {}).keys())
+    result: dict[str, float] = {}
+    for metric in tuple(TOP_LEVEL_DELTA_METRICS) + tuple(sorted(metrics)):
+        delta = _comparison_delta(comparison_item, metric)
+        if delta != 0:
+            result[metric] = delta
+    return result
+
+
+def _polish_auto_repair_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]]:
+    report = load_json(run_dir / "polish_auto_repair_report.json", default={})
+    evidence: dict[str, dict[str, Any]] = {}
+    for item in report.get("articles") or []:
+        if not isinstance(item, dict):
+            continue
+        article = str(item.get("article") or "")
+        if not article:
+            continue
+        repair_ids = sorted(
+            {
+                str(repair.get("id") or "")
+                for repair in item.get("repairs") or []
+                if isinstance(repair, dict) and repair.get("id")
+            }
+        )
+        evidence[article] = {
+            "patched": bool(item.get("patched")),
+            "repair_ids": repair_ids,
+            "error_count": len(item.get("errors") or []),
+        }
+    return evidence
+
+
+def _p62_recovery_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]]:
+    report = load_json(run_dir / "p62_image_recovery_report.json", default={})
+    evidence: dict[str, dict[str, Any]] = {}
+    for item in report.get("articles") or []:
+        if not isinstance(item, dict):
+            continue
+        article = str(item.get("article") or "")
+        if not article:
+            continue
+        article_evidence = evidence.setdefault(
+            article,
+            {
+                "patched_count": 0,
+                "source_visual_unavailable_count": 0,
+                "actionable_unresolved_count": 0,
+                "recovery_sources": [],
+            },
+        )
+        status = str(item.get("status") or "")
+        terminal_unavailable = (
+            status == "source_visual_unavailable"
+            or has_terminal_source_visual_unavailable_evidence(item)
+        )
+        if terminal_unavailable:
+            article_evidence["source_visual_unavailable_count"] += 1
+            continue
+        if status in {"unresolved", "asset_ready_patch_missed"}:
+            article_evidence["actionable_unresolved_count"] += 1
+            continue
+        if item.get("asset_status") == "ready" or status in {
+            "patched",
+            "already_patched",
+            "patched_duplicate_visuals",
+        }:
+            article_evidence["patched_count"] += 1
+        recovery_source = str(item.get("recovery_source") or "")
+        if recovery_source and recovery_source not in article_evidence["recovery_sources"]:
+            article_evidence["recovery_sources"].append(recovery_source)
+    return evidence
+
+
+def _review_change_sources(
+    manifest_article: dict[str, Any],
+    p62_evidence: dict[str, Any],
+    repair_evidence: dict[str, Any],
+) -> list[str]:
+    sources: list[str] = []
+    if int(manifest_article.get("restored_images") or 0) > 0:
+        sources.append("image_cache_restore")
+    if int(manifest_article.get("pdf_reference_recovered") or 0) > 0:
+        sources.append("pdf_reference_recovery")
+    if int(p62_evidence.get("patched_count") or 0) > 0:
+        sources.append("p62_image_recovery")
+    if int(p62_evidence.get("source_visual_unavailable_count") or 0) > 0:
+        sources.append("p62_source_visual_unavailable")
+    if repair_evidence.get("patched") and not int(repair_evidence.get("error_count") or 0):
+        for repair_id in repair_evidence.get("repair_ids") or []:
+            sources.append(f"polish_auto_repair:{repair_id}")
+    return sorted(set(sources))
+
+
+def classify_review_risk(
+    *,
+    changed: bool,
+    defects: list[dict[str, Any]],
+    non_ignored: list[dict[str, Any]],
+    non_ignored_quality_counted: list[dict[str, Any]],
+    comparison_item: dict[str, Any],
+    record: dict[str, Any],
+    assessment_article: dict[str, Any],
+    manifest_article: dict[str, Any],
+    gate_config: dict[str, Any],
+    p62_evidence: dict[str, Any],
+    repair_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    positive_deltas = _positive_delta_evidence(comparison_item, gate_config)
+    selected_deltas = _selected_delta_evidence(comparison_item, gate_config)
+    broken_targets = assessment_article.get("broken_targets") or []
+    broken_internal_links = len(broken_targets) or int(_metric_value(record, "broken_internal_links"))
+    missing_local_images = int(
+        _metric_value(record, "missing_local_images")
+        or _metric_value(record, "polish_missing_local_images")
+    )
+    mixed_citation_style_present = bool(assessment_article.get("mixed_citation_style")) or bool(
+        int(_metric_value(record, "mixed_citation_style"))
+    )
+    p62_actionable_unresolved = int(p62_evidence.get("actionable_unresolved_count") or 0)
+    change_sources = _review_change_sources(manifest_article, p62_evidence, repair_evidence)
+
+    reasons: list[str] = []
+    if comparison_item.get("bucket") == "regressions":
+        reasons.append("comparison_regression")
+    if positive_deltas:
+        reasons.append("lower_is_better_metric_increase")
+    if non_ignored_quality_counted:
+        reasons.append("non_ignored_quality_counted_audit_defects")
+    if broken_internal_links:
+        reasons.append("broken_internal_links")
+    if missing_local_images:
+        reasons.append("missing_local_images")
+    if p62_actionable_unresolved:
+        reasons.append("p62_unresolved_without_terminal_status")
+
+    if reasons:
+        risk_level = "high"
+    elif changed and (non_ignored or defects or mixed_citation_style_present):
+        risk_level = "medium"
+        if non_ignored:
+            reasons.append("observed_non_quality_or_telemetry_defects")
+        elif defects:
+            reasons.append("ignored_defects_only")
+        if mixed_citation_style_present:
+            reasons.append("mixed_citation_style_present")
+    elif changed and comparison_item.get("bucket") == "unchanged" and change_sources:
+        risk_level = "auto_verified"
+        reasons.append("changed_without_quality_delta_explained")
+    elif changed and comparison_item.get("bucket") in {"unchanged", "improvements"}:
+        risk_level = "low"
+        reasons.append("changed_without_quality_regression")
+    else:
+        risk_level = "low"
+        reasons.append("unchanged_or_not_review_required")
+
+    return {
+        "review_risk_level": risk_level,
+        "review_risk_reasons": sorted(set(reasons)),
+        "auto_review_eligible": bool(changed and risk_level in {"auto_verified", "low"}),
+        "auto_review_evidence": {
+            "comparison_bucket": comparison_item.get("bucket", ""),
+            "score_delta": _comparison_delta(comparison_item, "score"),
+            "defects_delta": _comparison_delta(comparison_item, "defects"),
+            "errors_delta": _comparison_delta(comparison_item, "errors"),
+            "warnings_delta": _comparison_delta(comparison_item, "warnings"),
+            "metric_deltas": selected_deltas,
+            "positive_lower_is_better_metric_deltas": positive_deltas,
+            "defect_count": len(defects),
+            "non_ignored_defect_count": len(non_ignored),
+            "non_ignored_quality_counted_defect_count": len(non_ignored_quality_counted),
+            "observed_non_quality_defect_count": sum(
+                1 for defect in defects if not defect_quality_counted(defect)
+            ),
+            "broken_internal_links": broken_internal_links,
+            "missing_local_images": missing_local_images,
+            "mixed_citation_style": mixed_citation_style_present,
+            "p62": p62_evidence,
+            "polish_auto_repair": repair_evidence,
+            "change_sources": change_sources,
+        },
+    }
+
+
 def existing_queue_items(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
@@ -45,7 +293,11 @@ def existing_queue_items(path: Path) -> list[dict[str, Any]]:
 def review_state_by_key(items: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     states: dict[str, dict[str, Any]] = {}
     for item in items:
-        state = {key: value for key, value in item.items() if key.startswith("review_")}
+        state = {
+            key: value
+            for key, value in item.items()
+            if key.startswith("review_") and not key.startswith("review_risk_")
+        }
         if not state:
             continue
         for key in ("article", "raw_stage_path", "polish_stage_path"):
@@ -85,6 +337,8 @@ def write_manual_review_queue(
     comparison = load_json(run_dir / "quality_compare.json", default={"status": "no_previous_entry"})
     deltas = comparison_by_article(comparison)
     previous_state = review_state_by_key(existing_queue_items(run_dir / "manual_review_queue.json"))
+    p62_evidence_by_article = _p62_recovery_evidence_by_article(run_dir)
+    repair_evidence_by_article = _polish_auto_repair_evidence_by_article(run_dir)
 
     queue: list[dict[str, Any]] = []
     for article in audit.get("articles") or []:
@@ -95,6 +349,10 @@ def write_manual_review_queue(
             continue
         defects = [defect for defect in article.get("defects_found", []) if isinstance(defect, dict)]
         non_ignored = [defect for defect in defects if str(defect.get("id") or "") not in ignored]
+        quality_counted = [defect for defect in defects if defect_quality_counted(defect)]
+        non_ignored_quality_counted = [
+            defect for defect in non_ignored if defect_quality_counted(defect)
+        ]
         record = entry_articles.get(article_id, {}) if isinstance(entry_articles, dict) else {}
         assessment_article = assessment_by_article.get(article_id, {})
         manifest_article = manifest_by_article.get(article_id, {})
@@ -121,7 +379,21 @@ def write_manual_review_queue(
         )
         changed = bool(manifest_article.get("changed"))
         comparison_item = deltas.get(article_id, {})
-        mandatory_changed_review = changed and comparison_item.get("bucket") == "unchanged"
+        risk = classify_review_risk(
+            changed=changed,
+            defects=defects,
+            non_ignored=non_ignored,
+            non_ignored_quality_counted=non_ignored_quality_counted,
+            comparison_item=comparison_item,
+            record=record,
+            assessment_article=assessment_article,
+            manifest_article=manifest_article,
+            gate_config=gate_config,
+            p62_evidence=p62_evidence_by_article.get(article_id, {}),
+            repair_evidence=repair_evidence_by_article.get(article_id, {}),
+        )
+        mandatory_review = bool(changed and risk["review_risk_level"] == "high")
+        changed_without_quality_delta = changed and comparison_item.get("bucket") == "unchanged"
         review_state = {}
         for key in (article_id, str(raw_stage_path or ""), str(polish_stage_path or "")):
             if key and key in previous_state:
@@ -138,14 +410,26 @@ def write_manual_review_queue(
                 "score": float(record.get("score", 0) or 0),
                 "defect_count": len(defects),
                 "non_ignored_defect_count": len(non_ignored),
+                "quality_counted_defect_count": len(quality_counted),
+                "non_ignored_quality_counted_defect_count": len(non_ignored_quality_counted),
                 "defect_ids": defect_id_counts(defects),
                 "non_ignored_defect_ids": defect_id_counts(non_ignored),
+                "quality_counted_defect_ids": defect_id_counts(quality_counted),
+                "non_ignored_quality_counted_defect_ids": defect_id_counts(
+                    non_ignored_quality_counted
+                ),
                 "severity_counts": severity_counts(defects),
                 "non_ignored_severity_counts": severity_counts(non_ignored),
                 "changed": changed,
-                "mandatory_review": mandatory_changed_review,
+                "review_risk_level": risk["review_risk_level"],
+                "review_risk_reasons": risk["review_risk_reasons"],
+                "auto_review_eligible": risk["auto_review_eligible"],
+                "auto_review_evidence": risk["auto_review_evidence"],
+                "mandatory_review": mandatory_review,
                 "mandatory_review_reason": (
-                    "changed_without_quality_delta" if mandatory_changed_review else ""
+                    "changed_without_quality_delta"
+                    if mandatory_review and changed_without_quality_delta
+                    else ("high_risk_changed_article" if mandatory_review else "")
                 ),
                 "comparison_bucket": comparison_item.get("bucket", ""),
                 "raw_stage_path": raw_stage_path,
@@ -157,6 +441,10 @@ def write_manual_review_queue(
     queue.sort(
         key=lambda item: (
             0 if item.get("mandatory_review") else 1,
+            {"high": 0, "medium": 1, "low": 2, "auto_verified": 3}.get(
+                str(item.get("review_risk_level") or ""),
+                4,
+            ),
             -float(item.get("score") or 0),
             -int(item.get("non_ignored_defect_count") or 0),
             -int(item.get("defect_count") or 0),

@@ -70,3 +70,27 @@ def test_p62_classifier_does_not_count_extended_data_missing_warning_next_to_oth
     assert classification["defect_id"] == "P62"
     assert classification["extra"]["figure_label"] == "extended-data-3"
     assert classification["extra"]["p62_subtype"] == "no_nearby_image"
+
+
+def test_p62_classifier_marks_source_unavailable_warning_as_terminal_telemetry() -> None:
+    html = "\n".join(
+        [
+            '<div id="fig-4" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">',
+            '<p class="z2m-missing-figure-warning z2m-figure-target" role="note" '
+            'data-z2m-recovery-status="source_visual_unavailable">',
+            "Figure 4 image was not extracted into this HTML.",
+            "</p>",
+            '<p class="z2m-figure-caption">Figure 4. The source PDF has no embedded visual.</p>',
+            "</div>",
+        ]
+    )
+    blocks = parse_overlapping_blocks(html)
+    warning = next(block for block in blocks if "z2m-missing-figure-warning" in block.classes)
+
+    classification = classify_missing_figure_warning(warning, blocks)
+
+    assert classification["defect_id"] == "P62"
+    assert classification["check"] == "Missing-figure warning is a terminal source-unavailable limitation"
+    assert classification["extra"]["quality_counted"] is False
+    assert classification["extra"]["warning_origin"] == "source_visual_unavailable"
+    assert classification["extra"]["p62_subtype"] == "source_visual_unavailable"

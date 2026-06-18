@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -2281,6 +2283,7 @@ def repolish_cached_run(
     target_language: str = "en",
     skip_non_target_language: bool = False,
     skip_unknown_language: bool = False,
+    jobs: int = 1,
 ) -> dict[str, Any]:
     """Regenerate polish HTML from a run directory containing raw_cache/profiles."""
     source_run_dir = source_run_dir.resolve(strict=False)
@@ -2311,27 +2314,39 @@ def repolish_cached_run(
     pdf_reference_recovery_count = 0
     pdf_reference_recovery_source_counts: Counter[str] = Counter()
     pdf_reference_entries_cache: dict[str, list[dict[str, Any]]] = {}
+    pdf_reference_entries_cache_lock = threading.Lock()
     source_manifest = _load_json(source_run_dir / "manifest.json", default={})
+    raw_files: list[Path] = []
 
     try:
         raw_files = sorted(raw_source_dir.glob(f"*.{RAW_STAGE}"))
         total_raw = len(raw_files)
-        print(f"Repolish started: raw={total_raw} source={source_run_dir}", flush=True)
+        worker_count = max(1, int(jobs or 1))
+        print(
+            f"Repolish started: raw={total_raw} source={source_run_dir} jobs={worker_count}",
+            flush=True,
+        )
         last_report = time.monotonic()
+        article_records_by_index: list[dict[str, Any] | None] = [None] * total_raw
+        assessments_by_index: list[dict[str, Any] | None] = [None] * total_raw
+        skipped_by_index: list[dict[str, Any] | None] = [None] * total_raw
+        completed_count = 0
+        processed_count = 0
+        skipped_count = 0
 
-        def report_progress(index: int, *, force: bool = False) -> None:
+        def report_progress(completed: int, *, force: bool = False) -> None:
             nonlocal last_report
             now = time.monotonic()
-            if force or index % 25 == 0 or now - last_report >= 15:
+            if force or completed % 25 == 0 or now - last_report >= 15:
                 print(
                     "Repolish progress: "
-                    f"{index}/{total_raw} articles={len(articles)} "
-                    f"skipped={len(skipped_articles)} changed={changed_count}",
+                    f"{completed}/{total_raw} articles={processed_count} "
+                    f"skipped={skipped_count} changed={changed_count}",
                     flush=True,
                 )
                 last_report = now
 
-        for index, raw_path in enumerate(raw_files, start=1):
+        def process_raw_file(index: int, raw_path: Path) -> dict[str, Any]:
             article = raw_path.name.removesuffix(f".{RAW_STAGE}")
             manifest_article = _manifest_article_for(source_manifest, article) or {}
             profile_path = profile_source_dir / f"{article}.citation_profile.json"
@@ -2359,11 +2374,12 @@ def repolish_cached_run(
                 skip_unknown_language=skip_unknown_language,
             )
             language_fields = language_decision.to_flat_report_fields()
-            language_counts[language_decision.detection.detected_language] += 1
             if language_decision.should_skip:
-                skip_reason_counts[language_decision.skip_reason] += 1
-                skipped_articles.append(
-                    {
+                return {
+                    "index": index,
+                    "detected_language": language_decision.detection.detected_language,
+                    "skip_reason": language_decision.skip_reason,
+                    "skipped_record": {
                         "index": index,
                         "article": article,
                         "raw_cache_path": str(out_raw),
@@ -2373,12 +2389,9 @@ def repolish_cached_run(
                         "citation_confidence": _profile_value(profile, "confidence"),
                         "language_detection": language_decision.detection.to_dict(),
                         **language_fields,
-                    }
-                )
-                report_progress(index)
-                continue
+                    },
+                }
 
-            polish_language_counts[language_decision.selected_polish_language] += 1
             polished = polish_html_document(
                 raw_html,
                 table_caption_language="en",
@@ -2386,17 +2399,21 @@ def repolish_cached_run(
                 citation_profile=profile,
                 polish_language=language_decision.selected_polish_language,
             )
-            profile, recovered_pdf_refs, pdf_reference_source = _enrich_profile_with_pdf_reference_entries_if_needed(
-                profile,
-                polished,
-                source_run_dir,
-                article,
-                manifest_article,
-                pdf_reference_entries_cache,
-            )
+            recovered_pdf_refs = 0
+            pdf_reference_source = ""
+            if not _profile_has_reference_entries(profile) and _pdf_reference_recovery_numbers(polished)[0]:
+                with pdf_reference_entries_cache_lock:
+                    profile, recovered_pdf_refs, pdf_reference_source = (
+                        _enrich_profile_with_pdf_reference_entries_if_needed(
+                            profile,
+                            polished,
+                            source_run_dir,
+                            article,
+                            manifest_article,
+                            pdf_reference_entries_cache,
+                        )
+                    )
             if recovered_pdf_refs:
-                pdf_reference_recovery_count += recovered_pdf_refs
-                pdf_reference_recovery_source_counts[pdf_reference_source] += recovered_pdf_refs
                 _write_json(out_profile, profile)
                 polished = polish_html_document(
                     raw_html,
@@ -2407,9 +2424,6 @@ def repolish_cached_run(
                 )
             data_image_cache, data_image_source = _cached_data_image_cache(source_run_dir, article, raw_html)
             polished, restored_images = _apply_data_image_cache(polished, data_image_cache)
-            if restored_images:
-                restored_image_count += restored_images
-                restored_image_source_counts[data_image_source or "unknown"] += restored_images
             previous_polish = source_run_dir / "polish" / out_polish.name
             previous_text = (
                 previous_polish.read_text(encoding="utf-8", errors="replace")
@@ -2417,8 +2431,6 @@ def repolish_cached_run(
                 else None
             )
             changed = previous_text != polished
-            if changed:
-                changed_count += 1
             out_polish.write_text(polished, encoding="utf-8")
 
             pair_dir = audit_tree / article
@@ -2428,31 +2440,101 @@ def repolish_cached_run(
 
             status = _profile_value(profile, "status")
             style_key = f"{_profile_value(profile, 'style')}:{_profile_value(profile, 'confidence')}"
-            profile_status_counts[status] = profile_status_counts.get(status, 0) + 1
-            profile_style_counts[style_key] = profile_style_counts.get(style_key, 0) + 1
-            articles.append(
-                {
-                    "index": index,
-                    "article": article,
-                    "raw_cache_path": str(out_raw),
-                    "profile_path": str(out_profile),
-                    "polish_path": str(out_polish),
-                    "profile_status": status,
-                    "citation_style": _profile_value(profile, "style"),
-                    "citation_confidence": _profile_value(profile, "confidence"),
-                    "changed": changed,
-                    "restored_images": restored_images,
-                    "restored_image_source": data_image_source,
-                    "pdf_reference_recovered": recovered_pdf_refs,
-                    "pdf_reference_source": pdf_reference_source,
-                    "language_detection": language_decision.detection.to_dict(),
-                    **language_fields,
-                }
-            )
+            article_record = {
+                "index": index,
+                "article": article,
+                "raw_cache_path": str(out_raw),
+                "profile_path": str(out_profile),
+                "polish_path": str(out_polish),
+                "profile_status": status,
+                "citation_style": _profile_value(profile, "style"),
+                "citation_confidence": _profile_value(profile, "confidence"),
+                "changed": changed,
+                "restored_images": restored_images,
+                "restored_image_source": data_image_source,
+                "pdf_reference_recovered": recovered_pdf_refs,
+                "pdf_reference_source": pdf_reference_source,
+                "language_detection": language_decision.detection.to_dict(),
+                **language_fields,
+            }
             assessment = assess_polish_html(article, polished, profile)
             assessment.update(language_fields)
-            assessments.append(assessment)
-            report_progress(index)
+            return {
+                "index": index,
+                "detected_language": language_decision.detection.detected_language,
+                "polish_language": language_decision.selected_polish_language,
+                "changed": changed,
+                "restored_images": restored_images,
+                "restored_image_source": data_image_source,
+                "pdf_reference_recovered": recovered_pdf_refs,
+                "pdf_reference_source": pdf_reference_source,
+                "profile_status": status,
+                "profile_style_key": style_key,
+                "article_record": article_record,
+                "assessment": assessment,
+            }
+
+        def record_result(result: dict[str, Any]) -> None:
+            nonlocal changed_count
+            nonlocal restored_image_count
+            nonlocal pdf_reference_recovery_count
+            nonlocal processed_count
+            nonlocal skipped_count
+            index = int(result["index"])
+            language_counts[str(result.get("detected_language") or "unknown")] += 1
+            skipped_record = result.get("skipped_record")
+            if isinstance(skipped_record, dict):
+                skip_reason = str(result.get("skip_reason") or "")
+                if skip_reason:
+                    skip_reason_counts[skip_reason] += 1
+                skipped_by_index[index - 1] = skipped_record
+                skipped_count += 1
+                return
+
+            article_record = result.get("article_record")
+            assessment = result.get("assessment")
+            if not isinstance(article_record, dict) or not isinstance(assessment, dict):
+                raise ValueError(f"Invalid repolish result for index {index}")
+            article_records_by_index[index - 1] = article_record
+            assessments_by_index[index - 1] = assessment
+            processed_count += 1
+            polish_language_counts[str(result.get("polish_language") or "unknown")] += 1
+            if bool(result.get("changed")):
+                changed_count += 1
+            restored_images = int(result.get("restored_images") or 0)
+            if restored_images:
+                restored_image_count += restored_images
+                restored_image_source_counts[str(result.get("restored_image_source") or "unknown")] += restored_images
+            recovered_pdf_refs = int(result.get("pdf_reference_recovered") or 0)
+            if recovered_pdf_refs:
+                pdf_reference_recovery_count += recovered_pdf_refs
+                pdf_reference_recovery_source_counts[str(result.get("pdf_reference_source") or "unknown")] += (
+                    recovered_pdf_refs
+                )
+            status = str(result.get("profile_status") or "unknown")
+            style_key = str(result.get("profile_style_key") or "unknown:low")
+            profile_status_counts[status] = profile_status_counts.get(status, 0) + 1
+            profile_style_counts[style_key] = profile_style_counts.get(style_key, 0) + 1
+
+        if worker_count <= 1 or total_raw <= 1:
+            for index, raw_path in enumerate(raw_files, start=1):
+                record_result(process_raw_file(index, raw_path))
+                completed_count += 1
+                report_progress(completed_count)
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(process_raw_file, index, raw_path)
+                    for index, raw_path in enumerate(raw_files, start=1)
+                ]
+                for future in as_completed(futures):
+                    record_result(future.result())
+                    completed_count += 1
+                    report_progress(completed_count)
+
+        articles = [article for article in article_records_by_index if article is not None]
+        assessments = [assessment for assessment in assessments_by_index if assessment is not None]
+        skipped_articles = [article for article in skipped_by_index if article is not None]
         report_progress(total_raw, force=True)
     finally:
         close_katex_v8_context()
@@ -2470,6 +2552,7 @@ def repolish_cached_run(
         "target_language": target_language,
         "skip_non_target_language": skip_non_target_language,
         "skip_unknown_language": skip_unknown_language,
+        "jobs": max(1, int(jobs or 1)),
         "raw_count": len(raw_files),
         "article_count": len(articles),
         "skipped_count": len(skipped_articles),
@@ -2505,6 +2588,7 @@ def repolish_cached_run(
         "language_counts": manifest["language_counts"],
         "polish_language_counts": manifest["polish_language_counts"],
         "skip_reason_counts": manifest["skip_reason_counts"],
+        "jobs": manifest["jobs"],
         "totals": totals,
         "profile_status_counts": manifest["profile_status_counts"],
         "profile_style_counts": manifest["profile_style_counts"],
@@ -2955,6 +3039,14 @@ def build_analysis_pack(
             "patched_warning_count": p62_image_recovery_report.get("patched_warning_count", 0),
             "duplicate_visual_repair_count": p62_image_recovery_report.get("duplicate_visual_repair_count", 0),
             "patch_missed_count": p62_image_recovery_report.get("patch_missed_count", 0),
+            "source_visual_unavailable_count": p62_image_recovery_report.get(
+                "source_visual_unavailable_count",
+                0,
+            ),
+            "source_visual_unavailable_group_count": p62_image_recovery_report.get(
+                "source_visual_unavailable_group_count",
+                0,
+            ),
             "unresolved_count": p62_image_recovery_report.get("unresolved_count", 0),
             "status_counts": p62_image_recovery_report.get("status_counts", {}),
             "recovery_source_counts": p62_image_recovery_report.get("recovery_source_counts", {}),
@@ -3118,11 +3210,40 @@ def _configured_optional_path(value: Any) -> Path | None:
     return path if path.is_absolute() else ROOT / path
 
 
+def _resolved_stage_jobs(
+    *,
+    args_value: int | None,
+    gate_config: dict[str, Any],
+    gate_key: str,
+    default_jobs: int,
+) -> int:
+    value = args_value
+    if value is None:
+        value = gate_config.get(gate_key)
+    if value is None:
+        value = default_jobs
+    return max(1, int(value or 1))
+
+
 def observe(args: argparse.Namespace) -> int:
     run_dir = args.out_dir.resolve(strict=False)
     converted_roots = list(args.converted_roots or [])
     if args.source_run_dir and converted_roots:
         raise SystemExit("Use either --source-run-dir or --converted-roots, not both.")
+    gate_config = load_gate_config(args.gate_config)
+    default_jobs = max(1, int(args.jobs or gate_config.get("document_jobs") or 1))
+    repolish_jobs = _resolved_stage_jobs(
+        args_value=args.repolish_jobs,
+        gate_config=gate_config,
+        gate_key="repolish_jobs",
+        default_jobs=default_jobs,
+    )
+    audit_jobs = _resolved_stage_jobs(
+        args_value=args.audit_jobs,
+        gate_config=gate_config,
+        gate_key="audit_jobs",
+        default_jobs=default_jobs,
+    )
     if args.source_run_dir:
         manifest = repolish_cached_run(
             args.source_run_dir,
@@ -3131,13 +3252,15 @@ def observe(args: argparse.Namespace) -> int:
             target_language=args.target_language,
             skip_non_target_language=args.skip_non_target_language,
             skip_unknown_language=args.skip_unknown_language,
+            jobs=repolish_jobs,
         )
         print(
             "Repolished cached run: "
             f"raw={manifest['raw_count']} "
             f"articles={manifest['article_count']} "
             f"skipped={manifest['skipped_count']} "
-            f"changed={manifest['changed_count']}"
+            f"changed={manifest['changed_count']} "
+            f"jobs={manifest.get('jobs')}"
         )
     elif converted_roots:
         if args.repolish_converted_raw:
@@ -3150,19 +3273,19 @@ def observe(args: argparse.Namespace) -> int:
                 target_language=args.target_language,
                 skip_non_target_language=args.skip_non_target_language,
                 skip_unknown_language=args.skip_unknown_language,
+                jobs=repolish_jobs,
             )
             print(
                 "Repolished converted raw stages: "
                 f"raw={source_manifest['raw_count']} "
                 f"articles={manifest['article_count']} "
                 f"skipped={manifest['skipped_count']} "
-                f"changed={manifest['changed_count']}"
+                f"changed={manifest['changed_count']} "
+                f"jobs={manifest.get('jobs')}"
             )
         else:
             manifest = prepare_converted_run(converted_roots, run_dir)
             print(f"Prepared converted stage run: articles={manifest['article_count']}")
-    gate_config = load_gate_config(args.gate_config)
-    audit_jobs = int(gate_config.get("audit_jobs") or 1)
     pdf_diagnostics_cache_dir = _configured_optional_path(gate_config.get("pdf_diagnostics_cache_dir"))
     if args.run_tests:
         run_test_command(args.test_command or gate_config.get("required_test_command") or "python -m pytest -q", run_dir)
@@ -3370,6 +3493,24 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     observe_parser.add_argument("--run-id")
     observe_parser.add_argument("--previous-entry", type=Path)
     observe_parser.add_argument("--gate-config", type=Path, default=DEFAULT_GATE_CONFIG)
+    observe_parser.add_argument(
+        "--jobs",
+        type=int,
+        help=(
+            "Default number of parallel article workers for document stages. "
+            "Stage-specific --repolish-jobs/--audit-jobs override it."
+        ),
+    )
+    observe_parser.add_argument(
+        "--repolish-jobs",
+        type=int,
+        help="Parallel article workers for cached raw repolish.",
+    )
+    observe_parser.add_argument(
+        "--audit-jobs",
+        type=int,
+        help="Parallel article workers for audit analysis.",
+    )
     observe_parser.add_argument("--defect-patterns", type=Path, default=DEFAULT_DEFECT_PATTERNS)
     observe_parser.add_argument(
         "--pattern-history",

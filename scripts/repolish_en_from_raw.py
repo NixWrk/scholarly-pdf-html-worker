@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html import unescape
@@ -287,20 +288,47 @@ def repolish_roots(
     skip_unknown_language: bool = False,
     inline_images: bool = True,
     image_cache_source_run: Path | None = None,
+    jobs: int = 1,
 ) -> dict[str, object]:
-    results = [
-        repolish_file(
-            raw_path,
-            table_caption_language=table_caption_language,
-            polish_language=polish_language,
-            target_language=target_language,
-            skip_non_target_language=skip_non_target_language,
-            skip_unknown_language=skip_unknown_language,
-            inline_images=inline_images,
-            image_cache_source_run=image_cache_source_run,
-        )
-        for raw_path in find_raw_files(roots)
-    ]
+    raw_files = find_raw_files(roots)
+    worker_count = max(1, int(jobs or 1))
+    options = {
+        "table_caption_language": table_caption_language,
+        "polish_language": polish_language,
+        "target_language": target_language,
+        "skip_non_target_language": skip_non_target_language,
+        "skip_unknown_language": skip_unknown_language,
+        "inline_images": inline_images,
+        "image_cache_source_run": image_cache_source_run,
+    }
+    if worker_count <= 1 or len(raw_files) <= 1:
+        results = [
+            repolish_file(
+                raw_path,
+                table_caption_language=table_caption_language,
+                polish_language=polish_language,
+                target_language=target_language,
+                skip_non_target_language=skip_non_target_language,
+                skip_unknown_language=skip_unknown_language,
+                inline_images=inline_images,
+                image_cache_source_run=image_cache_source_run,
+            )
+            for raw_path in raw_files
+        ]
+    else:
+        results_by_index: list[RepolishResult | None] = [None] * len(raw_files)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(repolish_file, raw_path, **options): index
+                for index, raw_path in enumerate(raw_files)
+            }
+            for future in as_completed(futures):
+                results_by_index[futures[future]] = future.result()
+        results = [
+            result
+            for result in results_by_index
+            if result is not None
+        ]
     processed_results = [result for result in results if not result.skipped]
     skipped_results = [result for result in results if result.skipped]
     language_counts = Counter(result.detected_language for result in results)
@@ -319,6 +347,7 @@ def repolish_roots(
         "target_language": target_language,
         "skip_non_target_language": skip_non_target_language,
         "skip_unknown_language": skip_unknown_language,
+        "jobs": worker_count,
         "raw_count": len(results),
         "article_count": len(processed_results),
         "skipped_count": len(skipped_results),
@@ -387,6 +416,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Exit with status 1 when any local image reference cannot be inlined.",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of parallel article workers for repolish. Defaults to 1.",
+    )
     return parser.parse_args(argv)
 
 
@@ -401,6 +436,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_unknown_language=args.skip_unknown_language,
         inline_images=not args.no_inline_images,
         image_cache_source_run=args.image_cache_source_run,
+        jobs=args.jobs,
     )
     print(
         "Repolished EN stages: "
@@ -408,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
         f"articles={report['article_count']} "
         f"skipped={report['skipped_count']} "
         f"changed={report['changed_count']} "
+        f"jobs={report['jobs']} "
         f"restored_images={report['restored_image_count']} "
         f"inlined_images={report['inlined_image_count']} "
         f"missing_images={report['missing_image_count']}"

@@ -185,6 +185,20 @@ def classify_missing_figure_warning(
     if warning.attrs.get("data-z2m-origin") == "caption-only-target":
         extra["quality_counted"] = False
         extra["warning_origin"] = "caption-only-target"
+    if warning.attrs.get("data-z2m-recovery-status") == "source_visual_unavailable":
+        extra["quality_counted"] = False
+        extra["warning_origin"] = "source_visual_unavailable"
+        extra["p62_subtype"] = "source_visual_unavailable"
+        return {
+            "defect_id": "P62",
+            "check": "Missing-figure warning is a terminal source-unavailable limitation",
+            "hypothesis": (
+                "The source PDF evidence says no recoverable embedded target visual is available; "
+                "the HTML keeps a visible warning for manual inspection."
+            ),
+            "proposed_fix_layer": "P62 source-unavailable telemetry",
+            "extra": extra,
+        }
     if index is not None:
         context_start = max(0, index - 4)
         context_stop = min(len(polish_blocks), index + 5)

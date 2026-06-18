@@ -333,6 +333,141 @@ def test_build_p62_image_recovery_report_summarizes_partial_recovery(tmp_path: P
     assert report["source_visual_probe_status_counts"] == {"failed": 1, "not_run": 1}
 
 
+def test_build_p62_image_recovery_report_closes_complete_source_unavailable_evidence(
+    tmp_path: Path,
+) -> None:
+    report = build_p62_image_recovery_report(
+        generated_at="2026-01-02T03:04:05Z",
+        run_dir=tmp_path / "run",
+        out_path=tmp_path / "report.json",
+        plan_path=tmp_path / "plan.json",
+        recovery_root=tmp_path / "recovery",
+        plan_candidate_count=1,
+        selected_count=1,
+        recovered_records=[
+            {
+                "status": "unresolved",
+                "plan_status": "source_visual_unavailable",
+                "asset_status": "not_ready",
+                "source_visual_unavailable_reason": (
+                    "all_label_matches_are_false_or_without_visual_objects"
+                ),
+                "source_visual_probe_status": "not_found",
+                "source_visual_probe": {
+                    "status": "not_found",
+                    "label_pages": [7, 43],
+                    "attempts": [{"status": "skipped_false_label_match"}],
+                    "visual_inventory": {"status": "ready", "native_image_count": 0},
+                    "pypdf_image_inventory": {"status": "ready", "image_count": 0},
+                },
+            },
+        ],
+        patched_article_ids=[],
+        stage_config=resolve_p62_image_recovery_stage_config({}),
+        allow_external_paths=False,
+    )
+
+    assert report["status"] == "ready"
+    assert report["asset_ready_count"] == 0
+    assert report["source_visual_unavailable_count"] == 1
+    assert report["unresolved_count"] == 0
+    assert report["status_counts"] == {"source_visual_unavailable": 1}
+    assert report["recovery_source_counts"] == {"source_visual_unavailable": 1}
+    assert report["articles"][0]["status"] == "source_visual_unavailable"
+
+
+def test_build_p62_image_recovery_report_keeps_incomplete_source_unavailable_unresolved(
+    tmp_path: Path,
+) -> None:
+    report = build_p62_image_recovery_report(
+        generated_at="2026-01-02T03:04:05Z",
+        run_dir=tmp_path / "run",
+        out_path=tmp_path / "report.json",
+        plan_path=tmp_path / "plan.json",
+        recovery_root=tmp_path / "recovery",
+        plan_candidate_count=1,
+        selected_count=1,
+        recovered_records=[
+            {
+                "status": "unresolved",
+                "plan_status": "source_visual_unavailable",
+                "asset_status": "not_ready",
+                "source_visual_unavailable_reason": (
+                    "all_label_matches_are_false_or_without_visual_objects"
+                ),
+                "source_visual_probe_status": "not_found",
+                "source_visual_probe": {
+                    "status": "not_found",
+                    "label_pages": [7],
+                    "attempts": [{"status": "skipped_false_label_match"}],
+                    "visual_inventory": {"status": "ready", "native_image_count": 0},
+                },
+            },
+        ],
+        patched_article_ids=[],
+        stage_config=resolve_p62_image_recovery_stage_config({}),
+        allow_external_paths=False,
+    )
+
+    assert report["status"] == "unresolved"
+    assert report["source_visual_unavailable_count"] == 0
+    assert report["unresolved_count"] == 1
+    assert report["status_counts"] == {"unresolved": 1}
+    assert report["articles"][0]["status"] == "unresolved"
+
+
+def test_build_p62_image_recovery_report_groups_duplicate_source_unavailable_records(
+    tmp_path: Path,
+) -> None:
+    base_record = {
+        "status": "source_visual_unavailable",
+        "asset_status": "not_ready",
+        "source_pdf_path": "paper.pdf",
+        "figure_label": "2",
+        "resolved_figure_label": "2",
+        "source_visual_unavailable_reason": "all_label_matches_are_false_or_without_visual_objects",
+        "source_visual_probe_status": "not_found",
+        "source_visual_probe": {
+            "status": "not_found",
+            "label_pages": [12],
+            "attempts": [{"status": "skipped_false_label_match"}],
+            "visual_inventory": {"status": "ready", "native_image_count": 0},
+            "pypdf_image_inventory": {"status": "ready", "image_count": 0},
+        },
+    }
+    report = build_p62_image_recovery_report(
+        generated_at="2026-01-02T03:04:05Z",
+        run_dir=tmp_path / "run",
+        out_path=tmp_path / "report.json",
+        plan_path=tmp_path / "plan.json",
+        recovery_root=tmp_path / "recovery",
+        plan_candidate_count=2,
+        selected_count=2,
+        recovered_records=[
+            {"article": "article_a", **base_record},
+            {"article": "article_b", **base_record},
+        ],
+        patched_article_ids=[],
+        stage_config=resolve_p62_image_recovery_stage_config({}),
+        allow_external_paths=False,
+    )
+
+    assert report["source_visual_unavailable_count"] == 2
+    assert report["source_visual_unavailable_group_count"] == 1
+    assert report["source_visual_unavailable_groups"] == [
+        {
+            "source_pdf_path": "paper.pdf",
+            "figure_label": "2",
+            "source_visual_unavailable_reason": (
+                "all_label_matches_are_false_or_without_visual_objects"
+            ),
+            "raw_record_count": 2,
+            "article_count": 2,
+            "affected_article_ids": ["article_a", "article_b"],
+        }
+    ]
+
+
 def test_build_p62_image_recovery_report_marks_empty_plan_not_required(tmp_path: Path) -> None:
     report = build_p62_image_recovery_report(
         generated_at="2026-01-02T03:04:05Z",

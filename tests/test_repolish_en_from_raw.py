@@ -149,6 +149,35 @@ def test_repolish_cli_writes_json_report() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_repolish_roots_parallel_jobs_keep_deterministic_article_order() -> None:
+    repolish = _load_module()
+    tmp_path = _make_temp_dir()
+    try:
+        for article in ("Article A", "Article B", "Article C"):
+            stage_dir = tmp_path / article / "_z2m_stages"
+            stage_dir.mkdir(parents=True)
+            (stage_dir / "01.en.raw.html").write_text(
+                "<html><body><p>This article describes methods, results, and discussion.</p></body></html>",
+                encoding="utf-8",
+            )
+
+        report = repolish.repolish_roots([tmp_path], jobs=3)
+
+        assert report["jobs"] == 3
+        assert report["article_count"] == 3
+        assert [article["article"] for article in report["articles"]] == [
+            "Article A",
+            "Article B",
+            "Article C",
+        ]
+        assert all(
+            (tmp_path / article / "_z2m_stages" / "02.en.polish.html").is_file()
+            for article in ("Article A", "Article B", "Article C")
+        )
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_repolish_cli_can_select_ru_polish_policy_with_en_captions() -> None:
     repolish = _load_module()
     tmp_path = _make_temp_dir()
