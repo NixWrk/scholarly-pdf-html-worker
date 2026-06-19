@@ -98,8 +98,8 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Continue `single_file_html.py` decomposition by moving nested semantic-link
-   unwrapping helpers into `html_links.py`.
+1. Continue `single_file_html.py` decomposition with the next small generic
+   text-cleanup helper family.
 2. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
 3. After the `single_file_html.py` polish pass, run polish/audit parity before
@@ -203,3 +203,6 @@ The cleanup policy is deliberately conservative:
   `html_images.py`; `single_file_html.py` now keeps file-level polish wrappers
   and compatibility aliases while direct image behavior is tested in
   `tests/test_html_images.py`.
+- Moved nested figure/same-href internal link unwrapping into `html_links.py`
+  with direct link tests and compatibility aliases retained in
+  `single_file_html.py`.
