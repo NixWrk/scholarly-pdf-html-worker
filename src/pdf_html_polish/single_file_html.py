@@ -184,6 +184,10 @@ from .semantic_labels import (
     normalize_table_key as _normalize_table_key,
     supplementary_figure_key_from_visible_number as _supplementary_figure_key_from_visible_number,
 )
+from .text_cleanup import (
+    REPEATED_PHRASE_PATTERN as _REPEATED_PHRASE_PATTERN,
+    drop_repeated_phrases,
+)
 from .url_repair import (
     BROKEN_PLAIN_URL_PROTOCOL_PATTERN as _BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
     compact_visible_url_fragment as _compact_visible_url_fragment,
@@ -2863,13 +2867,6 @@ _SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
-# Matches a phrase of 2-7 words repeated 2+ additional times back-to-back.
-# Example: "the property of the property of the property of" → "the property of"
-_REPEATED_PHRASE_PATTERN = re.compile(
-    r"\b((?:\w+\s+){2,7}\w+)(?:\s+\1){2,}",
-    re.IGNORECASE,
-)
-
 _DEFAULT_READABILITY_STYLE = """
 <style data-z2m-style="readable">
   :root { color-scheme: light; }
@@ -3171,21 +3168,6 @@ _MOJIBAKE_REPLACEMENTS = _MOJIBAKE_REPLACEMENTS + (
     ("О©", "Ω"),
     ("Г—", "×"),
 )
-
-
-def drop_repeated_phrases(text: str) -> str:
-    """Collapse runs where a phrase of 3–8 words repeats 3+ times consecutively.
-
-    Works on plain text and HTML alike (the pattern only matches word sequences,
-    so it never fires inside tag attributes or markup).  Iterates until stable to
-    handle nested / chained repetitions.
-    """
-    prev = None
-    result = text
-    while result != prev:
-        prev = result
-        result = _REPEATED_PHRASE_PATTERN.sub(r"\1", result)
-    return result
 
 
 def _inject_mathjax(html: str) -> str:

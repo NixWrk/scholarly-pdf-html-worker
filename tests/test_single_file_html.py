@@ -4,12 +4,13 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from pdf_html_polish import html_images, html_links
+from pdf_html_polish import html_images, html_links, text_cleanup
 from pdf_html_polish.single_file_html import (
     _IMAGE_CACHE_KEY_ATTR_PATTERN,
     _IMG_SRC_PATTERN,
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
+    _REPEATED_PHRASE_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _figure_caption_num_from_visible,
@@ -35,6 +36,7 @@ from pdf_html_polish.single_file_html import (
     _unwrap_nested_same_href_internal_links,
     _validate_data_url,
     close_katex_v8_context,
+    drop_repeated_phrases,
     inline_images_only_from_html_file,
     inline_images_from_html_file,
     polish_html_document,
@@ -70,6 +72,8 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN is html_links.NESTED_SAME_HREF_INTERNAL_LINK_PATTERN
     assert _unwrap_nested_fig_links is html_links.unwrap_nested_fig_links
     assert _unwrap_nested_same_href_internal_links is html_links.unwrap_nested_same_href_internal_links
+    assert _REPEATED_PHRASE_PATTERN is text_cleanup.REPEATED_PHRASE_PATTERN
+    assert drop_repeated_phrases is text_cleanup.drop_repeated_phrases
 
 
 def test_inline_images_from_html_file() -> None:

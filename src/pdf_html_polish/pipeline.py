@@ -28,7 +28,6 @@ from .pipeline_zotero import retry_pending_zotero_exports, zotero_write_lock_det
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
 from .single_file_html import (
     close_katex_v8_context,
-    drop_repeated_phrases,
     polish_and_inline_html_file,
 )
 from .staging import (
@@ -38,6 +37,7 @@ from .staging import (
     stage_resolved_pdfs,
     write_filename_map,
 )
+from .text_cleanup import drop_repeated_phrases
 from .webdav_pending import WebDavUploadSummary
 from .zotero_html_attachment import attach_single_file_html
 from .zotero_pending import (
