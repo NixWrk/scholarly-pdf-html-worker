@@ -7,7 +7,6 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from dataclasses import asdict
-from html import unescape
 import json
 from pathlib import Path
 import re
@@ -40,10 +39,8 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     visible_ref_number_from_match as _visible_ref_number_from_match,
 )
 from pdf_html_polish.quality_loop.audit_images import (
-    IMG_SRC_RE,
-    image_identity_key as _image_identity_key,
-    is_inline_or_remote_src as _is_inline_or_remote_src,
-    local_image_candidates as _local_image_candidates,
+    figure_visual_identity_defects as _figure_visual_identity_defects_base,
+    image_asset_defects as _image_asset_defects_base,
     missing_local_images as _missing_local_images,
 )
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
@@ -1801,86 +1798,18 @@ def _figure_caption_ux_defects(
 
 
 def _image_asset_defects(polish_path: Path, polish_html: str) -> list[Defect]:
-    defects: list[Defect] = []
-    missing = _missing_local_images(polish_path, polish_html)
-    for image in missing[:5]:
-        defects.append(
-            _defect(
-                defect_id="P20",
-                cc_class="CC-08/CC-13",
-                check="Local image asset referenced by polish HTML is missing",
-                severity="error",
-                block=None,
-                snippet=f"missing image src={image['src']}",
-                stage=POLISH_STAGE,
-                hypothesis="The HTML references a local sidecar image that is absent relative to the stage/review copy.",
-                proposed_fix_layer="review packaging or EN polish image asset export",
-                regression_test="Review/export HTML with local img src must include the referenced image or inline it as data URI.",
-                extra=image,
-            )
-        )
-    return defects
+    return _image_asset_defects_base(polish_path, polish_html, stage=POLISH_STAGE)
 
 
 def _figure_visual_identity_defects(polish_path: Path, polish_html: str) -> list[Defect]:
-    line_starts = _line_starts(polish_html)
-    records_by_key: dict[str, list[dict[str, Any]]] = {}
-    for match in FIGURE_UNIT_RE.finditer(polish_html):
-        figure_id = match.group("id")
-        body = match.group("body")
-        caption_numbers = [
-            number
-            for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
-            for number in [_figure_caption_number_from_caption_node(caption_match.group("body"))]
-            if number is not None
-        ]
-        for img_match in IMG_SRC_RE.finditer(body):
-            src = unescape(img_match.group("src")).strip()
-            key = _image_identity_key(polish_path, src)
-            if key is None:
-                continue
-            records_by_key.setdefault(key, []).append(
-                {
-                    "figure_id": figure_id,
-                    "caption_numbers": caption_numbers,
-                    "src": src[:160],
-                    "line": _line_at_from_starts(line_starts, match.start()),
-                    "snippet": _strip_tags(body)[:260],
-                }
-            )
-
-    for records in records_by_key.values():
-        figure_ids = sorted({str(record["figure_id"]) for record in records})
-        if len(figure_ids) < 2:
-            continue
-        caption_sets = {
-            tuple(record.get("caption_numbers") or [])
-            for record in records
-            if record.get("caption_numbers")
-        }
-        if len(caption_sets) == 1 and len(records) <= 2:
-            continue
-        first = records[0]
-        defects = [
-            _defect(
-                defect_id="P96",
-                cc_class="CC-08/CC-13",
-                check="Same visual image is attached to multiple distinct figure targets",
-                severity="error",
-                block=None,
-                snippet=first["snippet"] or f"duplicate visual across {', '.join(figure_ids)}",
-                stage=POLISH_STAGE,
-                hypothesis="A missing-figure recovery or pre-existing figure assignment reused the next/previous figure image for a different caption.",
-                proposed_fix_layer="P62 image recovery duplicate-visual audit and figure-page relocalization",
-                regression_test="Distinct fig-5 and fig-6 units with identical image payloads are reported before review packaging.",
-                extra={
-                    "figure_ids": figure_ids,
-                    "records": records[:6],
-                },
-            )
-        ]
-        return defects
-    return []
+    return _figure_visual_identity_defects_base(
+        polish_path,
+        polish_html,
+        stage=POLISH_STAGE,
+        figure_unit_re=FIGURE_UNIT_RE,
+        figure_caption_node_re=FIGURE_CAPTION_NODE_RE,
+        figure_caption_number_from_caption_node=_figure_caption_number_from_caption_node,
+    )
 
 
 def _numeric_ref_label_numbers(label: str) -> list[int]:

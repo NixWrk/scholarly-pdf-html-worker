@@ -1,6 +1,9 @@
 import hashlib
+import re
 
 from pdf_html_polish.quality_loop.audit_images import (
+    figure_visual_identity_defects,
+    image_asset_defects,
     image_identity_key,
     is_inline_or_remote_src,
     local_image_candidates,
@@ -64,3 +67,51 @@ def test_image_identity_key_hashes_data_and_local_file_sources(tmp_path) -> None
     )
     assert image_identity_key(html_path, "missing.png") == "src:missing.png"
     assert image_identity_key(html_path, "https://example.test/remote.png") is None
+
+
+def test_image_asset_defects_reports_missing_local_images(tmp_path) -> None:
+    html_path = tmp_path / "article" / "_pdf_html_polish_stages" / "02.en.polish.html"
+    html_path.parent.mkdir(parents=True)
+
+    defects = image_asset_defects(html_path, '<img src="missing.png">', stage="02.en.polish.html")
+
+    assert [defect.id for defect in defects] == ["P20"]
+    assert defects[0].snippet == "missing image src=missing.png"
+    assert defects[0].first_broken_stage == "02.en.polish.html"
+
+
+def test_figure_visual_identity_defects_reports_duplicate_distinct_figures(tmp_path) -> None:
+    html_path = tmp_path / "article" / "_pdf_html_polish_stages" / "02.en.polish.html"
+    html_path.parent.mkdir(parents=True)
+    data_url = "data:image/png;base64,AAAA"
+    html = (
+        '<div id="fig-5" class="z2m-figure-unit">'
+        f'<p><img src="{data_url}"></p>'
+        '<p class="z2m-figure-caption">Figure 5. First.</p>'
+        "</div>"
+        '<div id="fig-6" class="z2m-figure-unit">'
+        f'<p><img src="{data_url}"></p>'
+        '<p class="z2m-figure-caption">Figure 6. Second.</p>'
+        "</div>"
+    )
+    figure_unit_re = re.compile(
+        r"<div\b(?=[^>]*\bz2m-figure-unit\b)(?=[^>]*\bid\s*=\s*['\"](?P<id>fig-[^'\"]+)['\"])[^>]*>"
+        r"(?P<body>.*?)</div>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    caption_node_re = re.compile(
+        r"<p\b(?=[^>]*\bz2m-figure-caption\b)[^>]*>(?P<body>.*?)</p>",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    defects = figure_visual_identity_defects(
+        html_path,
+        html,
+        stage="02.en.polish.html",
+        figure_unit_re=figure_unit_re,
+        figure_caption_node_re=caption_node_re,
+        figure_caption_number_from_caption_node=lambda body: int(re.search(r"\d+", body).group(0)),
+    )
+
+    assert [defect.id for defect in defects] == ["P96"]
+    assert defects[0].extra["figure_ids"] == ["fig-5", "fig-6"]
