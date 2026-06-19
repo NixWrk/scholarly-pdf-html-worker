@@ -122,3 +122,60 @@ def build_polish_report(
     if progress_out is not None:
         deps.write_json_report(progress_out, report)
     return report
+
+
+def merge_targeted_polish_report(
+    previous_report: dict[str, Any],
+    targeted_report: dict[str, Any],
+    *,
+    deps: PolishAuditReportDeps,
+    previous_report_path: Path | None = None,
+    allow_new_articles: bool = False,
+) -> dict[str, Any]:
+    previous_articles = previous_report.get("articles") or []
+    targeted_articles = targeted_report.get("articles") or []
+    by_article: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for article in previous_articles:
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        by_article[article_id] = article
+        order.append(article_id)
+
+    replaced: list[str] = []
+    new_articles: list[str] = []
+    for article in targeted_articles:
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        if article_id not in by_article:
+            if not allow_new_articles:
+                raise ValueError(f"Targeted audit article is not present in previous report: {article_id}")
+            order.append(article_id)
+            new_articles.append(article_id)
+        else:
+            replaced.append(article_id)
+        by_article[article_id] = article
+
+    merged_articles = [by_article[article_id] for article_id in order if article_id in by_article]
+    defect_counts = deps.add_corpus_hit_counts(merged_articles)
+    merged = deps.assemble_report(
+        [Path(root) for root in previous_report.get("roots") or targeted_report.get("roots") or []],
+        merged_articles,
+        defect_counts,
+        audit_status="complete",
+        total_pair_count=int(previous_report.get("total_pair_count") or len(merged_articles)),
+    )
+    merged["targeted_audit"] = {
+        "enabled": True,
+        "previous_report_path": str(previous_report_path) if previous_report_path is not None else "",
+        "target_roots": targeted_report.get("roots") or [],
+        "target_article_count": len(targeted_articles),
+        "reused_article_count": max(0, len(previous_articles) - len(replaced)),
+        "replaced_article_count": len(replaced),
+        "new_article_count": len(new_articles),
+        "replaced_articles": sorted(replaced),
+        "new_articles": sorted(new_articles),
+    }
+    return merged

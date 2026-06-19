@@ -157,6 +157,7 @@ from pdf_html_polish.quality_loop.audit_polish_pair import (
 from pdf_html_polish.quality_loop.audit_polish_report import (
     PolishAuditReportDeps,
     build_polish_report as _build_polish_report_base,
+    merge_targeted_polish_report as _merge_targeted_report_base,
 )
 from pdf_html_polish.quality_loop.audit_p04 import (
     MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
@@ -1189,53 +1190,13 @@ def merge_targeted_report(
     previous_report_path: Path | None = None,
     allow_new_articles: bool = False,
 ) -> dict[str, Any]:
-    previous_articles = previous_report.get("articles") or []
-    targeted_articles = targeted_report.get("articles") or []
-    by_article: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    for article in previous_articles:
-        article_id = str(article.get("article") or "")
-        if not article_id:
-            continue
-        by_article[article_id] = article
-        order.append(article_id)
-
-    replaced: list[str] = []
-    new_articles: list[str] = []
-    for article in targeted_articles:
-        article_id = str(article.get("article") or "")
-        if not article_id:
-            continue
-        if article_id not in by_article:
-            if not allow_new_articles:
-                raise ValueError(f"Targeted audit article is not present in previous report: {article_id}")
-            order.append(article_id)
-            new_articles.append(article_id)
-        else:
-            replaced.append(article_id)
-        by_article[article_id] = article
-
-    merged_articles = [by_article[article_id] for article_id in order if article_id in by_article]
-    defect_counts = _add_corpus_hit_counts(merged_articles)
-    merged = _assemble_report(
-        [Path(root) for root in previous_report.get("roots") or targeted_report.get("roots") or []],
-        merged_articles,
-        defect_counts,
-        audit_status="complete",
-        total_pair_count=int(previous_report.get("total_pair_count") or len(merged_articles)),
+    return _merge_targeted_report_base(
+        previous_report,
+        targeted_report,
+        deps=_polish_audit_report_deps(),
+        previous_report_path=previous_report_path,
+        allow_new_articles=allow_new_articles,
     )
-    merged["targeted_audit"] = {
-        "enabled": True,
-        "previous_report_path": str(previous_report_path) if previous_report_path is not None else "",
-        "target_roots": targeted_report.get("roots") or [],
-        "target_article_count": len(targeted_articles),
-        "reused_article_count": max(0, len(previous_articles) - len(replaced)),
-        "replaced_article_count": len(replaced),
-        "new_article_count": len(new_articles),
-        "replaced_articles": sorted(replaced),
-        "new_articles": sorted(new_articles),
-    }
-    return merged
 
 
 def _safe_print(text: str) -> None:
