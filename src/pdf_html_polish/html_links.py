@@ -33,6 +33,19 @@ HREF_VALUE_RE = re.compile(
 )
 DOUBLE_QUOTED_HREF_ATTR_LITERAL_RE = re.compile(r'\bhref\s*=\s*"(?P<href>[^"]+)"', re.IGNORECASE)
 SINGLE_QUOTED_HREF_ATTR_LITERAL_RE = re.compile(r"\bhref\s*=\s*'(?P<href>[^']+)'", re.IGNORECASE)
+NESTED_FIG_LINK_PATTERN = re.compile(
+    r'(<a\b[^>]*class="[^"]*\bz2m-fig-link\b[^"]*"[^>]*>)\s*'
+    r'(<a\b[^>]*class="[^"]*\bz2m-fig-link\b[^"]*"[^>]*>[\s\S]*?</a>)\s*'
+    r'(</a>)',
+    re.IGNORECASE,
+)
+NESTED_SAME_HREF_INTERNAL_LINK_PATTERN = re.compile(
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']#[^"\']+["\'])[^>]*)>\s*'
+    r'<a\b(?P<inner_attrs>(?=[^>]*\bhref\s*=\s*["\']#[^"\']+["\'])[^>]*)>'
+    r'(?P<body>[\s\S]{1,260}?)</a>'
+    r'(?P<trail>[\)\]\.,;:]*)\s*</a>',
+    re.IGNORECASE,
+)
 DECLARED_URL_RE = re.compile(
     r"<(?:link|meta)\b(?P<attrs>[^>]*)>",
     re.IGNORECASE | re.DOTALL,
@@ -265,6 +278,35 @@ def replace_href_attr_literal(attrs: str, href: str) -> str:
         count=1,
         flags=re.IGNORECASE | re.DOTALL,
     )
+
+
+def unwrap_nested_fig_links(fragment: str) -> str:
+    prev = ""
+    current = fragment
+    while current != prev:
+        prev = current
+        current = NESTED_FIG_LINK_PATTERN.sub(r"\2", current)
+    return current
+
+
+def unwrap_nested_same_href_internal_links(fragment: str) -> str:
+    """Remove redundant nested semantic links that target the same local id."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = href_attr_literal(match.group("attrs"))
+        inner_href = href_attr_literal(match.group("inner_attrs"))
+        if href is None or inner_href is None:
+            return match.group(0)
+        if href.lower() != inner_href.lower() or not href.startswith("#"):
+            return match.group(0)
+        return f'<a{match.group("inner_attrs")}>{match.group("body")}</a>{match.group("trail")}'
+
+    prev = ""
+    current = fragment
+    while current != prev:
+        prev = current
+        current = NESTED_SAME_HREF_INTERNAL_LINK_PATTERN.sub(replace, current)
+    return current
 
 
 def is_same_document(

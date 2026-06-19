@@ -4,10 +4,12 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from pdf_html_polish import html_images
+from pdf_html_polish import html_images, html_links
 from pdf_html_polish.single_file_html import (
     _IMAGE_CACHE_KEY_ATTR_PATTERN,
     _IMG_SRC_PATTERN,
+    _NESTED_FIG_LINK_PATTERN,
+    _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _figure_caption_num_from_visible,
@@ -29,6 +31,8 @@ from pdf_html_polish.single_file_html import (
     _recover_unique_bare_source_named_figure_units,
     _split_table_units_before_section_headings,
     _to_data_url,
+    _unwrap_nested_fig_links,
+    _unwrap_nested_same_href_internal_links,
     _validate_data_url,
     close_katex_v8_context,
     inline_images_only_from_html_file,
@@ -56,12 +60,16 @@ def _valid_tiny_png_data_url() -> str:
     return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
 
 
-def test_single_file_html_preserves_image_refresh_aliases() -> None:
+def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _IMG_SRC_PATTERN is html_images.IMG_SRC_PATTERN
     assert _IMAGE_CACHE_KEY_ATTR_PATTERN is html_images.IMAGE_CACHE_KEY_ATTR_PATTERN
     assert _inline_images_from_html_text is html_images.inline_images_from_html_text
     assert _refresh_inlined_data_urls_by_hint is html_images.refresh_inlined_data_urls_by_hint
     assert _refresh_inlined_data_urls_by_cache is html_images.refresh_inlined_data_urls_by_cache
+    assert _NESTED_FIG_LINK_PATTERN is html_links.NESTED_FIG_LINK_PATTERN
+    assert _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN is html_links.NESTED_SAME_HREF_INTERNAL_LINK_PATTERN
+    assert _unwrap_nested_fig_links is html_links.unwrap_nested_fig_links
+    assert _unwrap_nested_same_href_internal_links is html_links.unwrap_nested_same_href_internal_links
 
 
 def test_inline_images_from_html_file() -> None:

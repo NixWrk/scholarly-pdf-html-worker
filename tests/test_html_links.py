@@ -1,4 +1,10 @@
-from pdf_html_polish.html_links import attr_value, href_attr_literal, replace_href_attr_literal
+from pdf_html_polish.html_links import (
+    attr_value,
+    href_attr_literal,
+    replace_href_attr_literal,
+    unwrap_nested_fig_links,
+    unwrap_nested_same_href_internal_links,
+)
 
 
 def test_href_attr_literal_preserves_escaped_href_text() -> None:
@@ -30,3 +36,27 @@ def test_replace_href_attr_literal_leaves_attrs_without_href_unchanged() -> None
     attrs = 'class="link" title="same"'
 
     assert replace_href_attr_literal(attrs, "https://example.org") == attrs
+
+
+def test_unwrap_nested_fig_links_keeps_inner_figure_link() -> None:
+    html = (
+        '<a class="z2m-fig-link" href="#fig-1">'
+        '<a class="z2m-fig-link" href="#fig-1">Fig. 1</a>'
+        "</a>"
+    )
+
+    assert unwrap_nested_fig_links(html) == '<a class="z2m-fig-link" href="#fig-1">Fig. 1</a>'
+
+
+def test_unwrap_nested_same_href_internal_links_keeps_inner_link_and_trailing_punct() -> None:
+    html = '<a href="#fig-1" class="outer"><a class="inner" href="#fig-1">Fig. 1</a>).</a>'
+
+    assert unwrap_nested_same_href_internal_links(html) == (
+        '<a class="inner" href="#fig-1">Fig. 1</a>).'
+    )
+
+
+def test_unwrap_nested_same_href_internal_links_keeps_different_targets() -> None:
+    html = '<a href="#fig-1"><a href="#fig-2">Fig. 2</a></a>'
+
+    assert unwrap_nested_same_href_internal_links(html) == html

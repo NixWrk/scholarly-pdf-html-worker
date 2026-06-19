@@ -45,9 +45,13 @@ from .html_images import (
     validate_data_url as _validate_data_url,
 )
 from .html_links import (
+    NESTED_FIG_LINK_PATTERN as _NESTED_FIG_LINK_PATTERN,
+    NESTED_SAME_HREF_INTERNAL_LINK_PATTERN as _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     escape_html_attr_literal as _escape_html_attr,
     href_attr_literal as _extract_href_attr,
     replace_href_attr_literal as _replace_href_attr_literal,
+    unwrap_nested_fig_links as _unwrap_nested_fig_links,
+    unwrap_nested_same_href_internal_links as _unwrap_nested_same_href_internal_links,
 )
 from .html_references import (
     NOTES_AND_REFERENCES_HEADING_PATTERN as _NOTES_AND_REFERENCES_HEADING_PATTERN,
@@ -626,19 +630,6 @@ _TABLE_CELL_SINGLE_LETTER_ROOT_ROMAN_SUFFIX_PATTERN = re.compile(
 )
 _TABLE_CELL_PAREN_ROMAN_SUFFIX_PATTERN = re.compile(
     rf"(?P<close>\))(?P<roman>{_TABLE_ROMAN_FOOTNOTE_MARKER})\b",
-    re.IGNORECASE,
-)
-_NESTED_FIG_LINK_PATTERN = re.compile(
-    r'(<a\b[^>]*class="[^"]*\bz2m-fig-link\b[^"]*"[^>]*>)\s*'
-    r'(<a\b[^>]*class="[^"]*\bz2m-fig-link\b[^"]*"[^>]*>[\s\S]*?</a>)\s*'
-    r'(</a>)',
-    re.IGNORECASE,
-)
-_NESTED_SAME_HREF_INTERNAL_LINK_PATTERN = re.compile(
-    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']#[^"\']+["\'])[^>]*)>\s*'
-    r'<a\b(?P<inner_attrs>(?=[^>]*\bhref\s*=\s*["\']#[^"\']+["\'])[^>]*)>'
-    r'(?P<body>[\s\S]{1,260}?)</a>'
-    r'(?P<trail>[\)\]\.,;:]*)\s*</a>',
     re.IGNORECASE,
 )
 _FIGURE_GAP_PARA_PATTERN = (
@@ -3180,35 +3171,6 @@ _MOJIBAKE_REPLACEMENTS = _MOJIBAKE_REPLACEMENTS + (
     ("О©", "Ω"),
     ("Г—", "×"),
 )
-
-
-def _unwrap_nested_fig_links(fragment: str) -> str:
-    prev = ""
-    current = fragment
-    while current != prev:
-        prev = current
-        current = _NESTED_FIG_LINK_PATTERN.sub(r"\2", current)
-    return current
-
-
-def _unwrap_nested_same_href_internal_links(fragment: str) -> str:
-    """Remove redundant nested semantic links that target the same local id."""
-
-    def replace(match: re.Match[str]) -> str:
-        href = _extract_href_attr(match.group("attrs"))
-        inner_href = _extract_href_attr(match.group("inner_attrs"))
-        if href is None or inner_href is None:
-            return match.group(0)
-        if href.lower() != inner_href.lower() or not href.startswith("#"):
-            return match.group(0)
-        return f'<a{match.group("inner_attrs")}>{match.group("body")}</a>{match.group("trail")}'
-
-    prev = ""
-    current = fragment
-    while current != prev:
-        prev = current
-        current = _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN.sub(replace, current)
-    return current
 
 
 def drop_repeated_phrases(text: str) -> str:
