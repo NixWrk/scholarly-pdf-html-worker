@@ -102,6 +102,24 @@ def test_quality_loop_script_keeps_review_helper_compatibility(tmp_path: Path) -
     )
 
 
+def test_quality_loop_script_keeps_source_pdf_helper_compatibility() -> None:
+    manifest = {"articles": [{"article_id": "article_a"}, {"article": "article_b"}]}
+    nested_paths = {
+        "source_pdf": "D:/papers/source.pdf",
+        "nested": [{"overlay_source_pdf": "D:/papers/overlay.pdf?download=1"}],
+    }
+
+    assert sorted(llm_quality_loop._manifest_article_by_id(manifest)) == ["article_a", "article_b"]
+    assert llm_quality_loop._collect_pdf_path_strings(nested_paths) == [
+        "D:/papers/source.pdf",
+        "D:/papers/overlay.pdf?download=1",
+    ]
+    assert llm_quality_loop._attachment_keys_from_article(
+        "Zotero_Elvis_D_KEY12345_571527_Article",
+        {"zotero_attachment_key": "ABC12345"},
+    ) == ["KEY12345", "ABC12345"]
+
+
 def test_quality_gate_fails_on_regressions_and_critical_metric_growth() -> None:
     comparison = {
         "status": "ok",

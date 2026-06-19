@@ -76,6 +76,11 @@ from pdf_html_polish.quality_loop.pdf_utils import (  # noqa: E402
     pdf_text_pages as _pdf_text_pages,
     render_pdf_page as _render_pdf_evidence_page,
 )
+from pdf_html_polish.quality_loop.source_pdf import (  # noqa: E402
+    attachment_keys_from_article as _attachment_keys_from_article,
+    collect_pdf_path_strings as _collect_pdf_path_strings,
+    manifest_article_by_id as _manifest_article_by_id,
+)
 from pdf_html_polish.quality_loop.pdf_reference_recovery import (  # noqa: E402
     enrich_profile_with_pdf_reference_entries_if_needed as _enrich_profile_with_pdf_reference_entries_if_needed_impl,
     expand_reference_candidate_numbers as _expand_reference_candidate_numbers,
@@ -231,20 +236,12 @@ P62_PDF_DERIVED_RECOVERY_SOURCES = {
 }
 
 
-def _manifest_article_by_id(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return quality_source_pdf.manifest_article_by_id(manifest)
-
-
 def _configured_path_prefix_pairs() -> list[tuple[str, str]]:
     return quality_source_pdf.configured_path_prefix_pairs(ROOT)
 
 
 def _host_path_candidates(value: str) -> list[Path]:
     return quality_source_pdf.host_path_candidates(value, repo_root=ROOT)
-
-
-def _collect_pdf_path_strings(value: Any) -> list[str]:
-    return quality_source_pdf.collect_pdf_path_strings(value)
 
 
 def _source_export_dirs_from_stage_related_path(value: Any) -> list[Path]:
@@ -261,10 +258,6 @@ def _pdf_candidates_from_source_export_dir(source_dir: Path) -> list[dict[str, A
 
 def _zotero_root_paths() -> list[Path]:
     return quality_source_pdf.zotero_root_paths(repo_root=ROOT)
-
-
-def _attachment_keys_from_article(article: str, manifest_article: dict[str, Any]) -> list[str]:
-    return quality_source_pdf.attachment_keys_from_article(article, manifest_article)
 
 
 def _pdf_candidates_from_zotero_storage(attachment_key: str) -> list[dict[str, Any]]:

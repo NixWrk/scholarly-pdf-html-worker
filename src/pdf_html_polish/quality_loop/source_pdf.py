@@ -102,13 +102,16 @@ def collect_pdf_path_strings(value: Any) -> list[str]:
     if isinstance(value, dict):
         for key, nested in value.items():
             key_lower = str(key).lower()
+            appended = False
             if isinstance(nested, str) and (
                 key_lower in {"source_pdf", "source_pdf_path", "pdf_path", "overlay_source_pdf", "source_path", "path"}
                 or "pdf" in key_lower
             ):
                 if nested.lower().split("?", 1)[0].endswith(".pdf"):
                     found.append(nested)
-            found.extend(collect_pdf_path_strings(nested))
+                    appended = True
+            if not appended:
+                found.extend(collect_pdf_path_strings(nested))
     elif isinstance(value, list):
         for nested in value:
             found.extend(collect_pdf_path_strings(nested))
@@ -297,19 +300,26 @@ def attachment_keys_from_article(article: str, manifest_article: dict[str, Any])
         if value and value not in keys:
             keys.append(value)
 
+    def looks_like_attachment_key(value: str) -> bool:
+        return (
+            bool(re.fullmatch(r"[A-Z0-9]{6,10}", value))
+            and any(ch.isdigit() for ch in value)
+            and any(ch.isalpha() for ch in value)
+        )
+
     for token in re.split(r"[_\\/]+", article):
-        if re.fullmatch(r"[A-Z0-9]{6,10}", token) and any(ch.isdigit() for ch in token):
+        if looks_like_attachment_key(token):
             add(token)
     for key in ("attachment_key", "zotero_attachment_key", "zotero_key"):
         value = manifest_article.get(key)
-        if isinstance(value, str) and re.fullmatch(r"[A-Z0-9]{6,10}", value):
+        if isinstance(value, str) and looks_like_attachment_key(value):
             add(value)
     for path_key in ("raw_stage_path", "polish_stage_path", "restored_image_source"):
         value = manifest_article.get(path_key)
         if not value:
             continue
         for part in Path(str(value)).parts:
-            if re.fullmatch(r"[A-Z0-9]{6,10}", part):
+            if looks_like_attachment_key(part):
                 add(part)
     return keys
 

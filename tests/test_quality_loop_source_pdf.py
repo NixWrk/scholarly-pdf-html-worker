@@ -1,7 +1,9 @@
 from pathlib import Path
 
 from pdf_html_polish.quality_loop.source_pdf import (
+    attachment_keys_from_article,
     article_source_pdf_candidates,
+    collect_pdf_path_strings,
     normalize_pdf_title_text,
 )
 
@@ -50,6 +52,25 @@ def test_source_pdf_title_normalization_keeps_cyrillic_words() -> None:
         )
     )
     assert normalize_pdf_title_text("\u041a\u0438\u0457\u0432 PDF") == "\u043a\u0438\u0457\u0432 pdf"
+
+
+def test_collect_pdf_path_strings_does_not_duplicate_keyed_pdf_values() -> None:
+    data = {
+        "source_pdf": "D:/papers/source.pdf",
+        "nested": [{"overlay_source_pdf": "D:/papers/overlay.pdf?download=1"}],
+    }
+
+    assert collect_pdf_path_strings(data) == [
+        "D:/papers/source.pdf",
+        "D:/papers/overlay.pdf?download=1",
+    ]
+
+
+def test_attachment_keys_skip_numeric_article_identifiers() -> None:
+    assert attachment_keys_from_article(
+        "Zotero_Elvis_D_KEY12345_571527_Article",
+        {"zotero_attachment_key": "ABC12345"},
+    ) == ["KEY12345", "ABC12345"]
 
 
 def test_source_pdf_candidates_fall_back_to_zotero_cyrillic_title_match(
