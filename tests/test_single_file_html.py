@@ -5,20 +5,32 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
-from pdf_html_polish.raw_html_polish import html_fragments
+from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup
 from pdf_html_polish.single_file_html import (
+    _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
+    _BACKSLASH_BEFORE_QUOTE_PATTERN,
     _ESCAPED_INLINE_TAG_PATTERN,
+    _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN,
     _IMAGE_CACHE_KEY_ATTR_PATTERN,
     _IMG_SRC_PATTERN,
+    _INLINE_OR_DISPLAY_TEX_PATTERN,
+    _LEADING_SPACED_BACKSLASH_PATTERN,
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     _REPEATED_PHRASE_PATTERN,
+    _RU_BARE_FIG_LEXEME_PATTERN,
+    _SKIP_AUTOLINK_TAGS,
+    _SLASH_PIPE_ARTIFACT_PATTERN,
     _SPACED_ESCAPED_INLINE_TAG_PATTERN,
     _SPACED_INLINE_TAG_PATTERN,
     _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN,
+    _TEXT_NODE_REPAIR_SKIP_TAGS,
+    _TRAILING_SPACED_BACKSLASH_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
+    _cleanup_marker_escape_artifacts,
     _figure_caption_num_from_visible,
+    _fix_common_mojibake,
     _fix_orphaned_sup_tags,
     _fix_false_sup_citations_in_decimals_and_figure_labels,
     _fix_subscript_equation_spill,
@@ -41,6 +53,8 @@ from pdf_html_polish.single_file_html import (
     _unescape_inline_sup_sub,
     _unwrap_nested_fig_links,
     _unwrap_nested_same_href_internal_links,
+    _strip_protocol_sentinel_leaks,
+    _update_skip_stack,
     _validate_data_url,
     close_katex_v8_context,
     drop_repeated_phrases,
@@ -87,6 +101,20 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _SPACED_INLINE_TAG_PATTERN is html_fragments.SPACED_INLINE_TAG_PATTERN
     assert _unescape_inline_sup_sub is html_fragments.unescape_inline_sup_sub
     assert _normalize_spaced_inline_sup_sub_tags is html_fragments.normalize_spaced_inline_sup_sub_tags
+    assert _SKIP_AUTOLINK_TAGS is pre_cleanup.SKIP_AUTOLINK_TAGS
+    assert _TEXT_NODE_REPAIR_SKIP_TAGS is pre_cleanup.TEXT_NODE_REPAIR_SKIP_TAGS
+    assert _SLASH_PIPE_ARTIFACT_PATTERN is pre_cleanup.SLASH_PIPE_ARTIFACT_PATTERN
+    assert _LEADING_SPACED_BACKSLASH_PATTERN is pre_cleanup.LEADING_SPACED_BACKSLASH_PATTERN
+    assert _TRAILING_SPACED_BACKSLASH_PATTERN is pre_cleanup.TRAILING_SPACED_BACKSLASH_PATTERN
+    assert _BACKSLASH_BEFORE_QUOTE_PATTERN is pre_cleanup.BACKSLASH_BEFORE_QUOTE_PATTERN
+    assert _INLINE_OR_DISPLAY_TEX_PATTERN is pre_cleanup.INLINE_OR_DISPLAY_TEX_PATTERN
+    assert _RU_BARE_FIG_LEXEME_PATTERN is pre_cleanup.RU_BARE_FIG_LEXEME_PATTERN
+    assert _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN
+    assert _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.AUX_PROTOCOL_SENTINEL_LEAK_PATTERN
+    assert _fix_common_mojibake is pre_cleanup.fix_common_mojibake
+    assert _cleanup_marker_escape_artifacts is pre_cleanup.cleanup_marker_escape_artifacts
+    assert _strip_protocol_sentinel_leaks is pre_cleanup.strip_protocol_sentinel_leaks
+    assert _update_skip_stack is pre_cleanup.update_skip_stack
 
 
 def test_inline_images_from_html_file() -> None:

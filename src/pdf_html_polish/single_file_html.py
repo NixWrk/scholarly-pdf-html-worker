@@ -180,6 +180,22 @@ from .raw_html_polish.presentation import (
     restore_abbreviations as _restore_abbreviations,
     wrap_body_in_container as _wrap_body_in_container,
 )
+from .raw_html_polish.pre_cleanup import (
+    AUX_PROTOCOL_SENTINEL_LEAK_PATTERN as _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
+    BACKSLASH_BEFORE_QUOTE_PATTERN as _BACKSLASH_BEFORE_QUOTE_PATTERN,
+    HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN as _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN,
+    INLINE_OR_DISPLAY_TEX_PATTERN as _INLINE_OR_DISPLAY_TEX_PATTERN,
+    LEADING_SPACED_BACKSLASH_PATTERN as _LEADING_SPACED_BACKSLASH_PATTERN,
+    RU_BARE_FIG_LEXEME_PATTERN as _RU_BARE_FIG_LEXEME_PATTERN,
+    SKIP_AUTOLINK_TAGS as _SKIP_AUTOLINK_TAGS,
+    SLASH_PIPE_ARTIFACT_PATTERN as _SLASH_PIPE_ARTIFACT_PATTERN,
+    TEXT_NODE_REPAIR_SKIP_TAGS as _TEXT_NODE_REPAIR_SKIP_TAGS,
+    TRAILING_SPACED_BACKSLASH_PATTERN as _TRAILING_SPACED_BACKSLASH_PATTERN,
+    cleanup_marker_escape_artifacts as _cleanup_marker_escape_artifacts,
+    fix_common_mojibake as _fix_common_mojibake,
+    strip_protocol_sentinel_leaks as _strip_protocol_sentinel_leaks,
+    update_skip_stack as _update_skip_stack,
+)
 from .raw_html_polish.url_autolink import (
     autolink_plain_urls as _autolink_plain_urls,
     autolink_text_urls as _autolink_text_urls,
@@ -276,8 +292,6 @@ _PAREN_REF_CITATION_PATTERN = re.compile(
     r'\((?:ref|см|see)\.?\s*(\d{1,3})\)',
     re.IGNORECASE,
 )
-_SKIP_AUTOLINK_TAGS = {"script", "style", "code", "pre", "math", "svg", "a"}
-_TEXT_NODE_REPAIR_SKIP_TAGS = _SKIP_AUTOLINK_TAGS - {"a"}
 _CITATION_SKIP_TAGS = _SKIP_AUTOLINK_TAGS | {
     "table",
     "thead",
@@ -391,7 +405,6 @@ _CREATIVE_COMMONS_PUBLICDOMAIN_MISSING_PAREN_PATTERN = re.compile(
     r'https?://creativecommons\.org/publicdomain/zero/1\.0/</a>)\s+(?P<tail>applies\b)',
     re.IGNORECASE,
 )
-_SLASH_PIPE_ARTIFACT_PATTERN = re.compile(r"\s*\\+\s*\|\s*\\+\s*")
 # SentencePiece byte-fallback tokens emitted by Gemma when it encounters Unicode
 # near translation boundaries: e.g. <0xE2><0x82><0xA9> instead of a real character.
 # When followed by citation numbers they represent a dropped <sup> tag.
@@ -714,18 +727,6 @@ _RU_INLINE_TABLE_REF_PATTERN = re.compile(
     r"\b(Table|Tables)\.?\s+([IVXLCM\d]+)\b",
     re.IGNORECASE,
 )
-_RU_BARE_FIG_LEXEME_PATTERN = re.compile(
-    r"\b(?:Фиг(?:ура)?|Рис(?:унок|уног|унк|уно)?)\b(?=\s*(?:<a\b|[SsСс]?[IVXLCM\d]))",
-    re.IGNORECASE,
-)
-_HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN = re.compile(
-    r"@{1,2}Z2M(?:\\?_)?HSEP@{0,2}",
-    re.IGNORECASE,
-)
-_AUX_PROTOCOL_SENTINEL_LEAK_PATTERN = re.compile(
-    r"@{1,2}Z2M(?:\\?_)?[ATF]\d+(?:@{1,2}|(?:\\?_)+)?",
-    re.IGNORECASE,
-)
 _RU_LONG_ENGLISH_RUN_PATTERN = re.compile(
     r"(?<![A-Za-z])"
     r"(?:[A-Za-z]{2,}(?:[-'][A-Za-z]{2,})?)"
@@ -738,13 +739,6 @@ _RU_HEADING_EN_PREFIX_PATTERN = re.compile(
     r"(?P<prefix>[A-Za-z0-9()\-,:;'\"\u00b5\s]{20,}?)"
     r"(?P<rest>\s*[\u0400-\u04FF][\s\S]*)$",
 )
-_LEADING_SPACED_BACKSLASH_PATTERN = re.compile(r"(^|\s)\\+\s+")
-_TRAILING_SPACED_BACKSLASH_PATTERN = re.compile(r"\s+\\+(?=\s|$)")
-# Backslash immediately before a quote mark: word\" → word"  (Marker OCR artefact)
-_BACKSLASH_BEFORE_QUOTE_PATTERN = re.compile(r'\\(["\'])')
-# Capturing split on a display or inline TeX span (used to shield LaTeX from
-# prose-only artefact cleaners that would otherwise eat ``\\`` row separators).
-_INLINE_OR_DISPLAY_TEX_PATTERN = re.compile(r"(\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\))")
 # Marker OCR artefact: figure captions wrapped in <math display="inline"> instead
 # of plain HTML.  A genuine <math> block never contains <strong>/<em>/<b>/<i> tags.
 _SPURIOUS_MATH_CAPTION_PATTERN = re.compile(
@@ -3176,106 +3170,6 @@ def _inject_katex_css(html: str) -> str:
 
 def _render_katex_html(html: str) -> str:
     return _render_katex_html_impl(html, ensure_head=_inject_default_styles)
-
-
-def _fix_common_mojibake(html: str) -> str:
-    fixed = html
-    replacements = sorted(_MOJIBAKE_REPLACEMENTS, key=lambda pair: len(pair[0]), reverse=True)
-    previous = None
-    while fixed != previous:
-        previous = fixed
-        for bad, good in replacements:
-            fixed = fixed.replace(bad, good)
-    return fixed
-
-
-def _cleanup_marker_escape_artifacts(html: str) -> str:
-    # Use the math-safe split: a bare ``<`` from TeX (``x < 0``) must not be
-    # treated as a tag, or it would fragment a ``\[...\]`` span and defeat the
-    # LaTeX protection below (eating ``\\`` row separators in cases/aligned).
-    parts = _MATH_TAG_SPLIT_PATTERN.split(html)
-    out: list[str] = []
-    skip_stack: list[str] = []
-
-    for part in parts:
-        if not part:
-            continue
-        if _MATH_TAG_SPLIT_PATTERN.fullmatch(part):
-            _update_skip_stack(part, skip_stack)
-            out.append(part)
-            continue
-        if skip_stack:
-            out.append(part)
-            continue
-
-        def _clean_prose(text: str) -> str:
-            text = _SLASH_PIPE_ARTIFACT_PATTERN.sub(" | ", text)
-            text = _LEADING_SPACED_BACKSLASH_PATTERN.sub(r"\1", text)
-            text = _TRAILING_SPACED_BACKSLASH_PATTERN.sub(" ", text)
-            return _BACKSLASH_BEFORE_QUOTE_PATTERN.sub(r"\1", text)
-
-        # Protect TeX spans: their ``\\`` row separators and ``\"``/``\|``
-        # delimiters are valid LaTeX, not Marker escape artefacts.
-        cleaned = "".join(
-            frag
-            if _INLINE_OR_DISPLAY_TEX_PATTERN.fullmatch(frag)
-            else _clean_prose(frag)
-            for frag in _INLINE_OR_DISPLAY_TEX_PATTERN.split(part)
-            if frag
-        )
-        out.append(cleaned)
-
-    normalized_html = "".join(out)
-    # Handle broken markup boundaries where caption lexeme and reference number
-    # are split by tags, e.g. "Фигура <a ...>1</a>".
-    normalized_html = _RU_BARE_FIG_LEXEME_PATTERN.sub("Рисунок", normalized_html)
-    return normalized_html
-
-
-def _strip_protocol_sentinel_leaks(html: str) -> str:
-    """Remove leaked internal @@Z2M_* protocol sentinels from text nodes."""
-    parts = _TAG_SPLIT_PATTERN.split(html)
-    out: list[str] = []
-    skip_stack: list[str] = []
-
-    for part in parts:
-        if not part:
-            continue
-        if part.startswith("<"):
-            _update_skip_stack(part, skip_stack)
-            out.append(part)
-            continue
-        if skip_stack:
-            out.append(part)
-            continue
-
-        cleaned = _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN.sub(" ", part)
-        cleaned = _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN.sub("", cleaned)
-        cleaned = re.sub(r"\(\s*,\s*", "(", cleaned)
-        cleaned = re.sub(r"\[\s*,\s*", "[", cleaned)
-        cleaned = re.sub(r",\s*,", ", ", cleaned)
-        cleaned = re.sub(r"\s+\)", ")", cleaned)
-        cleaned = re.sub(r"\s+\]", "]", cleaned)
-        cleaned = re.sub(r"(?<=\s)-(?=[A-Z]{2,6}\b)", "", cleaned)
-        cleaned = re.sub(r"\s{2,}", " ", cleaned)
-        out.append(cleaned)
-
-    cleaned_html = "".join(out)
-    # Final global sweep for malformed HTML regions where tag balancing can break
-    # local text-node cleaning (for example, leaked unclosed <a> blocks).
-    cleaned_html = _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN.sub(" ", cleaned_html)
-    cleaned_html = _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN.sub("", cleaned_html)
-    cleaned_html = re.sub(r"\(\s*,\s*", "(", cleaned_html)
-    cleaned_html = re.sub(r"\[\s*,\s*", "[", cleaned_html)
-    cleaned_html = re.sub(r",\s*,", ", ", cleaned_html)
-    cleaned_html = re.sub(r"\s+\)", ")", cleaned_html)
-    cleaned_html = re.sub(r"\s+\]", "]", cleaned_html)
-    cleaned_html = re.sub(r"(?<=\s)-(?=[A-Z]{2,6}\b)", "", cleaned_html)
-    return cleaned_html
-
-
-def _update_skip_stack(tag_fragment: str, skip_stack: list[str]) -> None:
-    _update_skip_stack_for_tags(tag_fragment, skip_stack, _SKIP_AUTOLINK_TAGS)
 
 
 def _citation_tag_is_protected(tag_fragment: str) -> bool:
