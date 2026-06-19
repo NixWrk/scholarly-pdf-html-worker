@@ -8,15 +8,114 @@ from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
 from pdf_html_polish.quality_loop.audit_blocks import (
     Block,
     Defect,
+    missing_figure_warning_blocks,
     normalize_ws,
     plain_text,
+    parse_overlapping_blocks,
     snippet,
     strip_tags,
     structure_html,
 )
+from pdf_html_polish.quality_loop.audit_citation_style import (
+    REF_ANCHOR_BODY_RE,
+    flattened_sup_match_is_doi_or_url_fragment,
+    flattened_sup_match_is_joined_figure_label,
+    looks_like_comma_decimal_stat_ref,
+    looks_like_sample_size_value_ref,
+    ref_anchor_visible_number,
+    ref_match_inside_bracketed_numeric_citation,
+)
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
+from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
+    FIGURE_CAPTION_NODE_RE,
+    figure_caption_number_from_caption_node,
+    figure_unit_allows_shared_image_alias,
+    looks_like_float_or_caption,
+    looks_like_figure_caption,
+)
+from pdf_html_polish.quality_loop.audit_manual_patterns import (
+    looks_like_affiliation_label_roman_boundary,
+    page_link_semantic_kind,
+)
+from pdf_html_polish.quality_loop.audit_p04 import (
+    MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
+    block_looks_like_math_or_measurement_range_context,
+    looks_like_table_flattened_citation_context,
+)
 from pdf_html_polish.quality_loop.audit_p35 import replacement_char_defects
+from pdf_html_polish.quality_loop.audit_p45 import roman_word_split_defects
+from pdf_html_polish.quality_loop.audit_p61 import figure_target_keys, visible_figure_target_defects
+from pdf_html_polish.quality_loop.audit_p62 import (
+    classify_missing_figure_warning as classify_missing_figure_warning_base,
+    nearby_image_offsets as nearby_image_offsets_base,
+)
 from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEADING_RE, is_references_block
+
+
+DOI_SPLIT_PLAIN_RE = re.compile(r"\bdoi:\s*10\.\d{4,9}/\s+[A-Za-z0-9]", re.IGNORECASE)
+GERMAN_SOURCE_HINT_RE = re.compile(
+    r"\b(?:AUSF|AUSFUEHRLICHES|AUSFUHRLICHES|PHOTOGRAPHIE|KOLLODIUM|"
+    r"KOLLODIUMVERFAHREN|DRITTE|AUFLAGE|DRESDEN|WISS|PHOTOGR|INSTITUT|"
+    r"TECHNICHE|SHULE|WISSEN|KALI|SALPETER|KUPFERVITRIOL|MASTIX|BORAX|"
+    r"WASSER|VERLAG|KAPITEL|LEITTHEMA|DEUTSCHE|LEITLINIEN|DIAGNOSTIK|"
+    r"PROSTATASYNDROMS|ZUSAMMENFASSUNG|UROLOGE|KLINIK|UND|DER|DIE|DAS|MIT)\b",
+    re.IGNORECASE,
+)
+MIXEDCASE_VAR_FOOTNOTE_RE = re.compile(
+    r"\b(?:Qma|Qa|Qav|Qmn)<sup\b[^>]*\bz2m-table-fn\b[^>]*>\s*[A-Za-z]+\s*</sup>",
+    re.IGNORECASE,
+)
+WORD_FOOTNOTE_SPLIT_RE = re.compile(
+    r"\b(?P<prefix>[^\W\d_]{3,})<sup\b[^>]*\bz2m-table-fn\b[^>]*>"
+    r"\s*(?P<suffix>i|v|x|vi|ix)\s*</sup>",
+    re.IGNORECASE,
+)
+SUSPICIOUS_FOOTNOTE_WORD_MERGES = {
+    "multi",
+    "complex",
+    "index",
+    "matrix",
+    "max",
+    "neurotox",
+    "plex",
+    "fix",
+    "neurx",
+    "revi",
+    "curonix",
+    "mastix",
+    "borax",
+}
+FLATTENED_SUP_CITATION_RE = re.compile(
+    r"\b(?:et\s+al\.?\s*|[A-Za-z]{5,}\.)(?P<num>\d{1,3})(?!\s*\d)(?=[\s,.;)])",
+    re.IGNORECASE,
+)
+COMMA_DECIMAL_REF_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<left>\d{1,3})['\"][^>]*>\s*(?P=left)\s*</a>"
+    r"\s*,\s*"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<right>\d{1,3})['\"][^>]*>\s*(?P=right)\s*</a>",
+    re.IGNORECASE,
+)
+TABLE_REF_PARTIAL_LINK_RE = re.compile(
+    r"\bTables?\s+<a\b[^>]*\bhref\s*=\s*['\"]#table-(?P<target>\d+)['\"][^>]*>"
+    r"\s*(?P<label>\d+)\s*</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+FIGS_REF_FALSE_REF_RE = re.compile(r"\bFigs?\.?\s+\d+(?:\s+and|\s*,)?\s*$", re.IGNORECASE)
+SINGLE_STAT_REF_RE = re.compile(
+    r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size)\b"
+    r"[\s\S]{0,180}?<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<num>\d{1,3})['\"][^>]*>"
+    r"\s*(?P=num)\s*</a>",
+    re.IGNORECASE,
+)
+TABLE_CAPTION_ID_RE = re.compile(
+    r"<p\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])[^>]*>"
+    r"(?P<body>.*?)</p>",
+    re.IGNORECASE | re.DOTALL,
+)
+TABLE_WRAPPER_ID_RE = re.compile(
+    r"<div\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])(?=[^>]*\bz2m-table-unit\b)[^>]*>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def block_is_float_or_table_context(block: Block) -> bool:
@@ -68,6 +167,24 @@ def ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) ->
             re.IGNORECASE,
         )
         is not None
+    )
+
+
+def nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None = None, window: int = 8) -> list[int]:
+    return nearby_image_offsets_base(
+        blocks,
+        index,
+        label=label,
+        window=window,
+        looks_like_figure_caption=looks_like_figure_caption,
+    )
+
+
+def classify_missing_figure_warning(warning: Block, polish_blocks: list[Block]) -> dict[str, object]:
+    return classify_missing_figure_warning_base(
+        warning,
+        polish_blocks,
+        looks_like_figure_caption=looks_like_figure_caption,
     )
 
 
@@ -181,6 +298,58 @@ class MeineRecentTextDeps:
     known_ocr_token_defects: Callable[[str, str, str], list[Defect]]
     find_split_dot_email_match: Callable[[str], re.Match[str] | None]
     bibliography_numbering_residue_is_clean_reference_boundary: Callable[[str, str], bool]
+
+
+def build_meine_recent_link_deps(
+    *,
+    author_year_text_re: re.Pattern[str],
+    page_link_re: re.Pattern[str],
+    figure_unit_re: re.Pattern[str],
+) -> MeineRecentLinkDeps:
+    return MeineRecentLinkDeps(
+        ref_anchor_body_re=REF_ANCHOR_BODY_RE,
+        author_year_text_re=author_year_text_re,
+        page_link_re=page_link_re,
+        mixedcase_var_footnote_re=MIXEDCASE_VAR_FOOTNOTE_RE,
+        table_caption_id_re=TABLE_CAPTION_ID_RE,
+        table_wrapper_id_re=TABLE_WRAPPER_ID_RE,
+        table_ref_partial_link_re=TABLE_REF_PARTIAL_LINK_RE,
+        flattened_sup_citation_re=FLATTENED_SUP_CITATION_RE,
+        math_or_measurement_range_context_re=MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
+        doi_split_plain_re=DOI_SPLIT_PLAIN_RE,
+        german_source_hint_re=GERMAN_SOURCE_HINT_RE,
+        word_footnote_split_re=WORD_FOOTNOTE_SPLIT_RE,
+        suspicious_footnote_word_merges=SUSPICIOUS_FOOTNOTE_WORD_MERGES,
+        figure_unit_re=figure_unit_re,
+        figure_caption_node_re=FIGURE_CAPTION_NODE_RE,
+        figs_ref_false_ref_re=FIGS_REF_FALSE_REF_RE,
+        comma_decimal_ref_re=COMMA_DECIMAL_REF_RE,
+        single_stat_ref_re=SINGLE_STAT_REF_RE,
+        references_heading_re=REFERENCES_HEADING_RE,
+        reference_target_numbers=reference_target_numbers,
+        figure_target_keys=figure_target_keys,
+        non_reference_body_blocks=non_reference_body_blocks,
+        ref_anchor_visible_number=ref_anchor_visible_number,
+        roman_word_split_defects=roman_word_split_defects,
+        is_references_block=is_references_block,
+        looks_like_affiliation_label_roman_boundary=looks_like_affiliation_label_roman_boundary,
+        block_is_float_or_table_context=block_is_float_or_table_context,
+        flattened_sup_match_is_joined_figure_label=flattened_sup_match_is_joined_figure_label,
+        flattened_sup_match_is_doi_or_url_fragment=flattened_sup_match_is_doi_or_url_fragment,
+        block_looks_like_math_or_measurement_range_context=block_looks_like_math_or_measurement_range_context,
+        looks_like_table_flattened_citation_context=looks_like_table_flattened_citation_context,
+        page_link_semantic_kind=page_link_semantic_kind,
+        figure_caption_number_from_caption_node=figure_caption_number_from_caption_node,
+        figure_unit_allows_shared_image_alias=figure_unit_allows_shared_image_alias,
+        ref_match_inside_bracketed_numeric_citation=ref_match_inside_bracketed_numeric_citation,
+        looks_like_comma_decimal_stat_ref=looks_like_comma_decimal_stat_ref,
+        looks_like_sample_size_value_ref=looks_like_sample_size_value_ref,
+        visible_figure_target_defects=visible_figure_target_defects,
+        looks_like_float_or_caption=looks_like_float_or_caption,
+        parse_overlapping_blocks=parse_overlapping_blocks,
+        missing_figure_warning_blocks=missing_figure_warning_blocks,
+        classify_missing_figure_warning=classify_missing_figure_warning,
+    )
 
 
 def manual_blind_spot_defects(

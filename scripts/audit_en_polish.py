@@ -24,7 +24,6 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     line_at as _line_at,
     line_at_from_starts as _line_at_from_starts,
     line_starts as _line_starts,
-    missing_figure_warning_blocks as _missing_figure_warning_blocks,
     parse_blocks as _parse_blocks,
     parse_overlapping_blocks as _parse_overlapping_blocks,
     snippet as _snippet,
@@ -34,12 +33,6 @@ from pdf_html_polish.quality_loop.audit_citation_style import (
     REF_ANCHOR_BODY_RE,
     REF_LINK_RE,
     citation_style_consistency_defects as _citation_style_consistency_defects_base,
-    flattened_sup_match_is_doi_or_url_fragment as _flattened_sup_match_is_doi_or_url_fragment,
-    flattened_sup_match_is_joined_figure_label as _flattened_sup_match_is_joined_figure_label,
-    looks_like_comma_decimal_stat_ref as _looks_like_comma_decimal_stat_ref,
-    looks_like_sample_size_value_ref as _looks_like_sample_size_value_ref,
-    ref_anchor_visible_number as _ref_anchor_visible_number,
-    ref_match_inside_bracketed_numeric_citation as _ref_match_inside_bracketed_numeric_citation,
 )
 from pdf_html_polish.quality_loop.audit_citations import (
     CitationDefectDeps,
@@ -66,7 +59,6 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     TABLE_CAPTION_RE,
     TABLE_CAPTION_NODE_RE,
     figure_caption_number_from_caption_node as _figure_caption_number_from_caption_node,
-    figure_unit_allows_shared_image_alias as _figure_unit_allows_shared_image_alias,
     figure_caption_ux_defects as _figure_caption_ux_defects_base,
     looks_like_equation_continuation as _looks_like_equation_continuation,
     looks_like_figure_caption as _looks_like_figure_caption,
@@ -97,7 +89,6 @@ from pdf_html_polish.quality_loop.audit_manual_patterns import (
     ends_like_sentence_fragment as _ends_like_sentence_fragment,
     find_split_dot_email_match as _find_split_dot_email_match,
     joined_word_match_is_url_slug as _joined_word_match_is_url_slug,
-    looks_like_affiliation_label_roman_boundary as _looks_like_affiliation_label_roman_boundary,
     page_link_semantic_kind as _page_link_semantic_kind,
     starts_like_sentence_continuation as _starts_like_sentence_continuation,
 )
@@ -106,11 +97,13 @@ from pdf_html_polish.quality_loop.audit_manual_recent import (
     MeineRecentLinkDeps,
     MeineRecentTextDeps,
     block_is_float_or_table_context as _block_is_float_or_table_context,
+    build_meine_recent_link_deps as _build_meine_recent_link_deps,
+    classify_missing_figure_warning as _classify_missing_figure_warning,
     manual_blind_spot_defects as _manual_blind_spot_defects_base,
     meine_recent_link_structure_defects as _meine_recent_link_structure_defects_base,
     meine_recent_text_ocr_defects as _meine_recent_text_ocr_defects_base,
+    nearby_image_offsets as _nearby_image_offsets,
     non_reference_body_blocks as _non_reference_body_blocks,
-    reference_target_numbers as _reference_target_numbers,
 )
 from pdf_html_polish.quality_loop.audit_math_units import (
     DEGREE_DEFECT_RE,
@@ -160,32 +153,13 @@ from pdf_html_polish.quality_loop.audit_polish_report import (
     merge_targeted_polish_report as _merge_targeted_report_base,
     print_polish_report_summary as _print_summary,
 )
-from pdf_html_polish.quality_loop.audit_p04 import (
-    MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
-    block_looks_like_math_or_measurement_range_context as _block_looks_like_math_or_measurement_range_context,
-    looks_like_table_flattened_citation_context as _looks_like_table_flattened_citation_context,
-    unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
-)
+from pdf_html_polish.quality_loop.audit_p04 import unlinked_citation_range_kind as _unlinked_citation_range_kind_base
 from pdf_html_polish.quality_loop.audit_p35 import replacement_char_defects as _replacement_char_defects
-from pdf_html_polish.quality_loop.audit_p45 import roman_word_split_defects as _roman_word_split_defects
-from pdf_html_polish.quality_loop.audit_p61 import (
-    figure_target_keys as _figure_target_keys,
-    figure_target_numbers as _figure_target_numbers,
-    visible_figure_target_defects as _visible_figure_target_defects,
-)
 from pdf_html_polish.quality_loop.audit_p71 import known_ocr_token_defects as _known_ocr_token_defects
 from pdf_html_polish.quality_loop.audit_p62 import (
-    classify_missing_figure_warning as _classify_missing_figure_warning_base,
-    figure_label_from_id as _figure_label_from_id,
-    figure_label_from_text as _figure_label_from_text,
-    figure_unit_label as _figure_unit_label,
-    find_warning_block_index as _find_warning_block_index,
     has_nearby_image as _has_nearby_image,
     has_nearby_missing_figure_warning as _has_nearby_missing_figure_warning,
     is_handled_missing_figure_block as _is_handled_missing_figure_block,
-    nearest_figure_label as _nearest_figure_label,
-    nearby_image_offsets as _nearby_image_offsets_base,
-    normalize_figure_label_key as _normalize_figure_label_key,
 )
 
 
@@ -681,76 +655,10 @@ TABLE_DOI_APPEND_RE = re.compile(
     r"(?P<tail>(?:[a-z]|\(?[a-z])[\s\S]{20,220})",
     re.IGNORECASE,
 )
-DOI_SPLIT_PLAIN_RE = re.compile(r"\bdoi:\s*10\.\d{4,9}/\s+[A-Za-z0-9]", re.IGNORECASE)
-GERMAN_SOURCE_HINT_RE = re.compile(
-    r"\b(?:AUSF|AUSFUEHRLICHES|AUSFUHRLICHES|PHOTOGRAPHIE|KOLLODIUM|"
-    r"KOLLODIUMVERFAHREN|DRITTE|AUFLAGE|DRESDEN|WISS|PHOTOGR|INSTITUT|"
-    r"TECHNICHE|SHULE|WISSEN|KALI|SALPETER|KUPFERVITRIOL|MASTIX|BORAX|"
-    r"WASSER|VERLAG|KAPITEL|LEITTHEMA|DEUTSCHE|LEITLINIEN|DIAGNOSTIK|"
-    r"PROSTATASYNDROMS|ZUSAMMENFASSUNG|UROLOGE|KLINIK|UND|DER|DIE|DAS|MIT)\b",
-    re.IGNORECASE,
-)
-MIXEDCASE_VAR_FOOTNOTE_RE = re.compile(
-    r"\b(?:Qma|Qa|Qav|Qmn)<sup\b[^>]*\bz2m-table-fn\b[^>]*>\s*[A-Za-z]+\s*</sup>",
-    re.IGNORECASE,
-)
-WORD_FOOTNOTE_SPLIT_RE = re.compile(
-    r"\b(?P<prefix>[^\W\d_]{3,})<sup\b[^>]*\bz2m-table-fn\b[^>]*>"
-    r"\s*(?P<suffix>i|v|x|vi|ix)\s*</sup>",
-    re.IGNORECASE,
-)
-SUSPICIOUS_FOOTNOTE_WORD_MERGES = {
-    "multi",
-    "complex",
-    "index",
-    "matrix",
-    "max",
-    "neurotox",
-    "plex",
-    "fix",
-    "neurx",
-    "revi",
-    "curonix",
-    "mastix",
-    "borax",
-}
 AUTHOR_YEAR_TEXT_RE = re.compile(
     r"\b[A-Z][A-Za-z'’.-]+(?:\s+et\s+al\.)?(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
     re.IGNORECASE,
 )
-FLATTENED_SUP_CITATION_RE = re.compile(
-    r"\b(?:et\s+al\.?\s*|[A-Za-z]{5,}\.)(?P<num>\d{1,3})(?!\s*\d)(?=[\s,.;)])",
-    re.IGNORECASE,
-)
-COMMA_DECIMAL_REF_RE = re.compile(
-    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<left>\d{1,3})['\"][^>]*>\s*(?P=left)\s*</a>"
-    r"\s*,\s*"
-    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<right>\d{1,3})['\"][^>]*>\s*(?P=right)\s*</a>",
-    re.IGNORECASE,
-)
-TABLE_REF_PARTIAL_LINK_RE = re.compile(
-    r"\bTables?\s+<a\b[^>]*\bhref\s*=\s*['\"]#table-(?P<target>\d+)['\"][^>]*>"
-    r"\s*(?P<label>\d+)\s*</a>",
-    re.IGNORECASE | re.DOTALL,
-)
-FIGS_REF_FALSE_REF_RE = re.compile(r"\bFigs?\.?\s+\d+(?:\s+and|\s*,)?\s*$", re.IGNORECASE)
-SINGLE_STAT_REF_RE = re.compile(
-    r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size)\b"
-    r"[\s\S]{0,180}?<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<num>\d{1,3})['\"][^>]*>"
-    r"\s*(?P=num)\s*</a>",
-    re.IGNORECASE,
-)
-TABLE_CAPTION_ID_RE = re.compile(
-    r"<p\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])[^>]*>"
-    r"(?P<body>.*?)</p>",
-    re.IGNORECASE | re.DOTALL,
-)
-TABLE_WRAPPER_ID_RE = re.compile(
-    r"<div\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])(?=[^>]*\bz2m-table-unit\b)[^>]*>",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
 def _source_pdf_path(raw_path: Path) -> Path:
     return source_pdf_path(raw_path, pdf_source_stage=PDF_SOURCE_STAGE)
 
@@ -796,27 +704,6 @@ class PdfDiagnosticsCache(_PackagePdfDiagnosticsCache):
             author_year_text_re=AUTHOR_YEAR_TEXT_RE,
             author_year_cache_key="AUTHOR_YEAR_TEXT_RE:v1",
         )
-
-
-def _nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None = None, window: int = 8) -> list[int]:
-    return _nearby_image_offsets_base(
-        blocks,
-        index,
-        label=label,
-        window=window,
-        looks_like_figure_caption=_looks_like_figure_caption,
-    )
-
-
-def _classify_missing_figure_warning(
-    warning: Block,
-    polish_blocks: list[Block],
-) -> dict[str, Any]:
-    return _classify_missing_figure_warning_base(
-        warning,
-        polish_blocks,
-        looks_like_figure_caption=_looks_like_figure_caption,
-    )
 
 
 def _unlinked_citation_range_kind(block: Block) -> str:
@@ -937,49 +824,10 @@ def _manual_blind_spot_defects(
 
 
 def _meine_recent_link_structure_deps() -> MeineRecentLinkDeps:
-    return MeineRecentLinkDeps(
-        ref_anchor_body_re=REF_ANCHOR_BODY_RE,
+    return _build_meine_recent_link_deps(
         author_year_text_re=AUTHOR_YEAR_TEXT_RE,
         page_link_re=PAGE_LINK_RE,
-        mixedcase_var_footnote_re=MIXEDCASE_VAR_FOOTNOTE_RE,
-        table_caption_id_re=TABLE_CAPTION_ID_RE,
-        table_wrapper_id_re=TABLE_WRAPPER_ID_RE,
-        table_ref_partial_link_re=TABLE_REF_PARTIAL_LINK_RE,
-        flattened_sup_citation_re=FLATTENED_SUP_CITATION_RE,
-        math_or_measurement_range_context_re=MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
-        doi_split_plain_re=DOI_SPLIT_PLAIN_RE,
-        german_source_hint_re=GERMAN_SOURCE_HINT_RE,
-        word_footnote_split_re=WORD_FOOTNOTE_SPLIT_RE,
-        suspicious_footnote_word_merges=SUSPICIOUS_FOOTNOTE_WORD_MERGES,
         figure_unit_re=FIGURE_UNIT_RE,
-        figure_caption_node_re=FIGURE_CAPTION_NODE_RE,
-        figs_ref_false_ref_re=FIGS_REF_FALSE_REF_RE,
-        comma_decimal_ref_re=COMMA_DECIMAL_REF_RE,
-        single_stat_ref_re=SINGLE_STAT_REF_RE,
-        references_heading_re=REFERENCES_HEADING_RE,
-        reference_target_numbers=_reference_target_numbers,
-        figure_target_keys=_figure_target_keys,
-        non_reference_body_blocks=_non_reference_body_blocks,
-        ref_anchor_visible_number=_ref_anchor_visible_number,
-        roman_word_split_defects=_roman_word_split_defects,
-        is_references_block=_is_references_block,
-        looks_like_affiliation_label_roman_boundary=_looks_like_affiliation_label_roman_boundary,
-        block_is_float_or_table_context=_block_is_float_or_table_context,
-        flattened_sup_match_is_joined_figure_label=_flattened_sup_match_is_joined_figure_label,
-        flattened_sup_match_is_doi_or_url_fragment=_flattened_sup_match_is_doi_or_url_fragment,
-        block_looks_like_math_or_measurement_range_context=_block_looks_like_math_or_measurement_range_context,
-        looks_like_table_flattened_citation_context=_looks_like_table_flattened_citation_context,
-        page_link_semantic_kind=_page_link_semantic_kind,
-        figure_caption_number_from_caption_node=_figure_caption_number_from_caption_node,
-        figure_unit_allows_shared_image_alias=_figure_unit_allows_shared_image_alias,
-        ref_match_inside_bracketed_numeric_citation=_ref_match_inside_bracketed_numeric_citation,
-        looks_like_comma_decimal_stat_ref=_looks_like_comma_decimal_stat_ref,
-        looks_like_sample_size_value_ref=_looks_like_sample_size_value_ref,
-        visible_figure_target_defects=_visible_figure_target_defects,
-        looks_like_float_or_caption=_looks_like_float_or_caption,
-        parse_overlapping_blocks=_parse_overlapping_blocks,
-        missing_figure_warning_blocks=_missing_figure_warning_blocks,
-        classify_missing_figure_warning=_classify_missing_figure_warning,
     )
 
 

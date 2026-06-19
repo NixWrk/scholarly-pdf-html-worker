@@ -6,7 +6,9 @@ import sys
 from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
 from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
+    MeineRecentLinkDeps,
     block_is_float_or_table_context,
+    build_meine_recent_link_deps,
     manual_blind_spot_defects,
     meine_recent_text_ocr_defects,
     non_reference_body_blocks,
@@ -134,6 +136,23 @@ def test_ref_match_inside_bracketed_reference_list_detects_linked_lists() -> Non
         anchor.start(),
         anchor.end(),
     )
+
+
+def test_build_meine_recent_link_deps_wires_default_callbacks() -> None:
+    deps = build_meine_recent_link_deps(
+        author_year_text_re=re.compile(r"\bSmith\s+2020\b"),
+        page_link_re=re.compile(r"<a href=\"#page-(?P<target>\d+)\">(?P<body>.*?)</a>"),
+        figure_unit_re=re.compile(r"<div id=\"(?P<id>fig-\d+)\" class=\"z2m-figure-unit\">(?P<body>.*?)</div>"),
+    )
+
+    assert isinstance(deps, MeineRecentLinkDeps)
+    assert deps.reference_target_numbers('<ol><li id="ref-7">Reference.</li></ol>') == {7}
+    assert deps.ref_anchor_visible_number("7") == 7
+    assert deps.figure_target_keys(
+        '<div id="fig-2" class="z2m-figure-unit">'
+        '<p class="z2m-figure-caption">Figure 2. Caption.</p>'
+        "</div>"
+    ) == {"2"}
 
 
 def test_audit_script_keeps_legacy_manual_blind_spot_aliases() -> None:
