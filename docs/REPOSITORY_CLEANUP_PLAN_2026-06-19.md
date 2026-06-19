@@ -98,8 +98,10 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Finish the audit CLI control pass by covering intentional legacy aliases.
-2. Start extracting the first small domain from `single_file_html.py`.
+1. Continue `single_file_html.py` decomposition by moving the remaining image
+   inlining orchestration behind package helpers.
+2. Preserve old private aliases in `single_file_html.py` while tests still
+   import them.
 3. After the `single_file_html.py` polish pass, run polish/audit parity before
    the full PDF-to-polish HTML pipeline.
 4. Run the full PDF-to-polish HTML flow only after the parity gate passes.
@@ -193,3 +195,7 @@ The cleanup policy is deliberately conservative:
   exercised by tests.
 - Recorded the post-`single_file_html.py` verification gate: run polish/audit
   parity first, then the full PDF-to-polish HTML pipeline.
+- Started `single_file_html.py` decomposition by moving stale inline-image data
+  URL refresh helpers into `html_images.py`; the monolith now preserves those
+  private names as compatibility aliases with focused tests on the package
+  owner and the alias surface.
