@@ -98,8 +98,8 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Continue `single_file_html.py` decomposition with the next small generic
-   text-cleanup helper family.
+1. Continue `single_file_html.py` decomposition with the next small inline HTML
+   cleanup helper family.
 2. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
 3. After the `single_file_html.py` polish pass, run polish/audit parity before
@@ -206,3 +206,6 @@ The cleanup policy is deliberately conservative:
 - Moved nested figure/same-href internal link unwrapping into `html_links.py`
   with direct link tests and compatibility aliases retained in
   `single_file_html.py`.
+- Moved repeated-phrase cleanup into `text_cleanup.py`; `pipeline.py` now uses
+  that package helper directly, while `single_file_html.py` keeps a
+  compatibility alias covered by tests.
