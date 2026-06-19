@@ -7,8 +7,10 @@ from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
 from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
     MeineRecentLinkDeps,
+    MeineRecentTextDeps,
     block_is_float_or_table_context,
     build_meine_recent_link_deps,
+    build_meine_recent_text_deps,
     manual_blind_spot_defects,
     meine_recent_text_ocr_defects,
     non_reference_body_blocks,
@@ -153,6 +155,15 @@ def test_build_meine_recent_link_deps_wires_default_callbacks() -> None:
         '<p class="z2m-figure-caption">Figure 2. Caption.</p>'
         "</div>"
     ) == {"2"}
+
+
+def test_build_meine_recent_text_deps_wires_default_patterns_and_callbacks() -> None:
+    deps = build_meine_recent_text_deps()
+
+    assert isinstance(deps, MeineRecentTextDeps)
+    assert deps.split_email_text_re.search("simono v@example.com") is not None
+    assert deps.known_joined_word_re.search("Theexperiment") is not None
+    assert deps.known_ocr_token_defects("inital", "", stage="07.en.polish.html")
 
 
 def test_audit_script_keeps_legacy_manual_blind_spot_aliases() -> None:

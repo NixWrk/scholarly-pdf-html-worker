@@ -34,6 +34,9 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     looks_like_figure_caption,
 )
 from pdf_html_polish.quality_loop.audit_manual_patterns import (
+    bibliography_numbering_residue_is_clean_reference_boundary,
+    find_split_dot_email_match,
+    joined_word_match_is_url_slug,
     looks_like_affiliation_label_roman_boundary,
     page_link_semantic_kind,
 )
@@ -49,6 +52,7 @@ from pdf_html_polish.quality_loop.audit_p62 import (
     classify_missing_figure_warning as classify_missing_figure_warning_base,
     nearby_image_offsets as nearby_image_offsets_base,
 )
+from pdf_html_polish.quality_loop.audit_p71 import known_ocr_token_defects
 from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEADING_RE, is_references_block
 
 
@@ -115,6 +119,430 @@ TABLE_CAPTION_ID_RE = re.compile(
 TABLE_WRAPPER_ID_RE = re.compile(
     r"<div\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])(?=[^>]*\bz2m-table-unit\b)[^>]*>",
     re.IGNORECASE | re.DOTALL,
+)
+SPLIT_EMAIL_TEXT_RE = re.compile(
+    r"\b[A-Za-z][A-Za-z0-9._%+-]{2,}\s+(?:vi|iv|ix|i|v|x)@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
+RUNAWAY_REPEATED_TEXT_RE = re.compile(
+    r"\b(?P<word>[A-Za-z]{3,})\b(?:\s*(?:,|\\,)\s*(?P=word)\b){5,}|"
+    r"(?:moderately\s+slow\s+deactivation\s+kinetics[\s\S]{0,120}?){3,}",
+    re.IGNORECASE,
+)
+LOST_FF_WORD_RE = re.compile(
+    r"\b(?:afective|coeficient|diference|diferential|efect(?:s|ive|ively)?|"
+    r"eficacy|eficient(?:ly)?|afect(?:s|ed|ing|ive|ively)?|eectiveness|"
+    r"diferent(?:ial(?:ly)?)?|specifc|identifed|fow|fxed|artifcial|"
+    r"refect|ofline|aferents|afiliations|ailiations|ofice|oficer|"
+    r"suficient(?:ly)?|tradeofs|"
+    r"fexible|ultrafexible|fbers|flms?|fbroin|biofuid|difusion|coefcient|"
+    r"defcits|scafolds|feld-efect|fnger|galss|artiicial|scientiic|"
+    r"certiication|deining|simpliication|irst|inluence|itness|worklow|"
+    r"frst|fne|fgurative|defned|profcient|beneft|"
+    r"difcult(?:y|ies)?|staf|efort(?:s)?|confrm(?:ed|ing)?|clarifed|"
+    r"infuenced|fndings|feld|ndings)\b|"
+    r"(?:\u00ae|\u0412\u00ae)rst\b|"
+    r"\b(?:suf|insuf)\s+cient\b|\bbene\s+ts\b|\bmagnetic\s+eld\b|"
+    r"\beld\s+strength\b|\bve\s+patients\b|\bOf\s+ce\b|\burine\s+ow\b|"
+    r"\bwhite\s+ght\b|"
+    r"\b(?:specifi|Specifi|signifi|Signifi|defi|Defi|diffi|Diffi|profi|Profi|"
+    r"confi|Confi|benefi|Benefi|identi?fi|Identi?fi|Offi|offi|Griffi|"
+    r"fl|Fl|urofl|Urofl|outfl|Outfl|refl|Refl|infl|Infl)\s+"
+    r"(?:c|cally|cant(?:ly)?|ned|ne|nition|ciency|cult(?:y|ies)?|le(?:s|ometry)?|"
+    r"dence|cial|es|ce|ths|oor|ow(?:s|metry|meter|rate)?|uid|ll(?:ing)?|"
+    r"uoroscopy|uoroscopic|uorescent|ux|uence)\b|"
+    r"\b(?:Urofowmet(?:ry|ery)|urofowmet(?:ry|er)|"
+    r"fow(?:s|ing|ed|meter|meters|metry|rate|rates)?|"
+    r"fll(?:ing|ed)?|fuid|fuoroscop(?:y|ic)|fuorescent|"
+    r"modifcations?|modifcation|signifcant(?:ly)?|specifcity|"
+    r"identifes|diferentiating|flter(?:ing)?|cutof)\b",
+    re.IGNORECASE,
+)
+KNOWN_JOINED_WORD_RE = re.compile(
+    r"\b(?:considerationsincluding|displaycan|refreshabletactile|staffmembers?|"
+    r"timeconsuming|nervesparing|da\s+Vinci1Si|touchinteraction|realworld|"
+    r"Theexperiment|tookplace|Thisarearepresented|hadtobeencoded|"
+    r"off-theshelf|state-ofthe-art|numbergestures|twodimensional|"
+    r"Perceptionof|Descriptionsfor|openaccess|basrelief|threedimensional|"
+    r"UFrecorded|SUFestimated|SUFdetermined|MRsafe|MRcompatible|"
+    r"lung-tohead|feed-andsleep|readyreckoners|injuryassociated|"
+    r"allin-one|singlefinger|locationspecific|Computeraided|Volpe1|"
+    r"MBVurgency|Qmaxnormal|residualnormal|ofdepression|inIndian|"
+    r"asmeasured|symptomscore|withlower|tractfunction|benignprostatic|"
+    r"urineflow|AcceptableBladder|suggestiveof|distentionon|healthyyoung|"
+    r"Theeffect|mattecollodion|Nineteenthcentury|darkbrown|nearinfrared|"
+    r"selfcontrolled|99Tcmcolloids|nonneoadjuvant|vanderVorst|populationbased|"
+    r"Positionrelated|intraand|lightbeam|Videobased|handassembled|OpticalTouch|"
+    r"airpolluted|vitamin-Ddeficient|watersoluble|asprepared|ecofriendly|"
+    r"explorationSeamless|basreliefs|frontto-back|signalto-noise|farred|"
+    r"FromFebruary|Qmaxurgency|image\s+processingbased|"
+    r"extrusionsurgically|inflammationat|of\s+theonly|NeururolUrodyn2021|"
+    r"such\s+asportraits|iodineattacks|"
+    r"timedependent|first-inhumans|backilluminated|anatomicallycompatible|"
+    r"convectionenhanced|neurologicallyrelated|valvegated|mindenhancing|"
+    r"andChallenges|SoftBankbacked|singleneuron|crossfrequency|"
+    r"inhibitionbased|phaselocked|ofrealistic|ofmedical|ofclinical|"
+    r"ofperspective|offactual|oflarge|of13|ofthe\s+accepted|andrequests|"
+    r"andpermissions|Competinginterests|Additionalinformation|"
+    r"Alessentially|medicineresistant|customdesigned|hardwareupdate|"
+    r"KeunWhangbo|easy-tolearn|Shapefrom-shading|Attributebased|"
+    r"thistask|higherthan|disabilitiessometimesface|artworksis|"
+    r"hierarchicalsegmentation|webbased|needsto|includesinformation|"
+    r"participantssuggested|overallwork|guidelinesfor|issimilarto|"
+    r"easierto|spatialcognitive|wassupported|blindaccessible|"
+    r"Key-wordaware|CTABassistant|pushpull|twoobject|itemspecific|"
+    r"controlrelated|lowdimensional|topdown|contextdependent|"
+    r"finergrained|cuetrials|trialaverage|match-tosample|"
+    r"spatiovectors|Qcould|Qto|IPPgrades|metaanalysis|"
+    r"BPHassociated|BEHAVIORALAND|OFTACTILE|EVERYDAYACTIVITIES|"
+    r"featurebased|upprojection|groundtruth|shiftinvariant|imagedepth|"
+    r"intraobject|state-oftheart|domaininvariant|textdetection|"
+    r"speechballoon|textbased|contentaware|leftright|Semisupervised|"
+    r"imageto-image|realdomain)\b|"
+    r"\btexture\.Tactile\b|"
+    r"\bheld\s+inWM\b|"
+    r"patients,were|prostatectomy\u0394VV|\btheCreative\b|\bd\)2\.5D\b|"
+    r"\bAl\s+Omari1\b",
+    re.IGNORECASE,
+)
+FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
+    r"For\s+these[\s\S]{200,6000}?reasons,\s+a\s+transdiagnostic|"
+    r"also\s+and\s+the\s+Committee[\s\S]{0,2000}?require\s+evaluation|"
+    r"trigger\s+global\s+projection\s+targets[\s\S]{0,2000}?"
+    r"innate\s+or\s+adaptive\s+immune\s+responses|"
+    r"systemic\s+circulation[\s\S]{0,1800}?"
+    r"(?:transduced\s+target\s+cells|Human\s+immune\s+responses\s+to\s+AAV)"
+    r"[\s\S]{0,1800}?\(with\s+some\s+serotypes\s+more\s+likely\s+to\s+leak",
+    re.IGNORECASE,
+)
+CORRUPT_EMAIL_LABEL_RE = re.compile(r"(?:\b[MmSs]e-mail:|[\u25a1\ufffd]\s*S?e-mail:)")
+REFERENCE_ROMAN_SPLIT_RE = re.compile(
+    r"\bBiobeha\s+v\.\s+Rev\.|\bBeha\s+v\.\s+Res\.\s+Methods\b|"
+    r"\bBeha\s+v\.\s+Sci\.(?=\W|$)",
+    re.IGNORECASE,
+)
+TABLE_NOTE_BODY_MERGE_RE = re.compile(
+    r"Positive\s+value\s*=\s*increased\s+symptoms,\s*negative\s+value\s*=\s*"
+    r"decreased\s+symptoms\s+studies\s+to\s+evaluate\b|"
+    r"\bin\s+the\s+absence\s+of\s+aSignificant,\s*p\s*(?:<|&lt;)\s*0\.05\.\s+"
+    r"standards,\s+it\s+remains\b",
+    re.IGNORECASE,
+)
+AUTHOR_MARKER_GLUE_RE = re.compile(r"\b[A-Z][A-Za-z-]{3,}\s+100\s+and\b")
+LATEX_MACRO_RUNAWAY_RE = re.compile(r"(?:\\@ifnextchar[\s\S]{0,80}){6,}", re.IGNORECASE)
+DOI_BODY_PROSE_MERGE_RE = re.compile(
+    r"\b(?:DOI:\s*(?:https?://(?:dx\.)?doi\.org/)?10\.[^\s<]+|"
+    r"https?://(?:dx\.)?doi\.org/10\.[^\s<]+)"
+    r"\s+(?:the|this|we|in|as|or|depicted|generated|lines)\b",
+    re.IGNORECASE,
+)
+DETACHED_ACCENT_RE = re.compile(
+    r"\b[A-Za-z]{2,}[\u00a8\u00b4\u00b8\u02c6\u02c7\u02d9\u02dc][A-Za-z]{1,}\b|"
+    r"\bOA\u02c6\s+\u02c7SModhrain\b|"
+    r"\bB[A-Za-z]+hler,\s*\u02dc\s+and\b|"
+    r"\bHeppner,\s*[\u00b4\u02c6]\s+and\b|"
+    r"\bC\u00b8\s*\.\s+Varel\b|"
+    r"\bSyd\s+\u00a8\s+anheimo\b|"
+    r"\bwireless\s+\u00a8\s+intraocular\b|"
+    r"\bPakenait\s+\u02d9\s*e\u02d9?\b|\bPeter\s+M\s+\u02d9\s+Hall\b|"
+    r"\bSpath\s+\u00a8\b|\bSequin\s+\u00b4\s+,|\bwould\s+\u00b4\s+be\b|"
+    r"\b[A-Za-z]{2,}\s+\u00a8\b|\b[A-Za-z]{2,}-?\s+[\u00a8\u00b4]\s+[A-Za-z]{2,}\b|"
+    r"\bBRICENO\S\s*,\s*H\.\s*M\.|\bHOLLERER\s+[^A-Za-z0-9\s,]\s*,\s*T\.|"
+    r"\b(?:PogoreliР’Т‘c|HuskiР’Т‘c|CohadР•С•iР’Т‘c|JukiР’Т‘c|Р›вЂЎ\s+Using)\b",
+    re.IGNORECASE,
+)
+TABLE_SECTION_ABSORB_RE = re.compile(
+    r"\bTable\s+3\.1:[\s\S]{0,3000}\b3\.8\.\s+Data\s+Acquisition"
+    r"[\s\S]{0,3000}\b3\.9\.\s+Criteria\s+for\s+Use\s+of\s+Data\b",
+    re.IGNORECASE,
+)
+INTRA_WORD_SPACE_RE = re.compile(
+    r"\bob\s+je\s+ct\s+s\s+w\s+ould\b|"
+    r"\bsafe\s+ty\s+c\s+oncerns\b|"
+    r"\bincl\s+ude\b|"
+    r"\bb\s+e\s+interpreted\b|"
+    r"\bA\s+dd\s+itional\b|"
+    r"\bsupple\s+mental\b|"
+    r"\bexpressi\s+ve\s+ness\b|"
+    r"\bT\s+his\s+fact\b|"
+    r"\bCNC-millin\s+g\s+m\s+achines\b|"
+    r"\bsupp\s+ort\s+structures\b|"
+    r"\ba\s+dditive\s+production\b|"
+    r"\balternati\s+ves\b|"
+    r"\bpr\s+inting\s+services\b|"
+    r"\btechnical\s+ly\b|"
+    r"\bstraightfo\s+rw\s+ard\b|"
+    r"\bGener\s+al\s+digital\b|"
+    r"\bBarc\s+elona\b|"
+    r"\bthr\s+ee\s+different\b|"
+    r"\bt\s+o\s+the\s+best\s+of\s+our\s+knowledge\b|"
+    r"\bhigh\s*\)\s*w\s+ere\b|"
+    r"\bB\s+rain-computer\b|"
+    r"\bBel\s+humeur\b|"
+    r"\bGroenenda\s+al@|\bWilhel\s+mina\b|\bRUTHERFO\s+RD\b|"
+    r"\benviron\s+ment\b|\bInter\s+national\b|\bdisconti\s+nuation\b|"
+    r"\bIta\s+ly\b|\bLeporin\s+i\b|\benj\s+oy\b|\bsepa\s+ration\b|"
+    r"\bat\s+tached\b|\bfr\s+om\s+ye\s+elk\b|\beve\s+ly\b",
+    re.IGNORECASE,
+)
+INLINE_INTRA_WORD_SPACE_HTML_RE = re.compile(
+    r"<a\b[^>]*>\s*\[?\s*Bel\s*</a>\s*humeur\b|"
+    r"\bob\s*<a\b[^>]*>\s*je\s*</a>\s*"
+    r"<a\b[^>]*>\s*ct\s*</a>\s*"
+    r"<a\b[^>]*>\s*s\s+w\s*</a>\s*ould\b|"
+    r"\bob\s+je\s+ct\s*<a\b[^>]*>\s*s\s+w\s*</a>\s*ould\b|"
+    r"\bsafe\s*<a\b[^>]*>\s*ty\s+c\s*</a>\s*oncerns\b|"
+    r"\bincl\s*<a\b[^>]*>\s*ude\s*</a>|"
+    r"<a\b[^>]*>\s*b\s*</a>\s*e\s+interpreted\b|"
+    r"\bA\s*<a\b[^>]*>\s*dd\s*</a>\s*itional\b|"
+    r"\bexpressi\s*<a\b[^>]*>\s*ve\s*</a>\s*ness\b|"
+    r"\bT\s*<a\b[^>]*>\s*his\s*</a>\s*fact\b|"
+    r"\bCNC-millin\s*<a\b[^>]*>\s*g\s+m\s*</a>\s*achines\b|"
+    r"\bsupp\s*<a\b[^>]*>\s*ort\s+structures\s+in\s+a\s*</a>\s*dditive\s+production\b|"
+    r"\balternati\s*<a\b[^>]*>\s*ves\s*</a>|"
+    r"<a\b[^>]*>\s*pr\s*</a>\s*inting\s+services\b|"
+    r"\btechnical\s*<a\b[^>]*>\s*ly\s*</a>|"
+    r"\bhigh\s*<a\b[^>]*>\s*\)\s*</a>\s*<a\b[^>]*>\s*w\s*</a>\s*ere\b|"
+    r"\bthr\s*<a\b[^>]*>\s*ee\s*</a>\s*different\b|"
+    r"\bstraightfo\s*<a\b[^>]*>\s*rw\s*</a>\s*ard\b|"
+    r"\bGener\s*<a\b[^>]*>\s*al\s*</a>\s*digital\b|"
+    r"<a\b[^>]*>\s*Barc\s*</a>\s*elona\b|"
+    r"\benj\s*<a\b[^>]*>\s*oy(?:\s+a)?\s*</a>|"
+    r"<b\b[^>]*>\s*B\s*</b>\s*rain-computer\b|"
+    r"\bIta\s*<b\b[^>]*>\s*ly\s*</b>",
+    re.IGNORECASE,
+)
+TABLE_FOOTNOTE_WORD_LETTER_HTML_RE = re.compile(
+    r"\b(?:Leporin|Ghian)\s*"
+    r"<sup\b(?=[^>]*\bclass\s*=\s*([\"'])[^\"']*\bz2m-table-fn\b[^\"']*\1)[^>]*>"
+    r"\s*i\s*</sup>",
+    re.IGNORECASE,
+)
+AFFILIATION_DEPARTMENT_GLUE_RE = re.compile(r"\b(?:[1-9]|Institute)Department\b")
+SUSPICIOUS_EMAIL_DOMAIN_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@unfi\.it\b",
+    re.IGNORECASE,
+)
+BODY_PAGE_HEADER_RE = re.compile(
+    r"\b[A-Z][A-Z]+(?:\s+ET\s+AL\.)?\s*\|\s*\d{3,5}\b|"
+    r"\bJin\s+et\s+al\.\s+Combined\s+Imaging\s+in\s+Breast\s+Cancer\b|"
+    r"\bAlrabadi\s+et\s+al\.\s+\d+\b|"
+    r"\b\d+:\d+\s+.{0,4}\s+A\.\s+Reichinger\s+et\s+al\.(?=\W|$)|"
+    r"\bThe\s+Getty\s+Conservation\s+Institute,\s+В©\s+2013\s+J\.\s+Paul\s+Getty\s+Trust\b|"
+    r"\bResonance-Compatible\s+Incubator\s+With\s+a\s+Built-in\s+Coil\s+"
+    r"Ultrafast\s+Magnetic\s+Resonance\s+Imaging\s+of\s+the\s+Neonate\s+in\s+a\s+Magnetic\b|"
+    r"\bPEDIATRICS\s+is\s+owned[\s\S]{0,360}\bAmerican\s+Academy\s+of\s+Pediatrics\b|"
+    r"\bJournal\s+of\s+Materials\s+Chemistry\s+B\s+Accepted\s+Manuscrip\b|"
+    r"\bPublished\s+on\s+20\s+July\s+2015\.\s+Downloaded\s+by\s+California\s+State\s+University\s+at\s+Fresno\b|"
+    r"\bPublished\s+on\s+03\s+August\s+2015\.\s+Downloaded\s+by\s+Emory\s+University\b|"
+    r"\bChemComm\s+Accepted\s+Manuscript\b|"
+    r"\b15206777,\s+2021,\s+S3,\s+Downloaded\s+from\s+https://onlinelibrary\.wiley\.com/doi/10\.1002/nau\.24751\b|"
+    r"\bEgyptian\s+National\s+Sti\.\s+Network\s+\(Enstinet\)\b|"
+    r"\bRETURN\s+CIRCULATION\s+DEPARTMENT\b|"
+    r"\b\d{2,3}\s+Y\.\s+Volpe\s+et\s+al\.(?=\s|$)|"
+    r"\bManuscript\s+received\s+on\s+April\s+17,\s+2021\b[\s\S]{0,260}"
+    r"\bManuscript\s+published\s+on\s+April\s+30,\s+2021\b|"
+    r"\bBlue\s+Eyes\s+Intelligence\s+Engineering\s+&\s+Sciences\s+Publication\b|"
+    r"\bRetrieval\s+Number:100\.1/ijmh\.E1208015521\b|"
+    r"\bCheck\s+for\s+updates\b",
+    re.IGNORECASE,
+)
+TABLE_GIBBERISH_FLOW_RE = re.compile(
+    r"\bTABLE\s+\d[\s\S]{0,1400}\bnales\s+5\s+ted\s+Q\s+a\s+rates\b|"
+    r"\bQn\s+Flow\s+i\s+[^\s]{1,4}ax\s+ndexes\b|"
+    r"\bP\s+Values\s+0\.06\s+0\.00\s+4\s+\.565\b|"
+    r"\bDid\s+tl\s+ne\s+IAG\s+he\s+elp\b|"
+    r"\bYour\s+general\s+ii\s+mpressio\s+n\b|"
+    r"\bHow\s+did\s+you\s+f\s+ind\s+using\s+g\s+the\s+IAC\b|"
+    r"\bWhat\s+tee\s+chnology\s+u\s+may\s+tic\s+k\b|"
+    r"\bOrigina\s+al\s+Color\s+Simpl\s+i\s+fication\b|"
+    r"\bCollodion\s+Prints\s+S\s+Process[\s\S]{0,900}\bWothlytype\b|"
+    r"\bAn\s+Over\s+5\s+Ho\s+6[\s\S]{0,600}\bPac\s+kard\s+Ideal\s+Shutter\b|"
+    r"\bCleaning\s+the\s+Autographic\s+Kodak\s+Camera\s+1915-192640[\s\S]{0,600}\bHIMPY\b|"
+    r"\bGrafle\s+x\s+Speed\s+Graphic[\s\S]{0,1400}\btopper\s+diago\s+silotoro\b|"
+    r"\bThornton-Pickard\s+Duple\s+x\s+Ruby\s+Refle\s+x[\s\S]{0,1400}\btiems\s+strate\b|"
+    r"\bMS\s+MPTO\s+SY[\s\S]{0,900}\bW\s+TO\s+GET\s+IT\s+HO\b|"
+    r"\bHyposulp\s+Water\s+phite\s+of\s+of\s+soc\s+la\b|"
+    r"\bRain\s+or\s+distille\s+d\s+w\s+rater\b|"
+    r"\bР СћРЎС“\s+of\s+ar\s+t\s+bei\s+ng\s+M\s+oda\s+litie\s+s[\s\S]{0,1400}"
+    r"\bEv\s+alu\s+atio\s+n\b|"
+    r"\benclusive\s+app\b[\s\S]{0,1200}\bCavalier\s+i\s+et\s+al\.|"
+    r"\bTrichopoulos\s+et\s+al\.[\s\S]{0,1200}\bV\s+\.\s+v\s+V\b|"
+    r"\bHydrometer\s+g\s+4[\s\S]{0,180}\bHydrometer\s+only\b|"
+    r"\bT\s+a\s+bl\s+e\s+2\s+1\s+con\s+t'[\s\S]{0,40}nue\s+d\b|"
+    r"\bHE\S?LTHY\s+SUBJECT\s+11\s+ME\S?SUREMENT\s+32\s+SER\b",
+    re.IGNORECASE,
+)
+FLOAT_OR_METADATA_INTERRUPTION_RE = re.compile(
+    r"\bDespite\s+the\s+intensive\s+investigation\s+of[\s\S]{0,1800}\badults\s+and\s+older\s+children\b|"
+    r"\bprinted\s+on\s+swell\s+paper\s+to[\s\S]{0,1600}\bform\s+a\s+tactile\s+rendering\b|"
+    r"\bin\s+the\s+\(hypothetic\)[\s\S]{0,1600}\b3D\s+space\b|"
+    r"\bprogrammed\s+pharmacological\s+delivery\s+and\s+mul-[\s\S]{0,2000}\btimodal\s+sensing\b|"
+    r"\bMRI\s+is\s+now\s+recommended\s+as\s+the\s+standard\s+of\s+care\s+for\s+term\s+infants"
+    r"[\s\S]{0,1400}\bwith\s+hypoxic\s+ischaemic\s+encephalopathy\b|"
+    r"\breliability\s+remains\s+insufficiently[\s\S]{0,2200}\bresearched\b|"
+    r"\bTransperineal\s+ultrasound\s+uroflowmetry[\s\S]{0,2600}\bwas\b"
+    r"[\s\S]{0,2600}\bcompared\s+with\s+pressure\s+flow\s+studies\b|"
+    r"\bselected\s+for\s+the\s+\(B\)\s+1\.\s+Flocked[\s\S]{0,1600}"
+    r"\bfamous\s+enough\s+P\s+to\s+bc[\s\S]{0,600}\bE\s+clarity\b|"
+    r"\bThere\s+is\s+obvious\s+urinary\s+leakage\s+with[\s\S]{0,900}"
+    r"\bminimal\s+increases\s+in\s+intravesical\s+pressure\b|"
+    r"\bmalignancy\s+or\s+traumatic\s+lesions\.\s+A[\s\S]{0,1000}"
+    r"\bjohn\.webster@wisc\.edu\s+major\s+and\s+essential\s+step\b|"
+    r"\bmany\s+visual\s+computing\s+algorithms\s+turn[\s\S]{0,1800}"
+    r"\bout\s+to\s+be\s+equally\s+well\s+suited\b|"
+    r"\bsurrounding\s+environment\s+needs\s+to\s+be\s+controlled\s+care-"
+    r"[\s\S]{0,1400}\bfully,\s+because\b|"
+    r"\bapplication\s+discloses\s+magnetic\s+resonance(?:\s+imaging)?"
+    r"(?:\s+\(MRI\))?\s+(?:\[071\]\s+)?This\s+(?:imaging\s+)?compatible\b|"
+    r"\bThey\s+organize\s+sequential\s+neuronal\s+events\s+as\s+well\s+as\s+The\s+temporal\s+characteristics\b|"
+    r"\bStudies\s+Glossary[\s\S]{0,2500}\brelating\s+timing\b|"
+    r"\bThe\s+laser\s+components\s+include\s+The\s+Cartesian[\s\S]{0,1600}\b16\s+a\s+60W\s+CO2\b|"
+    r"\busing-artificial-intelligence-to-help-blind-people-see-facebook\s+A\s+novel\s+system\b|"
+    r"\bClearVision\s+project:\s+www\.clearvisionproject\.org\s+In\s+summary\b|"
+    r"\bsmall\s+animals\s+imaging\s+In\s+summary\b|"
+    r"\bUrinary\s+flow\s+can\s+also\s+be\s+recorded\s+by\s+voiding\s+on\s+a\s+disk"
+    r"[\s\S]{0,1800}\bwhich\s+rotates\s+at\s+a\s+constant\s+speed\b|"
+    r"\bwho\s+measured\s+the\s+maximum\s+flow\s+by[\s\S]{0,1800}"
+    r"\brecording\s+the\s+volume\s+of\s+air\s+displaced\b|"
+    r"\bFour\s+of\s+these\s+principles\s+were\s+tested[\s\S]{0,1200}"
+    r"\bUF2[\s\S]{0,1200}\bconstant\s+flow\b|"
+    r"\bPatients\s+with\s+a\s+history\s+of\s+lower\s+urinary\s+system\s+surgery"
+    r"[\s\S]{0,700}\bwere\s+ex-[\s\S]{0,1200}\bMain\s+Points\b"
+    r"[\s\S]{0,1200}\bcluded,\s+and\s+a\s+total\s+of\s+83\s+patients\b|"
+    r"\bSpatial\s+computing\s+predicts\s+that\s+control-related[\s\S]{0,1200}"
+    r"\bThe\s+green\s+\(sample\s+1\)[\s\S]{0,800}\brectangles\s+mark\b|"
+    r"\bA\s+significantly\s+larger\s+portion\s+of\s+the\s+dPCA\s+gamma\s+components"
+    r"[\s\S]{0,1600}\bThe\s+4-array\s+spatial\s+distribution\b|"
+    r"\bdifferent\s+spatiovectors\s+extracted\s+from\s+2\s+s[\s\S]{0,1200}"
+    r"\bSource\s+data\s+are\s+provided[\s\S]{0,300}\bPanel\s+a\b|"
+    r"\bCorrespondence\s+Author\s+participants\s+were\s+asked\s+to\s+complete\b|"
+    r"\bCompeting\s+interest:\s+See\s+page\s+\d+\s+of\s+the\s+Creative\s+Commons\s+Attribution\s+License\b",
+    re.IGNORECASE,
+)
+FLOAT_OR_METADATA_INTRUSION_MARKER_RE = re.compile(
+    r"\b(?:"
+    r"Fig(?:ure)?\.?|Figure|Table|Box|Panel\s+[a-z]|"
+    r"Strengths?\s+and\s+limitations?|Main\s+Points?|"
+    r"Review\s+Article|Source\s+data|"
+    r"From\s+the|Accepted\s+for\s+publication|Read\s+at\s+(?:the\s+)?annual\s+meeting|"
+    r"Supported\s+by|Department|University|Author(?:s?'?\s+addresses)?|"
+    r"Correspondence|Competing\s+Interests?|Creative\s+Commons|Permission|Copyright|DOI|"
+    r"john\.[A-Za-z0-9._%+-]+@|https?://|www\."
+    r")\b|"
+    r"\bas\s+well\s+as\s+The\s+temporal\s+characteristics\b|"
+    r"\bsmall\s+animals\s+imaging\s+In\s+summary\b|"
+    r"\b\[071\]\s+This\b",
+    re.IGNORECASE,
+)
+ESCAPED_SUP_FOOTNOTE_RE = re.compile(r"&\s*lt;sup>\s*[A-Za-z0-9]\b", re.IGNORECASE)
+REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
+    r"\bETHICS\s+STATEMENT\b[\s\S]{0,1200}\bREFERENCES\b[\s\S]{0,3500}"
+    r"\bUniversity\s+of\s+Bath\b[\s\S]{0,1000}\bAUTHOR\s+CONTRIBUTIONS\b",
+    re.IGNORECASE,
+)
+SPLIT_AT_EMAIL_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
+    r"\bLUMBAH\s+I\s+-\s+i\b|"
+    r"\(\s*!I\s+G\s*:\.\s*nosis\b|"
+    r"\blan\.~r\s+tl!\b|\bresult\s+t\s+L\s+'\s+n\b|\bmuschnr\b|"
+    r"\bv&me\b|\bTVRP\b|\bpleak\s+flow\b|\bS\s+-'\b|"
+    r"\btimulus\b|\bmesc\b|\bU-W\s+vertebrae\b|\b4y6-8\b|"
+    r"\bVesicaf\b|\bJ\s+Ural\b|\bsnine\b|\bGvnecol\b|"
+    r"@e3\)|\borolanse\b|\bI\s+Bone\s+Point\s+Sure\b|\bBvadley\b|"
+    r"\bsuiprising\b|\bforiTi\b|\bstimulus\.d/T\./Sz\b|\belTicacy\b|"
+    r"\bkcounl/mg\s+prolan\b|\bLndferase\b|\bdetermitied\b|"
+    r"\biiiiegfiited\b|\blummesceoce\b|\blinearmotor\s+S~pole\s+aller\b|"
+    r"\bMu&es\b|\bHaiiy\b|\bCruc\$xion\b|\bP\s+to\s+bc\b|"
+    r"\bIt\s+isl\b|\b(?-i:aJways)\b|\bdemonstrale\b|\benor[\u00b7\s-]+mous\b|"
+    r"\b(?-i:riSing)\b|\bproperty\s+center\b|\bcharaCleriza[\u00b7\s-]+lion\b|"
+    r"\bLlnhof\s+Master\s+Te<:hnlka\b|\bUnhol\s+Kafdan\s+Mastel\s+TL\b|"
+    r"\bI-SlOP\b|\binli\s+nily\b|\bout\s+of\s+locus\b|\bScheimplJug\b|"
+    r"\bcompanson\s+ShOIS\b|\bparticularimagedislance\b|"
+    r"\bIndMdual\s+OUlldlngs\b|\bgelloreground\b|\bsubjecl\b|"
+    r"\bslreellevel\b|\beleminate\b|\bpocIure\b|\bsufiicient\b|"
+    r"\bmillimelers\b|\bspecificions\b|\baillinhof-supplied\b|"
+    r"\b(?:Uroflowrnetry|uroflowrneter|RotCDTleter|PsyahoZogiaaZ|"
+    r"Gra1Jimetry|(?-i:OVerfLow)|ResiduaZ|bZood|MuZtiphasicity|"
+    r"estabZishment|variabZes|abiZities|A!Jstract|vuiation|"
+    r"measwe)\b|"
+    r"\bprinaip\s+Ze\b|\bmeaszu'ing\b|\bfww-cion\b|\bcontin,Ious\b|"
+    r"\bDruck/Fiow\b",
+    re.IGNORECASE,
+)
+SPLIT_URL_DOMAIN_RE = re.compile(
+    r"\bwww\.\s+[A-Za-z]{2,}\s+[A-Za-z](?:\.[A-Za-z]{2,})+\b|"
+    r"\bwww\.[A-Za-z0-9-]+\s+\.\s+[A-Za-z]{2,}\b|"
+    r"\bwww\.[A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)+\.[A-Za-z]{2,}\b|"
+    r"\bhttps?://[A-Za-z0-9-]+\s+\.\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+BIBLIOGRAPHY_NUMBERING_RESIDUE_RE = re.compile(
+    r"\b20\.\s+20\s+van\s+Tulder\b|"
+    r"\b3[34]\.\s+3[23]\s+(?:De\s+Nunzio|G(?:u|Р“С)zelsoy)\b|"
+    r"\bmagnetic\s+resonance\s+82\.\s+imaging\s+volume\s+estimation\b|"
+    r"\b39\.\s+Sub-committee[\s\S]{0,260}\b39\.\s+Haylen\b|"
+    r"\bMedical\s+management\s+3\.\s+of\s+benign\s+prostatic\s+hyperplasia\b|"
+    r"\bfindings\s+and\s+17\.\s+postvoiding\s+residual\s+urine\b|"
+    r"\bpost-void\s+residual\s+20\.\s+urine\s+volume\b|"
+    r"\bA\s+Comprehensive\s+Review\s+4\.\s+Emphasizing\s+Anatomy\b|"
+    r"\bUrethral\s+Stricture\s+Recurrence\s+21\.\s+After\s+Anterior\s+Urethroplasty\b|"
+    r"\bChallenges\s+and\s+Opportunities,\s+Jeddah\s+28\.\s+Khorsheed\b|"
+    r"\bProceedings\s+of\s+the\s+2023\s+ACM\s+31\.\s+International\s+Conference\b|"
+    r"\b16\.\s+16Novadaq\b|"
+    r"\b25\s+5\s+H\.\s+Li\b|\b100\s+39\s+Khokhlov\b|\b105\s+41\s+Y\.\s+Yan\b|"
+    r"\bneuroimaging\s+76\.\s+Mondok\b|\b\(2020\)\.\s+van\s+Rijn\b|"
+    r"\b281\.\s+Zhang[\s\S]{0,500}\b282\.\s+Buzs|\bGroupMorrell\s+MJ\b|"
+    r"\bSuggestive\s+contours\s+for\s+conveying\s+shape\.\s+5\.\s+ACM\s+Transactions\b|"
+    r"\bTouchPen[\s\S]{0,320}\b13\.\s+Cham\b|"
+    r"\bTinne\s+Tuytelaars[\s\S]{0,320}\b36\.\s+Cham\b|"
+    r"\b7\.\s+50\s+7\s+P\.\s+Greenspan\b|"
+    r"\b11\.\s+55\s+10\s+X\.\s+He\b|"
+    r"\b1468\.\s+1469\.\s+20\s+L\.\s+Wang\b|"
+    r"\b1470\.\s+75\s+21\s+X\.\s+Chen\b|"
+    r"\b1476\.\s+We\.\s+Liu\b",
+    re.IGNORECASE,
+)
+PUBLISHER_RECOMMENDATION_BLOCK_RE = re.compile(
+    r"\bYou\s+may\s+also\s+like\b[\s\S]{0,700}"
+    r"(?:\bBecome\s+a\s+Multilingual\b|\bChArUco-based\s+3D\s+scanner\b|"
+    r"\btolerable\s+impurity\s+concentrations\b)|"
+    r"\bArticles\s+you\s+may\s+be\s+interested\s+in\b[\s\S]{0,700}"
+    r"\bMagnetic\s+resonance-guided\s+near-infrared\s+tomography\s+of\s+the\s+breast\b|"
+    r"\bFLORE\s+Repository\s+istituzionale[\s\S]{0,1500}\bArticle\s+begins\s+on\s+next\s+page\b|"
+    r"\bUniversity\s+of\s+Groningen[\s\S]{0,1200}\bIMPORTANT\s+NOTE\b|"
+    r"\bDownloaded\s+from\s+the\s+University\s+of\s+Groningen/UMCG\s+research\s+database\b|"
+    r"\bwww\.forgottenbooks\.com\b|"
+    r"\bTHIS\s+PAGE\s+IS\s+LOCKED\s+TO\s+FREE\s+MEMBERS\b|"
+    r"\bPurchase\s+full\s+membership\s+to\s+immediately\s+unlock\s+this\s+page\b|"
+    r"\bOver\s+2,000\s+years\s+of\s+human\s+knowledge\b",
+    re.IGNORECASE,
+)
+AFFILIATION_MARKER_RESIDUE_RE = re.compile(
+    r"\bYary\s+Volpe1\b|\b(?:Ilbey|Д°lbey)\s+1\s+1\s+2\s+3\s+1\s+1\b|"
+    r"\bLujain\s+Al\s+Omari1\b|"
+    r"\bEva\s+M\.\s+Sevick-Murac\s+aa\)|"
+    r"\bS\.V\.\s+Krishna\s+Reddy\s+pa\s+and\s+Ahammad\s+Basha\s+Shaik\s+pb\s+a\s+Department\b|"
+    r"\bMingyue\s+Xue,\s+ab\s+Mengbing\s+Zou[\s\S]{0,120}"
+    r"\bZhihua\s+Zhan\s+Ab\s+and\s+Shulin\s+Zhao\s+Zhao\b|"
+    r"\b(?:Zhen\s+Ling\s+Teo|Robert\s+J\.\s+T\.\s+Morris)\s+\u00a9\s+\d",
+    re.IGNORECASE,
+)
+PDF_LINE_NUMBER_RESIDUE_RE = re.compile(
+    r"\bJournal\s+of\s+Materials\s+Chemistry\s+B\s+Accepted\s+Manuscrip\b"
+    r"[\s\S]{0,5000}?"
+    r"\b(?:with\s+20\s+the\s+sizes|been\s+25\s+reported|"
+    r"Fresh\s+lychee\s+was\s+purchased|All\s+measurements\s+were\s+performed|"
+    r"_\{75\}\s+incubated|95\s+The\s+morphology|20\s+analytical\s+chemistry|"
+    r"100\s+39\s+Khokhlov|105\s+41\s+Y\.\s+Yan)\b|"
+    r"\bAccepted\s+Manuscript\b[\s\S]{0,5000}?"
+    r"\b(?:excellent\s+10\s+contrast|minimal\s+15\s+autofluorescence|"
+    r"20\s+photobleaching|25\s+development|30\s+dyes|35\s+resulting|"
+    r"45\s+developed|60\s+illustrated|75\s+fabricated|85\s+nanomicelles|"
+    r"100\s+As\s+shown|Key\s+25\s+Technologies)\b",
+    re.IGNORECASE,
 )
 
 
@@ -349,6 +777,49 @@ def build_meine_recent_link_deps(
         parse_overlapping_blocks=parse_overlapping_blocks,
         missing_figure_warning_blocks=missing_figure_warning_blocks,
         classify_missing_figure_warning=classify_missing_figure_warning,
+    )
+
+
+def build_meine_recent_text_deps() -> MeineRecentTextDeps:
+    return MeineRecentTextDeps(
+        split_email_text_re=SPLIT_EMAIL_TEXT_RE,
+        runaway_repeated_text_re=RUNAWAY_REPEATED_TEXT_RE,
+        lost_ff_word_re=LOST_FF_WORD_RE,
+        known_joined_word_re=KNOWN_JOINED_WORD_RE,
+        float_sentence_interrupt_re=FLOAT_SENTENCE_INTERRUPT_RE,
+        corrupt_email_label_re=CORRUPT_EMAIL_LABEL_RE,
+        reference_roman_split_re=REFERENCE_ROMAN_SPLIT_RE,
+        table_note_body_merge_re=TABLE_NOTE_BODY_MERGE_RE,
+        author_marker_glue_re=AUTHOR_MARKER_GLUE_RE,
+        latex_macro_runaway_re=LATEX_MACRO_RUNAWAY_RE,
+        doi_body_prose_merge_re=DOI_BODY_PROSE_MERGE_RE,
+        detached_accent_re=DETACHED_ACCENT_RE,
+        table_section_absorb_re=TABLE_SECTION_ABSORB_RE,
+        inline_intra_word_space_html_re=INLINE_INTRA_WORD_SPACE_HTML_RE,
+        intra_word_space_re=INTRA_WORD_SPACE_RE,
+        table_footnote_word_letter_html_re=TABLE_FOOTNOTE_WORD_LETTER_HTML_RE,
+        affiliation_department_glue_re=AFFILIATION_DEPARTMENT_GLUE_RE,
+        suspicious_email_domain_re=SUSPICIOUS_EMAIL_DOMAIN_RE,
+        body_page_header_re=BODY_PAGE_HEADER_RE,
+        table_gibberish_flow_re=TABLE_GIBBERISH_FLOW_RE,
+        float_or_metadata_interruption_re=FLOAT_OR_METADATA_INTERRUPTION_RE,
+        float_or_metadata_intrusion_marker_re=FLOAT_OR_METADATA_INTRUSION_MARKER_RE,
+        escaped_sup_footnote_re=ESCAPED_SUP_FOOTNOTE_RE,
+        references_backmatter_interleave_re=REFERENCES_BACKMATTER_INTERLEAVE_RE,
+        old_scan_ocr_gibberish_re=OLD_SCAN_OCR_GIBBERISH_RE,
+        split_url_domain_re=SPLIT_URL_DOMAIN_RE,
+        split_at_email_re=SPLIT_AT_EMAIL_RE,
+        bibliography_numbering_residue_re=BIBLIOGRAPHY_NUMBERING_RESIDUE_RE,
+        publisher_recommendation_block_re=PUBLISHER_RECOMMENDATION_BLOCK_RE,
+        affiliation_marker_residue_re=AFFILIATION_MARKER_RESIDUE_RE,
+        pdf_line_number_residue_re=PDF_LINE_NUMBER_RESIDUE_RE,
+        non_reference_body_blocks=non_reference_body_blocks,
+        joined_word_match_is_url_slug=joined_word_match_is_url_slug,
+        known_ocr_token_defects=known_ocr_token_defects,
+        find_split_dot_email_match=find_split_dot_email_match,
+        bibliography_numbering_residue_is_clean_reference_boundary=(
+            bibliography_numbering_residue_is_clean_reference_boundary
+        ),
     )
 
 
