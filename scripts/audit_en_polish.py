@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
-from dataclasses import asdict
 import json
 from pathlib import Path
 import re
@@ -29,13 +28,8 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     missing_figure_warning_blocks as _missing_figure_warning_blocks,
     parse_blocks as _parse_blocks,
     parse_overlapping_blocks as _parse_overlapping_blocks,
-    plain_text as _plain_text,
-    reference_identity_blocks as _reference_identity_blocks,
     snippet as _snippet,
     strip_tags as _strip_tags,
-    structure_html as _structure_html,
-    unit_diagnostic_text_from_html as _unit_diagnostic_text_from_html,
-    visible_ref_number_from_match as _visible_ref_number_from_match,
 )
 from pdf_html_polish.quality_loop.audit_citation_style import (
     REF_ANCHOR_BODY_RE,
@@ -156,6 +150,10 @@ from pdf_html_polish.quality_loop.audit_pdf import (
     pdf_path_from_map_record as _pdf_path_from_map_record,
     section_order_pdf_defects as _section_order_pdf_defects_impl,
     source_pdf_path,
+)
+from pdf_html_polish.quality_loop.audit_polish_pair import (
+    PolishPairAnalysisDeps,
+    analyze_polish_pair as _analyze_polish_pair_base,
 )
 from pdf_html_polish.quality_loop.audit_p04 import (
     MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
@@ -1078,6 +1076,32 @@ def _pdf_text_layer_defects(
     )
 
 
+def _polish_pair_analysis_deps() -> PolishPairAnalysisDeps:
+    return PolishPairAnalysisDeps(
+        source_pdf_path=_source_pdf_path,
+        load_pdf_diagnostic_text=_load_pdf_diagnostic_text,
+        pdf_citation_link_summary=_pdf_citation_link_summary,
+        article_name_from_stage=_article_name_from_stage,
+        frontmatter_defects=_frontmatter_defects,
+        citation_defects=_citation_defects,
+        reference_identity_defects=_reference_identity_defects,
+        unit_math_defects=_unit_math_defects,
+        equation_table_defects=_equation_table_defects,
+        figure_caption_ux_defects=_figure_caption_ux_defects,
+        figure_visual_identity_defects=_figure_visual_identity_defects,
+        image_asset_defects=_image_asset_defects,
+        citation_style_consistency_defects=_citation_style_consistency_defects,
+        manual_blind_spot_defects=_manual_blind_spot_defects,
+        meine_recent_manual_defects=_meine_recent_manual_defects,
+        pdf_text_layer_defects=_pdf_text_layer_defects,
+        missing_local_images=_missing_local_images,
+        ref_link_re=REF_LINK_RE,
+        fig_link_re=FIG_LINK_RE,
+        table_link_re=TABLE_LINK_RE,
+        page_link_re=PAGE_LINK_RE,
+    )
+
+
 def analyze_pair(
     raw_path: Path,
     polish_path: Path,
@@ -1087,94 +1111,15 @@ def analyze_pair(
     pdf_path_override: Path | None = None,
     pdf_diagnostics_cache: PdfDiagnosticsCache | None = None,
 ) -> dict[str, Any]:
-    raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
-    polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
-    raw_blocks = _parse_blocks(raw_html)
-    polish_blocks = _parse_blocks(polish_html)
-    polish_reference_blocks = _reference_identity_blocks(polish_html)
-    pdf_text = ""
-    pdf_summary: dict[str, Any] = {
-        "pdf_diagnostics_enabled": enable_pdf_diagnostics,
-        "source_pdf_path": str(pdf_path_override or _source_pdf_path(raw_path)),
-        "source_pdf_present": (pdf_path_override or _source_pdf_path(raw_path)).is_file(),
-        "source_pdf_origin": "map" if pdf_path_override is not None else "stage",
-        "pdf_text_status": "disabled",
-        "pdf_text_chars": 0,
-        "pdf_text_error": None,
-        "pdf_text_cache_status": "disabled",
-    }
-    if enable_pdf_diagnostics or pdf_text_override is not None:
-        if pdf_diagnostics_cache is not None:
-            pdf_text, pdf_summary = pdf_diagnostics_cache.load_text(raw_path, pdf_text_override, pdf_path_override)
-        else:
-            pdf_text, pdf_summary = _load_pdf_diagnostic_text(raw_path, pdf_text_override, pdf_path_override)
-            pdf_summary["pdf_text_cache_status"] = "disabled"
-    pdf_link_summary = {
-        "pdf_link_text_status": "disabled",
-        "pdf_link_count": 0,
-        "pdf_citation_dest_links": 0,
-        "pdf_author_year_link_labels": 0,
-        "pdf_citation_link_samples": [],
-        "pdf_link_text_error": None,
-        "pdf_link_cache_status": "disabled",
-    }
-    if enable_pdf_diagnostics:
-        if pdf_diagnostics_cache is not None:
-            pdf_link_summary = pdf_diagnostics_cache.link_summary(Path(pdf_summary["source_pdf_path"]))
-        else:
-            pdf_link_summary = _pdf_citation_link_summary(Path(pdf_summary["source_pdf_path"]))
-            pdf_link_summary["pdf_link_cache_status"] = "disabled"
-
-    defects: list[Defect] = []
-    defects.extend(_frontmatter_defects(raw_blocks, polish_blocks))
-    defects.extend(_citation_defects(polish_blocks, reference_blocks=polish_reference_blocks))
-    defects.extend(_reference_identity_defects(polish_reference_blocks))
-    defects.extend(_unit_math_defects(raw_html, polish_blocks))
-    defects.extend(_equation_table_defects(polish_blocks))
-    defects.extend(_figure_caption_ux_defects(polish_html, polish_blocks, pdf_text=pdf_text))
-    defects.extend(_figure_visual_identity_defects(polish_path, polish_html))
-    defects.extend(_image_asset_defects(polish_path, polish_html))
-    defects.extend(
-        _citation_style_consistency_defects(
-            polish_html,
-            polish_blocks,
-            pdf_text=pdf_text,
-            pdf_link_summary=pdf_link_summary,
-        )
+    return _analyze_polish_pair_base(
+        raw_path,
+        polish_path,
+        deps=_polish_pair_analysis_deps(),
+        enable_pdf_diagnostics=enable_pdf_diagnostics,
+        pdf_text_override=pdf_text_override,
+        pdf_path_override=pdf_path_override,
+        pdf_diagnostics_cache=pdf_diagnostics_cache,
     )
-    defects.extend(_manual_blind_spot_defects(polish_html, polish_blocks, pdf_text=pdf_text))
-    defects.extend(_meine_recent_manual_defects(polish_html, polish_blocks, pdf_text=pdf_text))
-    if enable_pdf_diagnostics or pdf_text_override is not None:
-        defects.extend(_pdf_text_layer_defects(pdf_text, polish_html, polish_blocks))
-
-    missing_images = _missing_local_images(polish_path, polish_html)
-
-    summary = {
-        "raw_blocks": len(raw_blocks),
-        "polish_blocks": len(polish_blocks),
-        "raw_img_tags": len(re.findall(r"<img\b", raw_html, re.IGNORECASE)),
-        "polish_img_tags": len(re.findall(r"<img\b", polish_html, re.IGNORECASE)),
-        "polish_ref_links": len(REF_LINK_RE.findall(polish_html)),
-        "polish_fig_links": len(FIG_LINK_RE.findall(polish_html)),
-        "polish_table_links": len(TABLE_LINK_RE.findall(polish_html)),
-        "polish_page_links": len(PAGE_LINK_RE.findall(polish_html)),
-        "polish_fig_ids": len(re.findall(r"\bid\s*=\s*['\"]fig-", polish_html, re.IGNORECASE)),
-        "polish_table_ids": len(re.findall(r"\bid\s*=\s*['\"]table-", polish_html, re.IGNORECASE)),
-        "polish_has_target_style": ":target" in polish_html,
-        "polish_has_scroll_margin": "scroll-margin" in polish_html,
-        "polish_replacement_chars": polish_html.count("\ufffd"),
-        "polish_missing_local_images": len(missing_images),
-        **pdf_summary,
-        **pdf_link_summary,
-    }
-    article = _article_name_from_stage(polish_path)
-    return {
-        "article": article,
-        "raw_stage_path": str(raw_path),
-        "polish_stage_path": str(polish_path),
-        "summary": summary,
-        "defects_found": [asdict(defect) for defect in defects],
-    }
 
 
 def find_pairs(roots: Iterable[Path]) -> list[tuple[Path, Path]]:
