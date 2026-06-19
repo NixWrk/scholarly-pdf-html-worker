@@ -236,6 +236,9 @@ P62_PDF_DERIVED_RECOVERY_SOURCES = {
 }
 
 
+# These adapters intentionally bind repository-local defaults for the script
+# facade. Helpers that need no defaults are imported directly under their
+# compatibility names above.
 def _configured_path_prefix_pairs() -> list[tuple[str, str]]:
     return quality_source_pdf.configured_path_prefix_pairs(ROOT)
 

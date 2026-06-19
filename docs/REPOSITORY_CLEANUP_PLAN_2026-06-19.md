@@ -91,3 +91,19 @@ The cleanup policy is deliberately conservative:
 2. Clean remaining review/gate/source-PDF wrappers where safe.
 3. Move to audit-script thinning after quality-loop wrapper churn is done.
 4. Only then start extracting small domains from `single_file_html.py`.
+
+## Progress
+
+- Documented the cleanup plan in this file.
+- Removed no-context pass-through helpers from `scripts/llm_quality_loop.py`
+  while keeping compatibility names covered by tests.
+- Tightened source-PDF discovery by removing duplicate keyed PDF paths and
+  ignoring numeric article ids as Zotero attachment-key candidates.
+- Moved existing path-candidate repair logic from the script into
+  `quality_loop/source_pdf.py`.
+- Added `.gitattributes` so future cleanup does not accumulate accidental
+  line-ending churn.
+- Current `llm_quality_loop.py` boundary: remaining wrappers should generally
+  stay unless they are moved with their injected defaults (`ROOT`, stage names,
+  output names, or dependency callbacks) into package-level orchestration
+  helpers.
