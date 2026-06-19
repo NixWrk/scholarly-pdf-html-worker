@@ -110,3 +110,5 @@ The cleanup policy is deliberately conservative:
 - Started audit-script thinning by moving image asset diagnostics from
   `scripts/audit_en_polish.py` into `quality_loop/audit_images.py` with direct
   unit tests.
+- Moved source-PDF float-gap confirmation from `scripts/audit_en_polish.py`
+  into `quality_loop/audit_float_gap.py` with direct unit tests.
