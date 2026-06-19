@@ -116,3 +116,6 @@ The cleanup policy is deliberately conservative:
   into `quality_loop/audit_float_gap.py` with direct unit tests.
 - Moved P20/P96 image defect builders from `scripts/audit_en_polish.py` into
   `quality_loop/audit_images.py` with direct unit tests.
+- Moved P98 citation-style consistency diagnostics from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_citation_style.py`
+  with direct unit tests.
