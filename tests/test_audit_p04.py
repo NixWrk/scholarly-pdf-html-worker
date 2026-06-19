@@ -1,6 +1,7 @@
 from pdf_html_polish.quality_loop.audit_blocks import Block
 from pdf_html_polish.quality_loop.audit_p04 import (
     has_unlinked_sup_numeric_range,
+    reference_numbers_from_blocks,
     unlinked_citation_candidate_numbers,
     unlinked_citation_range_kind,
 )
@@ -50,6 +51,13 @@ def test_unlinked_citation_range_kind_splits_math_sup_range() -> None:
         block_looks_like_frontmatter_affiliation_table=lambda _block: False,
     ) == "math"
     assert unlinked_citation_candidate_numbers(block) == [28, 31]
+
+
+def test_reference_numbers_from_blocks_reads_ids_and_raw_ref_targets() -> None:
+    explicit_id = Block(index=0, tag="p", attrs={"id": "ref-7"}, raw="<p id='ref-7'>Seven.</p>", text="Seven.", line=1)
+    nested_raw = _block("Nested.", raw='<div><span id="ref-11">Eleven.</span></div>', tag="div")
+
+    assert reference_numbers_from_blocks([explicit_id, nested_raw]) == {7, 11}
 
 
 def test_unlinked_sup_numeric_range_ignores_footnote_ref_range() -> None:

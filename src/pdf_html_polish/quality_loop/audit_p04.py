@@ -410,3 +410,14 @@ def unlinked_citation_candidate_numbers(block: Block) -> list[int]:
         if CITATION_RANGE_LIST_RE.fullmatch(f"[{visible}]") is not None:
             return [int(value) for value in re.findall(r"\d+", visible)]
     return []
+
+
+def reference_numbers_from_blocks(blocks: list[Block]) -> set[int]:
+    numbers: set[int] = set()
+    for block in blocks:
+        id_match = re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE)
+        if id_match is not None:
+            numbers.add(int(id_match.group(1)))
+        for raw_match in re.finditer(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", block.raw, re.IGNORECASE):
+            numbers.add(int(raw_match.group(1)))
+    return numbers

@@ -159,6 +159,7 @@ from pdf_html_polish.quality_loop.audit_p04 import (
     MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
     block_looks_like_math_or_measurement_range_context as _block_looks_like_math_or_measurement_range_context,
     looks_like_table_flattened_citation_context as _looks_like_table_flattened_citation_context,
+    reference_numbers_from_blocks as _reference_numbers_from_blocks,
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
     unlinked_sup_numeric_range_matches_footnote_targets as _unlinked_sup_numeric_range_matches_footnote_targets,
@@ -860,17 +861,6 @@ def _unlinked_citation_range_kind(block: Block) -> str:
 
 def _unlinked_citation_candidate_numbers(block: Block) -> list[int]:
     return _unlinked_citation_candidate_numbers_base(block)
-
-
-def _reference_numbers_from_blocks(blocks: list[Block]) -> set[int]:
-    numbers: set[int] = set()
-    for block in blocks:
-        id_match = re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE)
-        if id_match is not None:
-            numbers.add(int(id_match.group(1)))
-        for raw_match in re.finditer(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", block.raw, re.IGNORECASE):
-            numbers.add(int(raw_match.group(1)))
-    return numbers
 
 
 def _citation_defects(polish_blocks: list[Block], *, reference_blocks: list[Block] | None = None) -> list[Defect]:
