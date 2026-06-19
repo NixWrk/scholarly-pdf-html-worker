@@ -43,18 +43,20 @@ from pdf_html_polish.quality_loop.audit_citation_style import (
     citation_style_consistency_defects as _citation_style_consistency_defects_base,
     flattened_sup_match_is_doi_or_url_fragment as _flattened_sup_match_is_doi_or_url_fragment,
     flattened_sup_match_is_joined_figure_label as _flattened_sup_match_is_joined_figure_label,
-    linked_ref_near_non_citation_context as _linked_ref_near_non_citation_context,
     looks_like_comma_decimal_stat_ref as _looks_like_comma_decimal_stat_ref,
     looks_like_sample_size_value_ref as _looks_like_sample_size_value_ref,
     ref_anchor_visible_number as _ref_anchor_visible_number,
     ref_match_inside_bracketed_numeric_citation as _ref_match_inside_bracketed_numeric_citation,
+)
+from pdf_html_polish.quality_loop.audit_citations import (
+    CitationDefectDeps,
+    citation_defects as _citation_defects_base,
 )
 from pdf_html_polish.quality_loop.audit_images import (
     figure_visual_identity_defects as _figure_visual_identity_defects_base,
     image_asset_defects as _image_asset_defects_base,
     missing_local_images as _missing_local_images,
 )
-from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 from pdf_html_polish.quality_loop.audit_frontmatter import (
     FRONTMATTER_OCR_RE,
     block_looks_like_frontmatter_affiliation_table as _block_looks_like_frontmatter_affiliation_table,
@@ -159,10 +161,7 @@ from pdf_html_polish.quality_loop.audit_p04 import (
     MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
     block_looks_like_math_or_measurement_range_context as _block_looks_like_math_or_measurement_range_context,
     looks_like_table_flattened_citation_context as _looks_like_table_flattened_citation_context,
-    reference_numbers_from_blocks as _reference_numbers_from_blocks,
-    unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
-    unlinked_sup_numeric_range_matches_footnote_targets as _unlinked_sup_numeric_range_matches_footnote_targets,
 )
 from pdf_html_polish.quality_loop.audit_p35 import replacement_char_defects as _replacement_char_defects
 from pdf_html_polish.quality_loop.audit_p45 import roman_word_split_defects as _roman_word_split_defects
@@ -214,11 +213,6 @@ MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*(?P=split_quote)(?P=split_href)(?P=split_quote)[^>]*>"
     r"\s*[A-Za-z0-9][^<]{0,120}</a>",
     re.IGNORECASE | re.DOTALL,
-)
-LATEX_SUP_CITATION_RE = re.compile(r"\\\(\^\{[\d,\s\-\u2013\u2014]+}\\\)")
-OCR_CITATION_WORD_RE = re.compile(
-    r"\btask\.\s+Sec\.|\bflagship models\s+6,000\b",
-    re.IGNORECASE,
 )
 BROKEN_URL_TEXT_RE = re.compile(
     r"\b(?:hps|htps|ttps)://\S+|"
@@ -801,35 +795,6 @@ class PdfDiagnosticsCache(_PackagePdfDiagnosticsCache):
         )
 
 
-def _defect(
-    *,
-    defect_id: str,
-    cc_class: str,
-    check: str,
-    severity: str,
-    block: Block | None,
-    snippet: str,
-    stage: str,
-    hypothesis: str,
-    proposed_fix_layer: str,
-    regression_test: str,
-    extra: dict[str, Any] | None = None,
-) -> Defect:
-    return make_defect(
-        defect_id=defect_id,
-        cc_class=cc_class,
-        check=check,
-        severity=severity,
-        block=block,
-        snippet=snippet,
-        stage=stage,
-        hypothesis=hypothesis,
-        proposed_fix_layer=proposed_fix_layer,
-        regression_test=regression_test,
-        extra=extra,
-    )
-
-
 def _nearby_image_offsets(blocks: list[Block], index: int, *, label: str | None = None, window: int = 8) -> list[int]:
     return _nearby_image_offsets_base(
         blocks,
@@ -859,179 +824,13 @@ def _unlinked_citation_range_kind(block: Block) -> str:
     )
 
 
-def _unlinked_citation_candidate_numbers(block: Block) -> list[int]:
-    return _unlinked_citation_candidate_numbers_base(block)
-
-
 def _citation_defects(polish_blocks: list[Block], *, reference_blocks: list[Block] | None = None) -> list[Defect]:
-    defects: list[Defect] = []
-    references_started = False
-    unlinked_range_candidates: dict[str, Block] = {}
-    ref_numbers = _reference_numbers_from_blocks(reference_blocks or polish_blocks)
-    footnote_numbers = {
-        int(match.group(1))
-        for block in polish_blocks
-        for match in (re.match(r"^footnote-(\d+)$", block.id, re.IGNORECASE),)
-        if match is not None
-    }
-    saw_false_positive = False
-    saw_ocr_citation = False
-    saw_latex_sup = False
-    for block in polish_blocks:
-        if REFERENCES_HEADING_RE.match(block.text):
-            references_started = True
-        if _is_references_block(block, references_started):
-            continue
-        if block.classes & {"z2m-front-matter", "z2m-affiliations", "z2m-footnote"}:
-            continue
-        if not saw_ocr_citation and OCR_CITATION_WORD_RE.search(block.text):
-            defects.append(
-                _defect(
-                    defect_id="P32",
-                    cc_class="CC-02/CC-14",
-                    check="Likely OCR-corrupted superscript citation remains",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Marker recognized superscript citation numbers as words or ordinary numeric text.",
-                    proposed_fix_layer="EN polish citation OCR recovery with reference-count/PDF evidence guards",
-                    regression_test="Patterns such as 'task. Sec.' and 'flagship models 6,000' recover to citation links when references 58-60 exist.",
-                )
-            )
-            saw_ocr_citation = True
-        range_kind = _unlinked_citation_range_kind(block)
-        if range_kind and range_kind not in unlinked_range_candidates:
-            unlinked_range_candidates[range_kind] = block
-        if not saw_latex_sup and LATEX_SUP_CITATION_RE.search(block.raw):
-            defects.append(
-                _defect(
-                    defect_id="P28",
-                    cc_class="CC-02/CC-05",
-                    check="Citation-like LaTeX superscript remains in polish",
-                    severity="error",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Citation-like math superscripts were generated after the citation conversion pass or skipped as math.",
-                    proposed_fix_layer="EN polish post-math citation recovery",
-                    regression_test="Inline math forms like \\(^{71-73}\\) become linked citation superscripts.",
-                )
-            )
-            saw_latex_sup = True
-        if not saw_false_positive and _linked_ref_near_non_citation_context(block):
-            defects.append(
-                _defect(
-                    defect_id="P05",
-                    cc_class="CC-02/CC-04",
-                    check="Reference links appear in likely non-citation numeric context",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Broad numeric linkification may have linked units, labels, or scientific values.",
-                    proposed_fix_layer="EN polish citation false-positive guards",
-                    regression_test="pH, units, week/month labels, animal labels, and stimulus labels must remain unlinked.",
-                )
-            )
-            saw_false_positive = True
-    if "body" in unlinked_range_candidates:
-        block = unlinked_range_candidates["body"]
-        candidate_numbers = _unlinked_citation_candidate_numbers(block)
-        missing_targets = [number for number in candidate_numbers if number not in ref_numbers]
-        if not ref_numbers:
-            defects.append(
-                _defect(
-                    defect_id="P04N",
-                    cc_class="CC-02/CC-13",
-                    check="Citation-like range/list has no bibliography targets to link",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Reference heading/list recognition failed, so citation parser cannot create valid #ref links.",
-                    proposed_fix_layer="EN polish bibliography heading and reference-list detection",
-                    regression_test="Citation ranges in articles with no recognized ref targets are classified separately from parser misses.",
-                    extra={"quality_counted": False, "candidate_numbers": candidate_numbers},
-                )
-            )
-        elif candidate_numbers and missing_targets:
-            defects.append(
-                _defect(
-                    defect_id="P04R",
-                    cc_class="CC-02/CC-13",
-                    check="Citation-like range/list refers to missing bibliography targets",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Bibliography normalization skipped or merged some target numbers, so citation parser cannot link safely.",
-                    proposed_fix_layer="EN polish bibliography continuation split and reference ID gap repair",
-                    regression_test="Ranges such as [6, 7] remain separate from P04 when ref-6/ref-7 are absent.",
-                    extra={
-                        "quality_counted": False,
-                        "candidate_numbers": candidate_numbers,
-                        "missing_targets": missing_targets,
-                    },
-                )
-            )
-        else:
-            defects.append(
-                _defect(
-                    defect_id="P04",
-                    cc_class="CC-02",
-                    check="Unlinked body citation range/list remains in polish",
-                    severity="error",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Citation grammar misses body ranges, en-dash/hyphen spans, or comma-separated lists.",
-                    proposed_fix_layer="EN polish citation parser",
-                    regression_test="Link [1-4], [8-10], [11, 12], and mixed body citation list/range forms.",
-                )
-            )
-    elif "float" in unlinked_range_candidates:
-        block = unlinked_range_candidates["float"]
-        candidate_numbers = _unlinked_citation_candidate_numbers(block)
-        if candidate_numbers and ref_numbers and not any(number in ref_numbers for number in candidate_numbers):
-            return defects
-        defects.append(
-            _defect(
-                defect_id="P04T",
-                cc_class="CC-02/CC-06",
-                check="Citation-like numeric range/list remains in table or float context",
-                severity="warning",
-                block=block,
-                snippet=block.text,
-                stage=POLISH_STAGE,
-                hypothesis="Table, caption, or float content contains numeric ranges/lists that should be reviewed separately from body citation linking.",
-                proposed_fix_layer="EN audit P04 table/float classifier or table-specific citation policy",
-                regression_test="Author-affiliation and table numeric ranges must not inflate body P04 counts.",
-                extra={"quality_counted": False},
-            )
-        )
-    elif "math" in unlinked_range_candidates:
-        block = unlinked_range_candidates["math"]
-        candidate_numbers = _unlinked_citation_candidate_numbers(block)
-        if candidate_numbers and ref_numbers and not any(number in ref_numbers for number in candidate_numbers):
-            return defects
-        if not _unlinked_sup_numeric_range_matches_footnote_targets(block, footnote_numbers):
-            defects.append(
-                _defect(
-                    defect_id="P04M",
-                    cc_class="CC-02/CC-05",
-                    check="Citation-like numeric range/list remains in math or measurement context",
-                    severity="warning",
-                    block=block,
-                    snippet=block.text,
-                    stage=POLISH_STAGE,
-                    hypothesis="Math, statistical, vector, or measurement notation resembles citation ranges and needs separate classification.",
-                    proposed_fix_layer="EN audit P04 math/measurement classifier",
-                    regression_test="Numeric vectors, parameter intervals, and measurement ranges must not inflate body P04 counts.",
-                    extra={"quality_counted": False},
-                )
-            )
-    return defects
+    return _citation_defects_base(
+        polish_blocks,
+        reference_blocks=reference_blocks,
+        deps=CitationDefectDeps(unlinked_citation_range_kind=_unlinked_citation_range_kind),
+        polish_stage=POLISH_STAGE,
+    )
 
 
 def _figure_caption_ux_defects(
