@@ -13,6 +13,9 @@ from typing import Any
 from pdf_html_polish.html_stages import article_dir_from_html_stage, is_html_stage_dir_name
 
 
+PDF_TITLE_SEPARATOR_RE = re.compile("[^0-9A-Za-z\u0400-\u04FF]+")
+
+
 def _load_json(path: Path, default: Any | None = None) -> Any:
     if not path.is_file():
         if default is not None:
@@ -173,7 +176,7 @@ def zotero_root_paths(*, repo_root: Path) -> list[Path]:
 
 
 def normalize_pdf_title_text(value: str) -> str:
-    text = re.sub(r"[^0-9A-Za-zА-Яа-яЁё]+", " ", str(value or "").casefold())
+    text = PDF_TITLE_SEPARATOR_RE.sub(" ", str(value or "").casefold())
     return re.sub(r"\s+", " ", text).strip()
 
 
