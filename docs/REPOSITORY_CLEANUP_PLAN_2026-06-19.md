@@ -161,3 +161,6 @@ The cleanup policy is deliberately conservative:
 - Collapsed `MeineRecentTextDeps` wiring in `scripts/audit_en_polish.py` behind
   `quality_loop/audit_manual_recent.py` defaults; text/OCR regexes and callback
   dependencies now live in the package with direct unit tests.
+- Started `scripts/audit_en_raw.py` thinning by moving raw block parsing,
+  snippet helpers, generic first-match defects, and UTF-8 read diagnostics into
+  `quality_loop/audit_raw_blocks.py` with direct unit tests.
