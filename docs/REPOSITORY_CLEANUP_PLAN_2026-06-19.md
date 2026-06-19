@@ -148,3 +148,6 @@ The cleanup policy is deliberately conservative:
 - Moved pair-level polish audit orchestration from `scripts/audit_en_polish.py`
   into `quality_loop/audit_polish_pair.py` with direct unit tests; the script
   now only supplies dependency wiring for `analyze_pair`.
+- Moved polish audit report/progress orchestration from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_polish_report.py`
+  with direct unit tests; the script now only supplies report-level wiring.
