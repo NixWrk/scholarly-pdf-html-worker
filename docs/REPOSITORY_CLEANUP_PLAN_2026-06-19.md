@@ -63,6 +63,8 @@ The cleanup policy is deliberately conservative:
   - frontmatter and metadata cleanup;
   - image inlining and restoration.
 - Preserve old private aliases until compatibility tests can be retired.
+- After the polish pass on this module, run a polish/audit parity gate before
+  any full PDF-to-polish batch.
 
 ### 5. Reshape Tests
 
@@ -85,14 +87,22 @@ The cleanup policy is deliberately conservative:
 - Add a final release checklist: install, smoke conversion, targeted tests,
   full tests, quality-loop observe/gate.
 
+### 8. Post-Refactor Verification Gate
+
+- After meaningful `single_file_html.py` domain extractions, run focused tests
+  plus the full suite.
+- Before the full PDF-to-polish HTML pipeline, first run the existing
+  polish/repolish path and audit reports to confirm there is no quality or
+  behavior drift.
+- Only after that parity check passes, run the full PDF-to-polish HTML flow.
+
 ## Immediate Execution Queue
 
-1. Continue thinning `scripts/audit_en_polish.py` by defect family.
-2. Keep extracted audit helpers in focused `quality_loop/audit_*` modules with
-   direct tests.
-3. Revisit `scripts/audit_en_raw.py` once the polish audit boundaries are
-   calmer.
-4. Only then start extracting small domains from `single_file_html.py`.
+1. Finish the audit CLI control pass by covering intentional legacy aliases.
+2. Start extracting the first small domain from `single_file_html.py`.
+3. After the `single_file_html.py` polish pass, run polish/audit parity before
+   the full PDF-to-polish HTML pipeline.
+4. Run the full PDF-to-polish HTML flow only after the parity gate passes.
 
 ## Progress
 
@@ -177,3 +187,9 @@ The cleanup policy is deliberately conservative:
   summary output from `scripts/audit_en_raw.py` into
   `quality_loop/audit_raw_report.py` with direct unit tests; the script is now
   primarily CLI argument handling and JSON writing.
+- Completed a control pass over both audit CLIs after raw extraction:
+  `scripts/audit_en_raw.py` is primarily CLI/JSON wiring, while
+  `scripts/audit_en_polish.py` intentionally keeps compatibility aliases still
+  exercised by tests.
+- Recorded the post-`single_file_html.py` verification gate: run polish/audit
+  parity first, then the full PDF-to-polish HTML pipeline.
