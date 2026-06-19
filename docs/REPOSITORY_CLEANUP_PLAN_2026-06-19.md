@@ -155,3 +155,6 @@ The cleanup policy is deliberately conservative:
   into `quality_loop/audit_polish_report.py` with direct unit tests.
 - Moved polish audit summary output from `scripts/audit_en_polish.py` into
   `quality_loop/audit_polish_report.py` with direct unit tests.
+- Collapsed `MeineRecentLinkDeps` wiring in `scripts/audit_en_polish.py` behind
+  `quality_loop/audit_manual_recent.py` defaults; link-pattern regexes and
+  caption-aware warning wrappers now live in the package with direct unit tests.
