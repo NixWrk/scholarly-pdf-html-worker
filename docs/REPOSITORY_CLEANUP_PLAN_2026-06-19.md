@@ -98,8 +98,8 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Continue `single_file_html.py` decomposition by moving the remaining image
-   inlining orchestration behind package helpers.
+1. Continue `single_file_html.py` decomposition by moving nested semantic-link
+   unwrapping helpers into `html_links.py`.
 2. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
 3. After the `single_file_html.py` polish pass, run polish/audit parity before
@@ -199,3 +199,7 @@ The cleanup policy is deliberately conservative:
   URL refresh helpers into `html_images.py`; the monolith now preserves those
   private names as compatibility aliases with focused tests on the package
   owner and the alias surface.
+- Moved reusable inline-image text inlining/cache orchestration into
+  `html_images.py`; `single_file_html.py` now keeps file-level polish wrappers
+  and compatibility aliases while direct image behavior is tested in
+  `tests/test_html_images.py`.
