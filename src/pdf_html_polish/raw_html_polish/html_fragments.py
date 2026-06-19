@@ -10,6 +10,16 @@ TAG_SPLIT_PATTERN = re.compile(r"(<[^>]+>)")
 OPEN_TAG_PATTERN = re.compile(r"^<\s*([a-zA-Z0-9:_-]+)")
 CLOSE_TAG_PATTERN = re.compile(r"^<\s*/\s*([a-zA-Z0-9:_-]+)")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+ESCAPED_INLINE_TAG_PATTERN = re.compile(r"&lt;(/?)(sup|sub)&gt;", re.IGNORECASE)
+SPACED_ESCAPED_INLINE_TAG_PATTERN = re.compile(
+    r"(?:&amp;|&)\s+lt;\s*(/?)\s*(sup|sub)\s*(?:&gt;|>)",
+    re.IGNORECASE,
+)
+SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN = re.compile(
+    r"<sup\b[^>]*>\s*(?:&amp;|&)\s*</sup>\s*lt;\s*(sup|sub)\s*&gt;",
+    re.IGNORECASE,
+)
+SPACED_INLINE_TAG_PATTERN = re.compile(r"<\s*(/?)\s*(sup|sub)\s*>", re.IGNORECASE)
 # Splits on real HTML tags only. Unlike TAG_SPLIT_PATTERN, this never mistakes a
 # bare "<" from math text ("a < b", "x < 0") for a tag.
 MATH_TAG_SPLIT_PATTERN = re.compile(
@@ -30,6 +40,27 @@ def visible_text(fragment: str) -> str:
         .replace("\u00a0", " ")
     )
     return re.sub(r"\s+", " ", text).strip()
+
+
+def unescape_inline_sup_sub(html: str) -> str:
+    html = SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN.sub(
+        lambda match: f"<{match.group(1).lower()}>",
+        html,
+    )
+    html = SPACED_ESCAPED_INLINE_TAG_PATTERN.sub(
+        lambda match: f"<{match.group(1)}{match.group(2).lower()}>",
+        html,
+    )
+    return ESCAPED_INLINE_TAG_PATTERN.sub(r"<\1\2>", html)
+
+
+def normalize_spaced_inline_sup_sub_tags(html: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        slash = match.group(1) or ""
+        tag = (match.group(2) or "").lower()
+        return f"<{slash}{tag}>"
+
+    return SPACED_INLINE_TAG_PATTERN.sub(replace, html)
 
 
 def update_skip_stack_for_tags(

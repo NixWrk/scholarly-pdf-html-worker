@@ -69,10 +69,14 @@ from .raw_html_polish import (
 from .raw_html_polish.html_fragments import (
     CLOSE_TAG_PATTERN as _CLOSE_TAG_PATTERN,
     DIV_TAG_PATTERN as _DIV_TAG_PATTERN,
+    ESCAPED_INLINE_TAG_PATTERN as _ESCAPED_INLINE_TAG_PATTERN,
     FLOAT_NODE_PATTERN as _FLOAT_NODE_PATTERN,
     HTML_TAG_PATTERN as _HTML_TAG_PATTERN,
     MATH_TAG_SPLIT_PATTERN as _MATH_TAG_SPLIT_PATTERN,
     OPEN_TAG_PATTERN as _OPEN_TAG_PATTERN,
+    SPACED_ESCAPED_INLINE_TAG_PATTERN as _SPACED_ESCAPED_INLINE_TAG_PATTERN,
+    SPACED_INLINE_TAG_PATTERN as _SPACED_INLINE_TAG_PATTERN,
+    SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN as _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN,
     TAG_SPLIT_PATTERN as _TAG_SPLIT_PATTERN,
     add_body_class as _add_body_class,
     add_class_attr as _add_class_attr,
@@ -84,9 +88,11 @@ from .raw_html_polish.html_fragments import (
     node_has_class as _node_has_class,
     node_id_value as _node_id_value,
     node_open_id_value as _node_open_id_value,
+    normalize_spaced_inline_sup_sub_tags as _normalize_spaced_inline_sup_sub_tags,
     remove_id_attr as _remove_id_attr,
     strip_node_id_and_add_class as _strip_node_id_and_add_class,
     transform_node_open as _transform_node_open,
+    unescape_inline_sup_sub as _unescape_inline_sup_sub,
     update_skip_stack_for_tags as _update_skip_stack_for_tags,
     visible_text as _visible_text,
 )
@@ -204,16 +210,6 @@ from .url_repair import (
 
 _HEAD_CLOSE_PATTERN = re.compile(r"</head>", re.IGNORECASE)
 _BODY_PATTERN = re.compile(r"(<body\b[^>]*>)(.*?)(</body>)", re.IGNORECASE | re.DOTALL)
-_ESCAPED_INLINE_TAG_PATTERN = re.compile(r"&lt;(/?)(sup|sub)&gt;", re.IGNORECASE)
-_SPACED_ESCAPED_INLINE_TAG_PATTERN = re.compile(
-    r"(?:&amp;|&)\s+lt;\s*(/?)\s*(sup|sub)\s*(?:&gt;|>)",
-    re.IGNORECASE,
-)
-_SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN = re.compile(
-    r"<sup\b[^>]*>\s*(?:&amp;|&)\s*</sup>\s*lt;\s*(sup|sub)\s*&gt;",
-    re.IGNORECASE,
-)
-_SPACED_INLINE_TAG_PATTERN = re.compile(r"<\s*(/?)\s*(sup|sub)\s*>", re.IGNORECASE)
 _URL_PATTERN = re.compile(r"(?P<url>(?:https?://|www\.)[^\s<>\"]+)", re.IGNORECASE)
 _DOI_METADATA_BODY_BOUNDARY_PATTERN = re.compile(
     r"(?P<doi>(?:\b(?:DOI|doi)\s*:\s*)?(?:"
@@ -3180,27 +3176,6 @@ def _inject_katex_css(html: str) -> str:
 
 def _render_katex_html(html: str) -> str:
     return _render_katex_html_impl(html, ensure_head=_inject_default_styles)
-
-
-def _unescape_inline_sup_sub(html: str) -> str:
-    html = _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN.sub(
-        lambda m: f"<{m.group(1).lower()}>",
-        html,
-    )
-    html = _SPACED_ESCAPED_INLINE_TAG_PATTERN.sub(
-        lambda m: f"<{m.group(1)}{m.group(2).lower()}>",
-        html,
-    )
-    return _ESCAPED_INLINE_TAG_PATTERN.sub(r"<\1\2>", html)
-
-
-def _normalize_spaced_inline_sup_sub_tags(html: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        slash = match.group(1) or ""
-        tag = (match.group(2) or "").lower()
-        return f"<{slash}{tag}>"
-
-    return _SPACED_INLINE_TAG_PATTERN.sub(replace, html)
 
 
 def _fix_common_mojibake(html: str) -> str:

@@ -7,14 +7,34 @@ from pdf_html_polish.raw_html_polish.html_fragments import (
     node_has_class,
     node_id_value,
     node_open_id_value,
+    normalize_spaced_inline_sup_sub_tags,
     strip_node_id_and_add_class,
     transform_node_open,
+    unescape_inline_sup_sub,
     visible_text,
 )
 
 
 def test_visible_text_strips_tags_and_normalizes_nonbreaking_spaces() -> None:
     assert visible_text("<p>A&nbsp;<b>B</b>&#160;C\u00a0D</p>") == "A B C D"
+
+
+def test_inline_sup_sub_cleanup_unescapes_marker_artifacts() -> None:
+    html = "<p>&lt;sup&gt;1&lt;/sup&gt; and & lt; sub &gt;x& lt; / sub &gt;</p>"
+
+    assert unescape_inline_sup_sub(html) == "<p><sup>1</sup> and <sub>x</sub></p>"
+
+
+def test_inline_sup_sub_cleanup_repairs_split_open_tag() -> None:
+    html = "<p>H<sup>&</sup>lt;sub&gt;2</sub>O</p>"
+
+    assert unescape_inline_sup_sub(html) == "<p>H<sub>2</sub>O</p>"
+
+
+def test_normalize_spaced_inline_sup_sub_tags() -> None:
+    html = "<p>H< sub >2< / sub >O< SUP >1< / SUP ></p>"
+
+    assert normalize_spaced_inline_sup_sub_tags(html) == "<p>H<sub>2</sub>O<sup>1</sup></p>"
 
 
 def test_class_and_id_helpers_preserve_existing_attrs() -> None:

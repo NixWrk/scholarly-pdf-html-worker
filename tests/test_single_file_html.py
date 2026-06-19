@@ -5,12 +5,17 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
+from pdf_html_polish.raw_html_polish import html_fragments
 from pdf_html_polish.single_file_html import (
+    _ESCAPED_INLINE_TAG_PATTERN,
     _IMAGE_CACHE_KEY_ATTR_PATTERN,
     _IMG_SRC_PATTERN,
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     _REPEATED_PHRASE_PATTERN,
+    _SPACED_ESCAPED_INLINE_TAG_PATTERN,
+    _SPACED_INLINE_TAG_PATTERN,
+    _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _figure_caption_num_from_visible,
@@ -22,6 +27,7 @@ from pdf_html_polish.single_file_html import (
     _link_unlinked_numeric_superscripts_to_existing_refs,
     _link_section_refs,
     _late_recover_orphan_figure_anchors_and_links,
+    _normalize_spaced_inline_sup_sub_tags,
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
@@ -32,6 +38,7 @@ from pdf_html_polish.single_file_html import (
     _recover_unique_bare_source_named_figure_units,
     _split_table_units_before_section_headings,
     _to_data_url,
+    _unescape_inline_sup_sub,
     _unwrap_nested_fig_links,
     _unwrap_nested_same_href_internal_links,
     _validate_data_url,
@@ -74,6 +81,12 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _unwrap_nested_same_href_internal_links is html_links.unwrap_nested_same_href_internal_links
     assert _REPEATED_PHRASE_PATTERN is text_cleanup.REPEATED_PHRASE_PATTERN
     assert drop_repeated_phrases is text_cleanup.drop_repeated_phrases
+    assert _ESCAPED_INLINE_TAG_PATTERN is html_fragments.ESCAPED_INLINE_TAG_PATTERN
+    assert _SPACED_ESCAPED_INLINE_TAG_PATTERN is html_fragments.SPACED_ESCAPED_INLINE_TAG_PATTERN
+    assert _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN is html_fragments.SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN
+    assert _SPACED_INLINE_TAG_PATTERN is html_fragments.SPACED_INLINE_TAG_PATTERN
+    assert _unescape_inline_sup_sub is html_fragments.unescape_inline_sup_sub
+    assert _normalize_spaced_inline_sup_sub_tags is html_fragments.normalize_spaced_inline_sup_sub_tags
 
 
 def test_inline_images_from_html_file() -> None:
