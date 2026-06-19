@@ -5,6 +5,15 @@ import shutil
 import sys
 from uuid import uuid4
 
+from pdf_html_polish.html_stages import RAW_STAGE_NAME
+from pdf_html_polish.quality_loop.audit_raw_analysis import analyze_raw_file
+from pdf_html_polish.quality_loop.audit_raw_report import (
+    add_raw_corpus_hit_counts,
+    build_raw_report,
+    find_raw_stage_files,
+    print_raw_report_summary,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_SCRIPT = ROOT / "scripts" / "audit_en_raw.py"
@@ -24,6 +33,17 @@ def _load_audit_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_raw_cli_preserves_legacy_aliases() -> None:
+    audit = _load_audit_module()
+
+    assert audit.STAGE_NAME == RAW_STAGE_NAME
+    assert audit._analyze_raw_file is analyze_raw_file
+    assert audit._add_corpus_hit_counts is add_raw_corpus_hit_counts
+    assert audit._build_raw_report is build_raw_report
+    assert audit.find_stage_files is find_raw_stage_files
+    assert audit._print_summary is print_raw_report_summary
 
 
 def test_analyze_file_reports_en_raw_defect_shapes() -> None:
