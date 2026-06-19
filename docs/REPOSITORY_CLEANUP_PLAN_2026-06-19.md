@@ -98,8 +98,8 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Continue `single_file_html.py` decomposition with the next small inline HTML
-   cleanup helper family.
+1. Review the next pre-cleanup helper family in `single_file_html.py` and pick
+   the lowest-risk extraction boundary.
 2. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
 3. After the `single_file_html.py` polish pass, run polish/audit parity before
@@ -209,3 +209,6 @@ The cleanup policy is deliberately conservative:
 - Moved repeated-phrase cleanup into `text_cleanup.py`; `pipeline.py` now uses
   that package helper directly, while `single_file_html.py` keeps a
   compatibility alias covered by tests.
+- Moved inline `<sup>/<sub>` escaped/spaced tag cleanup into
+  `raw_html_polish/html_fragments.py` with direct fragment tests and
+  compatibility aliases retained in `single_file_html.py`.
