@@ -37,7 +37,7 @@ from pdf_html_polish.citation_profile import extract_reference_entries_from_pdf 
 from pdf_html_polish.marker_runner import build_marker_single_command  # noqa: E402
 from pdf_html_polish.polish_language import resolve_document_polish_language  # noqa: E402
 from pdf_html_polish.quality_loop import commands as quality_commands  # noqa: E402
-from pdf_html_polish.quality_loop.analysis_prompt import render_llm_prompt as _render_llm_prompt_impl  # noqa: E402
+from pdf_html_polish.quality_loop.analysis_prompt import render_llm_prompt  # noqa: E402
 from pdf_html_polish.quality_loop.cached_images import (  # noqa: E402
     apply_data_image_cache as _apply_data_image_cache,
     cached_data_image_cache as _cached_data_image_cache,
@@ -3190,9 +3190,6 @@ def build_analysis_pack(
         _attach_pdf_evidence_to_pack(pack, pdf_problem_evidence_report)
     return pack
 
-
-def render_llm_prompt(pack: dict[str, Any]) -> str:
-    return _render_llm_prompt_impl(pack)
 
 def write_analysis_pack(
     run_dir: Path,
