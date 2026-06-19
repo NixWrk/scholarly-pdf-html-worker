@@ -140,3 +140,5 @@ The cleanup policy is deliberately conservative:
   with direct unit tests.
 - Moved supplementary figure classification from `scripts/audit_en_polish.py`
   into `quality_loop/audit_figure_caption_ux.py` with direct unit tests.
+- Moved P04 reference-target number collection from `scripts/audit_en_polish.py`
+  into `quality_loop/audit_p04.py` with direct unit tests.
