@@ -108,11 +108,11 @@ from pdf_html_polish.quality_loop.resolver_decisions import (  # noqa: E402
     write_resolver_decisions as _write_resolver_decisions,
 )
 from pdf_html_polish.quality_loop.review_workflow import (  # noqa: E402
-    defect_id_counts as _defect_id_counts_impl,
-    existing_queue_items as _existing_queue_items_impl,
-    relative_review_href as _relative_review_href_impl,
-    review_state_by_key as _review_state_by_key_impl,
-    severity_counts as _severity_counts_impl,
+    defect_id_counts as _defect_id_counts,
+    existing_queue_items as _existing_queue_items,
+    relative_review_href as _relative_review_href,
+    review_state_by_key as _review_state_by_key,
+    severity_counts as _severity_counts,
     stage_path_for_review as _stage_path_for_review_impl,
     write_article_review_stage as _write_article_review_stage_impl,
     write_manual_review_queue as _write_manual_review_queue_impl,
@@ -2846,14 +2846,6 @@ def _changed_without_quality_delta_reviews(
     return reviews
 
 
-def _defect_id_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
-    return _defect_id_counts_impl(defects)
-
-
-def _severity_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
-    return _severity_counts_impl(defects)
-
-
 def write_manual_observation_summary(
     run_dir: Path,
     *,
@@ -2864,14 +2856,6 @@ def write_manual_observation_summary(
         ledger_path=ledger_path,
         default_ledger_name=DEFAULT_MANUAL_OBSERVATION_LEDGER_NAME,
     )
-
-
-def _existing_queue_items(path: Path) -> list[dict[str, Any]]:
-    return _existing_queue_items_impl(path)
-
-
-def _review_state_by_key(items: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return _review_state_by_key_impl(items)
 
 
 def write_manual_review_queue(
@@ -2892,10 +2876,6 @@ def write_manual_review_queue(
 
 def _stage_path_for_review(run_dir: Path, value: Any) -> Path | None:
     return _stage_path_for_review_impl(run_dir, value, repo_root=ROOT)
-
-
-def _relative_review_href(review_dir: Path, target_path: Path) -> str:
-    return _relative_review_href_impl(review_dir, target_path)
 
 
 def write_article_review_stage(

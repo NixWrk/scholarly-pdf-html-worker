@@ -74,6 +74,34 @@ def _write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def test_quality_loop_script_keeps_review_helper_compatibility(tmp_path: Path) -> None:
+    defects = [
+        {"id": "P71", "severity": "warning"},
+        {"id": "P71", "severity": "error"},
+        {"id": "P04"},
+    ]
+    queue_path = tmp_path / "manual_review_queue.json"
+    _write_json(
+        queue_path,
+        [
+            {
+                "article": "article_a",
+                "polish_stage_path": "article_a/02.en.polish.html",
+                "review_status": "reviewed",
+                "review_note": "checked",
+            }
+        ],
+    )
+
+    assert llm_quality_loop._defect_id_counts(defects) == {"P04": 1, "P71": 2}
+    assert llm_quality_loop._severity_counts(defects) == {"error": 1, "info": 1, "warning": 1}
+    items = llm_quality_loop._existing_queue_items(queue_path)
+    assert llm_quality_loop._review_state_by_key(items)["article_a"]["review_note"] == "checked"
+    assert llm_quality_loop._relative_review_href(tmp_path, tmp_path / "article_a" / "02.en.polish.html") == (
+        "article_a/02.en.polish.html"
+    )
+
+
 def test_quality_gate_fails_on_regressions_and_critical_metric_growth() -> None:
     comparison = {
         "status": "ok",
