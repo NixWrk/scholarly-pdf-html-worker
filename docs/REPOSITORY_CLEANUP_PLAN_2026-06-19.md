@@ -158,3 +158,6 @@ The cleanup policy is deliberately conservative:
 - Collapsed `MeineRecentLinkDeps` wiring in `scripts/audit_en_polish.py` behind
   `quality_loop/audit_manual_recent.py` defaults; link-pattern regexes and
   caption-aware warning wrappers now live in the package with direct unit tests.
+- Collapsed `MeineRecentTextDeps` wiring in `scripts/audit_en_polish.py` behind
+  `quality_loop/audit_manual_recent.py` defaults; text/OCR regexes and callback
+  dependencies now live in the package with direct unit tests.
