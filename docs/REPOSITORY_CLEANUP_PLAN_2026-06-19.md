@@ -135,3 +135,6 @@ The cleanup policy is deliberately conservative:
 - Moved the P05 reference false-positive classifier from
   `scripts/audit_en_polish.py` into `quality_loop/audit_citation_style.py`
   with direct unit tests.
+- Moved default `MeineRecentLinkDeps` reference/body-context callbacks from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_manual_recent.py`
+  with direct unit tests.
