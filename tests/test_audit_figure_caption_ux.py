@@ -7,7 +7,10 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     figure_caption_numbers_from_caption_node,
     figure_caption_ux_defects,
     figure_unit_allows_shared_image_alias,
+    looks_like_equation_continuation,
     looks_like_figure_caption,
+    looks_like_float_note,
+    looks_like_float_or_caption,
 )
 
 
@@ -19,13 +22,15 @@ def _looks_like_figure_caption(block: Block) -> bool:
     )
 
 
-def _block(text: str, *, id_: str = "", classes: str = "") -> Block:
+def _block(text: str, *, id_: str = "", classes: str = "", block_type: str = "", raw: str | None = None) -> Block:
     attrs = {}
     if id_:
         attrs["id"] = id_
     if classes:
         attrs["class"] = classes
-    return Block(index=0, tag="p", attrs=attrs, raw=f"<p>{text}</p>", text=text, line=1)
+    if block_type:
+        attrs["block-type"] = block_type
+    return Block(index=0, tag="p", attrs=attrs, raw=raw or f"<p>{text}</p>", text=text, line=1)
 
 
 def _defects(html: str, *, has_internal_links: bool = False) -> list[str]:
@@ -81,6 +86,14 @@ def test_figure_unit_allows_shared_image_alias_for_contiguous_caption_aliases() 
 
     assert figure_unit_allows_shared_image_alias(body, 1, [2])
     assert not figure_unit_allows_shared_image_alias(body, 1, [3])
+
+
+def test_float_context_helpers_classify_float_notes_and_equations() -> None:
+    assert looks_like_float_or_caption(_block("Figure 3. Caption.", classes="z2m-figure-caption"))
+    assert looks_like_float_note(_block("Values: mean and SD."))
+    assert looks_like_equation_continuation(_block("x = y + z"))
+    assert looks_like_equation_continuation(_block("not rendered", block_type="Equation"))
+    assert looks_like_equation_continuation(_block("display", raw='<p class="z2m-math-display">display</p>'))
 
 
 def test_figure_caption_ux_reports_caption_without_image() -> None:

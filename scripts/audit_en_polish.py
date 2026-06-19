@@ -72,7 +72,10 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     figure_caption_number_from_caption_node as _figure_caption_number_from_caption_node,
     figure_unit_allows_shared_image_alias as _figure_unit_allows_shared_image_alias,
     figure_caption_ux_defects as _figure_caption_ux_defects_base,
+    looks_like_equation_continuation as _looks_like_equation_continuation,
     looks_like_figure_caption as _looks_like_figure_caption,
+    looks_like_float_note as _looks_like_float_note,
+    looks_like_float_or_caption as _looks_like_float_or_caption,
 )
 from pdf_html_polish.quality_loop.audit_float_gap import (
     source_pdf_text_confirms_float_gap as _source_pdf_text_confirms_float_gap,
@@ -94,9 +97,12 @@ from pdf_html_polish.quality_loop.audit_reference_identity import (
 )
 from pdf_html_polish.quality_loop.audit_manual_patterns import (
     bibliography_numbering_residue_is_clean_reference_boundary as _bibliography_numbering_residue_is_clean_reference_boundary,
+    ends_like_sentence_fragment as _ends_like_sentence_fragment,
     find_split_dot_email_match as _find_split_dot_email_match,
     joined_word_match_is_url_slug as _joined_word_match_is_url_slug,
     looks_like_affiliation_label_roman_boundary as _looks_like_affiliation_label_roman_boundary,
+    page_link_semantic_kind as _page_link_semantic_kind,
+    starts_like_sentence_continuation as _starts_like_sentence_continuation,
 )
 from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
@@ -1211,91 +1217,6 @@ def _unlinked_citation_range_kind(block: Block) -> str:
 
 def _unlinked_citation_candidate_numbers(block: Block) -> list[int]:
     return _unlinked_citation_candidate_numbers_base(block)
-
-
-def _looks_like_float_or_caption(block: Block) -> bool:
-    return (
-        block.has_figure_visual
-        or bool(block.classes & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"})
-        or block.tag in {"table", "figure", "figcaption"}
-        or _looks_like_figure_caption(block)
-        or TABLE_CAPTION_RE.match(block.text) is not None
-    )
-
-
-def _looks_like_float_note(block: Block) -> bool:
-    text = block.text.strip()
-    if not text:
-        return True
-    if len(text) <= 180 and re.match(
-        r"^(?:\*|\ufffd|Values?\b|Median\b|Abbreviations?\b|doi:|https?://doi\.org/10\.)",
-        text,
-        re.IGNORECASE,
-    ):
-        return True
-    return bool(len(text) <= 140 and re.match(r"^[A-Z]{2,8}\s*:", text))
-
-
-def _ends_like_sentence_fragment(text: str) -> bool:
-    text = text.strip()
-    if len(text) < 24 or re.search(r"[.!?:;\]\)]\s*$", text):
-        return False
-    match = re.search(r"([A-Za-z][A-Za-z-]*)\s*$", text)
-    if match is None:
-        return False
-    word = match.group(1)
-    return word.islower() or word.lower() in {
-        "and",
-        "or",
-        "with",
-        "of",
-        "the",
-        "to",
-        "for",
-        "than",
-        "daytime",
-        "post-operative",
-        "pre-operative",
-    }
-
-
-def _starts_like_sentence_continuation(text: str) -> bool:
-    text = text.strip()
-    return bool(re.match(r"^(?:[a-z]|\(?[a-z])", text))
-
-
-def _looks_like_equation_continuation(block: Block) -> bool:
-    if block.block_type.lower() == "equation":
-        return True
-    if "z2m-math-display" in block.raw:
-        return True
-    text = block.text.strip()
-    return bool(re.match(r"^(?:\\[\[(]|[dD]\s*[tTV]\b|[A-Za-z]\s*=)", text))
-
-
-def _page_link_semantic_kind(html: str, match: re.Match[str]) -> str | None:
-    label = _strip_tags(match.group("body"))
-    left = _strip_tags(html[max(0, match.start() - 140) : match.start()])
-    right = _strip_tags(html[match.end() : match.end() + 140])
-    left_tail = left[-80:]
-    right_head = right[:80]
-    context = f"{left_tail} {label} {right_head}"
-
-    if re.search(r"\b(?:Box|Table|Tables|Fig\.?|Figure|Section|Appendix|Equation|Eq\.?)\s*$", left_tail, re.IGNORECASE):
-        return "semantic-cross-reference"
-    if re.match(r"^(?:Box|Table|Tables|Fig\.?|Figure|Section|Appendix|Equation|Eq\.?)\b", label, re.IGNORECASE):
-        return "semantic-cross-reference"
-    if re.match(r"^\(?S\d+", label, re.IGNORECASE) and re.match(r"^\s*Tables?\b", right_head, re.IGNORECASE):
-        return "semantic-cross-reference"
-    if re.search(r"\b(?:Table|Tables|Box|Section|Appendix|Figure|Fig\.?)\b", context, re.IGNORECASE) and re.search(
-        r"\d|[A-Z]\.?", label
-    ):
-        return "semantic-cross-reference"
-    if re.fullmatch(r"\[?\d{1,4}\]?[\].,;)]*", label):
-        return "citation"
-    if re.fullmatch(r"[a-z]\s*\d{1,4}(?:[\s,\-–\u2013\u2014\d.);]*)?", label):
-        return "citation-ocr-glue"
-    return None
 
 
 def _reference_numbers_from_blocks(blocks: list[Block]) -> set[int]:

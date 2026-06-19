@@ -3,10 +3,13 @@ import re
 from pdf_html_polish.quality_loop.audit_blocks import Block
 from pdf_html_polish.quality_loop.audit_manual_patterns import (
     bibliography_numbering_residue_is_clean_reference_boundary,
+    ends_like_sentence_fragment,
     find_split_dot_email_match,
     joined_word_match_is_url_slug,
     looks_like_affiliation_label_roman_boundary,
+    page_link_semantic_kind,
     replacement_chars_are_pdf_source_noise,
+    starts_like_sentence_continuation,
 )
 
 
@@ -81,3 +84,27 @@ def test_bibliography_numbering_residue_accepts_existing_reference_boundary() ->
 
     assert bibliography_numbering_residue_is_clean_reference_boundary(html, "2. Smith")
     assert not bibliography_numbering_residue_is_clean_reference_boundary(html, "2. Jones")
+
+
+def test_sentence_fragment_helpers_detect_float_interruption_shape() -> None:
+    assert ends_like_sentence_fragment("The response stayed stable and")
+    assert not ends_like_sentence_fragment("The response stayed stable.")
+    assert starts_like_sentence_continuation("continued after the figure")
+    assert not starts_like_sentence_continuation("Continued after the figure")
+
+
+def test_page_link_semantic_kind_classifies_cross_refs_and_citations() -> None:
+    link_re = re.compile(r"<a\b[^>]*href=\"#page-\d+\"[^>]*>(?P<body>.*?)</a>")
+    semantic_html = 'See Figure <a href="#page-4">2</a> for details.'
+    citation_html = 'Prior work <a href="#page-8">[12]</a> was cited.'
+    glue_html = 'Prior work <a href="#page-9">a 12</a> was cited.'
+    semantic_match = link_re.search(semantic_html)
+    citation_match = link_re.search(citation_html)
+    glue_match = link_re.search(glue_html)
+    assert semantic_match is not None
+    assert citation_match is not None
+    assert glue_match is not None
+
+    assert page_link_semantic_kind(semantic_html, semantic_match) == "semantic-cross-reference"
+    assert page_link_semantic_kind(citation_html, citation_match) == "citation"
+    assert page_link_semantic_kind(glue_html, glue_match) == "citation-ocr-glue"

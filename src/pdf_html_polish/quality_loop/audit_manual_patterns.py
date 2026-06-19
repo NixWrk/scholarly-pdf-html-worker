@@ -126,6 +126,59 @@ def bibliography_numbering_residue_is_clean_reference_boundary(polish_html: str,
     return True
 
 
+def ends_like_sentence_fragment(text: str) -> bool:
+    text = text.strip()
+    if len(text) < 24 or re.search(r"[.!?:;\]\)]\s*$", text):
+        return False
+    match = re.search(r"([A-Za-z][A-Za-z-]*)\s*$", text)
+    if match is None:
+        return False
+    word = match.group(1)
+    return word.islower() or word.lower() in {
+        "and",
+        "or",
+        "with",
+        "of",
+        "the",
+        "to",
+        "for",
+        "than",
+        "daytime",
+        "post-operative",
+        "pre-operative",
+    }
+
+
+def starts_like_sentence_continuation(text: str) -> bool:
+    text = text.strip()
+    return bool(re.match(r"^(?:[a-z]|\(?[a-z])", text))
+
+
+def page_link_semantic_kind(html: str, match: re.Match[str]) -> str | None:
+    label = strip_tags(match.group("body"))
+    left = strip_tags(html[max(0, match.start() - 140) : match.start()])
+    right = strip_tags(html[match.end() : match.end() + 140])
+    left_tail = left[-80:]
+    right_head = right[:80]
+    context = f"{left_tail} {label} {right_head}"
+
+    if re.search(r"\b(?:Box|Table|Tables|Fig\.?|Figure|Section|Appendix|Equation|Eq\.?)\s*$", left_tail, re.IGNORECASE):
+        return "semantic-cross-reference"
+    if re.match(r"^(?:Box|Table|Tables|Fig\.?|Figure|Section|Appendix|Equation|Eq\.?)\b", label, re.IGNORECASE):
+        return "semantic-cross-reference"
+    if re.match(r"^\(?S\d+", label, re.IGNORECASE) and re.match(r"^\s*Tables?\b", right_head, re.IGNORECASE):
+        return "semantic-cross-reference"
+    if re.search(r"\b(?:Table|Tables|Box|Section|Appendix|Figure|Fig\.?)\b", context, re.IGNORECASE) and re.search(
+        r"\d|[A-Z]\.?", label
+    ):
+        return "semantic-cross-reference"
+    if re.fullmatch(r"\[?\d{1,4}\]?[\].,;)]*", label):
+        return "citation"
+    if re.fullmatch(r"[a-z]\s*\d{1,4}(?:[\s,\-–\u2013\u2014\d.);]*)?", label):
+        return "citation-ocr-glue"
+    return None
+
+
 def looks_like_affiliation_label_roman_boundary(block: Block, split_match: re.Match[str]) -> bool:
     if split_match.group("suffix").lower() != "i":
         return False

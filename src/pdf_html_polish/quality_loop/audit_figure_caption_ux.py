@@ -236,6 +236,38 @@ def figure_unit_allows_shared_image_alias(
     return all_caption_nums == list(range(min(all_caption_nums), max(all_caption_nums) + 1))
 
 
+def looks_like_float_or_caption(block: Block) -> bool:
+    return (
+        block.has_figure_visual
+        or bool(block.classes & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"})
+        or block.tag in {"table", "figure", "figcaption"}
+        or looks_like_figure_caption(block)
+        or TABLE_CAPTION_RE.match(block.text) is not None
+    )
+
+
+def looks_like_float_note(block: Block) -> bool:
+    text = block.text.strip()
+    if not text:
+        return True
+    if len(text) <= 180 and re.match(
+        r"^(?:\*|\ufffd|Values?\b|Median\b|Abbreviations?\b|doi:|https?://doi\.org/10\.)",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    return bool(len(text) <= 140 and re.match(r"^[A-Z]{2,8}\s*:", text))
+
+
+def looks_like_equation_continuation(block: Block) -> bool:
+    if block.block_type.lower() == "equation":
+        return True
+    if "z2m-math-display" in block.raw:
+        return True
+    text = block.text.strip()
+    return bool(re.match(r"^(?:\\[\[(]|[dD]\s*[tTV]\b|[A-Za-z]\s*=)", text))
+
+
 def figure_caption_ux_defects(
     polish_html: str,
     polish_blocks: list[Block],
