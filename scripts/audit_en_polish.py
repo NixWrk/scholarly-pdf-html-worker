@@ -7,13 +7,11 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from dataclasses import asdict
-import hashlib
 from html import unescape
 import json
 from pathlib import Path
 import re
 import sys
-import urllib.parse
 from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +19,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pdf_html_polish.html_stages import HTML_STAGE_DIR_NAME, POLISH_STAGE_NAME, RAW_STAGE_NAME, is_html_stage_dir_name
+from pdf_html_polish.html_stages import HTML_STAGE_DIR_NAME, POLISH_STAGE_NAME, RAW_STAGE_NAME
 from pdf_html_polish.quality_loop.audit_blocks import (
     Block,
     Defect,
@@ -44,6 +42,13 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     unit_diagnostic_text_from_html as _unit_diagnostic_text_from_html,
     visible_ref_number_from_match as _visible_ref_number_from_match,
     word_sequence_match as _word_sequence_match,
+)
+from pdf_html_polish.quality_loop.audit_images import (
+    IMG_SRC_RE,
+    image_identity_key as _image_identity_key,
+    is_inline_or_remote_src as _is_inline_or_remote_src,
+    local_image_candidates as _local_image_candidates,
+    missing_local_images as _missing_local_images,
 )
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 from pdf_html_polish.quality_loop.audit_frontmatter import (
@@ -188,7 +193,6 @@ REF_ANCHOR_BODY_RE = re.compile(
     r"(?P<body>.*?)</a>",
     re.IGNORECASE | re.DOTALL,
 )
-IMG_SRC_RE = re.compile(r"<img\b[^>]*\bsrc\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
 FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
 TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
 CITATION_RANGE_LIST_RE = re.compile(
@@ -917,79 +921,6 @@ def _source_pdf_text_confirms_float_gap(left_text: str, right_text: str, pdf_tex
             re.IGNORECASE,
         )
     )
-
-
-def _is_inline_or_remote_src(src: str) -> bool:
-    src = src.strip()
-    if not src or src.startswith("#"):
-        return True
-    lower = src.lower()
-    if lower.startswith(("data:", "http://", "https://", "blob:", "cid:")):
-        return True
-    parsed = urllib.parse.urlsplit(src)
-    return bool(parsed.scheme and parsed.scheme.lower() not in {"file"})
-
-
-def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
-    clean = src.strip().split("?", 1)[0].split("#", 1)[0]
-    if not clean:
-        return []
-    parsed = urllib.parse.urlsplit(clean)
-    path_value = parsed.path if parsed.scheme.lower() == "file" else clean
-    decoded = urllib.parse.unquote(path_value)
-    if re.match(r"^/[A-Za-z]:/", decoded):
-        decoded = decoded[1:]
-    candidate = Path(decoded)
-    if candidate.is_absolute():
-        return [candidate]
-
-    search_dirs = [html_path.parent]
-    if is_html_stage_dir_name(html_path.parent.name):
-        search_dirs.append(html_path.parent.parent)
-    return [(base / decoded).resolve(strict=False) for base in search_dirs]
-
-
-def _missing_local_images(html_path: Path, html: str) -> list[dict[str, Any]]:
-    missing: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    line_starts = _line_starts(html)
-    for match in IMG_SRC_RE.finditer(html):
-        src = unescape(match.group("src")).strip()
-        if _is_inline_or_remote_src(src):
-            continue
-        candidates = _local_image_candidates(html_path, src)
-        if any(candidate.is_file() for candidate in candidates):
-            continue
-        key = src
-        if key in seen:
-            continue
-        seen.add(key)
-        missing.append(
-            {
-                "src": src,
-                "line": _line_at_from_starts(line_starts, match.start()),
-                "searched": [str(candidate) for candidate in candidates],
-            }
-        )
-    return missing
-
-
-def _image_identity_key(html_path: Path, src: str) -> str | None:
-    src = unescape(src).strip()
-    if not src:
-        return None
-    if src.lower().startswith("data:image/"):
-        return "data:" + hashlib.sha256(src.encode("utf-8", errors="replace")).hexdigest()
-    if _is_inline_or_remote_src(src):
-        return None
-    for candidate in _local_image_candidates(html_path, src):
-        if not candidate.is_file():
-            continue
-        try:
-            return "file:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
-        except OSError:
-            continue
-    return f"src:{src}"
 
 
 def _source_pdf_path(raw_path: Path) -> Path:
