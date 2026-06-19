@@ -98,13 +98,15 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Review the next pre-cleanup helper family in `single_file_html.py` and pick
-   the lowest-risk extraction boundary.
-2. Preserve old private aliases in `single_file_html.py` while tests still
+1. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
+   tuple left in `single_file_html.py` after the pre-cleanup extraction.
+2. Start the frontmatter/footnote cluster in small slices, using
+   `raw_html_polish/frontmatter_footnotes.py` as the package owner.
+3. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
-3. After the `single_file_html.py` polish pass, run polish/audit parity before
+4. After the `single_file_html.py` polish pass, run polish/audit parity before
    the full PDF-to-polish HTML pipeline.
-4. Run the full PDF-to-polish HTML flow only after the parity gate passes.
+5. Run the full PDF-to-polish HTML flow only after the parity gate passes.
 
 ## Progress
 
@@ -212,3 +214,8 @@ The cleanup policy is deliberately conservative:
 - Moved inline `<sup>/<sub>` escaped/spaced tag cleanup into
   `raw_html_polish/html_fragments.py` with direct fragment tests and
   compatibility aliases retained in `single_file_html.py`.
+- Moved low-risk pre-cleanup helpers (`_fix_common_mojibake`,
+  `_cleanup_marker_escape_artifacts`, `_strip_protocol_sentinel_leaks`) and
+  generic skip-stack wiring into `raw_html_polish/pre_cleanup.py` with direct
+  tests; citation-specific skip-stack logic intentionally remains in
+  `single_file_html.py`.
