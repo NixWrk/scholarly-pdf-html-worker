@@ -2619,6 +2619,46 @@ def test_polish_auto_repair_stage_parallelizes_by_article_and_merges_reports(tmp
         assert f'href="#ref-{ref_number}"' in html
 
 
+def test_polish_auto_repair_stage_repairs_p71_ocr_residues(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_p71"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><body>"
+            "<p>The cross validtation accuracy used 0:5mLs{ 1 mm{ 1 and FA 330.</p>"
+            "<p>Museum of Moden Art reported around287.8 eV.</p>"
+            "</body></html>",
+            encoding="utf-8",
+        )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {},
+                    "defects_found": [{"id": "P71"}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["repair_counts"] == {"P71": 2}
+    assert report["patched_articles"] == [article]
+    for path in (polish_path, audit_tree_path):
+        html = path.read_text(encoding="utf-8")
+        assert "cross validation accuracy used 0.5 mL s-1 mm-1 and FA 33°" in html
+        assert "Museum of Modern Art reported around 287.8 eV" in html
+
+
 def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_numeric_links(
     tmp_path: Path,
 ) -> None:
