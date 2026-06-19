@@ -5,6 +5,7 @@ from pdf_html_polish.quality_loop.audit_citation_style import (
     citation_style_consistency_defects,
     flattened_sup_match_is_doi_or_url_fragment,
     flattened_sup_match_is_joined_figure_label,
+    linked_ref_near_non_citation_context,
     looks_like_comma_decimal_stat_ref,
     looks_like_sample_size_value_ref,
     numeric_ref_label_numbers,
@@ -20,6 +21,12 @@ def _all_blocks(blocks: list[Block]) -> list[Block]:
 def _never_float_or_table_context(block: Block) -> bool:
     del block
     return False
+
+
+def _single_block(html: str) -> Block:
+    blocks = parse_blocks(html)
+    assert len(blocks) == 1
+    return blocks[0]
 
 
 def _citation_style_defects(html: str):
@@ -85,6 +92,29 @@ def test_flattened_sup_filters_detect_figure_labels_and_doi_fragments() -> None:
 
     assert flattened_sup_match_is_joined_figure_label(figure_match)
     assert flattened_sup_match_is_doi_or_url_fragment(doi_text, doi_match)
+
+
+def test_linked_ref_near_non_citation_context_flags_unit_like_context() -> None:
+    block = _single_block('<p>Urine pH <a href="#ref-7" class="z2m-ref-link">7</a> was recorded.</p>')
+
+    assert linked_ref_near_non_citation_context(block)
+
+
+def test_linked_ref_near_non_citation_context_ignores_sentence_final_superscript() -> None:
+    block = _single_block(
+        "<p>OAB should be investigated."
+        '<sup><a href="#ref-10" class="z2m-ref-link">10</a></sup> '
+        "The most recent study shows a correlation between urine pH and symptoms."
+        '<sup><a href="#ref-11" class="z2m-ref-link">11</a></sup></p>'
+    )
+
+    assert not linked_ref_near_non_citation_context(block)
+
+
+def test_linked_ref_near_non_citation_context_ignores_month_word_citation() -> None:
+    block = _single_block('<p>Symptoms improved at month <a href="#ref-13" class="z2m-ref-link">13</a>.</p>')
+
+    assert not linked_ref_near_non_citation_context(block)
 
 
 def test_citation_style_consistency_defects_reports_numeric_ref_in_author_year_article() -> None:

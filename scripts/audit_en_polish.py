@@ -40,9 +40,11 @@ from pdf_html_polish.quality_loop.audit_blocks import (
 )
 from pdf_html_polish.quality_loop.audit_citation_style import (
     REF_ANCHOR_BODY_RE,
+    REF_LINK_RE,
     citation_style_consistency_defects as _citation_style_consistency_defects_base,
     flattened_sup_match_is_doi_or_url_fragment as _flattened_sup_match_is_doi_or_url_fragment,
     flattened_sup_match_is_joined_figure_label as _flattened_sup_match_is_joined_figure_label,
+    linked_ref_near_non_citation_context as _linked_ref_near_non_citation_context,
     looks_like_comma_decimal_stat_ref as _looks_like_comma_decimal_stat_ref,
     looks_like_sample_size_value_ref as _looks_like_sample_size_value_ref,
     ref_anchor_visible_number as _ref_anchor_visible_number,
@@ -185,7 +187,6 @@ RAW_STAGE = RAW_STAGE_NAME
 POLISH_STAGE = POLISH_STAGE_NAME
 PDF_SOURCE_STAGE = "00.source.pdf"
 
-REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
 FIG_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#fig-([^'\"]+)['\"][^>]*>", re.IGNORECASE)
 TABLE_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#table-([^'\"]+)['\"][^>]*>", re.IGNORECASE)
 PAGE_LINK_RE = re.compile(
@@ -215,15 +216,6 @@ OCR_CITATION_WORD_RE = re.compile(
     r"\btask\.\s+Sec\.|\bflagship models\s+6,000\b",
     re.IGNORECASE,
 )
-NONCITATION_CONTEXT_RE = re.compile(
-    r"\b(?:pH|D\d|Vand|Aand|mAand|uAand|µAand|μAand)\b|"
-    r"\b(?:week|month)\s+\d+\b|"
-    r"\b(?:monkey|animal|female|male)\s+\d+\b|"
-    r"\b(?:mm\s*s|cm\s*s|m\s*s|cm|mC|kg|mA|uA|µA|μA|MHz|GHz|kHz)\s*[-\u2212]\s*\d+\b|"
-    r"\b(?:u|µ|μ)m\s*(?:1|2)\b",
-    re.IGNORECASE,
-)
-ML_PER_SECOND_CONTEXT_RE = re.compile(r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+\b", re.IGNORECASE)
 BROKEN_URL_TEXT_RE = re.compile(
     r"\b(?:hps|htps|ttps)://\S+|"
     r"\bhttps?://\s+|"
@@ -858,156 +850,6 @@ def _classify_missing_figure_warning(
         polish_blocks,
         looks_like_figure_caption=_looks_like_figure_caption,
     )
-
-
-def _ref_match_inside_sentence_final_superscript(raw: str, start: int, end: int) -> bool:
-    sup_open = raw.rfind("<sup", 0, start)
-    if sup_open < 0:
-        return False
-    prior_sup_close = raw.rfind("</sup", 0, start)
-    if prior_sup_close > sup_open:
-        return False
-    sup_close = raw.find("</sup>", end)
-    if sup_close < 0:
-        return False
-    before_text = _strip_tags(raw[max(0, sup_open - 96) : sup_open]).rstrip()
-    if not before_text or before_text[-1] not in ".!?)]":
-        return False
-    sup_body = raw[sup_open : sup_close + len("</sup>")]
-    if not re.search(r'\bhref\s*=\s*["\']#ref-\d+["\']', sup_body, re.IGNORECASE):
-        return False
-    after_text = _strip_tags(raw[sup_close + len("</sup>") : sup_close + len("</sup>") + 96]).lstrip()
-    return not after_text or bool(re.match(r"(?:[A-Z]|\(|\[|,|;|:)", after_text))
-
-
-def _ref_match_inside_author_et_al_citation(raw: str, start: int, end: int) -> bool:
-    left_text = _strip_tags(raw[max(0, start - 96) : start]).rstrip()
-    return re.search(r"\bet\s+al\.?\s*$", left_text, re.IGNORECASE) is not None
-
-
-def _ref_match_is_parenthetical_tail_citation(raw: str, start: int, end: int) -> bool:
-    anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
-    if anchor_end < 0:
-        return False
-    anchor_visible = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
-    if re.fullmatch(r"\)\s*\d{1,4}\s*\.?", anchor_visible) is None:
-        return False
-    right_text = _strip_tags(raw[anchor_end + len("</a>") : anchor_end + len("</a>") + 32]).lstrip()
-    return not right_text or right_text[0] in ".,;)]"
-
-
-def _block_looks_like_author_affiliation_byline(block: Block) -> bool:
-    text = _normalize_ws(block.text)
-    if len(text) > 1200:
-        return False
-    degree_hits = len(re.findall(r"\b(?:M\.D|Ph\.?D|F\.R\.C\.S|B\.Sc|M\.Sc)\.?", text, re.IGNORECASE))
-    short_ref_hits = len(re.findall(r"(?:^|[\s,])\d{1,2}(?=\s|,|$)", text))
-    return degree_hits >= 4 and short_ref_hits >= 4
-
-
-def _ref_visible_number_from_anchor(raw: str, start: int, end: int) -> tuple[int | None, int]:
-    anchor_end = raw.find("</a>", end, min(len(raw), end + 200))
-    if anchor_end < 0:
-        return None, end
-    label = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
-    number = _ref_anchor_visible_number(label)
-    return number, anchor_end + len("</a>")
-
-
-def _ref_match_is_month_word_citation(raw: str, start: int, end: int) -> bool:
-    number, anchor_end = _ref_visible_number_from_anchor(raw, start, end)
-    if number is None or number <= 12:
-        return False
-    left_text = _strip_tags(raw[max(0, start - 64) : start]).rstrip()
-    right_text = _strip_tags(raw[anchor_end : anchor_end + 32]).lstrip()
-    return re.search(r"\bmonth\s*$", left_text, re.IGNORECASE) is not None and (
-        not right_text or right_text[0] in ".,;:)]"
-    )
-
-
-def _ref_match_is_measurement_parenthetical_citation(raw: str, start: int, end: int) -> bool:
-    number, anchor_end = _ref_visible_number_from_anchor(raw, start, end)
-    if number is None:
-        return False
-    left_text = _strip_tags(raw[max(0, start - 140) : start])
-    right_text = _strip_tags(raw[anchor_end : anchor_end + 48]).lstrip()
-    if not right_text.startswith(")"):
-        return False
-    left_paren = left_text.rfind("(")
-    right_paren = left_text.rfind(")")
-    if left_paren < 0 or right_paren > left_paren:
-        return False
-    parenthetical = left_text[left_paren:]
-    return bool(re.search(r"(?:%|mL\s*/\s*s|mL\s+s|mmHg|cmH2O|L\s*/\s*s)", parenthetical, re.IGNORECASE))
-
-
-def _ref_match_follows_figure_or_unit_parenthetical_citation(raw: str, start: int, end: int) -> bool:
-    number, anchor_end = _ref_visible_number_from_anchor(raw, start, end)
-    if number is None:
-        return False
-    left_text = _strip_tags(raw[max(0, start - 260) : start]).rstrip()
-    right_text = _strip_tags(raw[anchor_end : anchor_end + 48]).lstrip()
-    if not left_text.endswith(")"):
-        return False
-    if right_text and right_text[0] not in ".,;:)]":
-        return False
-    right_paren = left_text.rfind(")")
-    left_paren = left_text.rfind("(", 0, right_paren)
-    if left_paren < 0:
-        return False
-    parenthetical = left_text[left_paren : right_paren + 1]
-    return bool(
-        re.search(r"\b(?:Fig|Figure)\.?\s*\d", parenthetical, re.IGNORECASE)
-        or re.search(
-            r"(?:%|mL\s*/\s*s|mL\s+s|mmHg|cmH2O|L\s*/\s*s|N\s*m\s*2|"
-            r"(?:u|Вµ|Ој|μ)m\s*2|mm\s*2|cm\s*2)",
-            parenthetical,
-            re.IGNORECASE,
-        )
-    )
-
-
-def _ref_match_inside_animal_human_study_citation(raw: str, start: int, end: int) -> bool:
-    window = _normalize_ws(_strip_tags(raw[max(0, start - 320) : min(len(raw), end + 320)]))
-    return bool(
-        re.search(
-            r"\banimal\s*\d{1,3}\s+and\s+human\s+studies\s+of\s+retinal\s*\d{1,3}"
-            r"(?:\s*,\s*\d{1,3})?\s+and\s+cortical\s*\d{1,3}\s+stimulat\w*",
-            window,
-            re.IGNORECASE,
-        )
-        or re.search(r"\breport\s+\d{1,3}\s+by\s+that\s+group\b", window, re.IGNORECASE)
-    )
-
-
-def _linked_ref_near_non_citation_context(block: Block) -> bool:
-    if _block_looks_like_author_affiliation_byline(block):
-        return False
-    for match in REF_LINK_RE.finditer(block.raw):
-        if _ref_match_inside_bracketed_numeric_citation(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_inside_sentence_final_superscript(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_inside_author_et_al_citation(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_is_parenthetical_tail_citation(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_is_month_word_citation(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_is_measurement_parenthetical_citation(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_follows_figure_or_unit_parenthetical_citation(block.raw, match.start(), match.end()):
-            continue
-        if _ref_match_inside_animal_human_study_citation(block.raw, match.start(), match.end()):
-            continue
-        window_raw = block.raw[max(0, match.start() - 48): match.end() + 80]
-        window_text = _strip_tags(window_raw)
-        context_text = re.sub(r"\bD\d-type\b", "D-type", window_text, flags=re.IGNORECASE)
-        if re.search(r"\b[A-Za-z0-9]+-D\d+\s+\d{1,3}\b", context_text):
-            continue
-        if NONCITATION_CONTEXT_RE.search(context_text) or ML_PER_SECOND_CONTEXT_RE.search(context_text):
-            return True
-    return False
 
 
 def _block_is_float_or_table_context(block: Block) -> bool:
