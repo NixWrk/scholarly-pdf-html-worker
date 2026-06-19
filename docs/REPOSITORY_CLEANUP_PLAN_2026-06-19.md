@@ -145,3 +145,6 @@ The cleanup policy is deliberately conservative:
 - Moved the full citation defect family (`P04*`, `P05`, `P28`, `P32`) from
   `scripts/audit_en_polish.py` into `quality_loop/audit_citations.py` with
   direct unit tests.
+- Moved pair-level polish audit orchestration from `scripts/audit_en_polish.py`
+  into `quality_loop/audit_polish_pair.py` with direct unit tests; the script
+  now only supplies dependency wiring for `analyze_pair`.
