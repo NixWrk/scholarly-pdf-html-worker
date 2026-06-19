@@ -4,7 +4,9 @@ from pdf_html_polish.quality_loop.source_pdf import (
     attachment_keys_from_article,
     article_source_pdf_candidates,
     collect_pdf_path_strings,
+    existing_path_candidates,
     normalize_pdf_title_text,
+    path_text_variants,
 )
 
 
@@ -71,6 +73,17 @@ def test_attachment_keys_skip_numeric_article_identifiers() -> None:
         "Zotero_Elvis_D_KEY12345_571527_Article",
         {"zotero_attachment_key": "ABC12345"},
     ) == ["KEY12345", "ABC12345"]
+
+
+def test_existing_path_candidates_keeps_path_repair_in_source_pdf_module(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "\u041a\u0438\u0457\u0432.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    mojibake = str(pdf_path).encode("utf-8").decode("cp1251")
+
+    assert path_text_variants(mojibake)[-1] == str(pdf_path)
+    assert existing_path_candidates(mojibake, repo_root=tmp_path) == [
+        pdf_path.resolve(strict=False)
+    ]
 
 
 def test_source_pdf_candidates_fall_back_to_zotero_cyrillic_title_match(

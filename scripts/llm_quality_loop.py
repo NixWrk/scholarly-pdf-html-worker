@@ -460,32 +460,8 @@ def write_pdf_problem_evidence_stage(
     )
 
 
-def _path_text_variants(value: Any) -> list[str]:
-    raw = str(value or "").strip()
-    if not raw:
-        return []
-    variants = [raw]
-    try:
-        repaired = raw.encode("cp1251").decode("utf-8")
-    except UnicodeError:
-        repaired = ""
-    if repaired and repaired not in variants:
-        variants.append(repaired)
-    return variants
-
-
 def _existing_path_candidates(value: Any) -> list[Path]:
-    candidates: list[Path] = []
-    seen: set[str] = set()
-    for variant in _path_text_variants(value):
-        for candidate in _host_path_candidates(variant):
-            key = str(candidate)
-            if key in seen:
-                continue
-            seen.add(key)
-            if candidate.is_file():
-                candidates.append(candidate)
-    return candidates
+    return quality_source_pdf.existing_path_candidates(value, repo_root=ROOT)
 
 
 def _index_polish_stage_files(run_dir: Path) -> list[Path]:
