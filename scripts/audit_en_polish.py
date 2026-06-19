@@ -41,6 +41,12 @@ from pdf_html_polish.quality_loop.audit_blocks import (
 from pdf_html_polish.quality_loop.audit_citation_style import (
     REF_ANCHOR_BODY_RE,
     citation_style_consistency_defects as _citation_style_consistency_defects_base,
+    flattened_sup_match_is_doi_or_url_fragment as _flattened_sup_match_is_doi_or_url_fragment,
+    flattened_sup_match_is_joined_figure_label as _flattened_sup_match_is_joined_figure_label,
+    looks_like_comma_decimal_stat_ref as _looks_like_comma_decimal_stat_ref,
+    looks_like_sample_size_value_ref as _looks_like_sample_size_value_ref,
+    ref_anchor_visible_number as _ref_anchor_visible_number,
+    ref_match_inside_bracketed_numeric_citation as _ref_match_inside_bracketed_numeric_citation,
 )
 from pdf_html_polish.quality_loop.audit_images import (
     figure_visual_identity_defects as _figure_visual_identity_defects_base,
@@ -1073,13 +1079,6 @@ def _non_reference_body_blocks(blocks: list[Block]) -> Iterable[Block]:
         yield block
 
 
-def _ref_anchor_visible_number(label: str) -> int | None:
-    numbers = re.findall(r"\d+", label)
-    if len(numbers) != 1:
-        return None
-    return int(numbers[0])
-
-
 def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -> bool:
     ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
     anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
@@ -1098,77 +1097,6 @@ def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -
         )
         is not None
     )
-
-
-def _ref_match_inside_bracketed_numeric_citation(raw: str, start: int, end: int) -> bool:
-    ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
-    anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
-    anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
-    if anchor_end >= 0:
-        anchor_visible = _normalize_ws(_strip_tags(raw[start : anchor_end + len("</a>")]))
-        if re.fullmatch(r"\[\s*\d{1,4}\s*\]\s*\.?", anchor_visible, re.IGNORECASE):
-            return True
-    left = raw.rfind("[", max(0, anchor_start - 240), anchor_start)
-    if left < 0:
-        return False
-    right = raw.find("]", end, min(len(raw), end + 160))
-    if right < 0:
-        return False
-    visible = _normalize_ws(_strip_tags(raw[left : right + 1]))
-    return (
-        re.fullmatch(
-            r"\[\s*\d{1,4}(?:\s*(?:[,;]|[-\u2013\u2014]|\band\b)\s*\d{1,4})*\s*\]\s*\.?",
-            visible,
-            re.IGNORECASE,
-        )
-        is not None
-    )
-
-
-def _anchor_span_inside_match(raw: str, match: re.Match[str]) -> tuple[int, int]:
-    anchor = REF_ANCHOR_BODY_RE.search(raw[match.start() : match.end()])
-    if anchor is None:
-        return match.start(), match.end()
-    start = match.start() + anchor.start()
-    return start, match.start() + anchor.end()
-
-
-def _looks_like_sample_size_value_ref(raw: str, match: re.Match[str]) -> bool:
-    anchor_start, anchor_end = _anchor_span_inside_match(raw, match)
-    left_text = _strip_tags(raw[max(0, anchor_start - 240) : anchor_start])
-    right_text = _strip_tags(raw[anchor_end : anchor_end + 100]).lstrip()
-    if re.search(
-        r"\bsample\s+size\b[^.;:]{0,160}\b(?:was|were|is|=|:)\s*$",
-        left_text,
-        re.IGNORECASE,
-    ) is None:
-        return False
-    return (
-        not right_text
-        or re.match(
-            r"^(?:[\.,;:)]|to\b|[-\u2010-\u2014]|\d|participants?\b|patients?\b|subjects?\b|controls?\b)",
-            right_text,
-            re.IGNORECASE,
-        )
-        is not None
-    )
-
-
-def _looks_like_comma_decimal_stat_ref(raw: str, match: re.Match[str]) -> bool:
-    left_text = _strip_tags(raw[max(0, match.start() - 240) : match.start()])
-    return re.search(
-        r"(?:"
-        r"\beffect\s+size\b[^.;:]{0,140}\b(?:was|were|is|of|=|:)\s*|"
-        r"\ballocation\s+ratio\b[^.;:]{0,180}\b(?:was|were|is|of|=|:|G\*Power)\s*|"
-        r"\bG\*Power\s*|"
-        r"\bCohen(?:'s)?\s*d\s*=?\s*|"
-        r"\blogMAR\s*|"
-        r"\b(?:SD|SEM)\s*=?\s*"
-        r")$",
-        left_text,
-        re.IGNORECASE,
-    ) is not None
-
 
 def _plain_bracket_range_is_likely_non_citation_math_or_measurement(text: str, match: re.Match[str]) -> bool:
     body = match.group(0)
@@ -1229,19 +1157,6 @@ def _looks_like_table_flattened_citation_context(text: str) -> bool:
         text,
         re.IGNORECASE,
     ) is not None
-
-
-def _flattened_sup_match_is_joined_figure_label(match: re.Match[str]) -> bool:
-    return re.match(r"\b[A-Za-z]*(?:fig|figure)\.\d{1,3}\b", match.group(0), re.IGNORECASE) is not None
-
-
-def _flattened_sup_match_is_doi_or_url_fragment(text: str, match: re.Match[str]) -> bool:
-    window = text[max(0, match.start() - 180) : min(len(text), match.end() + 120)]
-    return bool(
-        re.search(r"https?://(?:dx\.)?doi\.org/10\.\d{4,9}/", window, re.IGNORECASE)
-        or re.search(r"\bdoi\s*:?\s*10\.\d{4,9}/", window, re.IGNORECASE)
-    )
-
 
 def _looks_like_software_version_context(text: str, start: int) -> bool:
     left = text[max(0, start - 160):start]

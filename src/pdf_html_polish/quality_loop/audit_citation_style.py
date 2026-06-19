@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Iterable
 
-from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, strip_tags
+from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, normalize_ws, strip_tags
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 
 
@@ -30,6 +30,105 @@ def numeric_ref_label_numbers(label: str) -> list[int]:
     if any(value.startswith("0") for value in re.findall(r"\d{2,4}", label)):
         return []
     return [number for number in numbers if not (1800 <= number <= 2099)]
+
+
+def ref_anchor_visible_number(label: str) -> int | None:
+    numbers = re.findall(r"\d+", label)
+    if len(numbers) != 1:
+        return None
+    return int(numbers[0])
+
+
+def ref_match_inside_bracketed_numeric_citation(raw: str, start: int, end: int) -> bool:
+    ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
+    anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
+    anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
+    if anchor_end >= 0:
+        anchor_visible = normalize_ws(strip_tags(raw[start : anchor_end + len("</a>")]))
+        if re.fullmatch(r"\[\s*\d{1,4}\s*\]\s*\.?", anchor_visible, re.IGNORECASE):
+            return True
+    left = raw.rfind("[", max(0, anchor_start - 240), anchor_start)
+    if left < 0:
+        return False
+    right = raw.find("]", end, min(len(raw), end + 160))
+    if right < 0:
+        return False
+    visible = normalize_ws(strip_tags(raw[left : right + 1]))
+    return (
+        re.fullmatch(
+            r"\[\s*\d{1,4}(?:\s*(?:[,;]|[-\u2013\u2014]|\band\b)\s*\d{1,4})*\s*\]\s*\.?",
+            visible,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def anchor_span_inside_match(
+    raw: str,
+    match: re.Match[str],
+    *,
+    ref_anchor_body_re: re.Pattern[str] = REF_ANCHOR_BODY_RE,
+) -> tuple[int, int]:
+    anchor = ref_anchor_body_re.search(raw[match.start() : match.end()])
+    if anchor is None:
+        return match.start(), match.end()
+    start = match.start() + anchor.start()
+    return start, match.start() + anchor.end()
+
+
+def looks_like_sample_size_value_ref(
+    raw: str,
+    match: re.Match[str],
+    *,
+    ref_anchor_body_re: re.Pattern[str] = REF_ANCHOR_BODY_RE,
+) -> bool:
+    anchor_start, anchor_end = anchor_span_inside_match(raw, match, ref_anchor_body_re=ref_anchor_body_re)
+    left_text = strip_tags(raw[max(0, anchor_start - 240) : anchor_start])
+    right_text = strip_tags(raw[anchor_end : anchor_end + 100]).lstrip()
+    if re.search(
+        r"\bsample\s+size\b[^.;:]{0,160}\b(?:was|were|is|=|:)\s*$",
+        left_text,
+        re.IGNORECASE,
+    ) is None:
+        return False
+    return (
+        not right_text
+        or re.match(
+            r"^(?:[\.,;:)]|to\b|[-\u2010-\u2014]|\d|participants?\b|patients?\b|subjects?\b|controls?\b)",
+            right_text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def looks_like_comma_decimal_stat_ref(raw: str, match: re.Match[str]) -> bool:
+    left_text = strip_tags(raw[max(0, match.start() - 240) : match.start()])
+    return re.search(
+        r"(?:"
+        r"\beffect\s+size\b[^.;:]{0,140}\b(?:was|were|is|of|=|:)\s*|"
+        r"\ballocation\s+ratio\b[^.;:]{0,180}\b(?:was|were|is|of|=|:|G\*Power)\s*|"
+        r"\bG\*Power\s*|"
+        r"\bCohen(?:'s)?\s*d\s*=?\s*|"
+        r"\blogMAR\s*|"
+        r"\b(?:SD|SEM)\s*=?\s*"
+        r")$",
+        left_text,
+        re.IGNORECASE,
+    ) is not None
+
+
+def flattened_sup_match_is_joined_figure_label(match: re.Match[str]) -> bool:
+    return re.match(r"\b[A-Za-z]*(?:fig|figure)\.\d{1,3}\b", match.group(0), re.IGNORECASE) is not None
+
+
+def flattened_sup_match_is_doi_or_url_fragment(text: str, match: re.Match[str]) -> bool:
+    window = text[max(0, match.start() - 180) : min(len(text), match.end() + 120)]
+    return bool(
+        re.search(r"https?://(?:dx\.)?doi\.org/10\.\d{4,9}/", window, re.IGNORECASE)
+        or re.search(r"\bdoi\s*:?\s*10\.\d{4,9}/", window, re.IGNORECASE)
+    )
 
 
 def paren_numeric_ref_link_count(
