@@ -138,3 +138,5 @@ The cleanup policy is deliberately conservative:
 - Moved default `MeineRecentLinkDeps` reference/body-context callbacks from
   `scripts/audit_en_polish.py` into `quality_loop/audit_manual_recent.py`
   with direct unit tests.
+- Moved supplementary figure classification from `scripts/audit_en_polish.py`
+  into `quality_loop/audit_figure_caption_ux.py` with direct unit tests.
