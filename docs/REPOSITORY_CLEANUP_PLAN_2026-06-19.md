@@ -142,3 +142,6 @@ The cleanup policy is deliberately conservative:
   into `quality_loop/audit_figure_caption_ux.py` with direct unit tests.
 - Moved P04 reference-target number collection from `scripts/audit_en_polish.py`
   into `quality_loop/audit_p04.py` with direct unit tests.
+- Moved the full citation defect family (`P04*`, `P05`, `P28`, `P32`) from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_citations.py` with
+  direct unit tests.
