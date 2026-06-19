@@ -8,6 +8,7 @@ from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
 from pdf_html_polish.quality_loop.audit_blocks import (
     Block,
     Defect,
+    normalize_ws,
     plain_text,
     snippet,
     strip_tags,
@@ -15,7 +16,59 @@ from pdf_html_polish.quality_loop.audit_blocks import (
 )
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 from pdf_html_polish.quality_loop.audit_p35 import replacement_char_defects
-from pdf_html_polish.quality_loop.audit_reference_identity import is_references_block
+from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEADING_RE, is_references_block
+
+
+def block_is_float_or_table_context(block: Block) -> bool:
+    if block.id.lower().startswith(("fig-", "table-", "box-")):
+        return True
+    if block.classes & {
+        "z2m-figure-caption",
+        "z2m-figure-unit",
+        "z2m-table-caption",
+        "z2m-table-unit",
+        "z2m-box-caption",
+        "z2m-box-unit",
+        "z2m-missing-figure-warning",
+    }:
+        return True
+    return bool(re.match(r"^\s*(?:TABLE|Table|FIG(?:URE)?|Fig(?:ure)?\.?)\s+\d", block.text))
+
+
+def reference_target_numbers(html: str) -> set[int]:
+    return {int(number) for number in re.findall(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)}
+
+
+def non_reference_body_blocks(blocks: list[Block]) -> Iterable[Block]:
+    references_started = False
+    for block in blocks:
+        if REFERENCES_HEADING_RE.match(block.text):
+            references_started = True
+        if is_references_block(block, references_started):
+            continue
+        if block.classes & {"z2m-front-matter", "z2m-affiliations", "z2m-footnote"}:
+            continue
+        yield block
+
+
+def ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -> bool:
+    ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
+    anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
+    left = raw.rfind("[", max(0, anchor_start - 240), anchor_start)
+    if left < 0:
+        return False
+    right = raw.find("]", end, min(len(raw), end + 160))
+    if right < 0:
+        return False
+    visible = normalize_ws(strip_tags(raw[left : right + 1]))
+    return (
+        re.fullmatch(
+            r"\[\s*\d{1,4}(?:\s*(?:[,;]|[-\u2013\u2014]|\band\b)\s*\d{1,4})+\s*\]\.?",
+            visible,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 @dataclass(frozen=True)

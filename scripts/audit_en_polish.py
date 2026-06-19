@@ -27,7 +27,6 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     line_at_from_starts as _line_at_from_starts,
     line_starts as _line_starts,
     missing_figure_warning_blocks as _missing_figure_warning_blocks,
-    normalize_ws as _normalize_ws,
     parse_blocks as _parse_blocks,
     parse_overlapping_blocks as _parse_overlapping_blocks,
     plain_text as _plain_text,
@@ -110,9 +109,12 @@ from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
     MeineRecentLinkDeps,
     MeineRecentTextDeps,
+    block_is_float_or_table_context as _block_is_float_or_table_context,
     manual_blind_spot_defects as _manual_blind_spot_defects_base,
     meine_recent_link_structure_defects as _meine_recent_link_structure_defects_base,
     meine_recent_text_ocr_defects as _meine_recent_text_ocr_defects_base,
+    non_reference_body_blocks as _non_reference_body_blocks,
+    reference_target_numbers as _reference_target_numbers,
 )
 from pdf_html_polish.quality_loop.audit_math_units import (
     DEGREE_DEFECT_RE,
@@ -852,60 +854,9 @@ def _classify_missing_figure_warning(
     )
 
 
-def _block_is_float_or_table_context(block: Block) -> bool:
-    if block.id.lower().startswith(("fig-", "table-", "box-")):
-        return True
-    if block.classes & {
-        "z2m-figure-caption",
-        "z2m-figure-unit",
-        "z2m-table-caption",
-        "z2m-table-unit",
-        "z2m-box-caption",
-        "z2m-box-unit",
-        "z2m-missing-figure-warning",
-    }:
-        return True
-    return bool(re.match(r"^\s*(?:TABLE|Table|FIG(?:URE)?|Fig(?:ure)?\.?)\s+\d", block.text))
-
-
-def _reference_target_numbers(html: str) -> set[int]:
-    return {int(number) for number in re.findall(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)}
-
-
 def _is_supplementary_figure_block(block: Block) -> bool:
     return block.id.lower().startswith("fig-supplementary-") or SUPPLEMENTARY_FIGURE_LABEL_RE.match(block.text) is not None
 
-
-def _non_reference_body_blocks(blocks: list[Block]) -> Iterable[Block]:
-    references_started = False
-    for block in blocks:
-        if REFERENCES_HEADING_RE.match(block.text):
-            references_started = True
-        if _is_references_block(block, references_started):
-            continue
-        if block.classes & {"z2m-front-matter", "z2m-affiliations", "z2m-footnote"}:
-            continue
-        yield block
-
-
-def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -> bool:
-    ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
-    anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
-    left = raw.rfind("[", max(0, anchor_start - 240), anchor_start)
-    if left < 0:
-        return False
-    right = raw.find("]", end, min(len(raw), end + 160))
-    if right < 0:
-        return False
-    visible = _normalize_ws(_strip_tags(raw[left : right + 1]))
-    return (
-        re.fullmatch(
-            r"\[\s*\d{1,4}(?:\s*(?:[,;]|[-\u2013\u2014]|\band\b)\s*\d{1,4})+\s*\]\.?",
-            visible,
-            re.IGNORECASE,
-        )
-        is not None
-    )
 
 def _unlinked_citation_range_kind(block: Block) -> str:
     return _unlinked_citation_range_kind_base(

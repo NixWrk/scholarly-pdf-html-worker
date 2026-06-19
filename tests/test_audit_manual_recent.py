@@ -1,12 +1,17 @@
 import importlib.util
 from pathlib import Path
+import re
 import sys
 
 from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
 from pdf_html_polish.quality_loop.audit_manual_recent import (
     ManualBlindSpotDeps,
+    block_is_float_or_table_context,
     manual_blind_spot_defects,
     meine_recent_text_ocr_defects,
+    non_reference_body_blocks,
+    ref_match_inside_bracketed_reference_list,
+    reference_target_numbers,
 )
 
 
@@ -89,6 +94,46 @@ def test_meine_recent_text_ocr_reports_runaway_repeated_text() -> None:
     ids = _recent_ids("<p>slow, slow, slow, slow, slow, slow, slow.</p>")
 
     assert "P65" in ids
+
+
+def test_reference_target_numbers_reads_ref_ids() -> None:
+    html = '<ol><li id="ref-2">Two.</li><li id="ref-17">Seventeen.</li></ol>'
+
+    assert reference_target_numbers(html) == {2, 17}
+
+
+def test_block_is_float_or_table_context_detects_ids_and_classes() -> None:
+    figure_block = parse_blocks('<p id="fig-1">Figure 1. Caption.</p>')[0]
+    table_block = parse_blocks('<p class="z2m-table-unit">Table body.</p>')[0]
+    body_block = parse_blocks("<p>Ordinary body text.</p>")[0]
+
+    assert block_is_float_or_table_context(figure_block)
+    assert block_is_float_or_table_context(table_block)
+    assert not block_is_float_or_table_context(body_block)
+
+
+def test_non_reference_body_blocks_skips_references_and_frontmatter() -> None:
+    blocks = parse_blocks(
+        '<p class="z2m-front-matter">Author 1</p>'
+        "<p>Main body.</p>"
+        "<h4>References</h4>"
+        '<p id="ref-1">Smith reference.</p>'
+    )
+
+    assert [block.text for block in non_reference_body_blocks(blocks)] == ["Main body."]
+
+
+def test_ref_match_inside_bracketed_reference_list_detects_linked_lists() -> None:
+    raw = 'Prior work [<a href="#ref-1" class="z2m-ref-link">1</a>, 2] is cited.'
+    anchor = re.search(r"<a\b[^>]*href=\"#ref-1\"[^>]*>1</a>", raw)
+    assert anchor is not None
+
+    assert ref_match_inside_bracketed_reference_list(raw, anchor.start(), anchor.end())
+    assert not ref_match_inside_bracketed_reference_list(
+        'Prior work <a href="#ref-1" class="z2m-ref-link">1</a> is cited.',
+        anchor.start(),
+        anchor.end(),
+    )
 
 
 def test_audit_script_keeps_legacy_manual_blind_spot_aliases() -> None:
