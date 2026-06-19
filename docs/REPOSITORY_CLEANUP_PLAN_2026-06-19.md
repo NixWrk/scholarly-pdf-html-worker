@@ -129,3 +129,6 @@ The cleanup policy is deliberately conservative:
 - Moved manual blind-spot context classifiers from `scripts/audit_en_polish.py`
   into `quality_loop/audit_figure_caption_ux.py` and
   `quality_loop/audit_manual_patterns.py` with direct unit tests.
+- Removed duplicate P04 citation-range helper logic from
+  `scripts/audit_en_polish.py`; the CLI now relies on
+  `quality_loop/audit_p04.py` for those classifiers.
