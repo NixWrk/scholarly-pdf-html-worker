@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 import json
 from pathlib import Path
@@ -154,6 +153,10 @@ from pdf_html_polish.quality_loop.audit_pdf import (
 from pdf_html_polish.quality_loop.audit_polish_pair import (
     PolishPairAnalysisDeps,
     analyze_polish_pair as _analyze_polish_pair_base,
+)
+from pdf_html_polish.quality_loop.audit_polish_report import (
+    PolishAuditReportDeps,
+    build_polish_report as _build_polish_report_base,
 )
 from pdf_html_polish.quality_loop.audit_p04 import (
     MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
@@ -1145,6 +1148,18 @@ def _assemble_report(
     )
 
 
+def _polish_audit_report_deps() -> PolishAuditReportDeps:
+    return PolishAuditReportDeps(
+        find_pairs=find_pairs,
+        analyze_pair=analyze_pair,
+        add_corpus_hit_counts=_add_corpus_hit_counts,
+        assemble_report=_assemble_report,
+        write_json_report=_write_json_report,
+        article_name_from_stage=_article_name_from_stage,
+        pdf_diagnostics_cache_factory=PdfDiagnosticsCache,
+    )
+
+
 def build_report(
     roots: list[Path],
     *,
@@ -1155,93 +1170,15 @@ def build_report(
     jobs: int = 1,
     pdf_diagnostics_cache_dir: Path | None = None,
 ) -> dict[str, Any]:
-    pairs = find_pairs(roots)
-    progress_every = max(1, progress_write_every)
-    worker_count = max(1, int(jobs or 1))
-    articles_by_index: list[dict[str, Any] | None] = [None] * len(pairs)
-    pdf_diagnostics_cache = (
-        PdfDiagnosticsCache(pdf_diagnostics_cache_dir)
-        if enable_pdf_diagnostics and pdf_diagnostics_cache_dir is not None
-        else None
-    )
-
-    def completed_articles() -> list[dict[str, Any]]:
-        return [article for article in articles_by_index if article is not None]
-
-    def write_progress(completed: int) -> None:
-        if progress_out is None or not (completed % progress_every == 0 or completed == len(pairs)):
-            return
-        articles = completed_articles()
-        defect_counts = _add_corpus_hit_counts(articles)
-        partial_report = _assemble_report(
-            roots,
-            articles,
-            defect_counts,
-            audit_status=("complete" if completed == len(pairs) else "running"),
-            total_pair_count=len(pairs),
-        )
-        _write_json_report(progress_out, partial_report)
-        print(
-            f"Audit progress: {completed}/{len(pairs)} articles={len(articles)} "
-            f"defects={sum(len(article['defects_found']) for article in articles)}",
-            flush=True,
-        )
-
-    if worker_count <= 1 or len(pairs) <= 1:
-        for index, (raw_path, polish_path) in enumerate(pairs, 1):
-            articles_by_index[index - 1] = analyze_pair(
-                raw_path,
-                polish_path,
-                enable_pdf_diagnostics=enable_pdf_diagnostics,
-                pdf_path_override=(pdf_map or {}).get(_article_name_from_stage(raw_path)),
-                pdf_diagnostics_cache=pdf_diagnostics_cache,
-            )
-            write_progress(index)
-    else:
-        tasks = [
-            (
-                index,
-                raw_path,
-                polish_path,
-                enable_pdf_diagnostics,
-                str((pdf_map or {}).get(_article_name_from_stage(raw_path)) or ""),
-                pdf_diagnostics_cache,
-            )
-            for index, (raw_path, polish_path) in enumerate(pairs, 1)
-        ]
-        completed = 0
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [executor.submit(_analyze_pair_task, task) for task in tasks]
-            for future in as_completed(futures):
-                index, article = future.result()
-                articles_by_index[index - 1] = article
-                completed += 1
-                write_progress(completed)
-    articles = completed_articles()
-    defect_counts = _add_corpus_hit_counts(articles)
-    report = _assemble_report(
+    return _build_polish_report_base(
         roots,
-        articles,
-        defect_counts,
-        audit_status="complete",
-        total_pair_count=len(pairs),
-    )
-    if progress_out is not None:
-        _write_json_report(progress_out, report)
-    return report
-
-
-def _analyze_pair_task(task: tuple[int, Path, Path, bool, str, PdfDiagnosticsCache | None]) -> tuple[int, dict[str, Any]]:
-    index, raw_path, polish_path, enable_pdf_diagnostics, pdf_path, pdf_diagnostics_cache = task
-    return (
-        index,
-        analyze_pair(
-            raw_path,
-            polish_path,
-            enable_pdf_diagnostics=enable_pdf_diagnostics,
-            pdf_path_override=Path(pdf_path) if pdf_path else None,
-            pdf_diagnostics_cache=pdf_diagnostics_cache,
-        ),
+        deps=_polish_audit_report_deps(),
+        enable_pdf_diagnostics=enable_pdf_diagnostics,
+        pdf_map=pdf_map,
+        progress_out=progress_out,
+        progress_write_every=progress_write_every,
+        jobs=jobs,
+        pdf_diagnostics_cache_dir=pdf_diagnostics_cache_dir,
     )
 
 
