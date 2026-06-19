@@ -164,3 +164,6 @@ The cleanup policy is deliberately conservative:
 - Started `scripts/audit_en_raw.py` thinning by moving raw block parsing,
   snippet helpers, generic first-match defects, and UTF-8 read diagnostics into
   `quality_loop/audit_raw_blocks.py` with direct unit tests.
+- Moved EN raw image reference/sidecar summary and `R03` missing-image
+  diagnostics from `scripts/audit_en_raw.py` into
+  `quality_loop/audit_raw_images.py` with direct unit tests.
