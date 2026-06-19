@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import datetime, timezone
-from html import unescape
-from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -22,33 +20,24 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pdf_html_polish.html_stages import RAW_STAGE_NAME, article_name_from_html_stage  # noqa: E402
+from pdf_html_polish.quality_loop.audit_raw_blocks import (  # noqa: E402
+    Block,
+    BlockParser,
+    Defect,
+    first_match_defect as _first_match_defect,
+    line_at as _line_at,
+    normalize_ws as _normalize_ws,
+    parse_blocks as _parse_blocks,
+    read_utf8 as _read_utf8,
+    snippet_at as _snippet_at,
+    strip_tags as _strip_tags,
+)
 
 
 STAGE_NAME = RAW_STAGE_NAME
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
-BLOCK_TAGS = {
-    "address",
-    "blockquote",
-    "caption",
-    "dd",
-    "div",
-    "dt",
-    "figcaption",
-    "figure",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "li",
-    "p",
-    "td",
-    "th",
-}
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
-TAG_RE = re.compile(r"<[^>]+>")
 HTML_TAG_RE = re.compile(r"<html(?:\s|>)", re.IGNORECASE)
 BODY_TAG_RE = re.compile(r"<body(?:\s|>)", re.IGNORECASE)
 IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE | re.DOTALL)
@@ -89,191 +78,6 @@ FORMULA_UNIT_FRAGMENT_RE = re.compile(
     rf"\bm\s+(?:[{MICRO_CHARS}]|{MOJIBAKE_MICRO})\b)",
     re.IGNORECASE,
 )
-
-
-@dataclass
-class Block:
-    index: int
-    tag: str
-    text: str
-    has_img: bool
-    line: int
-
-
-@dataclass
-class Defect:
-    id: str
-    check: str
-    severity: str
-    snippet: str
-    line: int | None = None
-    first_broken_stage: str = STAGE_NAME
-    hypothesis: str = ""
-    same_pattern_hits_across_corpus: int | None = None
-    proposed_fix_layer: str = ""
-    regression_test: str = ""
-    status: str = "open"
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-class BlockParser(HTMLParser):
-    """Tiny block extractor for Marker HTML that keeps image proximity."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.blocks: list[Block] = []
-        self._current: dict[str, Any] | None = None
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        tag = tag.lower()
-        if tag in BLOCK_TAGS and self._current is None:
-            self._current = {
-                "tag": tag,
-                "parts": [],
-                "has_img": False,
-                "line": self.getpos()[0],
-            }
-        if self._current is not None:
-            if tag == "img":
-                self._current["has_img"] = True
-                self._current["parts"].append(" [IMG] ")
-            elif tag in {"br", "hr"}:
-                self._current["parts"].append(" ")
-
-    def handle_data(self, data: str) -> None:
-        if self._current is not None:
-            self._current["parts"].append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if self._current is not None and tag == self._current["tag"]:
-            self._finish_current()
-
-    def close(self) -> None:
-        super().close()
-        if self._current is not None:
-            self._finish_current()
-
-    def _finish_current(self) -> None:
-        current = self._current
-        if current is None:
-            return
-        text = _normalize_ws(" ".join(current["parts"]))
-        self.blocks.append(
-            Block(
-                index=len(self.blocks),
-                tag=current["tag"],
-                text=text,
-                has_img=bool(current["has_img"]),
-                line=int(current["line"]),
-            )
-        )
-        self._current = None
-
-
-def _normalize_ws(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _strip_tags(fragment: str) -> str:
-    return _normalize_ws(unescape(TAG_RE.sub(" ", fragment)))
-
-
-def _line_at(text: str, offset: int) -> int:
-    return text.count("\n", 0, offset) + 1
-
-
-def _snippet_at(text: str, start: int, end: int | None = None, *, width: int = 260) -> str:
-    end = start if end is None else end
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", end)
-    if line_end < 0:
-        line_end = len(text)
-    if line_end - line_start > width * 2:
-        context_start = max(line_start, start - width // 2)
-        context_end = min(line_end, end + width // 2)
-        snippet = _strip_tags(text[context_start:context_end])
-        if context_start > line_start:
-            snippet = "..." + snippet
-        if context_end < line_end:
-            snippet += "..."
-    else:
-        snippet = _strip_tags(text[line_start:line_end])
-    if len(snippet) <= width:
-        return snippet
-    return snippet[: width - 3].rstrip() + "..."
-
-
-def _first_match_defect(
-    *,
-    defect_id: str,
-    check: str,
-    severity: str,
-    pattern: re.Pattern[str],
-    text: str,
-    hypothesis: str,
-    proposed_fix_layer: str,
-    regression_test: str,
-    max_examples: int = 5,
-) -> Defect | None:
-    matches = list(pattern.finditer(text))
-    if not matches:
-        return None
-    first = matches[0]
-    return Defect(
-        id=defect_id,
-        check=check,
-        severity=severity,
-        snippet=_snippet_at(text, first.start(), first.end()),
-        line=_line_at(text, first.start()),
-        hypothesis=hypothesis,
-        proposed_fix_layer=proposed_fix_layer,
-        regression_test=regression_test,
-        extra={
-            "count": len(matches),
-            "examples": [
-                _snippet_at(text, match.start(), match.end(), width=180)
-                for match in matches[:max_examples]
-            ],
-        },
-    )
-
-
-def _read_utf8(path: Path) -> tuple[bytes, str, Defect | None]:
-    data = path.read_bytes()
-    if not data:
-        return data, "", Defect(
-            id="R01",
-            check="File exists, is non-empty, UTF-8 readable",
-            severity="error",
-            snippet="empty file",
-            line=None,
-            hypothesis="The EN raw stage artifact was not written correctly.",
-            proposed_fix_layer="pipeline stage artifact creation",
-            regression_test="Run the EN raw audit over the same article after re-export.",
-        )
-    try:
-        return data, data.decode("utf-8"), None
-    except UnicodeDecodeError as exc:
-        text = data.decode("utf-8", errors="replace")
-        return data, text, Defect(
-            id="R01",
-            check="File exists, is non-empty, UTF-8 readable",
-            severity="error",
-            snippet=str(exc),
-            line=None,
-            hypothesis="The EN raw artifact is not valid UTF-8.",
-            proposed_fix_layer="Marker output capture or stage writer",
-            regression_test="Run the EN raw audit and require UTF-8 decoding to pass.",
-            extra={"decode_error": str(exc)},
-        )
-
-
-def _parse_blocks(text: str) -> list[Block]:
-    parser = BlockParser()
-    parser.feed(text)
-    parser.close()
-    return parser.blocks
 
 
 def _image_refs(text: str) -> list[str]:
