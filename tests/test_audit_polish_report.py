@@ -5,6 +5,8 @@ from pdf_html_polish.quality_loop.audit_polish_report import (
     PolishAuditReportDeps,
     build_polish_report,
     merge_targeted_polish_report,
+    polish_report_summary_lines,
+    print_polish_report_summary,
 )
 
 
@@ -208,3 +210,50 @@ def test_merge_targeted_polish_report_allows_new_articles_when_requested(tmp_pat
     assert merged["targeted_audit"]["new_articles"] == ["Article new"]
     assert merged["targeted_audit"]["new_article_count"] == 1
     assert merged["corpus_summary"]["defect_counts"] == {"P05": 1}
+
+
+def test_polish_report_summary_lines_include_totals_defects_and_articles(capsys) -> None:
+    report = {
+        "article_count": 1,
+        "corpus_summary": {
+            "totals": {
+                "raw_img_tags": 1,
+                "polish_img_tags": 2,
+                "polish_ref_links": 3,
+                "polish_fig_links": 4,
+                "polish_table_links": 5,
+                "polish_page_links": 6,
+                "polish_replacement_chars": 7,
+                "polish_missing_local_images": 8,
+            },
+            "defect_counts": {"P04": 2, "P05": 1},
+        },
+        "articles": [
+            {
+                "article": "Article one",
+                "summary": {
+                    "raw_blocks": 10,
+                    "polish_blocks": 11,
+                    "raw_img_tags": 1,
+                    "polish_img_tags": 2,
+                    "polish_missing_local_images": 3,
+                    "polish_ref_links": 4,
+                    "polish_fig_links": 5,
+                    "polish_page_links": 6,
+                    "polish_replacement_chars": 7,
+                },
+                "defects_found": [{"id": "P04"}],
+            }
+        ],
+    }
+
+    lines = polish_report_summary_lines(report)
+    print_polish_report_summary(report)
+
+    assert lines == [
+        "EN raw/polish pair audit: 1 pair(s)",
+        "Totals: raw_img=1 polish_img=2 ref_links=3 fig_links=4 table_links=5 page_links=6 bad_chars=7 missing_img=8",
+        "Defects by check: P04=2, P05=1",
+        "- Article one: blocks=10->11 img=1->2 missing_img=3 refs=4 fig_links=5 page_links=6 bad_chars=7 defects=1",
+    ]
+    assert capsys.readouterr().out.splitlines() == lines

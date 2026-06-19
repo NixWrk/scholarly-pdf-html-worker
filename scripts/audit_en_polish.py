@@ -158,6 +158,7 @@ from pdf_html_polish.quality_loop.audit_polish_report import (
     PolishAuditReportDeps,
     build_polish_report as _build_polish_report_base,
     merge_targeted_polish_report as _merge_targeted_report_base,
+    print_polish_report_summary as _print_summary,
 )
 from pdf_html_polish.quality_loop.audit_p04 import (
     MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
@@ -1197,52 +1198,6 @@ def merge_targeted_report(
         previous_report_path=previous_report_path,
         allow_new_articles=allow_new_articles,
     )
-
-
-def _safe_print(text: str) -> None:
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        encoding = sys.stdout.encoding or "utf-8"
-        if hasattr(sys.stdout, "buffer"):
-            sys.stdout.buffer.write((text + "\n").encode(encoding, errors="replace"))
-            sys.stdout.flush()
-        else:  # pragma: no cover - unusual redirected stdout implementation
-            print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
-
-
-def _print_summary(report: dict[str, Any]) -> None:
-    _safe_print(f"EN raw/polish pair audit: {report['article_count']} pair(s)")
-    totals = report["corpus_summary"]["totals"]
-    _safe_print(
-        "Totals: "
-        f"raw_img={totals['raw_img_tags']} "
-        f"polish_img={totals['polish_img_tags']} "
-        f"ref_links={totals['polish_ref_links']} "
-        f"fig_links={totals['polish_fig_links']} "
-        f"table_links={totals['polish_table_links']} "
-        f"page_links={totals['polish_page_links']} "
-        f"bad_chars={totals['polish_replacement_chars']} "
-        f"missing_img={totals['polish_missing_local_images']}"
-    )
-    defect_counts = report["corpus_summary"]["defect_counts"]
-    if defect_counts:
-        _safe_print("Defects by check: " + ", ".join(f"{key}={value}" for key, value in sorted(defect_counts.items())))
-    else:
-        _safe_print("Defects by check: none")
-    for article in report["articles"]:
-        summary = article["summary"]
-        _safe_print(
-            f"- {article['article']}: "
-            f"blocks={summary['raw_blocks']}->{summary['polish_blocks']} "
-            f"img={summary['raw_img_tags']}->{summary['polish_img_tags']} "
-            f"missing_img={summary['polish_missing_local_images']} "
-            f"refs={summary['polish_ref_links']} "
-            f"fig_links={summary['polish_fig_links']} "
-            f"page_links={summary['polish_page_links']} "
-            f"bad_chars={summary['polish_replacement_chars']} "
-            f"defects={len(article['defects_found'])}"
-        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
