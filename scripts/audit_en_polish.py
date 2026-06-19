@@ -24,9 +24,6 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     Block,
     Defect,
     attrs as _attrs,
-    diagnostic_text as _diagnostic_text,
-    diagnostic_word_text as _diagnostic_word_text,
-    diagnostic_words as _diagnostic_words,
     line_at as _line_at,
     line_at_from_starts as _line_at_from_starts,
     line_starts as _line_starts,
@@ -41,7 +38,6 @@ from pdf_html_polish.quality_loop.audit_blocks import (
     structure_html as _structure_html,
     unit_diagnostic_text_from_html as _unit_diagnostic_text_from_html,
     visible_ref_number_from_match as _visible_ref_number_from_match,
-    word_sequence_match as _word_sequence_match,
 )
 from pdf_html_polish.quality_loop.audit_images import (
     IMG_SRC_RE,
@@ -65,6 +61,9 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     PAGE_FURNITURE_CONTINUATION_RE,
     TABLE_CAPTION_NODE_RE,
     figure_caption_ux_defects as _figure_caption_ux_defects_base,
+)
+from pdf_html_polish.quality_loop.audit_float_gap import (
+    source_pdf_text_confirms_float_gap as _source_pdf_text_confirms_float_gap,
 )
 from pdf_html_polish.quality_loop.audit_reference_identity import (
     DOI_ONLY_METADATA_RE,
@@ -865,62 +864,6 @@ def _bibliography_numbering_residue_is_clean_reference_boundary(
         if re.search(rf"\b{number}\.\s+{re.escape(name)}", li_text) is None:
             return False
     return True
-
-
-def _source_pdf_text_confirms_float_gap(left_text: str, right_text: str, pdf_text: str) -> bool:
-    """Return true when the source PDF text layer has float material between fragments."""
-    if not pdf_text.strip():
-        return False
-    left_diag = _diagnostic_text(left_text)
-    right_word_diag = _diagnostic_word_text(right_text)
-    pdf_diag = _diagnostic_text(pdf_text)
-    pdf_word_diag = _diagnostic_word_text(pdf_text)
-    if (
-        "this feature makes these coils" in left_diag
-        and "positive depending" in right_word_diag
-        and "table 1" in pdf_diag
-        and "negative or" in pdf_diag
-    ):
-        return True
-    if (
-        "no tumors developed in either" in left_diag
-        and "sham or field exposed animals" in right_word_diag
-        and "figure 7" in pdf_word_diag
-    ):
-        return True
-    left_words = _diagnostic_words(left_text)[-9:]
-    right_words = _diagnostic_words(right_text)[:9]
-    if len(left_words) < 3 or len(right_words) < 3:
-        return False
-
-    pdf_words_text = pdf_word_diag
-    left_match = _word_sequence_match(pdf_words_text, left_words)
-    if left_match is None and len(left_words) > 5:
-        left_words = left_words[-5:]
-        left_match = _word_sequence_match(pdf_words_text, left_words)
-    if left_match is None:
-        return False
-
-    right_match = _word_sequence_match(pdf_words_text, right_words, start=left_match.end())
-    if right_match is None and len(right_words) > 5:
-        right_words = right_words[:5]
-        right_match = _word_sequence_match(pdf_words_text, right_words, start=left_match.end())
-    if right_match is None:
-        return False
-    if right_match.start() - left_match.end() > 12000:
-        return False
-
-    between = pdf_words_text[left_match.end() : right_match.start()]
-    if len(_diagnostic_words(between)) < 3:
-        return False
-    return bool(
-        re.search(
-            r"\b(?:fig(?:ure)?|table)\s+\d+[a-z]?\b|"
-            r"\b(?:path\s+taken|directed\s+navigation|game|jewel|player|monster|exit|control)\b",
-            between,
-            re.IGNORECASE,
-        )
-    )
 
 
 def _source_pdf_path(raw_path: Path) -> Path:
