@@ -167,3 +167,6 @@ The cleanup policy is deliberately conservative:
 - Moved EN raw image reference/sidecar summary and `R03` missing-image
   diagnostics from `scripts/audit_en_raw.py` into
   `quality_loop/audit_raw_images.py` with direct unit tests.
+- Moved EN raw structural checks (`R02`, `R05`, `R06`, `R13`) and small
+  anchor/reference/mojibake summaries from `scripts/audit_en_raw.py` into
+  `quality_loop/audit_raw_checks.py` with direct unit tests.
