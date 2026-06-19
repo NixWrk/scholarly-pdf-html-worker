@@ -124,3 +124,5 @@ The cleanup policy is deliberately conservative:
 - Moved `MeineRecentLinkDeps` citation/reference callbacks from
   `scripts/audit_en_polish.py` into `quality_loop/audit_citation_style.py`
   with direct unit tests.
+- Moved figure-caption classifiers from `scripts/audit_en_polish.py` into
+  `quality_loop/audit_figure_caption_ux.py` with direct unit tests.
