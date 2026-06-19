@@ -64,10 +64,15 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     BIORENDER_CAPTION_URL_RE,
     CAPTION_INTRUSION_RE,
     CAPTION_TEX_RESIDUE_RE,
+    FIGURE_CAPTION_NODE_RE,
     MULTIPANEL_FIG_REF_RE,
     PAGE_FURNITURE_CONTINUATION_RE,
+    TABLE_CAPTION_RE,
     TABLE_CAPTION_NODE_RE,
+    figure_caption_number_from_caption_node as _figure_caption_number_from_caption_node,
+    figure_unit_allows_shared_image_alias as _figure_unit_allows_shared_image_alias,
     figure_caption_ux_defects as _figure_caption_ux_defects_base,
+    looks_like_figure_caption as _looks_like_figure_caption,
 )
 from pdf_html_polish.quality_loop.audit_float_gap import (
     source_pdf_text_confirms_float_gap as _source_pdf_text_confirms_float_gap,
@@ -197,8 +202,6 @@ MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
     r"\s*[A-Za-z0-9][^<]{0,120}</a>",
     re.IGNORECASE | re.DOTALL,
 )
-FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
-TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
 CITATION_RANGE_LIST_RE = re.compile(
     r"\[\s*\d+\s*(?:[-\u2013]\s*\d+|,\s*\d+)"
     r"(?:\s*,\s*\d+(?:\s*[-\u2013]\s*\d+)?)*\s*\]"
@@ -685,10 +688,6 @@ FIGURE_UNIT_RE = re.compile(
 IMMEDIATE_EXTERNAL_FIGURE_CAPTION_RE = re.compile(
     r"^\s*(?:<p\b[^>]*>(?:(?!</p>)[\s\S])*<img\b(?:(?!</p>)[\s\S])*</p>\s*)?"
     r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>(?P<body>.*?)</p>",
-    re.IGNORECASE | re.DOTALL,
-)
-FIGURE_CAPTION_NODE_RE = re.compile(
-    r"<(?:p|h[1-6])\b(?=[^>]*\bz2m-figure-caption\b)[^>]*>(?P<body>.*?)</(?:p|h[1-6])>",
     re.IGNORECASE | re.DOTALL,
 )
 TABLE_DOI_APPEND_RE = re.compile(
@@ -1212,140 +1211,6 @@ def _unlinked_citation_range_kind(block: Block) -> str:
 
 def _unlinked_citation_candidate_numbers(block: Block) -> list[int]:
     return _unlinked_citation_candidate_numbers_base(block)
-
-
-def _looks_like_figure_prose_reference_text(text: str) -> bool:
-    figure_label = (
-        r"(?:\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z](?:\s*,\s*[A-Za-z])?)?|"
-        r"\d+\s*\([A-Za-z]\))"
-    )
-    if re.match(
-        rf"^\s*(?:Figure|Fig\.?|FIGURE)\s+{figure_label}\s*(?:[,.;:]\s*)?"
-        r"(?:visually\s+)?(?:provides?|depicts?|is|are|was|were|demonstrates?|summari[sz]es?|"
-        r"shows?|showcases?|illustrates?|represents?|presents?|plots?|visuali[sz]es?|displays?|"
-        r"maps?|describes?|examines?|suggests?|validates?|details?|exemplif(?:y|ies)|reveals?|"
-        r"highlights?|contrasts?|compares?)\b",
-        text,
-        re.IGNORECASE,
-    ):
-        return True
-    if re.match(
-        rf"^\s*(?:Figure|Fig\.?|FIGURE)\s+{figure_label}\s*"
-        r"\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
-        r"same|both|all|main|inset|side|front|back|first|second|third)"
-        r"[\s\S]{0,80}\)\s+"
-        r"(?:provides?|depicts?|is|are|shows?|illustrates?|represents?|presents?)\b",
-        text,
-        re.IGNORECASE,
-    ):
-        return True
-    label_hits = re.findall(r"\b(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE)
-    if len(label_hits) >= 2 and re.search(r"\b\d{1,4}\s+(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE):
-        return True
-    if re.fullmatch(r"\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z])?\s*\.?\s*", text, re.IGNORECASE):
-        return True
-    return False
-
-
-def _looks_like_figure_caption(block: Block) -> bool:
-    if block.id.startswith("fig-"):
-        return True
-    if FIG_CAPTION_RE.match(block.text) is None:
-        return False
-    if not (block.classes & {"z2m-figure-caption", "z2m-figure-target"}) and _looks_like_figure_prose_reference_text(block.text):
-        return False
-    if re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+\s*"
-        r"\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
-        r"same|both|all|main|inset|side|front|back|first|second|third)"
-        r"(?:\s+(?:and|or|/)?\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
-        r"same|both|all|main|inset|side|front|back|first|second|third|panels?|panel|plots?|plot|images?|image))*"
-        r"\s*\)\s+"
-        r"(?:shows?|depicts?|illustrates?|examines?|suggests?|indicates?|presents?|represents?|validates?|details?|exemplif(?:y|ies))\b",
-        block.text,
-        re.IGNORECASE,
-    ):
-        return False
-    if re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\s*[\-\u2010-\u2014]\s*(?:\d+\s*)?[A-Za-z]\s+"
-        r"(?:shows?|depicts?|illustrates?|examines?|suggests?|indicates?|presents?|represents?|validates?|details?|exemplif(?:y|ies))\b",
-        block.text,
-        re.IGNORECASE,
-    ):
-        return False
-    return re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?\s+"
-        r"(?:shows|showed|showcases|illustrates|presents|contains|plots|visualizes|visualises|"
-        r"displays|maps|describes|examines|suggests|validates|details|exemplifies|represents|reveals|highlights)\b",
-        block.text,
-        re.IGNORECASE,
-    ) is None and re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?"
-        r"\s+(?:and|or|,|&)\s+[A-Za-z]\s+(?:shows?|depicts?|illustrates?|examines?|suggests?|validates?|details?|exemplif(?:y|ies))\b",
-        block.text,
-        re.IGNORECASE,
-    ) is None
-
-
-def _figure_caption_number_from_caption_node(raw_body: str) -> int | None:
-    text = _strip_tags(raw_body)
-    match = re.match(r"\s*(?:Fig\.?|Figure|FIGURE)\s+(\d+)\b(?P<tail>[\s\S]*)$", text, re.IGNORECASE)
-    if match is None:
-        return None
-    tail = match.group("tail").lstrip()
-    if not tail or tail[:1] not in ".:|-":
-        return None
-    return int(match.group(1))
-
-
-def _figure_caption_numbers_from_caption_node(raw_body: str) -> set[int]:
-    text = _strip_tags(raw_body)
-    label_re = re.compile(
-        r"\b(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*"
-        r"(?P<num>\d{1,3})(?!\d)(?![.-]\d)"
-        r"(?:\s*(?:[\.:|]|[-\u2010\u2011\u2012\u2013\u2014]))",
-        re.IGNORECASE,
-    )
-    skip_left_context = re.compile(
-        r"\b(?:as|see|shown|showing|participant|panel|panels?|same|in|of|from|with|"
-        r"extended\s+data|supplementary|supplemental)\s+$",
-        re.IGNORECASE,
-    )
-    numbers: set[int] = set()
-    for match in label_re.finditer(text):
-        left_context = text[max(0, match.start() - 36):match.start()]
-        if skip_left_context.search(left_context):
-            continue
-        numbers.add(int(match.group("num")))
-    return numbers
-
-
-def _figure_unit_allows_shared_image_alias(body: str, wrapper_num: int, unrelated: list[int]) -> bool:
-    if not unrelated:
-        return False
-    image_count = len(re.findall(r"<img\b", body, re.IGNORECASE))
-    if image_count < 1:
-        return False
-    float_alias_nums = {
-        int(number)
-        for number in re.findall(
-            r"<span\b(?=[^>]*\bz2m-float-alias\b)[^>]*\bid\s*=\s*['\"]fig-(\d+)['\"]",
-            body,
-            re.IGNORECASE,
-        )
-    }
-    caption_nums = {
-        number
-        for caption_match in FIGURE_CAPTION_NODE_RE.finditer(body)
-        for number in _figure_caption_numbers_from_caption_node(caption_match.group("body"))
-    }
-    expected = set(unrelated)
-    if not expected.issubset(float_alias_nums) or not expected.issubset(caption_nums):
-        return False
-    all_caption_nums = sorted(caption_nums | {wrapper_num})
-    if image_count > len(all_caption_nums):
-        return False
-    return all_caption_nums == list(range(min(all_caption_nums), max(all_caption_nums) + 1))
 
 
 def _looks_like_float_or_caption(block: Block) -> bool:

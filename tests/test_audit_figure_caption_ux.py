@@ -3,7 +3,11 @@ import re
 from pdf_html_polish.quality_loop.audit_blocks import Block, parse_blocks
 from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     CAPTION_TEX_RESIDUE_RE,
+    figure_caption_number_from_caption_node,
+    figure_caption_numbers_from_caption_node,
     figure_caption_ux_defects,
+    figure_unit_allows_shared_image_alias,
+    looks_like_figure_caption,
 )
 
 
@@ -13,6 +17,15 @@ def _looks_like_figure_caption(block: Block) -> bool:
         or "z2m-figure-caption" in block.classes
         or re.match(r"^\s*(?:Figure|Fig\.?)\s+\d+", block.text, re.IGNORECASE) is not None
     )
+
+
+def _block(text: str, *, id_: str = "", classes: str = "") -> Block:
+    attrs = {}
+    if id_:
+        attrs["id"] = id_
+    if classes:
+        attrs["class"] = classes
+    return Block(index=0, tag="p", attrs=attrs, raw=f"<p>{text}</p>", text=text, line=1)
 
 
 def _defects(html: str, *, has_internal_links: bool = False) -> list[str]:
@@ -40,6 +53,34 @@ def test_figure_caption_ux_reports_caption_tex_residue() -> None:
     ids = _defects('<p id="fig-1" class="z2m-figure-caption">Figure 1. Caption \\label{fig:a}</p>')
 
     assert "P12" in ids
+
+
+def test_looks_like_figure_caption_rejects_prose_reference_text() -> None:
+    caption = _block("Figure 1. A real caption sentence.")
+    prose = _block("Figure 1 shows the measured response in the sample.")
+
+    assert looks_like_figure_caption(caption)
+    assert not looks_like_figure_caption(prose)
+
+
+def test_figure_caption_number_from_caption_node_requires_caption_separator() -> None:
+    assert figure_caption_number_from_caption_node("Figure 12. Response map.") == 12
+    assert figure_caption_number_from_caption_node("Figure 12 shows a response map.") is None
+
+
+def test_figure_caption_numbers_from_caption_node_ignores_cross_reference_context() -> None:
+    assert figure_caption_numbers_from_caption_node("Figure 4. Main. See Figure 5. elsewhere.") == {4}
+
+
+def test_figure_unit_allows_shared_image_alias_for_contiguous_caption_aliases() -> None:
+    body = (
+        '<p><img src="fig1.png"></p>'
+        '<span class="z2m-float-alias" id="fig-2"></span>'
+        '<p class="z2m-figure-caption">Figure 2. Alias caption.</p>'
+    )
+
+    assert figure_unit_allows_shared_image_alias(body, 1, [2])
+    assert not figure_unit_allows_shared_image_alias(body, 1, [3])
 
 
 def test_figure_caption_ux_reports_caption_without_image() -> None:

@@ -5,11 +5,12 @@ from collections.abc import Callable
 import re
 
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME
-from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, plain_text, snippet
+from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, plain_text, snippet, strip_tags
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEADING_RE
 
 
+FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
 TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
 MULTIPANEL_FIG_REF_RE = re.compile(
     r"\bfigures?\s+\d+\s*\([A-Za-z]\)\s*,\s*\([A-Za-z]\)",
@@ -44,6 +45,10 @@ TABLE_CAPTION_NODE_RE = re.compile(
     r"<(?P<tag>p|h[1-6]|figcaption)\b(?=[^>]*\bz2m-table-caption\b)[^>]*>"
     r"[\s\S]*?</(?P=tag)>",
     re.IGNORECASE,
+)
+FIGURE_CAPTION_NODE_RE = re.compile(
+    r"<(?:p|h[1-6])\b(?=[^>]*\bz2m-figure-caption\b)[^>]*>(?P<body>.*?)</(?:p|h[1-6])>",
+    re.IGNORECASE | re.DOTALL,
 )
 BIORENDER_CAPTION_URL_RE = re.compile(r"BioRender\.com/", re.IGNORECASE)
 BIORENDER_CAPTION_SPLIT_RE = re.compile(
@@ -89,6 +94,146 @@ def looks_like_body_figure_reference_list(block: Block) -> bool:
     if len(BODY_FIGURE_TABLE_REF_RE.findall(head)) < 2:
         return False
     return bool(BODY_FIGURE_REFERENCE_PROSE_VERB_RE.search(head))
+
+
+def looks_like_figure_prose_reference_text(text: str) -> bool:
+    figure_label = (
+        r"(?:\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z](?:\s*,\s*[A-Za-z])?)?|"
+        r"\d+\s*\([A-Za-z]\))"
+    )
+    if re.match(
+        rf"^\s*(?:Figure|Fig\.?|FIGURE)\s+{figure_label}\s*(?:[,.;:]\s*)?"
+        r"(?:visually\s+)?(?:provides?|depicts?|is|are|was|were|demonstrates?|summari[sz]es?|"
+        r"shows?|showcases?|illustrates?|represents?|presents?|plots?|visuali[sz]es?|displays?|"
+        r"maps?|describes?|examines?|suggests?|validates?|details?|exemplif(?:y|ies)|reveals?|"
+        r"highlights?|contrasts?|compares?)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        rf"^\s*(?:Figure|Fig\.?|FIGURE)\s+{figure_label}\s*"
+        r"\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
+        r"same|both|all|main|inset|side|front|back|first|second|third)"
+        r"[\s\S]{0,80}\)\s+"
+        r"(?:provides?|depicts?|is|are|shows?|illustrates?|represents?|presents?)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return True
+    label_hits = re.findall(r"\b(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE)
+    if len(label_hits) >= 2 and re.search(r"\b\d{1,4}\s+(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE):
+        return True
+    if re.fullmatch(r"\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z])?\s*\.?\s*", text, re.IGNORECASE):
+        return True
+    return False
+
+
+def looks_like_figure_caption(block: Block, *, fig_caption_re: re.Pattern[str] = FIG_CAPTION_RE) -> bool:
+    if block.id.startswith("fig-"):
+        return True
+    if fig_caption_re.match(block.text) is None:
+        return False
+    if not (block.classes & {"z2m-figure-caption", "z2m-figure-target"}) and looks_like_figure_prose_reference_text(block.text):
+        return False
+    if re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+\s*"
+        r"\(\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
+        r"same|both|all|main|inset|side|front|back|first|second|third)"
+        r"(?:\s+(?:and|or|/)?\s*(?:left|right|top|bottom|upper|lower|central|center|middle|"
+        r"same|both|all|main|inset|side|front|back|first|second|third|panels?|panel|plots?|plot|images?|image))*"
+        r"\s*\)\s+"
+        r"(?:shows?|depicts?|illustrates?|examines?|suggests?|indicates?|presents?|represents?|validates?|details?|exemplif(?:y|ies))\b",
+        block.text,
+        re.IGNORECASE,
+    ):
+        return False
+    if re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\s*[\-\u2010-\u2014]\s*(?:\d+\s*)?[A-Za-z]\s+"
+        r"(?:shows?|depicts?|illustrates?|examines?|suggests?|indicates?|presents?|represents?|validates?|details?|exemplif(?:y|ies))\b",
+        block.text,
+        re.IGNORECASE,
+    ):
+        return False
+    return re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?\s+"
+        r"(?:shows|showed|showcases|illustrates|presents|contains|plots|visualizes|visualises|"
+        r"displays|maps|describes|examines|suggests|validates|details|exemplifies|represents|reveals|highlights)\b",
+        block.text,
+        re.IGNORECASE,
+    ) is None and re.match(
+        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?"
+        r"\s+(?:and|or|,|&)\s+[A-Za-z]\s+(?:shows?|depicts?|illustrates?|examines?|suggests?|validates?|details?|exemplif(?:y|ies))\b",
+        block.text,
+        re.IGNORECASE,
+    ) is None
+
+
+def figure_caption_number_from_caption_node(raw_body: str) -> int | None:
+    text = strip_tags(raw_body)
+    match = re.match(r"\s*(?:Fig\.?|Figure|FIGURE)\s+(\d+)\b(?P<tail>[\s\S]*)$", text, re.IGNORECASE)
+    if match is None:
+        return None
+    tail = match.group("tail").lstrip()
+    if not tail or tail[:1] not in ".:|-":
+        return None
+    return int(match.group(1))
+
+
+def figure_caption_numbers_from_caption_node(raw_body: str) -> set[int]:
+    text = strip_tags(raw_body)
+    label_re = re.compile(
+        r"\b(?:FIG(?:URE)?|Fig(?:ure)?|Figure)\.?\s*"
+        r"(?P<num>\d{1,3})(?!\d)(?![.-]\d)"
+        r"(?:\s*(?:[\.:|]|[-\u2010\u2011\u2012\u2013\u2014]))",
+        re.IGNORECASE,
+    )
+    skip_left_context = re.compile(
+        r"\b(?:as|see|shown|showing|participant|panel|panels?|same|in|of|from|with|"
+        r"extended\s+data|supplementary|supplemental)\s+$",
+        re.IGNORECASE,
+    )
+    numbers: set[int] = set()
+    for match in label_re.finditer(text):
+        left_context = text[max(0, match.start() - 36) : match.start()]
+        if skip_left_context.search(left_context):
+            continue
+        numbers.add(int(match.group("num")))
+    return numbers
+
+
+def figure_unit_allows_shared_image_alias(
+    body: str,
+    wrapper_num: int,
+    unrelated: list[int],
+    *,
+    figure_caption_node_re: re.Pattern[str] = FIGURE_CAPTION_NODE_RE,
+) -> bool:
+    if not unrelated:
+        return False
+    image_count = len(re.findall(r"<img\b", body, re.IGNORECASE))
+    if image_count < 1:
+        return False
+    float_alias_nums = {
+        int(number)
+        for number in re.findall(
+            r"<span\b(?=[^>]*\bz2m-float-alias\b)[^>]*\bid\s*=\s*['\"]fig-(\d+)['\"]",
+            body,
+            re.IGNORECASE,
+        )
+    }
+    caption_nums = {
+        number
+        for caption_match in figure_caption_node_re.finditer(body)
+        for number in figure_caption_numbers_from_caption_node(caption_match.group("body"))
+    }
+    expected = set(unrelated)
+    if not expected.issubset(float_alias_nums) or not expected.issubset(caption_nums):
+        return False
+    all_caption_nums = sorted(caption_nums | {wrapper_num})
+    if image_count > len(all_caption_nums):
+        return False
+    return all_caption_nums == list(range(min(all_caption_nums), max(all_caption_nums) + 1))
 
 
 def figure_caption_ux_defects(
