@@ -78,29 +78,29 @@ from pdf_html_polish.quality_loop.pdf_utils import (  # noqa: E402
 )
 from pdf_html_polish.quality_loop.pdf_reference_recovery import (  # noqa: E402
     enrich_profile_with_pdf_reference_entries_if_needed as _enrich_profile_with_pdf_reference_entries_if_needed_impl,
-    expand_reference_candidate_numbers as _expand_reference_candidate_numbers_impl,
-    pdf_reference_recovery_numbers as _pdf_reference_recovery_numbers_impl,
-    plain_reference_candidate_is_safe as _plain_reference_candidate_is_safe_impl,
-    profile_has_reference_entries as _profile_has_reference_entries_impl,
-    reference_entry_record as _reference_entry_record_impl,
-    reference_id_gap_numbers as _reference_id_gap_numbers_impl,
-    reference_id_numbers as _reference_id_numbers_impl,
-    reference_recovery_block_is_protected as _reference_recovery_block_is_protected_impl,
-    unlinked_body_reference_candidate_numbers as _unlinked_body_reference_candidate_numbers_impl,
+    expand_reference_candidate_numbers as _expand_reference_candidate_numbers,
+    pdf_reference_recovery_numbers as _pdf_reference_recovery_numbers,
+    plain_reference_candidate_is_safe as _plain_reference_candidate_is_safe,
+    profile_has_reference_entries as _profile_has_reference_entries,
+    reference_entry_record as _reference_entry_record,
+    reference_id_gap_numbers as _reference_id_gap_numbers,
+    reference_id_numbers as _reference_id_numbers,
+    reference_recovery_block_is_protected as _reference_recovery_block_is_protected,
+    unlinked_body_reference_candidate_numbers as _unlinked_body_reference_candidate_numbers,
 )
 from pdf_html_polish.quality_loop.polish_auto_repair import (  # noqa: E402
-    assessment_articles_by_broken_internal_links as _assessment_articles_by_broken_internal_links_impl,
-    audit_articles_by_auto_repair_need as _audit_articles_by_auto_repair_need_impl,
-    audit_defect_ids as _audit_defect_ids_impl,
-    relink_external_numeric_citation_anchors as _relink_external_numeric_citation_anchors_impl,
-    relink_spaced_multipanel_figure_refs as _relink_spaced_multipanel_figure_refs_impl,
-    repair_flattened_unit_exponents as _repair_flattened_unit_exponents_impl,
-    repair_second_echelon_ocr_residue as _repair_second_echelon_ocr_residue_impl,
-    repair_visible_reference_numbers as _repair_visible_reference_numbers_impl,
-    unwrap_broken_internal_links as _unwrap_broken_internal_links_impl,
-    unwrap_author_year_numeric_ref_links as _unwrap_author_year_numeric_ref_links_impl,
-    unwrap_author_year_ref_anchors as _unwrap_author_year_ref_anchors_impl,
-    visible_ref_prefix_number as _visible_ref_prefix_number_impl,
+    assessment_articles_by_broken_internal_links as _assessment_articles_by_broken_internal_links,
+    audit_articles_by_auto_repair_need as _audit_articles_by_auto_repair_need,
+    audit_defect_ids as _audit_defect_ids,
+    relink_external_numeric_citation_anchors as _relink_external_numeric_citation_anchors,
+    relink_spaced_multipanel_figure_refs as _relink_spaced_multipanel_figure_refs,
+    repair_flattened_unit_exponents as _repair_flattened_unit_exponents,
+    repair_second_echelon_ocr_residue as _repair_second_echelon_ocr_residue,
+    repair_visible_reference_numbers as _repair_visible_reference_numbers,
+    unwrap_broken_internal_links as _unwrap_broken_internal_links,
+    unwrap_author_year_numeric_ref_links as _unwrap_author_year_numeric_ref_links,
+    unwrap_author_year_ref_anchors as _unwrap_author_year_ref_anchors,
+    visible_ref_prefix_number as _visible_ref_prefix_number,
 )
 from pdf_html_polish.quality_loop.resolver_decisions import (  # noqa: E402
     ARTICLE_SLOT_REPAIR_DECISION_NAMES,
@@ -1063,54 +1063,6 @@ def _refresh_assessment_for_articles(run_dir: Path, article_ids: Iterable[str]) 
     }
     _write_json(run_dir / "assessment.json", refreshed_assessment)
     return refreshed_assessment
-
-
-def _audit_defect_ids(article: dict[str, Any]) -> set[str]:
-    return _audit_defect_ids_impl(article)
-
-
-def _audit_articles_by_auto_repair_need(audit_report: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return _audit_articles_by_auto_repair_need_impl(audit_report)
-
-
-def _assessment_articles_by_broken_internal_links(assessment: dict[str, Any]) -> dict[str, int]:
-    return _assessment_articles_by_broken_internal_links_impl(assessment)
-
-
-def _visible_ref_prefix_number(text: str) -> int | None:
-    return _visible_ref_prefix_number_impl(text)
-
-
-def _repair_visible_reference_numbers(html: str) -> tuple[str, int]:
-    return _repair_visible_reference_numbers_impl(html)
-
-
-def _relink_spaced_multipanel_figure_refs(html: str) -> tuple[str, int]:
-    return _relink_spaced_multipanel_figure_refs_impl(html)
-
-
-def _repair_second_echelon_ocr_residue(html: str) -> tuple[str, int]:
-    return _repair_second_echelon_ocr_residue_impl(html)
-
-
-def _repair_flattened_unit_exponents(html: str) -> tuple[str, int]:
-    return _repair_flattened_unit_exponents_impl(html)
-
-
-def _unwrap_broken_internal_links(html: str) -> tuple[str, int]:
-    return _unwrap_broken_internal_links_impl(html)
-
-
-def _relink_external_numeric_citation_anchors(html: str) -> tuple[str, int]:
-    return _relink_external_numeric_citation_anchors_impl(html)
-
-
-def _unwrap_author_year_numeric_ref_links(html: str) -> tuple[str, int]:
-    return _unwrap_author_year_numeric_ref_links_impl(html)
-
-
-def _unwrap_author_year_ref_anchors(html: str) -> tuple[str, int]:
-    return _unwrap_author_year_ref_anchors_impl(html)
 
 
 def write_polish_auto_repair_stage(
@@ -2419,42 +2371,6 @@ def _converted_manifest_by_pair(manifest: dict[str, Any]) -> dict[tuple[str, str
         if raw_path and polish_path:
             articles[(raw_path, polish_path)] = article
     return articles
-
-
-def _reference_id_numbers(html: str) -> list[int]:
-    return _reference_id_numbers_impl(html)
-
-
-def _reference_id_gap_numbers(html: str) -> list[int]:
-    return _reference_id_gap_numbers_impl(html)
-
-
-def _expand_reference_candidate_numbers(value: str) -> list[int]:
-    return _expand_reference_candidate_numbers_impl(value)
-
-
-def _plain_reference_candidate_is_safe(text: str, match: re.Match[str]) -> bool:
-    return _plain_reference_candidate_is_safe_impl(text, match)
-
-
-def _reference_recovery_block_is_protected(attrs: str, body: str) -> bool:
-    return _reference_recovery_block_is_protected_impl(attrs, body)
-
-
-def _unlinked_body_reference_candidate_numbers(html: str) -> list[int]:
-    return _unlinked_body_reference_candidate_numbers_impl(html)
-
-
-def _pdf_reference_recovery_numbers(polished_html: str) -> tuple[list[int], str]:
-    return _pdf_reference_recovery_numbers_impl(polished_html)
-
-
-def _profile_has_reference_entries(profile: dict[str, Any]) -> bool:
-    return _profile_has_reference_entries_impl(profile)
-
-
-def _reference_entry_record(entry: Any) -> dict[str, Any]:
-    return _reference_entry_record_impl(entry)
 
 
 def _enrich_profile_with_pdf_reference_entries_if_needed(
