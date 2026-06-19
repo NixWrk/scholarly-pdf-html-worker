@@ -153,3 +153,5 @@ The cleanup policy is deliberately conservative:
   with direct unit tests; the script now only supplies report-level wiring.
 - Moved targeted polish audit report merging from `scripts/audit_en_polish.py`
   into `quality_loop/audit_polish_report.py` with direct unit tests.
+- Moved polish audit summary output from `scripts/audit_en_polish.py` into
+  `quality_loop/audit_polish_report.py` with direct unit tests.
