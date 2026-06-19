@@ -14,6 +14,14 @@ def test_known_ocr_token_defects_reports_curated_token() -> None:
 def test_known_ocr_token_defects_accepts_curated_false_positive_context() -> None:
     assert known_ocr_token_defects("The IRIT-ELIPSE project is named here.", "", stage="02.en.polish.html") == []
     assert known_ocr_token_defects("Downloaded from OceanofPDF.com", "", stage="02.en.polish.html") == []
+    assert (
+        known_ocr_token_defects(
+            "TOOTEKO: A case study of augmented reality for an accessible cultural heritage.",
+            "",
+            stage="02.en.polish.html",
+        )
+        == []
+    )
 
 
 def test_known_ocr_token_defects_marks_pdf_layer_evidence_non_quality() -> None:

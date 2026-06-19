@@ -116,6 +116,9 @@ def known_ocr_token_is_false_positive(plain: str, match: re.Match[str]) -> bool:
     if token.lower() == "cognitive iter":
         context = plain[max(0, match.start() - 160) : min(len(plain), match.end() + 160)]
         return re.search(r"\bhaptic\s+exploration\b", context, re.IGNORECASE) is not None
+    if token == "TOOTEKO":
+        context = plain[max(0, match.start() - 120) : min(len(plain), match.end() + 160)]
+        return re.search(r"\bcase\s+study\s+of\s+augmented\s+reality\b", context, re.IGNORECASE) is not None
     return False
 
 

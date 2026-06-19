@@ -8,6 +8,7 @@ import re
 from pdf_html_polish.single_file_html import (
     _current_figure_target_keys,
     _link_spaced_multipanel_figure_refs,
+    _mark_unit_exponent_superscripts,
     _repair_second_echelon_ocr_residue_html,
 )
 
@@ -51,7 +52,7 @@ AUTHOR_YEAR_AUTHOR_LIST_RIGHT_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 REFERENCES_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>\s*(?:References|Bibliography|Works cited)\s*</h[1-6]>", re.IGNORECASE)
-SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P04", "P04N", "P17", "P55", "P59", "P71", "P96", "P97", "P98"}
+SUPPORTED_AUTO_REPAIR_DEFECT_IDS = {"P04", "P04N", "P06", "P17", "P55", "P59", "P71", "P96", "P97", "P98"}
 AUTHOR_YEAR_LABEL_STOPWORDS = {
     "appendix",
     "chapter",
@@ -162,6 +163,11 @@ def repair_visible_reference_numbers(html: str) -> tuple[str, int]:
 
 def repair_second_echelon_ocr_residue(html: str) -> tuple[str, int]:
     repaired = _repair_second_echelon_ocr_residue_html(html)
+    return repaired, int(repaired != html)
+
+
+def repair_flattened_unit_exponents(html: str) -> tuple[str, int]:
+    repaired = _mark_unit_exponent_superscripts(html)
     return repaired, int(repaired != html)
 
 

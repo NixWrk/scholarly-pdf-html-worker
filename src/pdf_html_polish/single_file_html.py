@@ -2631,7 +2631,9 @@ _LINKED_PLAIN_NEG_UNIT_EXPONENT_REF_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _PLAIN_NEG_UNIT_EXP_PATTERN = re.compile(
-    r"(?<![A-Za-z])(?P<unit>(?:mC\s*cm|\u00b5C\s*cm|\u03bcC\s*cm|uC\s*cm|cd\s*m|nm\s*d|mm\s*s|cm\s*s|m\s*s|cm|mm|nm|m|d|s)\s*)"
+    r"(?<![A-Za-z])(?P<unit>(?:mC\s*cm|\u00b5C\s*cm|\u03bcC\s*cm|uC\s*cm|"
+    r"cd\s*m|mL\s*s|mL\s*min|mL\s*h|L\s*s|L\s*min|L\s*h|"
+    r"nm\s*d|mm\s*s|cm\s*s|m\s*s|cm|mm|nm|m|d|s)\s*)"
     r"[-\u2212\u2013\u2014]\s*(?P<exp>[123])\b",
     re.IGNORECASE,
 )
@@ -16259,10 +16261,39 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "sys-",
         "DirectX-",
         "pv0:",
+        "0:5",
         "0:5mLs",
+        "health male volunteer",
         "validtation",
         "9 m m",
+        "m </sup> m",
         "seperable",
+        "Dl5660620",
+        "Cvalli",
+        "attempeted",
+        "detecte",
+        "afrer",
+        "ghraph",
+        "Authers",
+        "dihydroxyated",
+        "defensen",
+        "Rgiht",
+        "Verebrate",
+        "Foundayion",
+        "Naturwissenschaftem",
+        "millenium",
+        "tranformed",
+        "coditions",
+        "imlied",
+        "oberved",
+        "occurance",
+        "realtive",
+        "responsed",
+        "speices",
+        "treaditional",
+        "Furhtermore",
+        "et nl.",
+        "Electronic(Cambridge",
         "E clarity",
         "b5223",
         "0.999 0995",
@@ -16276,7 +16307,9 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "BOO i",
         "BOO <",
         "IPP Grade iii",
+        "IPP Grade<sup",
         "Gen-A i",
+        "Gen-A<sup",
         "Routeledge",
         "Build-in sensors",
         "Shepadex",
@@ -16345,10 +16378,49 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
     html = re.sub(rf"\bDirectX-\s*{sup_r}", "DirectX-R", html)
 
     html = re.sub(r"\bpv0:(\d+)\b", lambda m: f"p<0.{m.group(1)}", html)
-    html = re.sub(r"\b0:5\s*mLs\{?\s*1\s+mm\{?\s*1\b", "0.5 mL s-1 mm-1", html)
+    sup_one = r"(?:1|<sup\b[^>]*>\s*1\s*</sup>)"
+    unit_exp_minus_one = '<sup class="z2m-unit-exp">-1</sup>'
+    html = re.sub(
+        rf"\b0:5\s*mLs\{{?\s*{sup_one}\s+mm\{{?\s*{sup_one}",
+        f"0.5 mL s{unit_exp_minus_one} mm{unit_exp_minus_one}",
+        html,
+    )
+    html = re.sub(r"\bhealth\s+male\s+volunteer\b", "healthy male volunteer", html, flags=re.IGNORECASE)
     html = re.sub(r"\bvalidtation\b", "validation", html, flags=re.IGNORECASE)
-    html = re.sub(r"\b(\d+(?:\.\d+)?)\s+m\s+m\b", r"\1 mm", html, flags=re.IGNORECASE)
+    html = re.sub(
+        r"\b(\d+(?:\.\d+)?)\s+(?:m|<sup\b[^>]*>\s*m\s*</sup>)\s+m\b",
+        r"\1 mm",
+        html,
+        flags=re.IGNORECASE,
+    )
     html = re.sub(r"\bseperable\b", "separable", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bDl5660620\b", "Delta lambda=660 +/- 20", html)
+    html = re.sub(r"\bCvalli\b", "Cavalli", html)
+    html = re.sub(r"\battempeted\b", "attempted", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bdetecte\b", "detect", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bafrer\b", "after", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bghraph\b", "graph", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bAuthers\b", "Authors", html)
+    html = re.sub(r"\bTime\s+verses\s+Flow\s+Rate\s+graph\b", "Time versus Flow Rate graph", html)
+    html = re.sub(r"\bdihydroxyated\b", "dihydroxylated", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bdefensen\b", "defensin", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bRgiht\b", "Right", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bVerebrate\b", "Vertebrate", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bFoundayion\b", "Foundation", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bNaturwissenschaftem\b", "Naturwissenschaften", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bmillenium\b", "millennium", html, flags=re.IGNORECASE)
+    html = re.sub(r"\btranformed\b", "transformed", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bcoditions\b", "conditions", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bimlied\b", "implied", html, flags=re.IGNORECASE)
+    html = re.sub(r"\boberved\b", "observed", html, flags=re.IGNORECASE)
+    html = re.sub(r"\boccurance\b", "occurrence", html, flags=re.IGNORECASE)
+    html = re.sub(r"\brealtive\b", "relative", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bresponsed\b", "responded", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bspeices\b", "species", html, flags=re.IGNORECASE)
+    html = re.sub(r"\btreaditional\b", "traditional", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bFurhtermore\b", "Furthermore", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bet\s+nl\.", "et al.", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bElectronic\(Cambridge\b", "Electronics (Cambridge", html)
     html = re.sub(r"\bE\s+clarity\s+of\b", "The clarity of", html)
     html = re.sub(r"\bb5223\b", "b=223", html)
     html = re.sub(r"\b0\.999\s+0995\b", "0.999 0.995", html)
@@ -16382,8 +16454,8 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         html,
         flags=re.IGNORECASE,
     )
-    html = re.sub(r"\bIPP\s+Grade\s+iii\b", "IPP Grade III", html)
-    html = re.sub(r"\bGen-A\s+i\b", "Gen-AI", html)
+    html = re.sub(r"\bIPP\s+Grade\s*(?:iii|<sup\b[^>]*>\s*iii\s*</sup>)", "IPP Grade III", html)
+    html = re.sub(r"\bGen-A\s*(?:i|<sup\b[^>]*>\s*i\s*</sup>)", "Gen-AI", html)
     html = re.sub(r"\bRouteledge\b", "Routledge", html, flags=re.IGNORECASE)
     html = re.sub(r"\bBuild-in\s+sensors\b", "Built-in sensors", html, flags=re.IGNORECASE)
     html = re.sub(r"\bShep(?:a|ha)dex\b", "Sephadex", html)

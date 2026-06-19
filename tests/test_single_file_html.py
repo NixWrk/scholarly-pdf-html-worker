@@ -8251,6 +8251,7 @@ def test_polish_html_document_marks_existing_unit_exponent_superscripts() -> Non
         "<p>Dose was 10 mg kg h <i>−</i> <sup>1</sup> IV.</p>"
         "<p>Luminance was 74 cd m <i>−</i> <sup>2</sup>.</p>"
         "<p>Insertion velocity was 0.01 mm s <i>−</i> <sup>1</sup>.</p>"
+        "<p>where k is found to be 0.5 mL s-1 mm-1.</p>"
         "<p>Scan velocity was 1 cm s <sup> − </sup> <sup> 1 </sup> and 130000 M <sup> − </sup> <sup> 1 </sup>.</p>"
         "<h4>References</h4><ul><li>Ref one.</li><li>Ref two.</li></ul>"
         "</body></html>"
@@ -8261,6 +8262,7 @@ def test_polish_html_document_marks_existing_unit_exponent_superscripts() -> Non
     assert 'mg kg<sup class="z2m-unit-exp">-1</sup> h<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'cd m<sup class="z2m-unit-exp">-2</sup>' in polished
     assert 'mm s<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert '0.5 mL s<sup class="z2m-unit-exp">-1</sup> mm<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'cm s<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'M<sup class="z2m-unit-exp">-1</sup>' in polished
     assert 'href="#ref-1"' not in polished
@@ -13996,6 +13998,18 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
         "<p>More residual P71 tokens included validtation accuracy, 0:5mLs{ 1 mm{ 1, "
         "a 9 m m dot, IPP Grade iii, Gen-A i tools, trimetylsilyl ether, FA 330, "
         "around287.8 eV, millitres, 368C, rst few days, and Museum of Moden Art.</p>"
+        "<p>HTML-shaped P71 residues included 0:5mLs{ <sup>1</sup> mm{ <sup>1</sup>, "
+        "a 9 <sup>m</sup> m dot, IPP Grade<sup class=\"z2m-table-fn\">iii</sup>, "
+        "and Gen-A<sup class=\"z2m-table-fn\">i</sup>.</p>"
+        "<p>We attempeted to detecte MB in a Time verses Flow Rate ghraph after "
+        "recovering the dihydroxyated active form.</p>"
+        "<p>More recurring OCR tokens: a health male volunteer, Dl5660620 nm, Cvalli, "
+        "Authers, afrer 5 min, and a defensen protein.</p>"
+        "<p>Other recurring OCR tokens: (Rgiht), tranformed analytes, and et nl. references.</p>"
+        "<p>Reference OCR tokens: Verebrate Endocrinology, Naturwissenschaftem, "
+        "Foundayion, and millenium.</p>"
+        "<p>Assay OCR tokens: coditions imlied oberved occurance with realtive speices "
+        "that responsed in a treaditional way. Furhtermore, Electronic(Cambridge appeared.</p>"
         "<p>Split italic residue kept BOO <i>i</i> in a table-like row.</p>"
         '<p>Reference split reached r=0.9 <a href="#ref-9">526 30 31 33 52)</a>. '
         "Solid .999 fine silver sheet (left)999 fine silver clad copper (right). "
@@ -14047,8 +14061,19 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
     assert "The clarity of their design, b=223 magnification, Routledge, Built-in sensors" in polished
     assert "Sephadex columns, sequence 4 acquisition, room temperature, proposed work" in polished
     assert ">25 cmH2O, >60 bpm, and Archaeological exploration" in polished
-    assert "validation accuracy, 0.5 mL s-1 mm-1" in polished
+    assert 'validation accuracy, 0.5 mL s<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert 'mm<sup class="z2m-unit-exp">-1</sup>' in polished
     assert "a 9 mm dot, IPP Grade III, Gen-AI tools, trimethylsilyl ether, FA 33°" in polished
+    assert 'HTML-shaped P71 residues included 0.5 mL s<sup class="z2m-unit-exp">-1</sup>' in polished
+    assert "a 9 mm dot, IPP Grade III, and Gen-AI" in polished
+    assert "We attempted to detect MB in a Time versus Flow Rate graph" in polished
+    assert "recovering the dihydroxylated active form" in polished
+    assert "a healthy male volunteer, Delta lambda=660 +/- 20 nm, Cavalli" in polished
+    assert "Authors, after 5 min, and a defensin protein" in polished
+    assert "Other recurring OCR tokens: (Right), transformed analytes, and et al. references" in polished
+    assert "Vertebrate Endocrinology, Naturwissenschaften, Foundation, and millennium" in polished
+    assert "Assay OCR tokens: conditions implied observed occurrence with relative species" in polished
+    assert "that responded in a traditional way. Furthermore, Electronics (Cambridge appeared" in polished
     assert "around 287.8 eV, millilitres, 36.8 °C, first few days" in polished
     assert "Museum of Modern Art" in polished
     assert "kept BOOI in a table-like row" in polished

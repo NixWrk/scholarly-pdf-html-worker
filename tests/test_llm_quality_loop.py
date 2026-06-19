@@ -2629,6 +2629,15 @@ def test_polish_auto_repair_stage_repairs_p71_ocr_residues(tmp_path: Path) -> No
         path.write_text(
             "<html><body>"
             "<p>The cross validtation accuracy used 0:5mLs{ 1 mm{ 1 and FA 330.</p>"
+            "<p>The table kept 0:5mLs{ <sup>1</sup> mm{ <sup>1</sup>, "
+            "9 <sup>m</sup> m, IPP Grade<sup class=\"z2m-table-fn\">iii</sup>, "
+            "Gen-A<sup class=\"z2m-table-fn\">i</sup>, and a ghraph.</p>"
+            "<p>The article mentioned a health male volunteer, Dl5660620 nm, Cvalli, "
+            "Authers, afrer 5 min, and a defensen protein.</p>"
+            "<p>Other residues had (Rgiht) labels, tranformed analytes, and et nl. references.</p>"
+            "<p>References had Verebrate Endocrinology, Naturwissenschaftem, Foundayion, and millenium.</p>"
+            "<p>The assay coditions imlied oberved occurance with realtive speices that responsed "
+            "in a treaditional way. Furhtermore, Electronic(Cambridge appeared.</p>"
             "<p>Museum of Moden Art reported around287.8 eV.</p>"
             "</body></html>",
             encoding="utf-8",
@@ -2655,8 +2664,60 @@ def test_polish_auto_repair_stage_repairs_p71_ocr_residues(tmp_path: Path) -> No
     assert report["patched_articles"] == [article]
     for path in (polish_path, audit_tree_path):
         html = path.read_text(encoding="utf-8")
-        assert "cross validation accuracy used 0.5 mL s-1 mm-1 and FA 33°" in html
+        assert (
+            'cross validation accuracy used 0.5 mL s<sup class="z2m-unit-exp">-1</sup> '
+            'mm<sup class="z2m-unit-exp">-1</sup> and FA 33°'
+        ) in html
+        assert (
+            'table kept 0.5 mL s<sup class="z2m-unit-exp">-1</sup> '
+            'mm<sup class="z2m-unit-exp">-1</sup>, 9 mm, IPP Grade III, Gen-AI, and a graph'
+        ) in html
+        assert "healthy male volunteer, Delta lambda=660 +/- 20 nm, Cavalli" in html
+        assert "Authors, after 5 min, and a defensin protein" in html
+        assert "Other residues had (Right) labels, transformed analytes, and et al. references" in html
+        assert "Vertebrate Endocrinology, Naturwissenschaften, Foundation, and millennium" in html
+        assert "assay conditions implied observed occurrence with relative species that responded" in html
+        assert "in a traditional way. Furthermore, Electronics (Cambridge appeared" in html
         assert "Museum of Modern Art reported around 287.8 eV" in html
+
+
+def test_polish_auto_repair_stage_repairs_p06_flat_unit_exponents(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    article = "article_p06"
+    polish_path = run_dir / "polish" / f"{article}.02.en.polish.html"
+    audit_tree_path = run_dir / "audit_tree" / article / "02.en.polish.html"
+    for path in (polish_path, audit_tree_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "<html><body><p>where k is found to be 0.5 mL s-1 mm-1.</p></body></html>",
+            encoding="utf-8",
+        )
+    _write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": article,
+                    "summary": {},
+                    "defects_found": [{"id": "P06"}],
+                }
+            ]
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": article}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+
+    report = write_polish_auto_repair_stage(run_dir, gate_config={})
+
+    assert report["status"] == "patched"
+    assert report["repair_counts"] == {"P06": 2}
+    assert report["patched_articles"] == [article]
+    for path in (polish_path, audit_tree_path):
+        html = path.read_text(encoding="utf-8")
+        assert (
+            '0.5 mL s<sup class="z2m-unit-exp">-1</sup> '
+            'mm<sup class="z2m-unit-exp">-1</sup>'
+        ) in html
 
 
 def test_polish_auto_repair_stage_repairs_reference_numbers_and_author_year_numeric_links(

@@ -89,6 +89,7 @@ from pdf_html_polish.quality_loop.polish_auto_repair import (  # noqa: E402
     audit_defect_ids as _audit_defect_ids_impl,
     relink_external_numeric_citation_anchors as _relink_external_numeric_citation_anchors_impl,
     relink_spaced_multipanel_figure_refs as _relink_spaced_multipanel_figure_refs_impl,
+    repair_flattened_unit_exponents as _repair_flattened_unit_exponents_impl,
     repair_second_echelon_ocr_residue as _repair_second_echelon_ocr_residue_impl,
     repair_visible_reference_numbers as _repair_visible_reference_numbers_impl,
     unwrap_broken_internal_links as _unwrap_broken_internal_links_impl,
@@ -1185,6 +1186,10 @@ def _repair_second_echelon_ocr_residue(html: str) -> tuple[str, int]:
     return _repair_second_echelon_ocr_residue_impl(html)
 
 
+def _repair_flattened_unit_exponents(html: str) -> tuple[str, int]:
+    return _repair_flattened_unit_exponents_impl(html)
+
+
 def _unwrap_broken_internal_links(html: str) -> tuple[str, int]:
     return _unwrap_broken_internal_links_impl(html)
 
@@ -1450,6 +1455,33 @@ def write_polish_auto_repair_stage(
                         "id": "P71",
                         "path": str(target_path),
                         "ocr_residue_repairs": p71_repairs,
+                    }
+                )
+
+        if "P06" in defect_ids and apply_patches:
+            for target_path in targets:
+                try:
+                    html = target_path.read_text(encoding="utf-8", errors="replace")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                patched, p06_repairs = _repair_flattened_unit_exponents(html)
+                if patched == html:
+                    continue
+                try:
+                    target_path.write_text(patched, encoding="utf-8")
+                except OSError as exc:
+                    article_report["errors"].append({"path": str(target_path), "error": str(exc)})
+                    continue
+                repair_counts["P06"] += p06_repairs
+                patched_article_ids.add(article_id)
+                article_report["patched"] = True
+                target_patch_counts[str(target_path)] += 1
+                article_report["repairs"].append(
+                    {
+                        "id": "P06",
+                        "path": str(target_path),
+                        "flattened_unit_exponent_repairs": p06_repairs,
                     }
                 )
 
