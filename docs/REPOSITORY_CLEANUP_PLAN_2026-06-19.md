@@ -98,15 +98,18 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
+1. Run a repair-enabled full cached-raw parity pass before any production
+   PDF-to-polish batch. The no-repair parity run is useful diagnostics, but it
+   is not comparable to the repaired baseline.
+2. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
    tuple left in `single_file_html.py` after the pre-cleanup extraction.
-2. Start the frontmatter/footnote cluster in small slices, using
+3. Start the frontmatter/footnote cluster in small slices, using
    `raw_html_polish/frontmatter_footnotes.py` as the package owner.
-3. Preserve old private aliases in `single_file_html.py` while tests still
+4. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
-4. After the `single_file_html.py` polish pass, run polish/audit parity before
+5. After the `single_file_html.py` polish pass, run polish/audit parity before
    the full PDF-to-polish HTML pipeline.
-5. Run the full PDF-to-polish HTML flow only after the parity gate passes.
+6. Run the full PDF-to-polish HTML flow only after the parity gate passes.
 
 ## Progress
 
@@ -219,3 +222,14 @@ The cleanup policy is deliberately conservative:
   generic skip-stack wiring into `raw_html_polish/pre_cleanup.py` with direct
   tests; citation-specific skip-stack logic intentionally remains in
   `single_file_html.py`.
+- Ran a full cached-raw no-repair parity check on
+  `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
+  source run. The run repolished 878 EN articles, skipped 131 non-target
+  documents, reported 657 changed polish outputs, and passed the full test
+  suite (`1348 passed, 5 warnings`). The audit/gate failed against the repaired
+  baseline (`score_delta=1194.75`, `defects_delta=51`,
+  `broken_internal_links_delta=177`, `mandatory_pending=67`), but the main
+  counted defects matched the previous pre-auto-repair state (`P98=42`,
+  `P04=1`, `P59=3`, `P13=1`). Treat this as evidence that production
+  PDF-to-polish should wait for a standard repair-enabled parity pass, not as a
+  direct refactor regression verdict.
