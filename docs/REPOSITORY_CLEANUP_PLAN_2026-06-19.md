@@ -121,3 +121,6 @@ The cleanup policy is deliberately conservative:
   with direct unit tests.
 - Moved manual recent text-pattern callbacks from `scripts/audit_en_polish.py`
   into `quality_loop/audit_manual_patterns.py` with direct unit tests.
+- Moved `MeineRecentLinkDeps` citation/reference callbacks from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_citation_style.py`
+  with direct unit tests.
