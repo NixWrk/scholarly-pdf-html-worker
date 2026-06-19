@@ -107,3 +107,6 @@ The cleanup policy is deliberately conservative:
   stay unless they are moved with their injected defaults (`ROOT`, stage names,
   output names, or dependency callbacks) into package-level orchestration
   helpers.
+- Started audit-script thinning by moving image asset diagnostics from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_images.py` with direct
+  unit tests.
