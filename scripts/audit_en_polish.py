@@ -151,7 +151,9 @@ from pdf_html_polish.quality_loop.audit_pdf import (
     source_pdf_path,
 )
 from pdf_html_polish.quality_loop.audit_p04 import (
-    looks_like_math_or_measurement_range as _looks_like_math_or_measurement_range,
+    MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE,
+    block_looks_like_math_or_measurement_range_context as _block_looks_like_math_or_measurement_range_context,
+    looks_like_table_flattened_citation_context as _looks_like_table_flattened_citation_context,
     unlinked_citation_candidate_numbers as _unlinked_citation_candidate_numbers_base,
     unlinked_citation_range_kind as _unlinked_citation_range_kind_base,
     unlinked_sup_numeric_range_matches_footnote_targets as _unlinked_sup_numeric_range_matches_footnote_targets,
@@ -207,21 +209,6 @@ MALFORMED_URL_ANCHOR_BODY_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*(?P=split_quote)(?P=split_href)(?P=split_quote)[^>]*>"
     r"\s*[A-Za-z0-9][^<]{0,120}</a>",
     re.IGNORECASE | re.DOTALL,
-)
-CITATION_RANGE_LIST_RE = re.compile(
-    r"\[\s*\d+\s*(?:[-\u2013]\s*\d+|,\s*\d+)"
-    r"(?:\s*,\s*\d+(?:\s*[-\u2013]\s*\d+)?)*\s*\]"
-)
-TAGGED_CITATION_RANGE_LIST_RE = re.compile(
-    r"\[\s*(?P<body>(?=[\s\S]*?<)[\s\S]{1,260}?)\s*\]",
-    re.IGNORECASE,
-)
-SUP_NUMERIC_RANGE_RE = re.compile(
-    r"<sup\b(?![^>]*\bz2m-unit-exp\b)[^>]*>"
-    r"(?P<body>\s*\d{1,3}\s*(?:[-\u2013\u2014]\s*\d{1,3}|,\s*\d{1,3})"
-    r"(?:\s*,\s*\d{1,3}(?:\s*[-\u2013\u2014]\s*\d{1,3})?)*\s*)"
-    r"</sup>",
-    re.IGNORECASE,
 )
 LATEX_SUP_CITATION_RE = re.compile(r"\\\(\^\{[\d,\s\-\u2013\u2014]+}\\\)")
 OCR_CITATION_WORD_RE = re.compile(
@@ -765,31 +752,6 @@ SINGLE_STAT_REF_RE = re.compile(
     r"\s*(?P=num)\s*</a>",
     re.IGNORECASE,
 )
-STAT_NUMERIC_CONTEXT_RE = re.compile(
-    r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size|"
-    r"statistical\s+power|power\s+analysis)\b",
-    re.IGNORECASE,
-)
-MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE = re.compile(
-    r"(?:\\\[|\\\(|"
-    r"\b(?:anova|array|arrays|class|classes|coordinate|coordinates|equation|eq\.?|"
-    r"formula|glm|heatmap|interval|intervals|likelihood|matrix|median|parameter|"
-    r"parameters|probability|range|scale|score|scores|threshold|vector|"
-    r"values?)\b|"
-    r"[=<>]|[\u00b0\u03bc\u03c0\u03c3\u03c4\u03a6\u2208\u2211\u2212\u2217"
-    r"\u2219\u2223\u223c\u2248\u25e6])",
-    re.IGNORECASE,
-)
-NON_CITATION_BRACKET_RANGE_CONTEXT_RE = re.compile(
-    r"\b(?:amplitude|array|arrays|bounds?|class\s+scores?|coordinate|coordinates|"
-    r"current|dimension|dimensions|electrode\s+values?|feature|heatmap|input|"
-    r"interval|intervals|layer|layers|likelihood|map\s+size|matrix|median|"
-    r"normalization|normalized|output|parameters?|pixel|points?|probability|range|"
-    r"random\s+number|scale|score|scores|sigmoid|starting|STAI|threshold|values?|"
-    r"vector|vectors|VAS)\b|"
-    r"[=<>∈∑]",
-    re.IGNORECASE,
-)
 TABLE_CAPTION_ID_RE = re.compile(
     r"<p\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])[^>]*>"
     r"(?P<body>.*?)</p>",
@@ -1102,110 +1064,6 @@ def _ref_match_inside_bracketed_reference_list(raw: str, start: int, end: int) -
         )
         is not None
     )
-
-def _plain_bracket_range_is_likely_non_citation_math_or_measurement(text: str, match: re.Match[str]) -> bool:
-    body = match.group(0)
-    numbers = [int(value) for value in re.findall(r"\d+", body)]
-    if not numbers:
-        return False
-    left = text[max(0, match.start() - 80) : match.start()]
-    if re.search(
-        r"\b(?:prior|previous|related|reported|study|studies|work|works|literature|"
-        r"references?|refs?)\s*$",
-        left,
-        re.IGNORECASE,
-    ):
-        return False
-    right = text[match.end() : match.end() + 80]
-    window = text[max(0, match.start() - 180) : min(len(text), match.end() + 180)]
-    if any(number == 0 for number in numbers):
-        return True
-    if re.match(r"\s*(?:%|[munpµμ]?A|[munpµμ]?m|V|Hz|s|ms|kg|N)\b", right):
-        return True
-    if re.search(r"\b(?:map\s+size|starting|ending|points?)\b", window, re.IGNORECASE):
-        return True
-    if len(numbers) >= 3 and NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(window):
-        return True
-    return (
-        NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(window) is not None
-        and _looks_like_math_or_measurement_range(text, match)
-    )
-
-
-def _plain_bracket_range_is_likely_non_citation_table_text(text: str, match: re.Match[str]) -> bool:
-    body = match.group(0)
-    if re.fullmatch(r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body):
-        return True
-    window = text[max(0, match.start() - 220) : min(len(text), match.end() + 220)]
-    return bool(
-        re.search(r"\b(?:search\s+statement|set\s+number|concept|ti,\s*ab|exp\s+OR)\b", window, re.IGNORECASE)
-        and re.search(r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body)
-    )
-
-
-def _block_looks_like_math_or_measurement_range_context(block: Block) -> bool:
-    text = block.text
-    if STAT_NUMERIC_CONTEXT_RE.search(text):
-        return True
-    if re.search(r"\[\s*(?:0|[-\u2212])", text):
-        return True
-    return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(text) is not None
-
-
-def _looks_like_table_flattened_citation_context(text: str) -> bool:
-    if len(re.findall(r"\bet\s+al\.?\s*\d{1,3}\b", text, re.IGNORECASE)) < 2:
-        return False
-    return re.search(
-        r"\b(?:algorithm|category|curve|descriptors|efficiency|flow\s+rate|"
-        r"indicator|normal|compressive|constrictive|precision|recall|"
-        r"roc|score|smooth|tower-shaped)\b",
-        text,
-        re.IGNORECASE,
-    ) is not None
-
-def _looks_like_software_version_context(text: str, start: int) -> bool:
-    left = text[max(0, start - 160):start]
-    return (
-        re.search(
-            r"\b(?:python|pytorch|cuda|tensorflow|torch|matlab|opencv|numpy|scipy|driver)\s+"
-            r"(?:driver\s+)?version\s*$|\bversion\s*$",
-            left,
-            re.IGNORECASE,
-        )
-        is not None
-    )
-
-
-def _sup_numeric_range_is_software_version(block: Block, match: re.Match[str]) -> bool:
-    numbers = re.findall(r"\d{1,3}", match.group("body"))
-    if len(numbers) < 2:
-        return False
-    visible_pattern = r"\s*,\s*".join(re.escape(number) for number in numbers)
-    for text_match in re.finditer(visible_pattern, block.text):
-        if _looks_like_software_version_context(block.text, text_match.start()):
-            return True
-    return False
-
-
-def _has_unlinked_tagged_citation_range(block: Block) -> bool:
-    for match in TAGGED_CITATION_RANGE_LIST_RE.finditer(block.raw):
-        body = match.group("body")
-        if "<" not in body or "z2m-ref-link" in body:
-            continue
-        visible = _strip_tags(body)
-        if CITATION_RANGE_LIST_RE.fullmatch(f"[{visible}]") is not None:
-            return True
-    return False
-
-
-def _has_unlinked_sup_numeric_range(block: Block) -> bool:
-    for match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
-        if "z2m-ref-link" not in match.group(0):
-            if _sup_numeric_range_is_software_version(block, match):
-                continue
-            return True
-    return False
-
 
 def _unlinked_citation_range_kind(block: Block) -> str:
     return _unlinked_citation_range_kind_base(
