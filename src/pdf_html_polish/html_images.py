@@ -8,8 +8,10 @@ import hashlib
 import mimetypes
 from pathlib import Path
 import re
-from typing import Callable, Mapping
 import urllib.parse
+from typing import Callable, Mapping
+
+from .html_links import escape_html_attr_literal
 
 
 @dataclass(frozen=True)
@@ -329,3 +331,127 @@ def refresh_inlined_data_urls_by_cache(
         return f"{prefix}{quote}{cached_data_url}{suffix}"
 
     return IMG_SRC_PATTERN.sub(replace, html), refreshed
+
+
+def inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlResult, dict[str, str]]:
+    inlined_count = 0
+    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
+    sidecar_images = sorted(
+        (
+            path
+            for path in base_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in image_exts
+        ),
+        key=lambda path: path.name.lower(),
+    )
+    img_matches = list(IMG_SRC_PATTERN.finditer(text))
+    data_img_count = sum(1 for match in img_matches if (match.group(3) or "").strip().lower().startswith("data:"))
+    all_images_already_data = bool(img_matches) and data_img_count == len(img_matches)
+    allow_sidecar_order_refresh = all_images_already_data and len(sidecar_images) == len(img_matches)
+    sidecar_cursor = [0]
+    image_match_cursor = [0]
+    image_cache: dict[str, str] = {}
+
+    def resolve_candidate(path_value: str) -> Path | None:
+        if not path_value:
+            return None
+        clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
+        decoded = urllib.parse.unquote(clean_path)
+        candidate = (base_dir / decoded).resolve(strict=False)
+        if candidate.is_file():
+            return candidate
+        return None
+
+    def add_src_hint(prefix: str, hint_path: str) -> str:
+        if re.search(r'\bdata-z2m-src\s*=', prefix, re.IGNORECASE):
+            return prefix
+        escaped_hint = escape_html_attr_literal(hint_path)
+        return re.sub(
+            r"\bsrc\s*=\s*$",
+            f'data-z2m-src="{escaped_hint}" src=',
+            prefix,
+            flags=re.IGNORECASE,
+        )
+
+    def add_image_key(prefix: str, image_key: str) -> str:
+        if IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix):
+            return prefix
+        escaped_key = escape_html_attr_literal(image_key)
+        return re.sub(
+            r"\bsrc\s*=\s*$",
+            f'data-z2m-image-key="{escaped_key}" src=',
+            prefix,
+            flags=re.IGNORECASE,
+        )
+
+    def remember_data_url(prefix: str, data_url: str, match_idx: int) -> str:
+        if not data_url.lower().startswith("data:image/"):
+            return prefix
+        if not data_image_src_looks_renderable(data_url):
+            return prefix
+        decoded = decode_data_image_payload(data_url)
+        if decoded is None:
+            return prefix
+        _, blob = decoded
+        key_match = IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix)
+        if key_match is None:
+            digest = hashlib.sha256(blob).hexdigest()[:16]
+            image_key = f"img-{match_idx}-{digest}"
+            prefix = add_image_key(prefix, image_key)
+        else:
+            image_key = key_match.group(2).strip()
+        image_cache[image_key] = data_url
+        return prefix
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal inlined_count
+        match_idx = image_match_cursor[0]
+        image_match_cursor[0] += 1
+        prefix = match.group(1)
+        quote = match.group(2)
+        src_value = match.group(3).strip()
+        suffix = match.group(4)
+        hint_match = re.search(
+            r'\bdata-z2m-src\s*=\s*(["\'])([^"\']+)\1',
+            prefix,
+            re.IGNORECASE,
+        )
+        src_hint = hint_match.group(2).strip() if hint_match else ""
+
+        if not src_value:
+            return match.group(0)
+        src_lower = src_value.lower()
+        candidate: Path | None = None
+
+        if src_lower.startswith("data:"):
+            if src_hint:
+                candidate = resolve_candidate(src_hint)
+            if candidate is None and allow_sidecar_order_refresh and sidecar_cursor[0] < len(sidecar_images):
+                candidate = sidecar_images[sidecar_cursor[0]]
+                sidecar_cursor[0] += 1
+                prefix = add_src_hint(prefix, candidate.name)
+            if candidate is None:
+                prefix = remember_data_url(prefix, src_value, match_idx)
+                if prefix != match.group(1):
+                    return f"{prefix}{quote}{src_value}{suffix}"
+                return match.group(0)
+        elif is_inline_or_remote(src_value):
+            return match.group(0)
+        else:
+            candidate = resolve_candidate(src_value)
+            if candidate is None:
+                return match.group(0)
+            prefix = add_src_hint(prefix, src_value)
+
+        data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
+        if data_url is None:
+            return match.group(0)
+        if not validate_data_url(data_url, candidate):
+            return match.group(0)
+
+        prefix = remember_data_url(prefix, data_url, match_idx)
+        inlined_count += 1
+        return f"{prefix}{quote}{data_url}{suffix}"
+
+    inlined_html = IMG_SRC_PATTERN.sub(replace, text)
+    return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count), image_cache

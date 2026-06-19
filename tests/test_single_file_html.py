@@ -14,6 +14,7 @@ from pdf_html_polish.single_file_html import (
     _fix_orphaned_sup_tags,
     _fix_false_sup_citations_in_decimals_and_figure_labels,
     _fix_subscript_equation_spill,
+    _inline_images_from_html_text,
     _link_figure_refs,
     _link_unlinked_numeric_superscripts_to_existing_refs,
     _link_section_refs,
@@ -58,6 +59,7 @@ def _valid_tiny_png_data_url() -> str:
 def test_single_file_html_preserves_image_refresh_aliases() -> None:
     assert _IMG_SRC_PATTERN is html_images.IMG_SRC_PATTERN
     assert _IMAGE_CACHE_KEY_ATTR_PATTERN is html_images.IMAGE_CACHE_KEY_ATTR_PATTERN
+    assert _inline_images_from_html_text is html_images.inline_images_from_html_text
     assert _refresh_inlined_data_urls_by_hint is html_images.refresh_inlined_data_urls_by_hint
     assert _refresh_inlined_data_urls_by_cache is html_images.refresh_inlined_data_urls_by_cache
 

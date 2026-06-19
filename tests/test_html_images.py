@@ -6,6 +6,7 @@ from pdf_html_polish.html_images import (
     html_node_has_broken_data_image,
     html_node_has_renderable_image,
     html_node_image_srcs,
+    inline_images_from_html_text,
     refresh_inlined_data_urls_by_cache,
     refresh_inlined_data_urls_by_hint,
 )
@@ -74,3 +75,18 @@ def test_refresh_inlined_data_urls_by_cache_restores_broken_payload() -> None:
     assert count == 1
     assert broken_data_url not in refreshed
     assert f'src="{cached_data_url}"' in refreshed
+
+
+def test_inline_images_from_html_text_inlines_sidecar_and_records_cache(tmp_path) -> None:
+    image_path = tmp_path / "plot.png"
+    image_path.write_bytes(_valid_png_blob())
+    html = '<html><body><img alt="Plot" src="plot.png"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(html, tmp_path)
+
+    expected_data_url = _data_url("image/png", image_path.read_bytes())
+    assert result.inlined_images == 1
+    assert f'src="{expected_data_url}"' in result.html
+    assert 'data-z2m-src="plot.png"' in result.html
+    assert 'data-z2m-image-key="' in result.html
+    assert list(image_cache.values()) == [expected_data_url]
