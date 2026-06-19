@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
-from typing import Any, Iterable
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +17,12 @@ if str(SRC) not in sys.path:
 
 from pdf_html_polish.html_stages import RAW_STAGE_NAME  # noqa: E402
 from pdf_html_polish.quality_loop.audit_raw_analysis import analyze_raw_file as _analyze_raw_file  # noqa: E402
+from pdf_html_polish.quality_loop.audit_raw_report import (  # noqa: E402
+    add_raw_corpus_hit_counts as _add_corpus_hit_counts,
+    build_raw_report as _build_raw_report,
+    find_raw_stage_files as find_stage_files,
+    print_raw_report_summary as _print_summary,
+)
 
 
 STAGE_NAME = RAW_STAGE_NAME
@@ -27,80 +32,8 @@ def analyze_file(path: Path) -> dict[str, Any]:
     return _analyze_raw_file(path)
 
 
-def find_stage_files(roots: Iterable[Path]) -> list[Path]:
-    found: list[Path] = []
-    for root in roots:
-        if root.is_file() and root.name == STAGE_NAME:
-            found.append(root)
-        elif root.exists():
-            found.extend(root.rglob(STAGE_NAME))
-    return sorted({path.resolve(strict=False) for path in found})
-
-
-def _add_corpus_hit_counts(articles: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for article in articles:
-        seen = {defect["id"] for defect in article["defects_found"]}
-        for defect_id in seen:
-            counts[defect_id] = counts.get(defect_id, 0) + 1
-    for article in articles:
-        for defect in article["defects_found"]:
-            defect["same_pattern_hits_across_corpus"] = counts.get(defect["id"], 0)
-    return counts
-
-
 def build_report(roots: list[Path]) -> dict[str, Any]:
-    files = find_stage_files(roots)
-    articles = [analyze_file(path) for path in files]
-    defect_counts = _add_corpus_hit_counts(articles)
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "stage": STAGE_NAME,
-        "roots": [str(root) for root in roots],
-        "article_count": len(articles),
-        "corpus_summary": {
-            "defect_counts": defect_counts,
-            "totals": {
-                "bytes": sum(article["en_raw_summary"]["bytes"] for article in articles),
-                "img_tags": sum(article["en_raw_summary"]["images"].get("img_tags", 0) for article in articles),
-                "figure_labels": sum(article["en_raw_summary"]["figure_labels"] for article in articles),
-                "table_labels": sum(article["en_raw_summary"]["table_labels"] for article in articles),
-                "page_headers": sum(article["en_raw_summary"]["page_headers"] for article in articles),
-                "raw_sentinels": sum(article["en_raw_summary"]["raw_sentinels"] for article in articles),
-            },
-        },
-        "articles": articles,
-    }
-
-
-def _print_summary(report: dict[str, Any]) -> None:
-    print(f"EN raw audit: {report['article_count']} artifact(s)")
-    totals = report["corpus_summary"]["totals"]
-    print(
-        "Totals: "
-        f"bytes={totals['bytes']} "
-        f"img={totals['img_tags']} "
-        f"figure_labels={totals['figure_labels']} "
-        f"table_labels={totals['table_labels']} "
-        f"page_headers={totals['page_headers']} "
-        f"raw_sentinels={totals['raw_sentinels']}"
-    )
-    defect_counts = report["corpus_summary"]["defect_counts"]
-    if defect_counts:
-        print("Defects by check: " + ", ".join(f"{key}={value}" for key, value in sorted(defect_counts.items())))
-    else:
-        print("Defects by check: none")
-    for article in report["articles"]:
-        summary = article["en_raw_summary"]
-        print(
-            f"- {article['article']}: "
-            f"bytes={summary['bytes']} "
-            f"img={summary['images'].get('img_tags', 0)} "
-            f"fig={summary['figure_labels']} "
-            f"tables={summary['table_labels']} "
-            f"headers={summary['page_headers']} "
-            f"defects={len(article['defects_found'])}"
-        )
+    return _build_raw_report(roots, stage_name=STAGE_NAME, analyze_file=analyze_file)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
