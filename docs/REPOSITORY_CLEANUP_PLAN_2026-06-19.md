@@ -132,3 +132,6 @@ The cleanup policy is deliberately conservative:
 - Removed duplicate P04 citation-range helper logic from
   `scripts/audit_en_polish.py`; the CLI now relies on
   `quality_loop/audit_p04.py` for those classifiers.
+- Moved the P05 reference false-positive classifier from
+  `scripts/audit_en_polish.py` into `quality_loop/audit_citation_style.py`
+  with direct unit tests.
