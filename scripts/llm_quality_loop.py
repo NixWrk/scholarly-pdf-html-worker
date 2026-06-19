@@ -55,7 +55,6 @@ from pdf_html_polish.quality_loop.converted_runs import (  # noqa: E402
     visible_html_text as _visible_html_text,
 )
 from pdf_html_polish.quality_loop import gates as quality_gates  # noqa: E402
-from pdf_html_polish.quality_loop import pdf_utils as quality_pdf_utils  # noqa: E402
 from pdf_html_polish.quality_loop import source_pdf as quality_source_pdf  # noqa: E402
 from pdf_html_polish.quality_loop.observations import (  # noqa: E402
     compact_observation_text as _compact_observation_text,
@@ -67,9 +66,15 @@ from pdf_html_polish.quality_loop.pattern_observations import (  # noqa: E402
     write_pattern_observations as _write_pattern_observations,
 )
 from pdf_html_polish.quality_loop.pdf_evidence import (  # noqa: E402
-    attach_pdf_evidence_to_pack as _attach_pdf_evidence_to_pack_impl,
-    problem_snippets_for_evidence as _problem_snippets_for_evidence_impl,
+    attach_pdf_evidence_to_pack as _attach_pdf_evidence_to_pack,
+    problem_snippets_for_evidence as _problem_snippets_for_evidence,
     write_pdf_problem_evidence_stage as _write_pdf_problem_evidence_stage_impl,
+)
+from pdf_html_polish.quality_loop.pdf_utils import (  # noqa: E402
+    data_url_from_image_file as _data_url_from_image_file,
+    first_valid_image_path as _first_valid_image_path,
+    pdf_text_pages as _pdf_text_pages,
+    render_pdf_page as _render_pdf_evidence_page,
 )
 from pdf_html_polish.quality_loop.pdf_reference_recovery import (  # noqa: E402
     enrich_profile_with_pdf_reference_entries_if_needed as _enrich_profile_with_pdf_reference_entries_if_needed_impl,
@@ -156,7 +161,7 @@ from pdf_html_polish.quality_loop.p62_html import (  # noqa: E402
 )
 from pdf_html_polish.quality_loop.p62_marker import (  # noqa: E402
     execute_marker_command as _execute_p62_marker_command_impl,
-    validate_marker_output as _validate_p62_marker_output_impl,
+    validate_marker_output as _validate_p62_marker_output,
 )
 from pdf_html_polish.quality_loop.p62_plan import (  # noqa: E402
     P62MarkerRecoveryPlanDependencies,
@@ -171,17 +176,17 @@ from pdf_html_polish.quality_loop.p62_recovery_stage import (  # noqa: E402
     resolve_p62_image_recovery_stage_config as _resolve_p62_image_recovery_stage_config,
 )
 from pdf_html_polish.quality_loop.p62_pdf_assets import (  # noqa: E402
-    external_pdf_tool_inventory as _p62_external_pdf_tool_inventory_impl,
-    false_match_hint_blocks_asset_recovery as _p62_false_match_hint_blocks_asset_recovery_impl,
-    page_caption_label_rects as _p62_page_caption_label_rects_impl,
-    page_label_rects as _p62_page_label_rects_impl,
-    pdf_page_caption_label_found as _p62_pdf_page_caption_label_found_impl,
-    pdf_page_false_match_hint as _p62_pdf_page_false_match_hint_impl,
-    pdf_visual_inventory as _p62_pdf_visual_inventory_impl,
-    pypdf_image_inventory as _p62_pypdf_image_inventory_impl,
+    external_pdf_tool_inventory as _p62_external_pdf_tool_inventory,
+    false_match_hint_blocks_asset_recovery as _p62_false_match_hint_blocks_asset_recovery,
+    page_caption_label_rects as _p62_page_caption_label_rects,
+    page_label_rects as _p62_page_label_rects,
+    pdf_page_caption_label_found as _p62_pdf_page_caption_label_found,
+    pdf_page_false_match_hint as _p62_pdf_page_false_match_hint,
+    pdf_visual_inventory as _p62_pdf_visual_inventory,
+    pypdf_image_inventory as _p62_pypdf_image_inventory,
     recover_detached_pdf_figure_plate_asset as _recover_p62_detached_pdf_figure_plate_asset_impl,
     recover_pdf_figure_asset as _recover_p62_pdf_figure_asset_impl,
-    render_fallback_page_number as _p62_render_fallback_page_number_impl,
+    render_fallback_page_number as _p62_render_fallback_page_number,
 )
 from pdf_html_polish.quality_loop.p62_matching import (  # noqa: E402
     best_pdf_text_page as _best_pdf_text_page,
@@ -199,10 +204,10 @@ from pdf_html_polish.quality_loop.p62_matching import (  # noqa: E402
 )
 from pdf_html_polish.quality_loop.p62_context import (  # noqa: E402
     P62_MISSING_WARNING_TEXT_RE,
-    clean_context_fragment as _clean_p62_context_fragment_impl,
-    context_fragment as _p62_context_fragment_impl,
-    recovery_snippets as _p62_recovery_snippets_impl,
-    warning_context_from_html as _p62_warning_context_from_html_impl,
+    clean_context_fragment as _clean_p62_context_fragment,
+    context_fragment as _p62_context_fragment,
+    recovery_snippets as _p62_recovery_snippets,
+    warning_context_from_html as _p62_warning_context_from_html,
 )
 
 
@@ -305,10 +310,6 @@ def write_source_pdf_map_for_run(
         polish_stage=POLISH_STAGE,
         output_name=DEFAULT_SOURCE_PDF_MAP_NAME,
     )
-
-
-def _pdf_text_pages(pdf_path: Path, *, max_pages: int | None = None) -> tuple[str, list[str], str | None]:
-    return quality_pdf_utils.pdf_text_pages(pdf_path, max_pages=max_pages)
 
 
 def _resolve_p62_pdf_page_for_figure(
@@ -448,18 +449,6 @@ def _best_pdf_text_page_for_figure(
     return best_page, max(0.0, best_score), label_pages
 
 
-def _render_pdf_evidence_page(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float) -> dict[str, Any]:
-    return quality_pdf_utils.render_pdf_page(pdf_path, page_number, out_path, zoom=zoom)
-
-
-def _problem_snippets_for_evidence(article: dict[str, Any]) -> list[str]:
-    return _problem_snippets_for_evidence_impl(article)
-
-
-def _attach_pdf_evidence_to_pack(pack: dict[str, Any], evidence_report: dict[str, Any]) -> dict[str, Any]:
-    return _attach_pdf_evidence_to_pack_impl(pack, evidence_report)
-
-
 def write_pdf_problem_evidence_stage(
     run_dir: Path,
     pack: dict[str, Any],
@@ -554,32 +543,6 @@ def _find_polish_stage_path_for_article(
     return None, "missing"
 
 
-def _clean_p62_context_fragment(fragment: str, *, max_len: int = 1400) -> str:
-    return _clean_p62_context_fragment_impl(fragment, max_len=max_len)
-
-
-def _p62_context_fragment(html: str, position: int, *, radius: int) -> str:
-    return _p62_context_fragment_impl(html, position, radius=radius)
-
-
-def _p62_warning_context_from_html(
-    html: str,
-    defect: dict[str, Any],
-    *,
-    radius: int,
-) -> tuple[str, str]:
-    return _p62_warning_context_from_html_impl(html, defect, radius=radius)
-
-
-def _p62_recovery_snippets(
-    html: str,
-    defect: dict[str, Any],
-    *,
-    context_chars: int,
-) -> tuple[list[str], str, str]:
-    return _p62_recovery_snippets_impl(html, defect, context_chars=context_chars)
-
-
 def _selected_pdf_candidate(
     run_dir: Path,
     article_id: str,
@@ -590,10 +553,6 @@ def _selected_pdf_candidate(
     candidates = _article_source_pdf_candidates(run_dir, article_id, summary, manifest_article)
     selected = next((candidate for candidate in candidates if candidate.get("exists")), None)
     return selected, candidates
-
-
-def _validate_p62_marker_output(marker_output_dir: Path, figure_label: str) -> dict[str, Any]:
-    return _validate_p62_marker_output_impl(marker_output_dir, figure_label)
 
 
 def write_p62_marker_recovery_plan(
@@ -676,28 +635,12 @@ def _apply_p62_duplicate_figure_image_repairs(
     )
 
 
-def _data_url_from_image_file(path: Path) -> str | None:
-    return quality_pdf_utils.data_url_from_image_file(path)
-
-
-def _first_valid_image_path(validation: dict[str, Any]) -> Path | None:
-    return quality_pdf_utils.first_valid_image_path(validation)
-
-
 def _execute_p62_marker_command(
     record: dict[str, Any],
     *,
     timeout_seconds: int,
 ) -> dict[str, Any]:
     return _execute_p62_marker_command_impl(record, timeout_seconds=timeout_seconds, cwd=ROOT)
-
-
-def _p62_render_fallback_page_number(
-    pdf_path: Path,
-    source_page_number: int,
-    figure_label: str,
-) -> tuple[int, str]:
-    return _p62_render_fallback_page_number_impl(pdf_path, source_page_number, figure_label)
 
 
 def _p62_record_allows_page_render_fallback(record: dict[str, Any]) -> bool:
@@ -786,42 +729,6 @@ def _render_p61_nonduplicate_page_recovery(
         "data_url": "",
         "attempts": attempts,
     }
-
-
-def _p62_false_match_hint_blocks_asset_recovery(
-    hint: str,
-    *,
-    caption_found: bool = False,
-) -> bool:
-    return _p62_false_match_hint_blocks_asset_recovery_impl(hint, caption_found=caption_found)
-
-
-def _p62_pdf_page_false_match_hint(pdf_path: Path, page_number: int, figure_label: str) -> str:
-    return _p62_pdf_page_false_match_hint_impl(pdf_path, page_number, figure_label)
-
-
-def _p62_pdf_page_caption_label_found(pdf_path: Path, page_number: int, figure_label: str) -> bool:
-    return _p62_pdf_page_caption_label_found_impl(pdf_path, page_number, figure_label)
-
-
-def _p62_page_caption_label_rects(page: Any, figure_label: str) -> list[Any]:
-    return _p62_page_caption_label_rects_impl(page, figure_label)
-
-
-def _p62_page_label_rects(page: Any, figure_label: str) -> list[Any]:
-    return _p62_page_label_rects_impl(page, figure_label)
-
-
-def _p62_pdf_visual_inventory(pdf_path: Path) -> dict[str, Any]:
-    return _p62_pdf_visual_inventory_impl(pdf_path)
-
-
-def _p62_pypdf_image_inventory(pdf_path: Path) -> dict[str, Any]:
-    return _p62_pypdf_image_inventory_impl(pdf_path)
-
-
-def _p62_external_pdf_tool_inventory() -> dict[str, Any]:
-    return _p62_external_pdf_tool_inventory_impl()
 
 
 def _probe_p62_source_visual_unavailable(
