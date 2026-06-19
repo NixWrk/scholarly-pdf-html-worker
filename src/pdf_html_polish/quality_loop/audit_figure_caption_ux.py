@@ -53,6 +53,13 @@ BIORENDER_CAPTION_SPLIT_RE = re.compile(
     r"<p\b[^>]*\bz2m-figure-caption\b[^>]*>\s*comparison\s+shows\b",
     re.IGNORECASE,
 )
+TERMINAL_SOURCE_VISUAL_UNAVAILABLE_WARNING_RE = re.compile(
+    r"\bz2m-missing-figure-warning\b[\s\S]{0,500}?"
+    r"\bdata-z2m-recovery-status\s*=\s*([\"'])source_visual_unavailable\1|"
+    r"\bdata-z2m-recovery-status\s*=\s*([\"'])source_visual_unavailable\2"
+    r"[\s\S]{0,500}?\bz2m-missing-figure-warning\b",
+    re.IGNORECASE,
+)
 
 
 def caption_raw_for_tex_residue(block: Block) -> str:
@@ -64,6 +71,10 @@ def caption_raw_for_tex_residue(block: Block) -> str:
             return caption_match.group(0)
         return re.split(r"<table\b", block.raw, maxsplit=1, flags=re.IGNORECASE)[0]
     return block.raw
+
+
+def has_terminal_source_visual_unavailable_warning(block: Block) -> bool:
+    return TERMINAL_SOURCE_VISUAL_UNAVAILABLE_WARNING_RE.search(block.raw) is not None
 
 
 def looks_like_body_figure_reference_list(block: Block) -> bool:
@@ -173,6 +184,7 @@ def figure_caption_ux_defects(
             and not looks_like_body_figure_reference_list(block)
             and not is_supplementary_figure_block(block)
             and not is_handled_missing_figure_block(block)
+            and not has_terminal_source_visual_unavailable_warning(block)
             and figure_id_counts.get(block.id, 0) <= 1
             and not has_nearby_image(polish_blocks, block.index)
             and not has_nearby_missing_figure_warning(polish_blocks, block.index)
@@ -222,6 +234,8 @@ def figure_caption_ux_defects(
         if is_supplementary_figure_block(block):
             continue
         if is_handled_missing_figure_block(block):
+            continue
+        if has_terminal_source_visual_unavailable_warning(block):
             continue
         if has_nearby_missing_figure_warning(polish_blocks, block.index):
             continue

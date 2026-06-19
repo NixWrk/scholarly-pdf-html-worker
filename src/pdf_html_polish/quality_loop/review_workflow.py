@@ -128,8 +128,34 @@ def _polish_auto_repair_evidence_by_article(run_dir: Path) -> dict[str, dict[str
     return evidence
 
 
+def _audit_source_visual_unavailable_labels_by_article(run_dir: Path) -> dict[str, set[str]]:
+    audit = load_json(run_dir / "audit_full_checks.json", default={})
+    labels_by_article: dict[str, set[str]] = {}
+    for article in audit.get("articles") or []:
+        if not isinstance(article, dict):
+            continue
+        article_id = str(article.get("article") or "")
+        if not article_id:
+            continue
+        for defect in article.get("defects_found") or []:
+            if not isinstance(defect, dict) or str(defect.get("id") or "") != "P62":
+                continue
+            extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+            if (
+                str(extra.get("p62_subtype") or "") != "source_visual_unavailable"
+                and str(extra.get("warning_origin") or "") != "source_visual_unavailable"
+            ):
+                continue
+            label = str(extra.get("figure_label") or "").strip()
+            if label:
+                labels_by_article.setdefault(article_id, set()).add(label)
+    return labels_by_article
+
+
 def _p62_recovery_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]]:
     report = load_json(run_dir / "p62_image_recovery_report.json", default={})
+    audit_terminal_labels = _audit_source_visual_unavailable_labels_by_article(run_dir)
+    seen_terminal_labels: dict[str, set[str]] = {}
     evidence: dict[str, dict[str, Any]] = {}
     for item in report.get("articles") or []:
         if not isinstance(item, dict):
@@ -147,12 +173,19 @@ def _p62_recovery_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]
             },
         )
         status = str(item.get("status") or "")
+        figure_label = str(item.get("figure_label") or item.get("resolved_figure_label") or "").strip()
         terminal_unavailable = (
             status == "source_visual_unavailable"
             or has_terminal_source_visual_unavailable_evidence(item)
+            or (
+                bool(figure_label)
+                and figure_label in audit_terminal_labels.get(article, set())
+            )
         )
         if terminal_unavailable:
             article_evidence["source_visual_unavailable_count"] += 1
+            if figure_label:
+                seen_terminal_labels.setdefault(article, set()).add(figure_label)
             continue
         if status in {"unresolved", "asset_ready_patch_missed"}:
             article_evidence["actionable_unresolved_count"] += 1
@@ -166,6 +199,20 @@ def _p62_recovery_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]
         recovery_source = str(item.get("recovery_source") or "")
         if recovery_source and recovery_source not in article_evidence["recovery_sources"]:
             article_evidence["recovery_sources"].append(recovery_source)
+    for article, labels in audit_terminal_labels.items():
+        unseen = labels - seen_terminal_labels.get(article, set())
+        if not unseen:
+            continue
+        article_evidence = evidence.setdefault(
+            article,
+            {
+                "patched_count": 0,
+                "source_visual_unavailable_count": 0,
+                "actionable_unresolved_count": 0,
+                "recovery_sources": [],
+            },
+        )
+        article_evidence["source_visual_unavailable_count"] += len(unseen)
     return evidence
 
 

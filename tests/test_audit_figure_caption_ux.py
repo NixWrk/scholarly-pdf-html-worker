@@ -48,6 +48,21 @@ def test_figure_caption_ux_reports_caption_without_image() -> None:
     assert "P13" in ids
 
 
+def test_figure_caption_ux_accepts_terminal_source_visual_unavailable_warning() -> None:
+    ids = _defects(
+        '<p>See <a href="#fig-3" class="z2m-fig-link">Figure 3</a>.</p>'
+        '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note" '
+        'data-z2m-recovery-status="source_visual_unavailable">'
+        "Figure 3 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 3. Caption text.</p>'
+        "</div>"
+    )
+
+    assert "P13" not in ids
+    assert "P14" not in ids
+
+
 def test_figure_caption_ux_reports_internal_target_style_gap() -> None:
     ids = _defects('<p>See <a href="#fig-1">Figure 1</a>.</p>', has_internal_links=True)
 

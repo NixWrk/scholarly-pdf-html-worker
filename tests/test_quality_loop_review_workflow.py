@@ -235,6 +235,70 @@ def test_review_queue_keeps_incomplete_p62_unavailable_record_mandatory(
     assert "p62_unresolved_without_terminal_status" in queue[0]["review_risk_reasons"]
 
 
+def test_review_queue_accepts_audit_terminal_p62_source_visual_unavailable(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "a",
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "severity": "warning",
+                            "extra": {
+                                "figure_label": "7",
+                                "p62_subtype": "source_visual_unavailable",
+                                "quality_counted": False,
+                                "warning_origin": "source_visual_unavailable",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    write_json(run_dir / "quality_history_entry.json", {"articles": {"a": {"score": 0}}})
+    write_json(
+        run_dir / "quality_compare.json",
+        {"unchanged": [{"article": "a", "score_delta": 0, "metrics_delta": {}}]},
+    )
+    write_json(run_dir / "manifest.json", {"articles": [{"article_id": "a", "changed": True}]})
+    write_json(
+        run_dir / "p62_image_recovery_report.json",
+        {
+            "articles": [
+                {
+                    "article": "a",
+                    "status": "unresolved",
+                    "figure_label": "7",
+                    "source_visual_probe_status": "not_found",
+                }
+            ]
+        },
+    )
+
+    queue = write_manual_review_queue(
+        run_dir,
+        gate_config={"ignored_defect_ids_for_analysis": ["P62"]},
+        comparison_by_article=lambda comparison: {
+            item["article"]: {"bucket": "unchanged", **item}
+            for item in comparison.get("unchanged", [])
+        },
+        manifest_article_by_id=lambda manifest: {
+            item["article_id"]: item for item in manifest.get("articles", [])
+        },
+    )
+
+    assert queue[0]["mandatory_review"] is False
+    assert queue[0]["auto_review_evidence"]["p62"]["source_visual_unavailable_count"] == 1
+    assert queue[0]["auto_review_evidence"]["p62"]["actionable_unresolved_count"] == 0
+    assert "p62_unresolved_without_terminal_status" not in queue[0]["review_risk_reasons"]
+
+
 def test_article_review_stage_uses_copy_callback_and_writes_index(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     source = run_dir / "polish" / "a.02.en.polish.html"

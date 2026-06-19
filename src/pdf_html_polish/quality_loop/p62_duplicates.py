@@ -10,6 +10,7 @@ from .p62_html import (
     P62_LOW_FIDELITY_RECOVERY_SOURCES,
     data_url_image_hash,
     extract_html_figure_units,
+    replace_figure_unit_target_with_missing_warning,
     replace_figure_unit_target_with_image,
 )
 
@@ -18,6 +19,7 @@ P62_REGION_REPAIR_SOURCES = {"pdf_figure_region_render", "pdf_detached_plate_reg
 P62_DUPLICATE_REPAIRABLE_RECOVERY_SOURCES = (
     {"marker_image"} | P62_LOW_FIDELITY_RECOVERY_SOURCES | P62_REGION_REPAIR_SOURCES
 )
+P62_UNSAFE_DUPLICATE_WARNING_SOURCES = P62_LOW_FIDELITY_RECOVERY_SOURCES | P62_REGION_REPAIR_SOURCES
 
 PdfTextPages = Callable[..., tuple[str, list[str], str | None]]
 ResolvePdfPage = Callable[..., dict[str, Any]]
@@ -196,6 +198,40 @@ def repair_duplicate_figure_images(
             asset_path = Path(str(asset.get("path") or ""))
             strip_like = _pdf_region_asset_looks_like_page_strip(asset, asset_path) if asset_path else None
             if strip_like is not None:
+                cleanup_allowed = bool(
+                    set(candidate_recovery_sources) & P62_UNSAFE_DUPLICATE_WARNING_SOURCES
+                )
+                next_html = patched
+                replacements = 0
+                if cleanup_allowed:
+                    next_html, replacements = replace_figure_unit_target_with_missing_warning(
+                        patched,
+                        figure_label=label,
+                        reason="source_visual_unavailable",
+                    )
+                if replacements:
+                    patched = next_html
+                    repaired_labels.add(label)
+                    repairs.append(
+                        {
+                            "figure_label": label,
+                            "status": "patched",
+                            "reason": "pdf_region_asset_looks_like_page_strip",
+                            "action": "replaced_duplicate_recovery_with_missing_warning",
+                            "source_pdf_page_number": page_number,
+                            "duplicate_labels": labels,
+                            "duplicate_hash": duplicate_hash,
+                            "repair_mode": repair_mode,
+                            "candidate_recovery_sources": candidate_recovery_sources,
+                            "resolver": resolver,
+                            "asset_path": str(asset_path),
+                            "asset_source": asset.get("source") or "",
+                            "asset_status": asset.get("status") or "",
+                            "asset_dimensions": strip_like,
+                            "replacement_count": replacements,
+                        }
+                    )
+                    continue
                 repairs.append(
                     {
                         "figure_label": label,
