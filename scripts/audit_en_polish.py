@@ -82,6 +82,9 @@ from pdf_html_polish.quality_loop.audit_reference_identity import (
     reference_identity_defects as _reference_identity_defects,
 )
 from pdf_html_polish.quality_loop.audit_manual_patterns import (
+    bibliography_numbering_residue_is_clean_reference_boundary as _bibliography_numbering_residue_is_clean_reference_boundary,
+    find_split_dot_email_match as _find_split_dot_email_match,
+    joined_word_match_is_url_slug as _joined_word_match_is_url_slug,
     looks_like_affiliation_label_roman_boundary as _looks_like_affiliation_label_roman_boundary,
 )
 from pdf_html_polish.quality_loop.audit_manual_recent import (
@@ -324,11 +327,6 @@ KNOWN_JOINED_WORD_RE = re.compile(
 )
 
 
-def _joined_word_match_is_url_slug(text: str, match: re.Match[str]) -> bool:
-    left = text[max(0, match.start() - 96): match.start()]
-    return bool(re.search(r"(?:https?://|www\.)[^\s<>()\[\]]*$", left, re.IGNORECASE))
-
-
 FLOAT_SENTENCE_INTERRUPT_RE = re.compile(
     r"For\s+these[\s\S]{200,6000}?reasons,\s+a\s+transdiagnostic|"
     r"also\s+and\s+the\s+Committee[\s\S]{0,2000}?require\s+evaluation|"
@@ -565,42 +563,10 @@ REFERENCES_BACKMATTER_INTERLEAVE_RE = re.compile(
     r"\bUniversity\s+of\s+Bath\b[\s\S]{0,1000}\bAUTHOR\s+CONTRIBUTIONS\b",
     re.IGNORECASE,
 )
-SPLIT_DOT_EMAIL_RE = re.compile(
-    r"\b(?-i:[a-z]{2,})\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|"
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\s*\.\s+|\s+\.\s*)[A-Za-z]{2,}\b",
-    re.IGNORECASE,
-)
 SPLIT_AT_EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@\s+[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
     re.IGNORECASE,
 )
-SPLIT_DOT_EMAIL_SENTENCE_WORDS = {
-    "addressed",
-    "author",
-    "authors",
-    "contact",
-    "correspondence",
-    "email",
-}
-
-
-def _split_dot_email_is_sentence_boundary(match: re.Match[str]) -> bool:
-    matched = match.group(0)
-    dot_pos = matched.find(".")
-    at_pos = matched.find("@")
-    if dot_pos < 0 or (at_pos >= 0 and at_pos < dot_pos):
-        return False
-    leading_word = re.match(r"\b([A-Za-z]{2,})\.\s+", matched)
-    return bool(leading_word and leading_word.group(1).lower() in SPLIT_DOT_EMAIL_SENTENCE_WORDS)
-
-
-def _find_split_dot_email_match(text: str) -> re.Match[str] | None:
-    for match in SPLIT_DOT_EMAIL_RE.finditer(text):
-        if not _split_dot_email_is_sentence_boundary(match):
-            return match
-    return None
-
-
 OLD_SCAN_OCR_GIBBERISH_RE = re.compile(
     r"\bLUMBAH\s+I\s+-\s+i\b|"
     r"\(\s*!I\s+G\s*:\.\s*nosis\b|"
@@ -822,37 +788,6 @@ TABLE_WRAPPER_ID_RE = re.compile(
     r"<div\b(?=[^>]*\bid\s*=\s*['\"]table-(?P<num>\d+)['\"])(?=[^>]*\bz2m-table-unit\b)[^>]*>",
     re.IGNORECASE | re.DOTALL,
 )
-
-
-_REFERENCE_BOUNDARY_START_RE = re.compile(
-    r"\b(?P<num>\d{1,4})\.\s+"
-    r"(?P<name>[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,40})"
-)
-
-
-def _bibliography_numbering_residue_is_clean_reference_boundary(
-    polish_html: str,
-    residue: str,
-) -> bool:
-    starts = [
-        (int(match.group("num")), match.group("name"))
-        for match in _REFERENCE_BOUNDARY_START_RE.finditer(residue)
-    ]
-    if not starts:
-        return False
-    for number, name in starts:
-        li_match = re.search(
-            rf"<li\b(?=[^>]*\bid\s*=\s*['\"]ref-{number}['\"])[^>]*>"
-            rf"(?P<body>[\s\S]{{0,1200}}?)</li>",
-            polish_html,
-            re.IGNORECASE,
-        )
-        if li_match is None:
-            return False
-        li_text = _strip_tags(li_match.group("body"))
-        if re.search(rf"\b{number}\.\s+{re.escape(name)}", li_text) is None:
-            return False
-    return True
 
 
 def _source_pdf_path(raw_path: Path) -> Path:

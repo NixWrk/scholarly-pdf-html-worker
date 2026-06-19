@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_blocks import Block, strip_tags
 
 
 AFFILIATION_LABEL_CONTEXT_RE = re.compile(r"\b(?:ARTICLE INFO|Keywords?|Received|Accepted)\b", re.IGNORECASE)
@@ -35,6 +35,23 @@ AFFILIATION_LABEL_LOCATION_PREFIXES = {
     "sweden",
     "switzerland",
 }
+SPLIT_DOT_EMAIL_RE = re.compile(
+    r"\b(?-i:[a-z]{2,})\.\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|"
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\s*\.\s+|\s+\.\s*)[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+SPLIT_DOT_EMAIL_SENTENCE_WORDS = {
+    "addressed",
+    "author",
+    "authors",
+    "contact",
+    "correspondence",
+    "email",
+}
+REFERENCE_BOUNDARY_START_RE = re.compile(
+    r"\b(?P<num>\d{1,4})\.\s+"
+    r"(?P<name>[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{1,40})"
+)
 
 
 def replacement_chars_are_pdf_source_noise(polish_html: str, pdf_text: str) -> bool:
@@ -63,6 +80,50 @@ def replacement_chars_are_pdf_source_noise(polish_html: str, pdf_text: str) -> b
         if len(numeric_cells) >= 12 or len(re.findall(r"\b\d\s+\d\s+\d\s+\d\b", pdf_text)) >= 4:
             return True
     return False
+
+
+def joined_word_match_is_url_slug(text: str, match: re.Match[str]) -> bool:
+    left = text[max(0, match.start() - 96) : match.start()]
+    return bool(re.search(r"(?:https?://|www\.)[^\s<>()\[\]]*$", left, re.IGNORECASE))
+
+
+def split_dot_email_is_sentence_boundary(match: re.Match[str]) -> bool:
+    matched = match.group(0)
+    dot_pos = matched.find(".")
+    at_pos = matched.find("@")
+    if dot_pos < 0 or (at_pos >= 0 and at_pos < dot_pos):
+        return False
+    leading_word = re.match(r"\b([A-Za-z]{2,})\.\s+", matched)
+    return bool(leading_word and leading_word.group(1).lower() in SPLIT_DOT_EMAIL_SENTENCE_WORDS)
+
+
+def find_split_dot_email_match(text: str) -> re.Match[str] | None:
+    for match in SPLIT_DOT_EMAIL_RE.finditer(text):
+        if not split_dot_email_is_sentence_boundary(match):
+            return match
+    return None
+
+
+def bibliography_numbering_residue_is_clean_reference_boundary(polish_html: str, residue: str) -> bool:
+    starts = [
+        (int(match.group("num")), match.group("name"))
+        for match in REFERENCE_BOUNDARY_START_RE.finditer(residue)
+    ]
+    if not starts:
+        return False
+    for number, name in starts:
+        li_match = re.search(
+            rf"<li\b(?=[^>]*\bid\s*=\s*['\"]ref-{number}['\"])[^>]*>"
+            rf"(?P<body>[\s\S]{{0,1200}}?)</li>",
+            polish_html,
+            re.IGNORECASE,
+        )
+        if li_match is None:
+            return False
+        li_text = strip_tags(li_match.group("body"))
+        if re.search(rf"\b{number}\.\s+{re.escape(name)}", li_text) is None:
+            return False
+    return True
 
 
 def looks_like_affiliation_label_roman_boundary(block: Block, split_match: re.Match[str]) -> bool:
