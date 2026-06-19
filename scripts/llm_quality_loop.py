@@ -1627,14 +1627,43 @@ def write_p62_image_recovery_stage(
                 flush=True,
             )
 
+            def group_artifact_paths(group_index: int, article_id: str) -> tuple[Path, Path]:
+                group_slug = f"{group_index:03d}_{_slug(article_id, max_len=72)}"
+                return (
+                    parallel_root / f"{group_slug}.plan.json",
+                    parallel_root / f"{group_slug}.report.json",
+                )
+
+            def load_completed_group_report(
+                group_index: int,
+                article_id: str,
+                group_records: list[dict[str, Any]],
+            ) -> dict[str, Any] | None:
+                _group_plan_path, group_report_path = group_artifact_paths(group_index, article_id)
+                if not group_report_path.is_file():
+                    return None
+                group_report = _load_json(group_report_path, default={})
+                if not isinstance(group_report, dict):
+                    return None
+                report_records = [
+                    item for item in (group_report.get("articles") or []) if isinstance(item, dict)
+                ]
+                expected_indices = sorted(
+                    int(record.get("recovery_index") or 0) for record in group_records
+                )
+                actual_indices = sorted(int(item.get("record_index") or 0) for item in report_records)
+                if not expected_indices or actual_indices != expected_indices:
+                    return None
+                if any(str(item.get("article") or "") != article_id for item in report_records):
+                    return None
+                return group_report
+
             def process_article_group(
                 group_index: int,
                 article_id: str,
                 group_records: list[dict[str, Any]],
             ) -> dict[str, Any]:
-                group_slug = f"{group_index:03d}_{_slug(article_id, max_len=72)}"
-                group_plan_path = parallel_root / f"{group_slug}.plan.json"
-                group_report_path = parallel_root / f"{group_slug}.report.json"
+                group_plan_path, group_report_path = group_artifact_paths(group_index, article_id)
                 group_plan = dict(plan)
                 group_plan["articles"] = group_records
                 group_plan["selected_count"] = len(group_records)
@@ -1655,6 +1684,24 @@ def write_p62_image_recovery_stage(
             reports_by_group: list[dict[str, Any] | None] = [None] * len(group_items)
             completed_records = 0
             completed_groups = 0
+            pending_groups: list[tuple[int, str, list[dict[str, Any]]]] = []
+            for group_index, (article_id, group_records) in enumerate(group_items, start=1):
+                cached_report = load_completed_group_report(group_index, article_id, group_records)
+                if cached_report is None:
+                    pending_groups.append((group_index, article_id, group_records))
+                    continue
+                reports_by_group[group_index - 1] = cached_report
+                completed_records += len(group_records)
+                completed_groups += 1
+                print(
+                    "P62 image recovery article cached: "
+                    f"articles={completed_groups}/{len(group_items)} "
+                    f"records={completed_records}/{len(records)} "
+                    f"article={_console_text(article_id)} "
+                    f"asset_ready={cached_report.get('asset_ready_count', 0)} "
+                    f"patched={cached_report.get('patched_warning_count', 0)}",
+                    flush=True,
+                )
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
                 futures = {
                     executor.submit(process_article_group, group_index, article_id, group_records): (
@@ -1662,7 +1709,7 @@ def write_p62_image_recovery_stage(
                         article_id,
                         len(group_records),
                     )
-                    for group_index, (article_id, group_records) in enumerate(group_items, start=1)
+                    for group_index, article_id, group_records in pending_groups
                 }
                 for future in as_completed(futures):
                     group_index, article_id, group_record_count = futures[future]

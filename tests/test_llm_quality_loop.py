@@ -2511,6 +2511,70 @@ def test_p62_image_recovery_stage_parallelizes_by_article_and_preserves_record_o
     assert report["status_counts"] == {"already_patched": 3}
 
 
+def test_p62_image_recovery_stage_parallel_resume_skips_completed_article_reports(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    article_b_polish = run_dir / "polish" / "article_b.02.en.polish.html"
+    article_b_audit = run_dir / "audit_tree" / "article_b" / "02.en.polish.html"
+    for path in (article_b_polish, article_b_audit):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '<html><body><div id="fig-1">Figure 1. Already present.</div></body></html>',
+            encoding="utf-8",
+        )
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 2,
+            "articles": [
+                {"article": "article_a", "figure_label": "1", "status": "ready"},
+                {"article": "article_b", "figure_label": "1", "status": "ready"},
+            ],
+        },
+    )
+    _write_json(
+        run_dir / "manifest.json",
+        {"articles": [{"article_id": "article_a"}, {"article_id": "article_b"}]},
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 2, "totals": {}, "articles": []})
+    parallel_root = run_dir / "p62_image_recovery" / "_parallel_article_plans"
+    parallel_root.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        parallel_root / "001_article_a.report.json",
+        {
+            "articles": [
+                {
+                    "article": "article_a",
+                    "record_index": 1,
+                    "figure_label": "1",
+                    "status": "already_patched",
+                    "asset_status": "ready",
+                }
+            ],
+            "patched_articles": [],
+            "asset_ready_count": 0,
+            "patched_warning_count": 0,
+        },
+    )
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={
+            "p62_image_recovery_jobs": 2,
+            "p62_image_recovery_repair_duplicate_figure_images": False,
+        },
+        execute_marker=False,
+    )
+
+    assert report["status"] == "ready"
+    assert [article["record_index"] for article in report["articles"]] == [1, 2]
+    assert [article["article"] for article in report["articles"]] == ["article_a", "article_b"]
+    assert report["status_counts"] == {"already_patched": 2}
+
+
 def test_polish_auto_repair_stage_parallelizes_by_article_and_merges_reports(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     audit_articles = []
