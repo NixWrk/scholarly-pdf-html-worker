@@ -16259,6 +16259,9 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "sys-",
         "DirectX-",
         "pv0:",
+        "0:5mLs",
+        "validtation",
+        "9 m m",
         "seperable",
         "E clarity",
         "b5223",
@@ -16272,10 +16275,20 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         "flow flow flow flow",
         "BOO i",
         "BOO <",
+        "IPP Grade iii",
+        "Gen-A i",
         "Routeledge",
         "Build-in sensors",
         "Shepadex",
         "sequence4",
+        "FA 330",
+        "trimetylsilyl",
+        "around287.8",
+        "millitres",
+        "368C",
+        "378C",
+        "rst few",
+        "Museum of Moden Art",
         "room temperation",
         "purposed work",
         "425 cmH2O",
@@ -16332,6 +16345,9 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
     html = re.sub(rf"\bDirectX-\s*{sup_r}", "DirectX-R", html)
 
     html = re.sub(r"\bpv0:(\d+)\b", lambda m: f"p<0.{m.group(1)}", html)
+    html = re.sub(r"\b0:5\s*mLs\{?\s*1\s+mm\{?\s*1\b", "0.5 mL s-1 mm-1", html)
+    html = re.sub(r"\bvalidtation\b", "validation", html, flags=re.IGNORECASE)
+    html = re.sub(r"\b(\d+(?:\.\d+)?)\s+m\s+m\b", r"\1 mm", html, flags=re.IGNORECASE)
     html = re.sub(r"\bseperable\b", "separable", html, flags=re.IGNORECASE)
     html = re.sub(r"\bE\s+clarity\s+of\b", "The clarity of", html)
     html = re.sub(r"\bb5223\b", "b=223", html)
@@ -16366,10 +16382,19 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
         html,
         flags=re.IGNORECASE,
     )
+    html = re.sub(r"\bIPP\s+Grade\s+iii\b", "IPP Grade III", html)
+    html = re.sub(r"\bGen-A\s+i\b", "Gen-AI", html)
     html = re.sub(r"\bRouteledge\b", "Routledge", html, flags=re.IGNORECASE)
     html = re.sub(r"\bBuild-in\s+sensors\b", "Built-in sensors", html, flags=re.IGNORECASE)
     html = re.sub(r"\bShep(?:a|ha)dex\b", "Sephadex", html)
+    html = re.sub(r"\btrimetylsilyl\b", "trimethylsilyl", html, flags=re.IGNORECASE)
     html = re.sub(r"\bsequence4\b", "sequence 4", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bFA\s+330\b", "FA 33°", html)
+    html = re.sub(r"\baround287\.8\b", "around 287.8", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bmillitres\b", "millilitres", html, flags=re.IGNORECASE)
+    html = re.sub(r"\b(3[67])8C\b", r"\1.8 °C", html)
+    html = re.sub(r"\brst\s+few\b", "first few", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bMuseum\s+of\s+Moden\s+Art\b", "Museum of Modern Art", html)
     html = re.sub(r"\broom\s+temperation\b", "room temperature", html, flags=re.IGNORECASE)
     html = re.sub(r"\bpurposed\s+work\b", "proposed work", html, flags=re.IGNORECASE)
     html = re.sub(r"\b425\s+cmH2O\b", ">25 cmH2O", html)

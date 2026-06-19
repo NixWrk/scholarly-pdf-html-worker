@@ -13993,6 +13993,9 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
         "E clarity of their design, b5223 magnification, Routeledge, Build-in sensors, "
         "Shepadex columns, sequence4 acquisition, room temperation, purposed work, "
         "425 cmH2O, 460 bpm, and Archelological exploration.</p>"
+        "<p>More residual P71 tokens included validtation accuracy, 0:5mLs{ 1 mm{ 1, "
+        "a 9 m m dot, IPP Grade iii, Gen-A i tools, trimetylsilyl ether, FA 330, "
+        "around287.8 eV, millitres, 368C, rst few days, and Museum of Moden Art.</p>"
         "<p>Split italic residue kept BOO <i>i</i> in a table-like row.</p>"
         '<p>Reference split reached r=0.9 <a href="#ref-9">526 30 31 33 52)</a>. '
         "Solid .999 fine silver sheet (left)999 fine silver clad copper (right). "
@@ -14044,6 +14047,10 @@ def test_polish_html_document_repairs_second_wave_ocr_residues() -> None:
     assert "The clarity of their design, b=223 magnification, Routledge, Built-in sensors" in polished
     assert "Sephadex columns, sequence 4 acquisition, room temperature, proposed work" in polished
     assert ">25 cmH2O, >60 bpm, and Archaeological exploration" in polished
+    assert "validation accuracy, 0.5 mL s-1 mm-1" in polished
+    assert "a 9 mm dot, IPP Grade III, Gen-AI tools, trimethylsilyl ether, FA 33°" in polished
+    assert "around 287.8 eV, millilitres, 36.8 °C, first few days" in polished
+    assert "Museum of Modern Art" in polished
     assert "kept BOOI in a table-like row" in polished
     assert "r=0.9526 30 31 33 52)" in polished
     assert "sheet (left). .999 fine silver clad copper" in polished
