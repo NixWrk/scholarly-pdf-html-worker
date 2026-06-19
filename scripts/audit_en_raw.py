@@ -11,7 +11,6 @@ from pathlib import Path
 import re
 import sys
 from typing import Any, Iterable
-from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,19 +31,19 @@ from pdf_html_polish.quality_loop.audit_raw_blocks import (  # noqa: E402
     snippet_at as _snippet_at,
     strip_tags as _strip_tags,
 )
+from pdf_html_polish.quality_loop.audit_raw_images import (  # noqa: E402
+    image_refs as _image_refs,
+    image_summary as _image_summary,
+    resolve_image_ref as _resolve_image_ref,
+    sidecar_images as _sidecar_images,
+)
 
 
 STAGE_NAME = RAW_STAGE_NAME
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
 HTML_TAG_RE = re.compile(r"<html(?:\s|>)", re.IGNORECASE)
 BODY_TAG_RE = re.compile(r"<body(?:\s|>)", re.IGNORECASE)
-IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE | re.DOTALL)
-IMG_SRC_RE = re.compile(
-    r"<img\b[^>]*\bsrc\s*=\s*(?:(?P<quote>['\"])(?P<quoted>.*?)(?P=quote)|(?P<bare>[^\s>]+))",
-    re.IGNORECASE | re.DOTALL,
-)
 FIGURE_LABEL_RE = re.compile(r"\b(?:FIGURE|Figure|Fig\.)\s+\d+[A-Za-z]?\b")
 FIGURE_CAPTION_RE = re.compile(
     r"^\s*(?:FIGURE\s+\d+\s*\||Figure\s+\d+\s*[.:]|Fig\.\s+\d+\s*\.)",
@@ -78,83 +77,6 @@ FORMULA_UNIT_FRAGMENT_RE = re.compile(
     rf"\bm\s+(?:[{MICRO_CHARS}]|{MOJIBAKE_MICRO})\b)",
     re.IGNORECASE,
 )
-
-
-def _image_refs(text: str) -> list[str]:
-    refs: list[str] = []
-    for match in IMG_SRC_RE.finditer(text):
-        refs.append(match.group("quoted") or match.group("bare") or "")
-    return refs
-
-
-def _sidecar_images(article_dir: Path, stage_dir: Path) -> set[Path]:
-    images: set[Path] = set()
-    for base in {article_dir, stage_dir}:
-        if not base.exists():
-            continue
-        for child in base.iterdir():
-            if child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS:
-                images.add(child.resolve(strict=False))
-    return images
-
-
-def _resolve_image_ref(src: str, article_dir: Path, stage_dir: Path) -> tuple[str, Path | None]:
-    parsed = urlsplit(src)
-    if parsed.scheme in {"http", "https", "data"}:
-        return parsed.scheme, None
-    clean = unquote(parsed.path).replace("\\", "/")
-    candidates = [stage_dir / clean, article_dir / clean]
-    for candidate in candidates:
-        if candidate.exists():
-            return "local", candidate.resolve(strict=False)
-    return "missing", (article_dir / clean).resolve(strict=False)
-
-
-def _image_summary(path: Path, text: str) -> tuple[dict[str, Any], Defect | None]:
-    stage_dir = path.parent
-    article_dir = stage_dir.parent
-    refs = _image_refs(text)
-    local_resolved: set[Path] = set()
-    remote_refs = 0
-    data_refs = 0
-    missing: list[str] = []
-
-    for src in refs:
-        kind, resolved = _resolve_image_ref(src, article_dir, stage_dir)
-        if kind == "local" and resolved is not None:
-            local_resolved.add(resolved)
-        elif kind == "data":
-            data_refs += 1
-        elif kind in {"http", "https"}:
-            remote_refs += 1
-        else:
-            missing.append(src)
-
-    sidecars = _sidecar_images(article_dir, stage_dir)
-    unused = sorted(str(path) for path in sidecars.difference(local_resolved))
-    summary = {
-        "img_tags": len(IMG_TAG_RE.findall(text)),
-        "image_srcs": len(refs),
-        "local_sidecar_files": len(sidecars),
-        "local_refs_resolved": len(local_resolved),
-        "remote_refs": remote_refs,
-        "data_uri_refs": data_refs,
-        "missing_refs": missing[:20],
-        "unused_sidecars": unused[:20],
-    }
-    if missing:
-        return summary, Defect(
-            id="R03",
-            check="Count <img> tags and sidecar image files",
-            severity="error",
-            snippet=missing[0],
-            line=None,
-            hypothesis="Marker referenced an image that is not present beside the article or stage artifact.",
-            proposed_fix_layer="Marker image extraction or staging",
-            regression_test="Audit image refs and sidecars for the full EN raw control corpus.",
-            extra={"missing_refs": missing[:20], "missing_count": len(missing)},
-        )
-    return summary, None
 
 
 def _major_tag_defects(text: str) -> list[Defect]:
