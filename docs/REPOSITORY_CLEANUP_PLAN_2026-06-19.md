@@ -87,9 +87,11 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Continue thinning `scripts/llm_quality_loop.py` by cluster.
-2. Clean remaining review/gate/source-PDF wrappers where safe.
-3. Move to audit-script thinning after quality-loop wrapper churn is done.
+1. Continue thinning `scripts/audit_en_polish.py` by defect family.
+2. Keep extracted audit helpers in focused `quality_loop/audit_*` modules with
+   direct tests.
+3. Revisit `scripts/audit_en_raw.py` once the polish audit boundaries are
+   calmer.
 4. Only then start extracting small domains from `single_file_html.py`.
 
 ## Progress
@@ -112,3 +114,5 @@ The cleanup policy is deliberately conservative:
   unit tests.
 - Moved source-PDF float-gap confirmation from `scripts/audit_en_polish.py`
   into `quality_loop/audit_float_gap.py` with direct unit tests.
+- Moved P20/P96 image defect builders from `scripts/audit_en_polish.py` into
+  `quality_loop/audit_images.py` with direct unit tests.
