@@ -28,6 +28,8 @@ from .citation_profile_recovery import (
 )
 from .email_repair import repair_split_visible_emails as _repair_split_visible_emails
 from .html_images import (
+    IMAGE_CACHE_KEY_ATTR_PATTERN as _IMAGE_CACHE_KEY_ATTR_PATTERN,
+    IMG_SRC_PATTERN as _IMG_SRC_PATTERN,
     InlineHtmlResult,
     data_image_src_looks_renderable as _data_image_src_looks_renderable,
     decode_data_image_payload as _decode_data_image_payload,
@@ -37,6 +39,8 @@ from .html_images import (
     html_node_has_renderable_image as _node_has_renderable_image,
     html_node_image_srcs as _node_image_srcs,
     is_inline_or_remote as _is_inline_or_remote,
+    refresh_inlined_data_urls_by_cache as _refresh_inlined_data_urls_by_cache,
+    refresh_inlined_data_urls_by_hint as _refresh_inlined_data_urls_by_hint,
     to_data_url as _to_data_url,
     validate_data_url as _validate_data_url,
 )
@@ -190,11 +194,6 @@ from .url_repair import (
 )
 
 
-_IMG_SRC_PATTERN = re.compile(r'(<img\b[^>]*?\ssrc\s*=\s*)(["\'])([^"\']+)(\2)', re.IGNORECASE)
-_IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
-    r'\bdata-z2m-image-key\s*=\s*(["\'])([^"\']+)\1',
-    re.IGNORECASE,
-)
 _HEAD_CLOSE_PATTERN = re.compile(r"</head>", re.IGNORECASE)
 _BODY_PATTERN = re.compile(r"(<body\b[^>]*>)(.*?)(</body>)", re.IGNORECASE | re.DOTALL)
 _ESCAPED_INLINE_TAG_PATTERN = re.compile(r"&lt;(/?)(sup|sub)&gt;", re.IGNORECASE)
@@ -3210,94 +3209,6 @@ def _unwrap_nested_same_href_internal_links(fragment: str) -> str:
         prev = current
         current = _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN.sub(replace, current)
     return current
-
-
-def _refresh_inlined_data_urls_by_hint(
-    html: str,
-    *,
-    base_dir: Path,
-) -> tuple[str, int]:
-    """Refresh stale/corrupted data URLs using ``data-z2m-src`` sidecar hints."""
-    refreshed = 0
-
-    def resolve_hint_path(path_value: str) -> Path | None:
-        if not path_value:
-            return None
-        clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
-        decoded = urllib.parse.unquote(clean_path)
-        candidate = (base_dir / decoded).resolve(strict=False)
-        if candidate.is_file():
-            return candidate
-        return None
-
-    def replace(match: re.Match[str]) -> str:
-        nonlocal refreshed
-        prefix = match.group(1)
-        quote = match.group(2)
-        src_value = match.group(3).strip()
-        suffix = match.group(4)
-
-        if not src_value.lower().startswith("data:"):
-            return match.group(0)
-
-        hint_match = re.search(
-            r'\bdata-z2m-src\s*=\s*(["\'])([^"\']+)\1',
-            prefix,
-            re.IGNORECASE,
-        )
-        if hint_match is None:
-            return match.group(0)
-        candidate = resolve_hint_path(hint_match.group(2).strip())
-        if candidate is None:
-            return match.group(0)
-        if _validate_data_url(src_value, candidate):
-            return match.group(0)
-
-        refreshed_data_url = _to_data_url(candidate, detect_by_signature=True, log_func=None)
-        if refreshed_data_url is None:
-            return match.group(0)
-        if not _validate_data_url(refreshed_data_url, candidate):
-            return match.group(0)
-
-        refreshed += 1
-        return f"{prefix}{quote}{refreshed_data_url}{suffix}"
-
-    return _IMG_SRC_PATTERN.sub(replace, html), refreshed
-
-
-def _refresh_inlined_data_urls_by_cache(
-    html: str,
-    *,
-    image_cache: Mapping[str, str] | None,
-) -> tuple[str, int]:
-    """Restore broken inline image payloads from the pre-polish image cache."""
-    if not image_cache:
-        return html, 0
-
-    refreshed = 0
-
-    def replace(match: re.Match[str]) -> str:
-        nonlocal refreshed
-        prefix = match.group(1)
-        quote = match.group(2)
-        src_value = match.group(3).strip()
-        suffix = match.group(4)
-
-        key_match = _IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix)
-        if key_match is None:
-            return match.group(0)
-        cached_data_url = image_cache.get(key_match.group(2).strip())
-        if not cached_data_url or not cached_data_url.lower().startswith("data:image/"):
-            return match.group(0)
-        if not _data_image_src_looks_renderable(cached_data_url):
-            return match.group(0)
-        if src_value.lower().startswith("data:image/") and _data_image_src_looks_renderable(src_value):
-            return match.group(0)
-
-        refreshed += 1
-        return f"{prefix}{quote}{cached_data_url}{suffix}"
-
-    return _IMG_SRC_PATTERN.sub(replace, html), refreshed
 
 
 def drop_repeated_phrases(text: str) -> str:

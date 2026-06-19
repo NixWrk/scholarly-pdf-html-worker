@@ -4,7 +4,10 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
+from pdf_html_polish import html_images
 from pdf_html_polish.single_file_html import (
+    _IMAGE_CACHE_KEY_ATTR_PATTERN,
+    _IMG_SRC_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _figure_caption_num_from_visible,
@@ -15,6 +18,8 @@ from pdf_html_polish.single_file_html import (
     _link_unlinked_numeric_superscripts_to_existing_refs,
     _link_section_refs,
     _late_recover_orphan_figure_anchors_and_links,
+    _refresh_inlined_data_urls_by_cache,
+    _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
@@ -48,6 +53,13 @@ def _valid_tiny_png_bytes() -> bytes:
 
 def _valid_tiny_png_data_url() -> str:
     return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
+
+
+def test_single_file_html_preserves_image_refresh_aliases() -> None:
+    assert _IMG_SRC_PATTERN is html_images.IMG_SRC_PATTERN
+    assert _IMAGE_CACHE_KEY_ATTR_PATTERN is html_images.IMAGE_CACHE_KEY_ATTR_PATTERN
+    assert _refresh_inlined_data_urls_by_hint is html_images.refresh_inlined_data_urls_by_hint
+    assert _refresh_inlined_data_urls_by_cache is html_images.refresh_inlined_data_urls_by_cache
 
 
 def test_inline_images_from_html_file() -> None:

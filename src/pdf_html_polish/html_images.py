@@ -8,7 +8,8 @@ import hashlib
 import mimetypes
 from pathlib import Path
 import re
-from typing import Callable
+from typing import Callable, Mapping
+import urllib.parse
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,10 @@ IMAGE_SIGNATURES: dict[bytes, str] = {
     b"\x42\x4d": "image/bmp",
 }
 IMG_SRC_PATTERN = re.compile(r'(<img\b[^>]*?\ssrc\s*=\s*)(["\'])([^"\']+)(\2)', re.IGNORECASE)
+IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
+    r'\bdata-z2m-image-key\s*=\s*(["\'])([^"\']+)\1',
+    re.IGNORECASE,
+)
 
 
 def is_inline_or_remote(value: str) -> bool:
@@ -236,3 +241,91 @@ def html_node_has_broken_data_image(raw: str) -> bool:
         decode_data_image_payload(src) is not None and not data_image_src_looks_renderable(src)
         for src in html_node_image_srcs(raw)
     )
+
+
+def refresh_inlined_data_urls_by_hint(
+    html: str,
+    *,
+    base_dir: Path,
+) -> tuple[str, int]:
+    """Refresh stale/corrupted data URLs using ``data-z2m-src`` sidecar hints."""
+    refreshed = 0
+
+    def resolve_hint_path(path_value: str) -> Path | None:
+        if not path_value:
+            return None
+        clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
+        decoded = urllib.parse.unquote(clean_path)
+        candidate = (base_dir / decoded).resolve(strict=False)
+        if candidate.is_file():
+            return candidate
+        return None
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal refreshed
+        prefix = match.group(1)
+        quote = match.group(2)
+        src_value = match.group(3).strip()
+        suffix = match.group(4)
+
+        if not src_value.lower().startswith("data:"):
+            return match.group(0)
+
+        hint_match = re.search(
+            r'\bdata-z2m-src\s*=\s*(["\'])([^"\']+)\1',
+            prefix,
+            re.IGNORECASE,
+        )
+        if hint_match is None:
+            return match.group(0)
+        candidate = resolve_hint_path(hint_match.group(2).strip())
+        if candidate is None:
+            return match.group(0)
+        if validate_data_url(src_value, candidate):
+            return match.group(0)
+
+        refreshed_data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
+        if refreshed_data_url is None:
+            return match.group(0)
+        if not validate_data_url(refreshed_data_url, candidate):
+            return match.group(0)
+
+        refreshed += 1
+        return f"{prefix}{quote}{refreshed_data_url}{suffix}"
+
+    return IMG_SRC_PATTERN.sub(replace, html), refreshed
+
+
+def refresh_inlined_data_urls_by_cache(
+    html: str,
+    *,
+    image_cache: Mapping[str, str] | None,
+) -> tuple[str, int]:
+    """Restore broken inline image payloads from the pre-polish image cache."""
+    if not image_cache:
+        return html, 0
+
+    refreshed = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal refreshed
+        prefix = match.group(1)
+        quote = match.group(2)
+        src_value = match.group(3).strip()
+        suffix = match.group(4)
+
+        key_match = IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix)
+        if key_match is None:
+            return match.group(0)
+        cached_data_url = image_cache.get(key_match.group(2).strip())
+        if not cached_data_url or not cached_data_url.lower().startswith("data:image/"):
+            return match.group(0)
+        if not data_image_src_looks_renderable(cached_data_url):
+            return match.group(0)
+        if src_value.lower().startswith("data:image/") and data_image_src_looks_renderable(src_value):
+            return match.group(0)
+
+        refreshed += 1
+        return f"{prefix}{quote}{cached_data_url}{suffix}"
+
+    return IMG_SRC_PATTERN.sub(replace, html), refreshed
