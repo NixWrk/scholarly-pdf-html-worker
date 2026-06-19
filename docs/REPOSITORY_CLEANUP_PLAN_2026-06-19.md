@@ -173,3 +173,7 @@ The cleanup policy is deliberately conservative:
 - Moved EN raw per-file analysis orchestration and raw pattern checks
   (`R07`, `R08`, `R09`, `R11`, `R12`, `R14`) from `scripts/audit_en_raw.py`
   into `quality_loop/audit_raw_analysis.py` with direct unit tests.
+- Moved EN raw stage discovery, corpus aggregation, report assembly, and console
+  summary output from `scripts/audit_en_raw.py` into
+  `quality_loop/audit_raw_report.py` with direct unit tests; the script is now
+  primarily CLI argument handling and JSON writing.
