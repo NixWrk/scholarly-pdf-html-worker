@@ -77,6 +77,7 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     looks_like_figure_caption as _looks_like_figure_caption,
     looks_like_float_note as _looks_like_float_note,
     looks_like_float_or_caption as _looks_like_float_or_caption,
+    is_supplementary_figure_block as _is_supplementary_figure_block,
 )
 from pdf_html_polish.quality_loop.audit_float_gap import (
     source_pdf_text_confirms_float_gap as _source_pdf_text_confirms_float_gap,
@@ -729,11 +730,6 @@ COMMA_DECIMAL_REF_RE = re.compile(
     r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<right>\d{1,3})['\"][^>]*>\s*(?P=right)\s*</a>",
     re.IGNORECASE,
 )
-SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
-    r"^\s*(?:Supplementary|Supplemental|Suppl\.?)\s+"
-    r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
-    re.IGNORECASE,
-)
 TABLE_REF_PARTIAL_LINK_RE = re.compile(
     r"\bTables?\s+<a\b[^>]*\bhref\s*=\s*['\"]#table-(?P<target>\d+)['\"][^>]*>"
     r"\s*(?P<label>\d+)\s*</a>",
@@ -852,10 +848,6 @@ def _classify_missing_figure_warning(
         polish_blocks,
         looks_like_figure_caption=_looks_like_figure_caption,
     )
-
-
-def _is_supplementary_figure_block(block: Block) -> bool:
-    return block.id.lower().startswith("fig-supplementary-") or SUPPLEMENTARY_FIGURE_LABEL_RE.match(block.text) is not None
 
 
 def _unlinked_citation_range_kind(block: Block) -> str:

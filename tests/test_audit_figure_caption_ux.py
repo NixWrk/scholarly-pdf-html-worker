@@ -7,6 +7,7 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
     figure_caption_numbers_from_caption_node,
     figure_caption_ux_defects,
     figure_unit_allows_shared_image_alias,
+    is_supplementary_figure_block,
     looks_like_equation_continuation,
     looks_like_figure_caption,
     looks_like_float_note,
@@ -86,6 +87,12 @@ def test_figure_unit_allows_shared_image_alias_for_contiguous_caption_aliases() 
 
     assert figure_unit_allows_shared_image_alias(body, 1, [2])
     assert not figure_unit_allows_shared_image_alias(body, 1, [3])
+
+
+def test_is_supplementary_figure_block_accepts_ids_and_labels() -> None:
+    assert is_supplementary_figure_block(_block("Figure S1. Caption.", id_="fig-supplementary-s1"))
+    assert is_supplementary_figure_block(_block("Supplementary Figure S2. Caption."))
+    assert not is_supplementary_figure_block(_block("Figure 2. Main caption."))
 
 
 def test_float_context_helpers_classify_float_notes_and_equations() -> None:

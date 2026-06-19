@@ -11,6 +11,11 @@ from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEA
 
 
 FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
+SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
+    r"^\s*(?:Supplementary|Supplemental|Suppl\.?)\s+"
+    r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
+    re.IGNORECASE,
+)
 TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
 MULTIPANEL_FIG_REF_RE = re.compile(
     r"\bfigures?\s+\d+\s*\([A-Za-z]\)\s*,\s*\([A-Za-z]\)",
@@ -80,6 +85,13 @@ def caption_raw_for_tex_residue(block: Block) -> str:
 
 def has_terminal_source_visual_unavailable_warning(block: Block) -> bool:
     return TERMINAL_SOURCE_VISUAL_UNAVAILABLE_WARNING_RE.search(block.raw) is not None
+
+
+def is_supplementary_figure_block(block: Block) -> bool:
+    return (
+        block.id.lower().startswith("fig-supplementary-")
+        or SUPPLEMENTARY_FIGURE_LABEL_RE.match(block.text) is not None
+    )
 
 
 def looks_like_body_figure_reference_list(block: Block) -> bool:
