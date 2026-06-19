@@ -24,12 +24,20 @@ from pdf_html_polish.quality_loop.audit_raw_blocks import (  # noqa: E402
     BlockParser,
     Defect,
     first_match_defect as _first_match_defect,
-    line_at as _line_at,
     normalize_ws as _normalize_ws,
     parse_blocks as _parse_blocks,
     read_utf8 as _read_utf8,
-    snippet_at as _snippet_at,
     strip_tags as _strip_tags,
+)
+from pdf_html_polish.quality_loop.audit_raw_checks import (  # noqa: E402
+    FIGURE_CAPTION_RE,
+    all_caps_heading_defects as _all_caps_heading_defects,
+    anchor_summary as _anchor_summary,
+    caption_without_image_defects as _caption_without_image_defects,
+    heading_ocr_defects as _heading_ocr_defects,
+    major_tag_defects as _major_tag_defects,
+    mojibake_micro_count as _mojibake_micro_count,
+    references_summary as _references_summary,
 )
 from pdf_html_polish.quality_loop.audit_raw_images import (  # noqa: E402
     image_refs as _image_refs,
@@ -40,19 +48,11 @@ from pdf_html_polish.quality_loop.audit_raw_images import (  # noqa: E402
 
 
 STAGE_NAME = RAW_STAGE_NAME
-HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
-HTML_TAG_RE = re.compile(r"<html(?:\s|>)", re.IGNORECASE)
-BODY_TAG_RE = re.compile(r"<body(?:\s|>)", re.IGNORECASE)
 FIGURE_LABEL_RE = re.compile(r"\b(?:FIGURE|Figure|Fig\.)\s+\d+[A-Za-z]?\b")
-FIGURE_CAPTION_RE = re.compile(
-    r"^\s*(?:FIGURE\s+\d+\s*\||Figure\s+\d+\s*[.:]|Fig\.\s+\d+\s*\.)",
-    re.IGNORECASE,
-)
 TABLE_LABEL_RE = re.compile(r"\b(?:TABLE|Table)\s+(?:[IVXLCDM]+|\d+)\b")
 PAGE_HEADER_RE = re.compile(r"\bPage\s+\d+\s+of\s+\d+\b", re.IGNORECASE)
 RAW_SENTINEL_RE = re.compile(r"@@Z2M|<z2m\b|Z2M(?:_[ATF])?", re.IGNORECASE)
-ESCAPED_ANCHOR_RE = re.compile(r"&lt;\s*/?\s*a(?:\s|&gt;|>)", re.IGNORECASE)
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[^\s<>'\"]+", re.IGNORECASE)
 DUPLICATED_DOI_FRAGMENT_RE = re.compile(
     r"\b(10\.\d{4,9}/[^\s<>'\"]+)\s+\1\b",
@@ -63,11 +63,6 @@ GLUED_ROMAN_SUFFIX_RE = re.compile(
     r"\b[A-Za-z]{4,}(?:ii|iii|iv|vi|vii|viii|xii|xiii|xiv|xv|ingv)\b",
     re.IGNORECASE,
 )
-REFERENCES_RE = re.compile(
-    r"\b(?:references|bibliography|works cited|literature cited)\b",
-    re.IGNORECASE,
-)
-
 MICRO_CHARS = "\u00b5\u03bc"
 MOJIBAKE_MICRO = "\u0412\u00b5"
 MICRO_TOKEN_RE = re.compile(rf"(?:[{MICRO_CHARS}]|{MOJIBAKE_MICRO})")
@@ -77,159 +72,6 @@ FORMULA_UNIT_FRAGMENT_RE = re.compile(
     rf"\bm\s+(?:[{MICRO_CHARS}]|{MOJIBAKE_MICRO})\b)",
     re.IGNORECASE,
 )
-
-
-def _major_tag_defects(text: str) -> list[Defect]:
-    defects: list[Defect] = []
-    checks = [
-        ("html", HTML_TAG_RE, re.compile(r"</html\s*>", re.IGNORECASE)),
-        ("body", BODY_TAG_RE, re.compile(r"</body\s*>", re.IGNORECASE)),
-    ]
-    for tag, open_re, close_re in checks:
-        opens = len(open_re.findall(text))
-        closes = len(close_re.findall(text))
-        if opens == 0 or closes == 0 or opens != closes:
-            defects.append(
-                Defect(
-                    id="R02",
-                    check="HTML has <html>, <body>, balanced major closing tags",
-                    severity="error",
-                    snippet=f"{tag}: open={opens}, close={closes}",
-                    hypothesis="Marker emitted malformed HTML or the stage artifact was truncated.",
-                    proposed_fix_layer="Marker output capture or raw-stage validation",
-                    regression_test="Audit R02 over all canonical EN raw artifacts.",
-                    extra={"tag": tag, "open": opens, "close": closes},
-                )
-            )
-    return defects
-
-
-def _caption_without_image_defects(blocks: list[Block], *, window: int = 3) -> list[Defect]:
-    defects: list[Defect] = []
-    for block in blocks:
-        if not FIGURE_CAPTION_RE.search(block.text):
-            continue
-        start = max(0, block.index - window)
-        stop = min(len(blocks), block.index + window + 1)
-        if any(neighbor.has_img for neighbor in blocks[start:stop]):
-            continue
-        defects.append(
-            Defect(
-                id="R05",
-                check="Figure label has nearby image before/after within a small block window",
-                severity="warning",
-                snippet=block.text[:260],
-                line=block.line,
-                hypothesis="A figure caption exists, but Marker did not keep a nearby figure image in the raw HTML.",
-                proposed_fix_layer="classify as Marker/PDF extraction defect unless a documented fallback is added",
-                regression_test="Audit caption-to-image proximity for all canonical EN raw artifacts.",
-                extra={"block_index": block.index, "window": window},
-            )
-        )
-    return defects
-
-
-def _heading_ocr_defects(blocks: list[Block]) -> list[Defect]:
-    defects: list[Defect] = []
-    for index, block in enumerate(blocks):
-        if block.tag not in HEADING_TAGS:
-            continue
-        next_block = blocks[index + 1] if index + 1 < len(blocks) else None
-        if next_block is None or not FIGURE_CAPTION_RE.search(next_block.text):
-            continue
-        letters = re.findall(r"[A-Za-z]", block.text)
-        uppercase = [char for char in letters if char.isupper()]
-        uppercase_ratio = (len(uppercase) / len(letters)) if letters else 0.0
-        has_panel_terms = bool(
-            re.search(
-                r"\b(?:electrode|array|substrate|mask|etching|thickness|stimulating|recording)\b",
-                block.text,
-                re.IGNORECASE,
-            )
-        )
-        suspicious = (
-            len(block.text) > 120 and has_panel_terms
-        ) or (
-            len(block.text) > 80 and uppercase_ratio > 0.45 and has_panel_terms
-        )
-        if suspicious:
-            defects.append(
-                Defect(
-                    id="R06",
-                    check="Detect OCR-only figure panels in headings",
-                    severity="warning",
-                    snippet=block.text[:260],
-                    line=block.line,
-                    hypothesis="Marker converted figure panel text into a document heading.",
-                    proposed_fix_layer="classify as Marker/PDF extraction defect; optionally add downstream fallback policy",
-                    regression_test="Audit suspicious heading OCR leakage across the canonical EN raw corpus.",
-                    extra={
-                        "tag": block.tag,
-                        "block_index": block.index,
-                        "uppercase_ratio": round(uppercase_ratio, 3),
-                    },
-                )
-            )
-    return defects
-
-
-def _all_caps_heading_defects(blocks: list[Block]) -> list[Defect]:
-    defects: list[Defect] = []
-    for block in blocks:
-        if block.tag not in HEADING_TAGS or len(block.text) < 40:
-            continue
-        letters = re.findall(r"[A-Za-z]", block.text)
-        if not letters:
-            continue
-        uppercase_ratio = sum(1 for char in letters if char.isupper()) / len(letters)
-        if uppercase_ratio < 0.75:
-            continue
-        if not re.search(r"\b(?:Figure|FIGURE|Table|TABLE|[A-Z]{4,})\b", block.text):
-            continue
-        defects.append(
-            Defect(
-                id="R13",
-                check="Detect suspicious all-caps figure/table text inside headings",
-                severity="warning",
-                snippet=block.text[:260],
-                line=block.line,
-                hypothesis="A figure or table panel was promoted to a heading in EN raw.",
-                proposed_fix_layer="Marker/PDF extraction classification or EN polish fallback after corpus review",
-                regression_test="Audit all-caps heading leakage across all canonical EN raw artifacts.",
-                extra={
-                    "tag": block.tag,
-                    "block_index": block.index,
-                    "uppercase_ratio": round(uppercase_ratio, 3),
-                },
-            )
-        )
-    return defects
-
-
-def _references_summary(text: str) -> dict[str, Any]:
-    matches = list(REFERENCES_RE.finditer(text))
-    if not matches:
-        return {"found": False, "line": None, "snippet": None, "post_reference_bytes": 0}
-    first = matches[0]
-    return {
-        "found": True,
-        "line": _line_at(text, first.start()),
-        "snippet": _snippet_at(text, first.start(), first.end()),
-        "post_reference_bytes": len(text) - first.start(),
-    }
-
-
-def _anchor_summary(text: str) -> dict[str, Any]:
-    return {
-        "anchors": len(re.findall(r"<a\b", text, re.IGNORECASE)),
-        "escaped_anchors": len(ESCAPED_ANCHOR_RE.findall(text)),
-        "ids": len(re.findall(r"\bid\s*=", text, re.IGNORECASE)),
-        "hrefs": len(re.findall(r"\bhref\s*=", text, re.IGNORECASE)),
-    }
-
-
-def _mojibake_micro_count(text: str) -> int:
-    return len(re.findall(re.escape(MOJIBAKE_MICRO), text))
 
 
 def analyze_file(path: Path) -> dict[str, Any]:
