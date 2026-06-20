@@ -161,6 +161,14 @@ def page_link_semantic_kind(html: str, match: re.Match[str]) -> str | None:
     left_tail = left[-80:]
     right_head = right[:80]
     context = f"{left_tail} {label} {right_head}"
+    supplemental_media_re = re.compile(r"\b(?:Video|Movie|Audio|Dataset|Data|File|Text|Protocol|Supplement)\b", re.IGNORECASE)
+
+    if re.fullmatch(r"\(?S\d+[A-Z]?\)?", label.strip(), re.IGNORECASE) and supplemental_media_re.match(
+        right_head.strip()
+    ):
+        return None
+    if supplemental_media_re.fullmatch(label.strip()) and re.search(r"\bS\d+[A-Z]?\s*$", left_tail, re.IGNORECASE):
+        return None
 
     if re.search(r"\b(?:Box|Table|Tables|Fig\.?|Figure|Section|Appendix|Equation|Eq\.?)\s*$", left_tail, re.IGNORECASE):
         return "semantic-cross-reference"

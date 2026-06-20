@@ -98,9 +98,8 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Run a repair-enabled full cached-raw parity pass before any production
-   PDF-to-polish batch. The no-repair parity run is useful diagnostics, but it
-   is not comparable to the repaired baseline.
+1. Treat the repair-enabled cached-raw parity pass as the current readiness
+   baseline for the next production check.
 2. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
    tuple left in `single_file_html.py` after the pre-cleanup extraction.
 3. Start the frontmatter/footnote cluster in small slices, using
@@ -233,3 +232,25 @@ The cleanup policy is deliberately conservative:
   `P04=1`, `P59=3`, `P13=1`). Treat this as evidence that production
   PDF-to-polish should wait for a standard repair-enabled parity pass, not as a
   direct refactor regression verdict.
+- Ran the repair-enabled full cached-raw parity check in
+  `review_runs/refactor_parity_cleanup_repair_enabled_20260619_01` against
+  `review_runs/full_p62_parallel_p61_p71_20260619_01`. The run repolished 878
+  EN articles from 1009 cached raws, skipped 131 non-target documents, and
+  changed 657 polish outputs.
+- The default P62 image-recovery parallelism (`p62_image_recovery_jobs=16`)
+  exhausted memory on the full corpus. Resuming P62 with `--jobs 2` completed
+  the recovery stage (`candidate_count=184`, `asset_ready_count=160`,
+  `patched_warning_count=370`, `unresolved_count=12`), so the default gate
+  config now uses `p62_image_recovery_jobs=2` for reliability.
+- Polish auto-repair patched 62 articles in the repair-enabled parity pass
+  (`P04=98`, `P59=20`, `P98=176`, `broken_internal_links=300`). A refreshed
+  full PDF-aware polish audit covered all 878 articles with no counted defects;
+  only non-quality telemetry remained (`P62`, `P04M`, `P61`, `P45*`, `P71`,
+  `P35`).
+- Final repair-enabled parity result: `quality_history` score `445.0`,
+  defects/errors/warnings `0/0/0`, `quality_compare` regressions `0`,
+  improvements `2`, article review `not_required`, and quality gate `pass`.
+  Follow-up audit fixes added during this pass covered all-letter Zotero
+  attachment keys, P05 clean citation false positives near truncated
+  `phoneme` text, P33 supplemental-media page anchors, and review classification
+  for `source_pdf_unavailable` P62 records.

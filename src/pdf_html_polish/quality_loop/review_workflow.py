@@ -168,12 +168,17 @@ def _p62_recovery_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]
             {
                 "patched_count": 0,
                 "source_visual_unavailable_count": 0,
+                "source_pdf_unavailable_count": 0,
                 "actionable_unresolved_count": 0,
                 "recovery_sources": [],
             },
         )
         status = str(item.get("status") or "")
+        plan_status = str(item.get("plan_status") or "")
         figure_label = str(item.get("figure_label") or item.get("resolved_figure_label") or "").strip()
+        if "source_pdf_unavailable" in {status, plan_status}:
+            article_evidence["source_pdf_unavailable_count"] += 1
+            continue
         terminal_unavailable = (
             status == "source_visual_unavailable"
             or has_terminal_source_visual_unavailable_evidence(item)
@@ -208,6 +213,7 @@ def _p62_recovery_evidence_by_article(run_dir: Path) -> dict[str, dict[str, Any]
             {
                 "patched_count": 0,
                 "source_visual_unavailable_count": 0,
+                "source_pdf_unavailable_count": 0,
                 "actionable_unresolved_count": 0,
                 "recovery_sources": [],
             },
@@ -230,6 +236,8 @@ def _review_change_sources(
         sources.append("p62_image_recovery")
     if int(p62_evidence.get("source_visual_unavailable_count") or 0) > 0:
         sources.append("p62_source_visual_unavailable")
+    if int(p62_evidence.get("source_pdf_unavailable_count") or 0) > 0:
+        sources.append("p62_source_pdf_unavailable")
     if repair_evidence.get("patched") and not int(repair_evidence.get("error_count") or 0):
         for repair_id in repair_evidence.get("repair_ids") or []:
             sources.append(f"polish_auto_repair:{repair_id}")

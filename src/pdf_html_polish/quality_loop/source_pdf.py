@@ -331,7 +331,6 @@ def attachment_keys_from_article(article: str, manifest_article: dict[str, Any])
     def looks_like_attachment_key(value: str) -> bool:
         return (
             bool(re.fullmatch(r"[A-Z0-9]{6,10}", value))
-            and any(ch.isdigit() for ch in value)
             and any(ch.isalpha() for ch in value)
         )
 

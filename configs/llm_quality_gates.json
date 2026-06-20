@@ -25,7 +25,7 @@
   "p62_marker_recovery_retry_full_pdf_on_label_miss": true,
   "run_p62_image_recovery_stage": true,
   "p62_image_recovery_max_articles": 0,
-  "p62_image_recovery_jobs": 16,
+  "p62_image_recovery_jobs": 2,
   "p62_image_recovery_execute_marker": true,
   "p62_image_recovery_apply_patches": true,
   "p62_image_recovery_rerun_audit": true,

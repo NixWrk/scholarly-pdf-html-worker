@@ -299,6 +299,75 @@ def test_review_queue_accepts_audit_terminal_p62_source_visual_unavailable(
     assert "p62_unresolved_without_terminal_status" not in queue[0]["review_risk_reasons"]
 
 
+def test_review_queue_treats_source_pdf_unavailable_p62_as_explained(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    write_json(
+        run_dir / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "a",
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "severity": "warning",
+                            "extra": {
+                                "figure_label": "3",
+                                "p62_subtype": "no_nearby_image",
+                                "quality_counted": False,
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    write_json(run_dir / "quality_history_entry.json", {"articles": {"a": {"score": 0}}})
+    write_json(
+        run_dir / "quality_compare.json",
+        {"unchanged": [{"article": "a", "score_delta": 0, "metrics_delta": {}}]},
+    )
+    write_json(
+        run_dir / "manifest.json",
+        {"articles": [{"article_id": "a", "changed": True, "restored_images": 1}]},
+    )
+    write_json(
+        run_dir / "p62_image_recovery_report.json",
+        {
+            "articles": [
+                {
+                    "article": "a",
+                    "status": "unresolved",
+                    "plan_status": "source_pdf_unavailable",
+                    "figure_label": "3",
+                    "unresolved_reason": "source_pdf_unavailable",
+                }
+            ]
+        },
+    )
+
+    queue = write_manual_review_queue(
+        run_dir,
+        gate_config={"ignored_defect_ids_for_analysis": ["P62"]},
+        comparison_by_article=lambda comparison: {
+            item["article"]: {"bucket": "unchanged", **item}
+            for item in comparison.get("unchanged", [])
+        },
+        manifest_article_by_id=lambda manifest: {
+            item["article_id"]: item for item in manifest.get("articles", [])
+        },
+    )
+
+    assert queue[0]["mandatory_review"] is False
+    assert queue[0]["review_risk_level"] == "medium"
+    assert queue[0]["review_risk_reasons"] == ["ignored_defects_only"]
+    assert queue[0]["auto_review_evidence"]["p62"]["source_pdf_unavailable_count"] == 1
+    assert queue[0]["auto_review_evidence"]["p62"]["actionable_unresolved_count"] == 0
+    assert "p62_source_pdf_unavailable" in queue[0]["auto_review_evidence"]["change_sources"]
+
+
 def test_article_review_stage_uses_copy_callback_and_writes_index(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     source = run_dir / "polish" / "a.02.en.polish.html"

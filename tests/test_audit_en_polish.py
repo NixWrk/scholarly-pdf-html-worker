@@ -1966,6 +1966,33 @@ def test_analyze_pair_does_not_report_p05_for_sentence_final_sup_citation_group(
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_report_p05_for_dataset_sup_citation() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "<html><body>"
+            "<p>We compared errors from a previously published dataset"
+            '<sup><a href="#ref-16" class="z2m-ref-link">16</a></sup> '
+            "(participant T5) against keyboard errors.</p>"
+            "<h4>References</h4><ol>"
+            + "".join(f'<li id="ref-{idx}">Reference {idx}.</li>' for idx in range(1, 17))
+            + "</ol></body></html>",
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P05" not in {defect["id"] for defect in result["defects_found"]}
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_does_not_report_p05_for_long_bracket_citation_before_phosphene() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
@@ -3305,6 +3332,37 @@ def test_analyze_pair_reports_meine_manual_blind_spots() -> None:
         assert {"P33", "P34", "P35", "P36", "P37", "P38", "P39", "P40", "P41"}.issubset(defect_ids)
         assert result["summary"]["polish_page_links"] == 2
         assert result["summary"]["polish_replacement_chars"] == 1
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_analyze_pair_does_not_report_p33_for_supplemental_video_page_anchor() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    "<p>Fig. <a href=\"#fig-3\" class=\"z2m-fig-link\">3</a> shows a virtual street intersection. "
+                    'A video clip can be found in <a href="#page-16-0">S1</a> '
+                    '<a href="#page-16-0">Video</a>.</p>',
+                    '<div id="fig-3" class="z2m-float-unit z2m-figure-unit">'
+                    '<p class="z2m-figure-caption">Figure 3. Example.</p></div>',
+                    "</body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        assert "P33" not in {defect["id"] for defect in result["defects_found"]}
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 

@@ -75,6 +75,44 @@ def test_attachment_keys_skip_numeric_article_identifiers() -> None:
     ) == ["KEY12345", "ABC12345"]
 
 
+def test_attachment_keys_accept_all_letter_zotero_keys() -> None:
+    assert attachment_keys_from_article(
+        "Zotero_NIX_Dat_FCHTKCWJ_80630_1763382631000000_Vovk",
+        {},
+    ) == ["FCHTKCWJ"]
+
+
+def test_source_pdf_candidates_fall_back_to_all_letter_zotero_storage_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    attachment_key = "ZZZXQWTY"
+    zotero_root = tmp_path / "Zotero_NIX_Data"
+    storage_dir = zotero_root / "storage" / attachment_key
+    storage_dir.mkdir(parents=True)
+    pdf_path = (
+        storage_dir
+        / "\u0412\u043e\u0432\u043a \u0438 \u0434\u0440. - 2005 - Viewfinder based on a Galilean telescope system.pdf"
+    )
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv("ZOTERO_PATH_PREFIX_MAP", f"/zotero_roots/test_zotero={zotero_root}")
+
+    candidates = article_source_pdf_candidates(
+        tmp_path / "run",
+        f"Zotero_NIX_Dat_{attachment_key}_80630_1763382631000000_"
+        "Vovk_\u00e8_\u00e4\u00f0._-_2005_-_Viewfinder_based_on_a_Galilean_telescope_system",
+        {},
+        {},
+        repo_root=tmp_path,
+        raw_stage="01.en.raw.html",
+        polish_stage="02.en.polish.html",
+    )
+
+    assert candidates[0]["path"] == str(pdf_path.resolve(strict=False))
+    assert candidates[0]["source"] == f"zotero_storage.{attachment_key}"
+    assert candidates[0]["exists"] is True
+
+
 def test_existing_path_candidates_keeps_path_repair_in_source_pdf_module(tmp_path: Path) -> None:
     pdf_path = tmp_path / "\u041a\u0438\u0457\u0432.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")

@@ -111,6 +111,16 @@ def test_linked_ref_near_non_citation_context_ignores_sentence_final_superscript
     assert not linked_ref_near_non_citation_context(block)
 
 
+def test_linked_ref_near_non_citation_context_ignores_truncated_phoneme_tail() -> None:
+    block = _single_block(
+        '<p>Movements often produce overlapping neural signatures <a href="#ref-12" '
+        'class="z2m-ref-link"> 12; </a> these phonemes (especially vowels) are often '
+        "interchangeable when a phoneme-based language model considers probable sentences.</p>"
+    )
+
+    assert not linked_ref_near_non_citation_context(block)
+
+
 def test_linked_ref_near_non_citation_context_ignores_month_word_citation() -> None:
     block = _single_block('<p>Symptoms improved at month <a href="#ref-13" class="z2m-ref-link">13</a>.</p>')
 

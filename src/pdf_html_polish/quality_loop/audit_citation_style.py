@@ -33,6 +33,13 @@ NONCITATION_CONTEXT_RE = re.compile(
 ML_PER_SECOND_CONTEXT_RE = re.compile(r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+\b", re.IGNORECASE)
 
 
+def has_noncitation_context(text: str) -> bool:
+    for match in NONCITATION_CONTEXT_RE.finditer(text):
+        if match.group(0) == "pH" or match.group(0).lower() != "ph":
+            return True
+    return False
+
+
 def numeric_ref_label_numbers(label: str) -> list[int]:
     if re.fullmatch(r"[\s\(\)\[\],.;:\-\u2010-\u2014\d]+", label) is None:
         return []
@@ -92,6 +99,23 @@ def ref_match_inside_sentence_final_superscript(raw: str, start: int, end: int) 
         return False
     after_text = strip_tags(raw[sup_close + len("</sup>") : sup_close + len("</sup>") + 96]).lstrip()
     return not after_text or bool(re.match(r"(?:[A-Z]|\(|\[|,|;|:)", after_text))
+
+
+def ref_match_inside_clean_superscript_citation(raw: str, start: int, end: int) -> bool:
+    sup_open = raw.rfind("<sup", 0, start)
+    if sup_open < 0:
+        return False
+    prior_sup_close = raw.rfind("</sup", 0, start)
+    if prior_sup_close > sup_open:
+        return False
+    sup_close = raw.find("</sup>", end)
+    if sup_close < 0:
+        return False
+    sup_body = raw[sup_open : sup_close + len("</sup>")]
+    if not re.search(r'\bhref\s*=\s*["\']#ref-\d+["\']', sup_body, re.IGNORECASE):
+        return False
+    visible = normalize_ws(strip_tags(sup_body))
+    return re.fullmatch(r"[\d,\s;.\-\u2010-\u2014]+", visible) is not None
 
 
 def ref_match_inside_author_et_al_citation(raw: str, start: int, end: int) -> bool:
@@ -200,6 +224,8 @@ def linked_ref_near_non_citation_context(block: Block) -> bool:
     for match in REF_LINK_RE.finditer(block.raw):
         if ref_match_inside_bracketed_numeric_citation(block.raw, match.start(), match.end()):
             continue
+        if ref_match_inside_clean_superscript_citation(block.raw, match.start(), match.end()):
+            continue
         if ref_match_inside_sentence_final_superscript(block.raw, match.start(), match.end()):
             continue
         if ref_match_inside_author_et_al_citation(block.raw, match.start(), match.end()):
@@ -219,7 +245,7 @@ def linked_ref_near_non_citation_context(block: Block) -> bool:
         context_text = re.sub(r"\bD\d-type\b", "D-type", window_text, flags=re.IGNORECASE)
         if re.search(r"\b[A-Za-z0-9]+-D\d+\s+\d{1,3}\b", context_text):
             continue
-        if NONCITATION_CONTEXT_RE.search(context_text) or ML_PER_SECOND_CONTEXT_RE.search(context_text):
+        if has_noncitation_context(context_text) or ML_PER_SECOND_CONTEXT_RE.search(context_text):
             return True
     return False
 
