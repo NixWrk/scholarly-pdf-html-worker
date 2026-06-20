@@ -57,6 +57,33 @@ def test_converted_article_id_includes_library_attachment_and_version(tmp_path: 
     )
 
 
+def test_converted_article_id_disambiguates_long_article_names_with_shared_prefix(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "review_runs" / "full_pdf_to_polish" / "root"
+    first = (
+        parent
+        / "Oswalt et al. - 2021 - Multi-electrode stimulation evokes consist_3a3f09be"
+        / "_pdf_html_polish_stages"
+        / "01.en.raw.html"
+    )
+    second = (
+        parent
+        / "Oswalt et al. - 2021 - Multi-electrode stimulation evokes consist_3a3f09_2"
+        / "_pdf_html_polish_stages"
+        / "01.en.raw.html"
+    )
+
+    first_id = converted_article_id(first)
+    second_id = converted_article_id(second)
+
+    assert first_id != second_id
+    assert "_Oswalt_et_al" in first_id
+    assert "_Oswalt_et_al" in second_id
+    assert len(first_id.rsplit("_", 1)[-1]) == 8
+    assert len(second_id.rsplit("_", 1)[-1]) == 8
+
+
 def test_profile_and_norm_path_helpers(tmp_path: Path) -> None:
     assert profile_value({"status": "ready"}, "status") == "ready"
     assert profile_value({"status": ""}, "status", default="unknown") == "unknown"

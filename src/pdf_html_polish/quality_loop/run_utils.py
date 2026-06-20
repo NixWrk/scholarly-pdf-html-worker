@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -20,6 +21,19 @@ def slug(value: str, *, max_len: int = 80) -> str:
     cleaned = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("._")
     cleaned = re.sub(r"_+", "_", cleaned)
     return (cleaned or "article")[:max_len]
+
+
+def _stable_truncated_slug(value: str, *, max_len: int) -> str:
+    cleaned = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("._")
+    cleaned = re.sub(r"_+", "_", cleaned) or "article"
+    if len(cleaned) <= max_len:
+        return cleaned
+
+    digest = hashlib.sha1(cleaned.encode("utf-8", errors="ignore")).hexdigest()[:8]
+    head_len = max_len - len(digest) - 1
+    if head_len < 1:
+        return digest[:max_len]
+    return f"{cleaned[:head_len].rstrip('._')}_{digest}"
 
 
 def load_json(path: Path, default: Any | None = None) -> Any:
@@ -98,5 +112,5 @@ def converted_article_id(raw_path: Path, index: int | None = None) -> str:
         )
         if part
     )
-    suffix = slug(article_dir.name, max_len=72)
+    suffix = _stable_truncated_slug(article_dir.name, max_len=72)
     return f"{prefix}_{suffix}" if prefix else suffix
