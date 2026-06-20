@@ -23959,6 +23959,66 @@ def polish_html_phase_names() -> tuple[str, ...]:
     return default_polish_phase_names()
 
 
+_DATA_IMAGE_SHIELD_PLACEHOLDER = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+_DATA_IMAGE_SHIELD_ATTR_PATTERN = re.compile(
+    r'\s+data-z2m-data-image-src-shield\s*=\s*(["\'])([^"\']+)\1',
+    re.IGNORECASE,
+)
+
+
+def _shield_renderable_data_image_srcs(html: str) -> tuple[str, dict[str, str]]:
+    """Replace large renderable data-image payloads with tiny placeholders during text polish."""
+
+    shielded: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        quote = match.group(2)
+        src_value = match.group(3).strip()
+        suffix = match.group(4)
+        if not src_value.lower().startswith("data:image/"):
+            return match.group(0)
+        if not _data_image_src_looks_renderable(src_value):
+            return match.group(0)
+        if _DATA_IMAGE_SHIELD_ATTR_PATTERN.search(prefix):
+            return match.group(0)
+
+        key = f"img-src-{len(shielded)}"
+        shielded[key] = src_value
+        prefix = re.sub(
+            r"\bsrc\s*=\s*$",
+            f'data-z2m-data-image-src-shield="{key}" src=',
+            prefix,
+            flags=re.IGNORECASE,
+        )
+        return f"{prefix}{quote}{_DATA_IMAGE_SHIELD_PLACEHOLDER}{suffix}"
+
+    return _IMG_SRC_PATTERN.sub(replace, html), shielded
+
+
+def _restore_shielded_data_image_srcs(html: str, shielded: Mapping[str, str]) -> str:
+    if not shielded:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        quote = match.group(2)
+        suffix = match.group(4)
+        key_match = _DATA_IMAGE_SHIELD_ATTR_PATTERN.search(prefix)
+        if key_match is None:
+            return match.group(0)
+        original_src = shielded.get(key_match.group(2).strip())
+        if not original_src:
+            return match.group(0)
+        prefix = _DATA_IMAGE_SHIELD_ATTR_PATTERN.sub("", prefix)
+        return f"{prefix}{quote}{original_src}{suffix}"
+
+    return _IMG_SRC_PATTERN.sub(replace, html)
+
+
 def polish_html_document(
     html: str,
     *,
@@ -23979,11 +24039,13 @@ def polish_html_document(
         image_cache=image_cache,
         language_policy=language_policy,
     )
-    return run_polish_phases(
-        html,
+    shielded_html, data_image_srcs = _shield_renderable_data_image_srcs(html)
+    polished = run_polish_phases(
+        shielded_html,
         context=context,
         phases=_raw_html_polish_phases(),
     ).html
+    return _restore_shielded_data_image_srcs(polished, data_image_srcs)
 
 
 def _looks_like_ru_html_artifact(html_path: Path) -> bool:

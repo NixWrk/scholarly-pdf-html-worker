@@ -48,6 +48,8 @@ from pdf_html_polish.single_file_html import (
     _repair_sentence_breaks_around_float_units,
     _repair_sup_figure_chain_continuations,
     _recover_unique_bare_source_named_figure_units,
+    _restore_shielded_data_image_srcs,
+    _shield_renderable_data_image_srcs,
     _split_table_units_before_section_headings,
     _to_data_url,
     _unescape_inline_sup_sub,
@@ -232,6 +234,41 @@ def test_polish_html_document_restores_broken_data_image_from_cache_before_missi
     assert broken_png not in polished
     assert valid_data_url in polished
     assert '<p class="z2m-figure-caption">Figure 5. Caption should keep the cached image.</p>' in polished
+
+
+def test_data_image_src_shield_round_trips_large_renderable_payload() -> None:
+    large_gif = base64.b64encode(b"GIF89a" + (b"A" * 250_000) + b";").decode("ascii")
+    data_url = f"data:image/gif;base64,{large_gif}"
+    html = f'<html><body><p><img src="{data_url}"/></p><p>Text with 2 m^-1.</p></body></html>'
+
+    shielded, image_srcs = _shield_renderable_data_image_srcs(html)
+
+    assert data_url not in shielded
+    assert "data-z2m-data-image-src-shield" in shielded
+    assert _VALID_TINY_PNG_B64 in shielded
+    assert _restore_shielded_data_image_srcs(shielded, image_srcs) == html
+
+
+def test_data_image_src_shield_keeps_broken_payload_visible_to_polish() -> None:
+    broken = base64.b64encode(b"\x89PNG\r\n\x1a\ntruncated").decode("ascii").rstrip("=")
+    html = f'<html><body><img src="data:image/png;base64,{broken}"/></body></html>'
+
+    shielded, image_srcs = _shield_renderable_data_image_srcs(html)
+
+    assert shielded == html
+    assert image_srcs == {}
+
+
+def test_polish_html_document_restores_large_data_image_after_shielded_polish() -> None:
+    large_gif = base64.b64encode(b"GIF89a" + (b"A" * 250_000) + b";").decode("ascii")
+    data_url = f"data:image/gif;base64,{large_gif}"
+    html = f'<html><body><p><img src="{data_url}"/></p><p>Figure 7. Example caption.</p></body></html>'
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert data_url in polished
+    assert "data-z2m-data-image-src-shield" not in polished
+    assert _VALID_TINY_PNG_B64 not in polished
 
 
 def test_inline_images_polish_uses_en_mode_for_non_ru_html() -> None:
