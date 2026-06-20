@@ -98,17 +98,23 @@ The cleanup policy is deliberately conservative:
 
 ## Immediate Execution Queue
 
-1. Treat the repair-enabled cached-raw parity pass as the current readiness
-   baseline for the next production check.
-2. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
+1. Treat the full source-PDF pipeline run
+   `review_runs/full_pdf_to_polish_from_source_map_chunked_20260620_01` plus
+   audit `review_runs/full_pdf_to_polish_from_source_map_chunked_audit_20260620_02`
+   as the current production baseline.
+2. Triage full-PDF-only audit clusters before broad refactors: source-PDF
+   mapping is incomplete for converted-root audits, 51 items remain in the
+   re-OCR queue, and the full run still has accepted/queued repair candidates
+   despite passing the gate.
+3. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
    tuple left in `single_file_html.py` after the pre-cleanup extraction.
-3. Start the frontmatter/footnote cluster in small slices, using
+4. Start the frontmatter/footnote cluster in small slices, using
    `raw_html_polish/frontmatter_footnotes.py` as the package owner.
-4. Preserve old private aliases in `single_file_html.py` while tests still
+5. Preserve old private aliases in `single_file_html.py` while tests still
    import them.
-5. After the `single_file_html.py` polish pass, run polish/audit parity before
+6. After the `single_file_html.py` polish pass, run polish/audit parity before
    the full PDF-to-polish HTML pipeline.
-6. Run the full PDF-to-polish HTML flow only after the parity gate passes.
+7. Run the full PDF-to-polish HTML flow only after the parity gate passes.
 
 ## Progress
 
@@ -254,3 +260,38 @@ The cleanup policy is deliberately conservative:
   attachment keys, P05 clean citation false positives near truncated
   `phoneme` text, P33 supplemental-media page anchors, and review classification
   for `source_pdf_unavailable` P62 records.
+- Ran the full chunked source-PDF-to-polish HTML pipeline in
+  `review_runs/full_pdf_to_polish_from_source_map_chunked_20260620_01` from the
+  repair-enabled source PDF map. The run covered 744 unique existing source PDF
+  paths, completed with `failed_count=0`, and produced 744
+  `_pdf_html_polish_stages/02.en.polish.html` files after backfilling two
+  duplicate-stem PDFs.
+- The full run exposed and fixed two production accounting bugs:
+  renderable inline `data:image` payloads are now shielded during polish so
+  regex phases do not scan base64 (`bfed005`), and duplicate Zotero PDFs with
+  the same visible filename no longer false-skip or collide on alias ownership
+  (`1aaa806`). Converted-root article ids now keep a short hash when truncated,
+  so long names that differ only near the end stay distinct in quality history
+  (`c1f2447`).
+- Verification after those fixes: `python -m pytest` passed with
+  `1361 passed, 5 warnings`. The production output map now has 744 rows, 744
+  unique source paths, and 744 unique aliases. The only process left after the
+  run was the unrelated n8n launcher.
+- Full converted-root audit
+  `review_runs/full_pdf_to_polish_from_source_map_chunked_audit_20260620_02`
+  covered 744 articles at commit `c1f2447` with a clean working tree and passed
+  the quality gate (`failures=[]`). Quality history totals were
+  `score=2435.75`, `defects=305`, `errors=122`, `warnings=182`,
+  `missing_local_images=0`, and `polish_missing_local_images=0`.
+- Remaining full-PDF follow-up signals are operational, not blockers for the
+  current gate: `_reocr_pending.json` contains 51 entries; converted-root
+  `source_pdf_map.json` mapped only 119 of 744 articles because the audit run
+  cannot yet recover every original source PDF from converted stage paths; and
+  resolver decisions still include queued repair/recovery groups
+  (`needs_repair=305`, `needs_pdf_recovery=124`, `needs_semantic_recovery=8`).
+- Operational notes from the full run: one historical chunk retry remains in
+  `chunked_pipeline_status.json` (`batches=745`) because a Windows cp1251
+  console encode error interrupted a retry before the UTF-8 resume; final
+  status is still `paths_total=744`, `completed_count=744`, `failed_count=0`.
+  Production logging should keep using safe stdout handling for Windows
+  Unicode-heavy titles.
