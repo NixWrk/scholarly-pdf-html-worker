@@ -3676,12 +3676,21 @@ def test_observe_accepts_parallel_document_job_overrides() -> None:
             "32",
             "--audit-jobs",
             "48",
+            "--p62-marker-recovery-jobs",
+            "7",
+            "--p62-recovery-jobs",
+            "8",
+            "--polish-auto-repair-jobs",
+            "9",
         ]
     )
 
     assert args.jobs == 64
     assert args.repolish_jobs == 32
     assert args.audit_jobs == 48
+    assert args.p62_marker_recovery_jobs == 7
+    assert args.p62_recovery_jobs == 8
+    assert args.polish_auto_repair_jobs == 9
 
 
 def test_observe_accepts_converted_raw_repolish_mode() -> None:
@@ -4140,7 +4149,7 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish.</p></body></html>", encoding="utf-8")
     audit_calls: list[dict[str, object]] = []
     repolish_calls: list[dict[str, object]] = []
-    repair_calls: list[str] = []
+    repair_calls: list[tuple[str, dict[str, object]]] = []
 
     gate_config = {
         "repolish_jobs": 3,
@@ -4172,18 +4181,18 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     monkeypatch.setattr(
         llm_quality_loop,
         "write_p62_marker_recovery_plan",
-        lambda *args, **kwargs: repair_calls.append("p62_plan") or {},
+        lambda *args, **kwargs: repair_calls.append(("p62_plan", dict(kwargs))) or {},
     )
     monkeypatch.setattr(
         llm_quality_loop,
         "write_p62_image_recovery_stage",
-        lambda *args, **kwargs: repair_calls.append("p62_recovery")
+        lambda *args, **kwargs: repair_calls.append(("p62_recovery", dict(kwargs)))
         or {"patched_warning_count": 3, "patched_articles": ["article_a"]},
     )
     monkeypatch.setattr(
         llm_quality_loop,
         "write_polish_auto_repair_stage",
-        lambda *args, **kwargs: repair_calls.append("polish_auto_repair")
+        lambda *args, **kwargs: repair_calls.append(("polish_auto_repair", dict(kwargs)))
         or {"patched_article_count": 2, "patched_articles": ["article_a"]},
     )
     monkeypatch.setattr(llm_quality_loop, "write_manual_review_queue", lambda *args, **kwargs: [])
@@ -4216,13 +4225,16 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
             str(source_dir),
             "--out-dir",
             str(run_dir),
+            "--jobs",
+            "5",
             "--skip-tests",
             "--skip-history",
         ]
     )
 
     assert llm_quality_loop.observe(args) == 0
-    assert repair_calls == ["p62_plan", "p62_recovery", "polish_auto_repair"]
+    assert [name for name, _kwargs in repair_calls] == ["p62_plan", "p62_recovery", "polish_auto_repair"]
+    assert [kwargs["jobs"] for _name, kwargs in repair_calls] == [5, 5, 5]
     assert repolish_calls[0]["kwargs"]["jobs"] == 3
     assert len(audit_calls) == 2
     assert audit_calls[0]["kwargs"]["jobs"] == 2

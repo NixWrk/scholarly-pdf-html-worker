@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import threading
+import time
 
 from pdf_html_polish.quality_loop.p62_plan import (
     P62MarkerRecoveryPlanDependencies,
@@ -248,3 +250,94 @@ def test_write_marker_recovery_plan_builds_ready_single_page_record(tmp_path: Pa
     assert record["marker_page_range"] == "0"
     assert record["marker_command"]
     assert Path(record["source_pdf_page_excerpt_path"]).read_text(encoding="utf-8") == "Figure 2 caption and visual evidence"
+
+
+def test_write_marker_recovery_plan_parallelizes_records_by_jobs(tmp_path: Path) -> None:
+    source_a = tmp_path / "source_a.pdf"
+    source_b = tmp_path / "source_b.pdf"
+    source_a.write_bytes(b"%PDF-1.4\n")
+    source_b.write_bytes(b"%PDF-1.4\n")
+    write_json(
+        tmp_path / "audit_full_checks.json",
+        {
+            "articles": [
+                {
+                    "article": "Article A",
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "snippet": "Missing Figure 2 warning",
+                            "extra": {"figure_label": "2", "warning_index": 1},
+                        }
+                    ],
+                },
+                {
+                    "article": "Article B",
+                    "defects_found": [
+                        {
+                            "id": "P62",
+                            "snippet": "Missing Figure 3 warning",
+                            "extra": {"figure_label": "3", "warning_index": 1},
+                        }
+                    ],
+                },
+            ]
+        },
+    )
+    write_json(tmp_path / "manifest.json", {"articles": []})
+    pdf_by_article = {"Article A": source_a, "Article B": source_b}
+    active = 0
+    max_active = 0
+    active_lock = threading.Lock()
+
+    def selected_pdf_candidate(run_dir, article_id, article, manifest_article):
+        pdf_path = pdf_by_article[article_id]
+        selected = {"path": str(pdf_path), "source": "test", "exists": True}
+        return selected, [selected]
+
+    def recovery_snippets(html, defect, *, context_chars):
+        figure_label = defect["extra"]["figure_label"]
+        context = f"Figure {figure_label} context"
+        return [context], context, "defect"
+
+    def pdf_text_pages(pdf_path, *, max_pages):
+        nonlocal active, max_active
+        with active_lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.05)
+            return "ok", [f"{pdf_path.stem} caption and visual evidence"], None
+        finally:
+            with active_lock:
+                active -= 1
+
+    deps = P62MarkerRecoveryPlanDependencies(
+        index_polish_stage_files=lambda run_dir: [],
+        selected_pdf_candidate=selected_pdf_candidate,
+        find_polish_stage_path_for_article=lambda run_dir, article_id, article, manifest_article, polish_index: (
+            None,
+            "missing",
+        ),
+        recovery_snippets=recovery_snippets,
+        full_figure_label_from_context=lambda context, fallback_label: f"Figure {fallback_label}",
+        pdf_text_pages=pdf_text_pages,
+        resolve_pdf_page_for_figure=lambda snippets, pdf_pages, figure_label, *, pdf_path: {
+            "page_number": 1,
+            "match_score": 0.9,
+            "label_pages": [1],
+            "candidates": [{"page_number": 1, "score": 0.9}],
+        },
+        validate_marker_output=lambda marker_output_dir, figure_label: {"status": "not_run"},
+    )
+
+    report = write_marker_recovery_plan(
+        tmp_path,
+        gate_config={"p62_marker_recovery_jobs": 2},
+        dependencies=deps,
+    )
+
+    assert report["jobs"] == 2
+    assert max_active > 1
+    assert report["status"] == "ready"
+    assert [record["article"] for record in report["articles"]] == ["Article A", "Article B"]

@@ -295,3 +295,9 @@ The cleanup policy is deliberately conservative:
   status is still `paths_total=744`, `completed_count=744`, `failed_count=0`.
   Production logging should keep using safe stdout handling for Windows
   Unicode-heavy titles.
+- Parallelized the P62 marker recovery plan pre-stage by `p62_marker_recovery_jobs`
+  and wired `observe --jobs` as a fallback for P62 marker planning, P62 image
+  recovery, and polish auto-repair when neither stage-specific CLI flags nor
+  gate config values are provided. The default gate config now uses
+  `p62_marker_recovery_jobs=8`, while `polish_auto_repair_jobs=32` remains the
+  auto-repair default.

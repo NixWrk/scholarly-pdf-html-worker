@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
+import threading
 from typing import Any
 
 from pdf_html_polish.marker_runner import build_marker_single_command
@@ -116,6 +118,7 @@ def write_marker_recovery_plan(
     dependencies: P62MarkerRecoveryPlanDependencies,
     out_path: Path | None = None,
     plan_name: str = DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME,
+    jobs: int | None = None,
 ) -> dict[str, Any]:
     """Build reproducible marker_single commands for source-backed P62 recovery."""
 
@@ -134,6 +137,14 @@ def write_marker_recovery_plan(
     require_label_match = bool(gate_config.get("p62_marker_recovery_require_label_match", True))
     retry_full_pdf_on_label_miss = bool(
         gate_config.get("p62_marker_recovery_retry_full_pdf_on_label_miss", True)
+    )
+    worker_count = max(
+        1,
+        int(
+            jobs
+            if jobs is not None
+            else (gate_config.get("p62_marker_recovery_jobs") or gate_config.get("document_jobs") or 1)
+        ),
     )
     recovery_defect_ids = marker_recovery_defect_ids(gate_config)
 
@@ -195,9 +206,21 @@ def write_marker_recovery_plan(
 
     selected_items = p62_items[:max_items] if max_items > 0 else p62_items
     pdf_text_cache: dict[str, tuple[str, list[str], str | None]] = {}
-    records: list[dict[str, Any]] = []
+    pdf_text_cache_lock = threading.Lock()
+    excerpt_write_lock = threading.Lock()
 
-    for index, (article, defect, defect_index) in enumerate(selected_items, start=1):
+    def cached_pdf_text_pages(pdf_path: Path, *, max_pages: int | None) -> tuple[str, list[str], str | None]:
+        cache_key = f"{pdf_path}|{max_pages if max_pages is not None else 'full'}"
+        with pdf_text_cache_lock:
+            cached = pdf_text_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        loaded = dependencies.pdf_text_pages(pdf_path, max_pages=max_pages)
+        with pdf_text_cache_lock:
+            return pdf_text_cache.setdefault(cache_key, loaded)
+
+    def build_record(index: int, article: dict[str, Any], defect: dict[str, Any], defect_index: int) -> dict[str, Any]:
         article_id = str(article.get("article") or f"article_{index}")
         manifest_article = manifest_by_article.get(article_id, {})
         extra = defect_extra(defect)
@@ -288,18 +311,13 @@ def write_marker_recovery_plan(
             "existing_marker_output_validation": {"status": "not_run"},
         }
         if not selected_pdf:
-            records.append(record)
-            continue
+            return record
         if not snippets:
             record["status"] = "warning_context_unavailable"
-            records.append(record)
-            continue
+            return record
 
         pdf_path = Path(str(selected_pdf.get("path") or "")).expanduser()
-        cache_key = f"{pdf_path}|{max_pdf_pages}"
-        if cache_key not in pdf_text_cache:
-            pdf_text_cache[cache_key] = dependencies.pdf_text_pages(pdf_path, max_pages=max_pdf_pages)
-        text_status, pages, text_error = pdf_text_cache[cache_key]
+        text_status, pages, text_error = cached_pdf_text_pages(pdf_path, max_pages=max_pdf_pages)
         resolver = dependencies.resolve_pdf_page_for_figure(
             snippets,
             pages,
@@ -322,10 +340,7 @@ def write_marker_recovery_plan(
             and max_pdf_pages > 0
             and len(pages) >= max_pdf_pages
         ):
-            full_cache_key = f"{pdf_path}|full"
-            if full_cache_key not in pdf_text_cache:
-                pdf_text_cache[full_cache_key] = dependencies.pdf_text_pages(pdf_path, max_pages=None)
-            full_text_status, full_pages, full_text_error = pdf_text_cache[full_cache_key]
+            full_text_status, full_pages, full_text_error = cached_pdf_text_pages(pdf_path, max_pages=None)
             full_resolver = dependencies.resolve_pdf_page_for_figure(
                 snippets,
                 full_pages,
@@ -366,25 +381,22 @@ def write_marker_recovery_plan(
         )
         if not pages or text_chars <= 0:
             record["status"] = "text_layer_unavailable"
-            records.append(record)
-            continue
+            return record
         if page_number <= 0 or match_score <= 0:
             record["status"] = "page_match_unavailable"
-            records.append(record)
-            continue
+            return record
         if require_label_match and figure_label and not label_pages:
             record["status"] = "figure_label_page_unavailable"
-            records.append(record)
-            continue
+            return record
         if resolver.get("source_visual_unavailable"):
             record["status"] = "source_visual_unavailable"
             record["source_visual_unavailable_reason"] = "all_label_matches_are_false_or_without_visual_objects"
-            records.append(record)
-            continue
+            return record
 
         excerpt_path = article_dir / f"source_pdf_page_{page_number:04d}.txt"
-        excerpt_path.parent.mkdir(parents=True, exist_ok=True)
-        excerpt_path.write_text(pages[page_number - 1], encoding="utf-8", errors="replace")
+        with excerpt_write_lock:
+            excerpt_path.parent.mkdir(parents=True, exist_ok=True)
+            excerpt_path.write_text(pages[page_number - 1], encoding="utf-8", errors="replace")
         marker_page_index = page_number - 1
         marker_output_dir = article_dir / f"marker_page_{page_number:04d}"
         marker_page_range = str(marker_page_index)
@@ -408,7 +420,40 @@ def write_marker_recovery_plan(
             }
         )
         record["status"] = "ready" if match_score >= min_match_score else "page_match_low_confidence"
-        records.append(record)
+        return record
+
+    indexed_items = [
+        (index, article, defect, defect_index)
+        for index, (article, defect, defect_index) in enumerate(selected_items, start=1)
+    ]
+    records_by_index: dict[int, dict[str, Any]] = {}
+    if worker_count > 1 and len(indexed_items) > 1:
+        print(
+            "P62 marker recovery plan parallel dispatch: "
+            f"records={len(indexed_items)} jobs={worker_count}",
+            flush=True,
+        )
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(build_record, index, article, defect, defect_index): index
+                for index, article, defect, defect_index in indexed_items
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                records_by_index[index] = future.result()
+                completed_count += 1
+                if completed_count % 10 == 0 or completed_count == len(indexed_items):
+                    print(
+                        "P62 marker recovery plan progress: "
+                        f"{completed_count}/{len(indexed_items)}",
+                        flush=True,
+                    )
+    else:
+        for index, article, defect, defect_index in indexed_items:
+            records_by_index[index] = build_record(index, article, defect, defect_index)
+
+    records = [records_by_index[index] for index, *_rest in indexed_items if index in records_by_index]
 
     status_counts = Counter(str(item.get("status") or "unknown") for item in records)
     marker_output_status_counts = Counter(
@@ -450,6 +495,7 @@ def write_marker_recovery_plan(
         "selected_count": len(records),
         "truncated_by_max_articles": bool(max_items > 0 and len(p62_items) > max_items),
         "max_articles": max_items,
+        "jobs": worker_count,
         "ready_count": ready_count,
         "unresolved_count": unresolved_count,
         "status_counts": dict(sorted(status_counts.items())),

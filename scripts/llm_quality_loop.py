@@ -532,6 +532,7 @@ def write_p62_marker_recovery_plan(
     *,
     gate_config: dict[str, Any] | None = None,
     out_path: Path | None = None,
+    jobs: int | None = None,
 ) -> dict[str, Any]:
     """Build reproducible marker_single commands for source-backed P62 recovery."""
     dependencies = P62MarkerRecoveryPlanDependencies(
@@ -550,6 +551,7 @@ def write_p62_marker_recovery_plan(
         dependencies=dependencies,
         out_path=out_path,
         plan_name=DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME,
+        jobs=jobs,
     )
 
 
@@ -3343,6 +3345,24 @@ def observe(args: argparse.Namespace) -> int:
         gate_key="audit_jobs",
         default_jobs=default_jobs,
     )
+    p62_marker_recovery_jobs = _resolved_stage_jobs(
+        args_value=args.p62_marker_recovery_jobs,
+        gate_config=gate_config,
+        gate_key="p62_marker_recovery_jobs",
+        default_jobs=default_jobs,
+    )
+    p62_recovery_jobs = _resolved_stage_jobs(
+        args_value=args.p62_recovery_jobs,
+        gate_config=gate_config,
+        gate_key="p62_image_recovery_jobs",
+        default_jobs=default_jobs,
+    )
+    polish_auto_repair_jobs = _resolved_stage_jobs(
+        args_value=args.polish_auto_repair_jobs,
+        gate_config=gate_config,
+        gate_key="polish_auto_repair_jobs",
+        default_jobs=default_jobs,
+    )
     if args.source_run_dir:
         manifest = repolish_cached_run(
             args.source_run_dir,
@@ -3413,14 +3433,18 @@ def observe(args: argparse.Namespace) -> int:
         repair_audit_reasons: list[str] = []
         repair_audit_article_ids: set[str] = set()
         if run_p62_recovery:
-            write_p62_marker_recovery_plan(run_dir, gate_config=gate_config)
+            write_p62_marker_recovery_plan(
+                run_dir,
+                gate_config=gate_config,
+                jobs=p62_marker_recovery_jobs,
+            )
             recovery_report = write_p62_image_recovery_stage(
                 run_dir,
                 gate_config=gate_config,
                 execute_marker=bool(gate_config.get("p62_image_recovery_execute_marker", True)),
                 apply_patches=bool(gate_config.get("p62_image_recovery_apply_patches", True)),
                 max_items=args.p62_recovery_max_items,
-                jobs=args.p62_recovery_jobs,
+                jobs=p62_recovery_jobs,
             )
             if int(recovery_report.get("patched_warning_count") or 0) > 0 and bool(
                 gate_config.get("p62_image_recovery_rerun_audit", True)
@@ -3435,7 +3459,7 @@ def observe(args: argparse.Namespace) -> int:
             auto_repair_report = write_polish_auto_repair_stage(
                 run_dir,
                 gate_config=gate_config,
-                jobs=args.polish_auto_repair_jobs,
+                jobs=polish_auto_repair_jobs,
             )
             if int(auto_repair_report.get("patched_article_count") or 0) > 0 and bool(
                 gate_config.get("polish_auto_repair_rerun_audit", True)
@@ -3602,7 +3626,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         type=int,
         help=(
             "Default number of parallel article workers for document stages. "
-            "Stage-specific --repolish-jobs/--audit-jobs override it."
+            "Stage-specific CLI job flags and gate config values override it."
         ),
     )
     observe_parser.add_argument(
@@ -3661,6 +3685,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         help="Skip the configured P62 marker/render recovery stage after audit.",
     )
     observe_parser.add_argument(
+        "--p62-marker-recovery-jobs",
+        type=int,
+        help="Article-level worker count for the P62 marker recovery plan; defaults to gate config or --jobs.",
+    )
+    observe_parser.add_argument(
         "--p62-recovery-max-items",
         type=int,
         help="Limit P62 image recovery records for this observe run; omitted or zero means all.",
@@ -3668,12 +3697,12 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     observe_parser.add_argument(
         "--p62-recovery-jobs",
         type=int,
-        help="Article-level worker count for the P62 image recovery stage; defaults to gate config.",
+        help="Article-level worker count for the P62 image recovery stage; defaults to gate config or --jobs.",
     )
     observe_parser.add_argument(
         "--polish-auto-repair-jobs",
         type=int,
-        help="Article-level worker count for the polish auto-repair stage; defaults to gate config.",
+        help="Article-level worker count for the polish auto-repair stage; defaults to gate config or --jobs.",
     )
     observe_parser.add_argument("--skip-history", action="store_true")
     observe_parser.add_argument("--no-append-history", action="store_true")
