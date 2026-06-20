@@ -65,6 +65,50 @@ def _ensure_unique_base_name(candidate: str, used_names: set[str], max_len: int)
         index += 1
 
 
+def _normalize_source_path(path: Path) -> str:
+    return os.path.normcase(str(path.expanduser().resolve(strict=False)))
+
+
+def _existing_output_dir_names(output_dir: Path) -> set[str]:
+    if not output_dir.is_dir():
+        return set()
+    return {child.name.lower() for child in output_dir.iterdir() if child.is_dir()}
+
+
+def _load_alias_owners(output_dir: Path) -> dict[str, set[str]]:
+    map_path = output_dir / FILENAME_MAP_NAME
+    if not map_path.is_file():
+        return {}
+
+    owners: dict[str, set[str]] = {}
+    with map_path.open("r", encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            source_path = (row.get("source_pdf_path") or "").strip()
+            alias_pdf_path = (row.get("alias_pdf_path") or "").strip()
+            if not source_path or not alias_pdf_path:
+                continue
+            alias_base = Path(alias_pdf_path).stem.lower()
+            owners.setdefault(alias_base, set()).add(_normalize_source_path(Path(source_path)))
+    return owners
+
+
+def _alias_collides_with_other_source(
+    alias_base: str,
+    source_pdf_path: Path,
+    existing_output_dirs: set[str],
+    alias_owners: dict[str, set[str]],
+) -> bool:
+    key = alias_base.lower()
+    if key not in existing_output_dirs:
+        return False
+
+    owners = alias_owners.get(key)
+    if owners and _normalize_source_path(source_pdf_path) in owners:
+        return False
+    return True
+
+
 def _link_or_copy(source_pdf: Path, target_pdf: Path) -> str:
     try:
         os.link(source_pdf, target_pdf)
@@ -91,13 +135,23 @@ def stage_resolved_pdfs(
     runtime_root = temp_root if temp_root is not None else runtime_temp_root(output_dir)
     staging_dir = make_temp_dir(runtime_root, prefix="zotero_pdf_stage_")
 
+    existing_output_dirs = _existing_output_dir_names(output_dir)
+    alias_owners = _load_alias_owners(output_dir)
     used_names: set[str] = set()
     staged_files: list[StagedFile] = []
 
     for resolved in resolved_attachments:
         source_base = resolved.source_pdf_path.stem
         alias_base = _make_short_base_name(source_base, effective_max_len)
-        alias_base = _ensure_unique_base_name(alias_base, used_names, effective_max_len)
+        reserved_names = used_names
+        if _alias_collides_with_other_source(
+            alias_base,
+            resolved.source_pdf_path,
+            existing_output_dirs,
+            alias_owners,
+        ):
+            reserved_names = used_names | existing_output_dirs
+        alias_base = _ensure_unique_base_name(alias_base, reserved_names, effective_max_len)
         used_names.add(alias_base.lower())
 
         alias_pdf_path = staging_dir / f"{alias_base}.pdf"
