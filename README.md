@@ -26,6 +26,10 @@ write-back belongs to the caller.
    - `01.en.raw.html`
    - `02.en.polish.html`
 
+For the full production order, including direct Zotero-storage PDF inputs,
+post-conversion quality-loop repair, audit, and gate criteria, see
+[`docs/REPOSITORY_WORKFLOW.md`](docs/REPOSITORY_WORKFLOW.md).
+
 ## Install
 
 ```powershell
