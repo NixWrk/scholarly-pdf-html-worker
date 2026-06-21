@@ -158,10 +158,13 @@ corpus. For the current branch, EN runs should stay on the default EN target.
 
 For production output under `data/html/converted/.../_pdf_html_polish_stages`
 (or older runs under `_z2m_stages`),
-observe the existing raw/polish pairs directly. This mode does not repolish; it
-audits the current production artifacts in place, keeps duplicate document
-names separate with stable artifact ids, and writes `manual_review_queue.json`
-for article-by-article review.
+the default `observe --converted-roots` path now treats the converted tree as
+the source corpus for the full loop. It copies every `01.en.raw.html` into an
+internal cached-run source, repolishes that cache, runs the configured repair
+stages, reruns audit when repairs patch articles, and never writes back to the
+production converted tree. This keeps the production check aligned with the
+normal cached raw loop instead of only auditing stale `02.en.polish.html`
+artifacts.
 
 ```powershell
 python scripts\llm_quality_loop.py observe `
@@ -176,28 +179,28 @@ Use a previous entry only when it was produced by the same converted-stage mode;
 older entries that were keyed by document name can collapse duplicate Zotero
 attachments and create misleading deltas.
 
-Converted-stage observation is useful for manual review queues, but it is not a
-replacement for the mandatory cached raw EN repolish loop above because it does
-not regenerate `02.en.polish.html`.
-
-When the production converted tree itself is the corpus for the next loop,
-convert it into an internal cached-run source and repolish that cache. This
-uses every `01.en.raw.html` under the supplied converted roots, keeps the
-original stage paths for image restoration and review, skips confidently
-non-EN documents by default, and does not write back to `data/html/converted`.
-Because converted stages do not carry the original PDF citation profiles, the
-cache records a per-document citation-style inference from the raw HTML text.
-Only high-confidence inferred styles are used as the effective polish profile;
+The converted raw cache keeps original stage paths for image restoration and
+review, skips confidently non-EN documents by default, and records a
+per-document citation-style inference from the raw HTML text. Only
+high-confidence inferred styles are used as the effective polish profile;
 medium-confidence inferences stay as diagnostics and keep the effective profile
-at `unknown/low`:
+at `unknown/low`. If the converted roots come from a production PDF run with
+`_source_filename_map.csv` or `full_source_filename_map.csv`, those maps are
+copied into the converted manifest as `source_pdf_path` evidence so audit,
+PDF evidence, P62 recovery, and PDF reference recovery can use the original
+source PDFs.
 
 ```powershell
 python scripts\llm_quality_loop.py observe `
   --converted-roots D:\Elvis_projects\Zotero_automatization\data\html\converted\Zotero_Elvis_Data_cfd7a6f4 D:\Elvis_projects\Zotero_automatization\data\html\converted\Zotero_Heart_n_Lung_Data_745ee21a D:\Elvis_projects\Zotero_automatization\data\html\converted\Zotero_NIX_Data_ba8b3354 `
-  --repolish-converted-raw `
   --out-dir .tmp_local2\llm_runs\converted_all3_repolish_001 `
   --run-id converted_all3_repolish_001
 ```
+
+For a readonly manual review queue of the already-produced HTML, pass
+`--audit-converted-existing`. That mode audits existing `02.en.polish.html`
+files in place, keeps duplicate document names separate with stable artifact
+ids, and deliberately does not repolish or run repair stages.
 
 Converted article ids are derived from the library, attachment key,
 size/mtime directory, and document folder rather than from discovery order.

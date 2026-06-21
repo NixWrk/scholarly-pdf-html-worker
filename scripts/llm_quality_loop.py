@@ -3605,18 +3605,32 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         nargs="+",
         type=Path,
         help=(
-            "Production converted roots or direct HTML stage files to audit without repolishing. "
+            "Production converted roots or direct HTML stage files. By default these are copied "
+            "into an internal raw_cache and passed through the normal repolish/repair loop. "
             "Both _pdf_html_polish_stages and legacy _z2m_stages are recognized."
         ),
     )
-    observe_parser.add_argument(
+    converted_mode_group = observe_parser.add_mutually_exclusive_group()
+    converted_mode_group.add_argument(
         "--repolish-converted-raw",
+        dest="repolish_converted_raw",
         action="store_true",
         help=(
             "With --converted-roots, copy production 01.en.raw.html stages into an internal "
-            "raw_cache and run the normal EN repolish loop without writing back to converted roots."
+            "raw_cache and run the normal EN repolish loop without writing back to converted roots. "
+            "This is the default."
         ),
     )
+    converted_mode_group.add_argument(
+        "--audit-converted-existing",
+        dest="repolish_converted_raw",
+        action="store_false",
+        help=(
+            "With --converted-roots, audit existing 02.en.polish.html files in place without "
+            "repolishing or running repair stages."
+        ),
+    )
+    observe_parser.set_defaults(repolish_converted_raw=True)
     observe_parser.add_argument("--out-dir", type=Path, required=True)
     observe_parser.add_argument("--run-id")
     observe_parser.add_argument("--previous-entry", type=Path)

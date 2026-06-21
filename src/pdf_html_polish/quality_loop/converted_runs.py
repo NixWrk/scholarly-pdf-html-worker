@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import csv
 from html import unescape
 import re
 import shutil
@@ -29,6 +30,7 @@ from .run_utils import (
 
 RAW_STAGE = RAW_STAGE_NAME
 POLISH_STAGE = POLISH_STAGE_NAME
+SOURCE_FILENAME_MAP_NAMES = ("_source_filename_map.csv", "full_source_filename_map.csv")
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -236,6 +238,54 @@ def find_converted_stage_pairs(roots: Iterable[Path]) -> list[tuple[Path, Path]]
     return sorted(pairs, key=lambda pair: str(pair[1]))
 
 
+def _filename_map_paths_for_roots(roots: Iterable[Path]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        start = root if root.is_dir() else root.parent
+        for base in (start, *start.parents):
+            for name in SOURCE_FILENAME_MAP_NAMES:
+                path = (base / name).resolve(strict=False)
+                key = str(path)
+                if key in seen or not path.is_file():
+                    continue
+                seen.add(key)
+                paths.append(path)
+    return paths
+
+
+def _source_pdf_records_by_alias(roots: Iterable[Path]) -> dict[str, dict[str, str]]:
+    records: dict[str, dict[str, str]] = {}
+    for map_path in _filename_map_paths_for_roots(roots):
+        with map_path.open("r", encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                source_pdf_path = (row.get("source_pdf_path") or "").strip()
+                alias_pdf_path = (row.get("alias_pdf_path") or "").strip()
+                if not source_pdf_path or not alias_pdf_path:
+                    continue
+                alias_base = Path(alias_pdf_path).stem
+                if not alias_base:
+                    continue
+                records.setdefault(
+                    alias_base.lower(),
+                    {
+                        "source_pdf_path": source_pdf_path,
+                        "source_pdf_origin": "filename_map",
+                        "source_pdf_map_path": str(map_path),
+                        "source_pdf_alias_path": alias_pdf_path,
+                    },
+                )
+    return records
+
+
+def _source_pdf_record_for_stage(
+    raw_path: Path,
+    source_pdf_by_alias: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    article_dir = article_dir_from_stage(raw_path)
+    return dict(source_pdf_by_alias.get(article_dir.name.lower()) or {})
+
+
 def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
     """Prepare a loop run from existing Zotero converted stage directories.
 
@@ -249,6 +299,7 @@ def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     roots = [root.resolve(strict=False) for root in roots]
     pairs = find_converted_stage_pairs(roots)
+    source_pdf_by_alias = _source_pdf_records_by_alias(roots)
     articles: list[dict[str, Any]] = []
     assessments: list[dict[str, Any]] = []
     profile = {"status": "not_applicable_converted_stage", "style": "unknown", "confidence": "low"}
@@ -256,17 +307,17 @@ def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
         article = article_name_from_stage(raw_path)
         article_id = converted_article_id(raw_path, index)
         polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
-        articles.append(
-            {
-                "index": index,
-                "article_id": article_id,
-                "article": article,
-                "article_dir": str(article_dir_from_stage(raw_path)),
-                "raw_stage_path": str(raw_path),
-                "polish_stage_path": str(polish_path),
-                "artifact_hint": artifact_hint(raw_path),
-            }
-        )
+        article_record = {
+            "index": index,
+            "article_id": article_id,
+            "article": article,
+            "article_dir": str(article_dir_from_stage(raw_path)),
+            "raw_stage_path": str(raw_path),
+            "polish_stage_path": str(polish_path),
+            "artifact_hint": artifact_hint(raw_path),
+        }
+        article_record.update(_source_pdf_record_for_stage(raw_path, source_pdf_by_alias))
+        articles.append(article_record)
         assessment = assess_polish_html(article_id, polish_html, profile)
         assessment["source_article"] = article
         assessment["raw_stage_path"] = str(raw_path)
@@ -326,6 +377,7 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
 
     roots = [root.resolve(strict=False) for root in roots]
     pairs = find_converted_stage_pairs(roots)
+    source_pdf_by_alias = _source_pdf_records_by_alias(roots)
     articles: list[dict[str, Any]] = []
     profile_status_counts: Counter[str] = Counter()
     profile_style_counts: Counter[str] = Counter()
@@ -355,6 +407,7 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
                 "profile_status": profile["status"],
                 "citation_style": profile["style"],
                 "citation_confidence": profile["confidence"],
+                **_source_pdf_record_for_stage(raw_path, source_pdf_by_alias),
             }
         )
 

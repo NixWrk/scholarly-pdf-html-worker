@@ -3711,6 +3711,23 @@ def test_observe_accepts_converted_raw_repolish_mode() -> None:
     assert args.polish_language == "auto"
 
 
+def test_observe_defaults_converted_roots_to_repolish_mode() -> None:
+    default_args = parse_args(["observe", "--converted-roots", "converted_root", "--out-dir", "out_run"])
+    audit_only_args = parse_args(
+        [
+            "observe",
+            "--converted-roots",
+            "converted_root",
+            "--audit-converted-existing",
+            "--out-dir",
+            "out_run",
+        ]
+    )
+
+    assert default_args.repolish_converted_raw is True
+    assert audit_only_args.repolish_converted_raw is False
+
+
 def test_recover_p62_command_uses_configured_marker_mode_by_default() -> None:
     default_args = parse_args(["recover-p62", "--run-dir", "run"])
     run_marker_args = parse_args(["recover-p62", "--run-dir", "run", "--run-marker"])
@@ -4042,6 +4059,36 @@ def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_pat
     assert all(Path(article["raw_stage_path"]).name == "01.en.raw.html" for article in manifest["articles"])
 
 
+def test_prepare_converted_raw_cache_carries_source_pdf_from_filename_map(tmp_path: Path) -> None:
+    root = tmp_path / "converted_run"
+    article_dir = root / "AliasDoc"
+    stage_dir = article_dir / "_pdf_html_polish_stages"
+    stage_dir.mkdir(parents=True)
+    source_pdf = tmp_path / "zotero" / "paper.pdf"
+    source_pdf.parent.mkdir(parents=True)
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    alias_pdf = root / "_z2m_runtime_tmp" / "zotero_pdf_stage_abc" / "AliasDoc.pdf"
+    alias_pdf.parent.mkdir(parents=True)
+    alias_pdf.write_bytes(b"%PDF-1.4\n")
+    (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    (root / "_source_filename_map.csv").write_text(
+        "source_pdf_path,alias_pdf_path,source_base_len,alias_base_len,was_shortened,materialization\n"
+        f"{source_pdf},{alias_pdf},9,8,no,copy\n",
+        encoding="utf-8",
+    )
+
+    manifest = prepare_converted_raw_cache([root], tmp_path / "source")
+
+    article = manifest["articles"][0]
+    assert article["source_pdf_path"] == str(source_pdf)
+    assert article["source_pdf_origin"] == "filename_map"
+    assert article["source_pdf_map_path"] == str(root / "_source_filename_map.csv")
+    report = write_source_pdf_map_for_run(tmp_path / "source", manifest)
+    assert report["mapped_count"] == 1
+    assert report["records"][0]["pdf_path"] == str(source_pdf)
+
+
 def test_prepare_converted_raw_cache_infers_citation_style_from_raw_html(tmp_path: Path) -> None:
     root = tmp_path / "converted"
     stage_dir = root / "lib" / "KEY" / "111" / "Doc" / "_z2m_stages"
@@ -4242,6 +4289,115 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     assert audit_calls[0]["kwargs"].get("merge_previous_report_path") is None
     assert audit_calls[1]["kwargs"]["roots"] == [stage_dir]
     assert audit_calls[1]["kwargs"]["merge_previous_report_path"] == run_dir / "audit_full_checks.json"
+
+
+def test_observe_converted_roots_default_runs_repolish_and_repair_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    converted_root = tmp_path / "converted"
+    stage_dir = run_dir / "audit_tree" / "article_a"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish.</p></body></html>", encoding="utf-8")
+    converted_cache_calls: list[dict[str, object]] = []
+    repolish_calls: list[dict[str, object]] = []
+    audit_calls: list[dict[str, object]] = []
+    repair_calls: list[tuple[str, dict[str, object]]] = []
+
+    gate_config = {
+        "repolish_jobs": 3,
+        "audit_jobs": 2,
+        "require_pdf_text_layer_diagnostics": False,
+        "targeted_repair_audit_enabled": True,
+        "run_p62_image_recovery_stage": True,
+        "p62_image_recovery_execute_marker": True,
+        "p62_image_recovery_apply_patches": True,
+        "p62_image_recovery_rerun_audit": True,
+        "run_polish_auto_repair_stage": True,
+        "polish_auto_repair_rerun_audit": True,
+        "article_review_bundle_max_articles": 0,
+    }
+
+    def fake_prepare_converted_raw_cache(*args: object, **kwargs: object) -> dict[str, object]:
+        converted_cache_calls.append({"args": args, "kwargs": kwargs})
+        return {"raw_count": 1, "article_count": 1}
+
+    def fake_repolish(*args: object, **kwargs: object) -> dict[str, object]:
+        repolish_calls.append({"args": args, "kwargs": kwargs})
+        return {"raw_count": 1, "article_count": 1, "skipped_count": 0, "changed_count": 1}
+
+    def fake_run_audit(*args: object, **kwargs: object) -> None:
+        if not audit_calls:
+            _write_json(run_dir / "audit_full_checks.json", {"roots": [str(run_dir / "audit_tree")], "articles": []})
+        audit_calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(llm_quality_loop, "load_gate_config", lambda *args, **kwargs: gate_config)
+    monkeypatch.setattr(llm_quality_loop, "prepare_converted_raw_cache", fake_prepare_converted_raw_cache)
+    monkeypatch.setattr(llm_quality_loop, "repolish_cached_run", fake_repolish)
+    monkeypatch.setattr(llm_quality_loop, "run_audit", fake_run_audit)
+    monkeypatch.setattr(llm_quality_loop, "run_quality_history", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_p62_marker_recovery_plan",
+        lambda *args, **kwargs: repair_calls.append(("p62_plan", dict(kwargs))) or {},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_p62_image_recovery_stage",
+        lambda *args, **kwargs: repair_calls.append(("p62_recovery", dict(kwargs)))
+        or {"patched_warning_count": 1, "patched_articles": ["article_a"]},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_polish_auto_repair_stage",
+        lambda *args, **kwargs: repair_calls.append(("polish_auto_repair", dict(kwargs)))
+        or {"patched_article_count": 1, "patched_articles": ["article_a"]},
+    )
+    monkeypatch.setattr(llm_quality_loop, "write_manual_review_queue", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_article_review_stage",
+        lambda *args, **kwargs: {"status": "not_required", "pending_mandatory_count": 0},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_pattern_observations",
+        lambda *args, **kwargs: {"pattern_count": 0, "problem_candidates": []},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_manual_observation_summary",
+        lambda *args, **kwargs: {"observation_count": 0, "problem_candidates": []},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "write_analysis_pack",
+        lambda *args, **kwargs: {"resolver_decisions": {"repair_candidate_counts": {}}, "articles": []},
+    )
+    monkeypatch.setattr(llm_quality_loop, "_write_gate_report", lambda *args, **kwargs: {"status": "pass"})
+
+    args = parse_args(
+        [
+            "observe",
+            "--converted-roots",
+            str(converted_root),
+            "--out-dir",
+            str(run_dir),
+            "--skip-tests",
+            "--skip-history",
+        ]
+    )
+
+    assert llm_quality_loop.observe(args) == 0
+    assert converted_cache_calls[0]["args"] == ([converted_root], run_dir / "_converted_raw_source")
+    assert repolish_calls[0]["args"][0] == run_dir / "_converted_raw_source"
+    assert repolish_calls[0]["kwargs"]["jobs"] == 3
+    assert [name for name, _kwargs in repair_calls] == ["p62_plan", "p62_recovery", "polish_auto_repair"]
+    assert len(audit_calls) == 2
+    assert audit_calls[0]["kwargs"].get("roots") is None
+    assert audit_calls[1]["kwargs"]["roots"] == [stage_dir]
 
 
 def test_run_test_command_writes_stream_logs_and_command_report(tmp_path: Path) -> None:
