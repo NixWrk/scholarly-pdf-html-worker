@@ -195,7 +195,7 @@ def write_gate_report(
     out_path: Path | None = None,
     pdf_problem_evidence_name: str = "pdf_problem_evidence_report.json",
 ) -> dict[str, Any]:
-    comparison = load_json(run_dir / "quality_compare.json")
+    comparison = load_json(run_dir / "quality_compare.json", default={"status": "no_previous_entry"})
     gate_config = load_gate_config(gate_config_path)
     article_review_path = run_dir / "article_review_report.json"
     article_review_report = load_json(article_review_path) if article_review_path.is_file() else None

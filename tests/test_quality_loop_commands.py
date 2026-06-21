@@ -32,3 +32,18 @@ def test_write_gate_report_loads_optional_stage_reports(tmp_path: Path) -> None:
 
     assert report["status"] == "pass"
     assert (run_dir / "quality_gate_report.json").is_file()
+
+
+def test_write_gate_report_allows_missing_quality_compare_for_skip_history(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    gate_config_path = tmp_path / "gate.json"
+    _write_json(
+        gate_config_path,
+        {"allow_missing_previous": True, "max_regressions": 0, "max_total_deltas": {}},
+    )
+
+    report = write_gate_report(run_dir, gate_config_path)
+
+    assert report["status"] == "pass"
+    assert report["regression_count"] == 0
+    assert (run_dir / "quality_gate_report.json").is_file()
