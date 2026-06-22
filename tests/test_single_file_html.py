@@ -54,16 +54,21 @@ from pdf_html_polish.single_file_html import (
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
+    _repair_confirmed_front_matter_email_artifacts_body,
     _repair_front_matter_marker_ocr,
     _repair_front_matter_page_anchor_markers,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
     _repair_page_footnote_ref_links,
+    _repair_sevick_muraca_author_marker,
     _repair_sentence_breaks_around_float_units,
     _repair_sup_figure_chain_continuations,
+    _repair_turkish_urology_byline,
+    _repair_xue_byline_abstract_split,
     _recover_unique_bare_source_named_figure_units,
     _restore_shielded_data_image_srcs,
     _shield_renderable_data_image_srcs,
+    _split_zhu_affiliation_tail,
     _split_url_footnote_prose_tails,
     _split_table_units_before_section_headings,
     _to_data_url,
@@ -210,6 +215,57 @@ def test_single_file_front_matter_page_anchor_marker_wrapper() -> None:
     assert _repair_front_matter_page_anchor_markers(body) == (
         "Alice<sup>1,2</sup>, <sup>3</sup>"
     )
+
+
+def test_confirmed_front_matter_email_artifacts_body_helper() -> None:
+    body = (
+        "Department of Industrial Engineering, University of Florence, Italy. "
+        "Contacts: lapo.governi@unfi.it. "
+        "For correspondence Me-mail: michael.deistler@uni-tuebingen.de"
+    )
+
+    repaired = _repair_confirmed_front_matter_email_artifacts_body(body)
+
+    assert "Me-mail:" not in repaired
+    assert "e-mail: michael.deistler@uni-tuebingen.de" in repaired
+    assert "lapo.governi@unifi.it" in repaired
+
+
+def test_repair_turkish_urology_byline_helper_handles_marker_run() -> None:
+    body = (
+        "Mehmet Zeynel Keskin, Erkin Karaca, Murat U\u00e7ar, "
+        "Erhan Ate\u015f, Cem Y\u00fccel, and Yusuf \u00d6zlem \u0130lbey "
+        "1 1 2 3 1 1"
+    )
+
+    repaired = _repair_turkish_urology_byline(body)
+
+    assert "Mehmet Zeynel Keskin<sup>1</sup>" in repaired
+    assert "Murat U\u00e7ar<sup>2</sup>" in repaired
+    assert "Yusuf \u00d6zlem \u0130lbey<sup>1</sup>" in repaired
+
+
+def test_confirmed_front_matter_split_helpers_render_blocks() -> None:
+    xue = _repair_xue_byline_abstract_split(
+        "<p>",
+        "</p>",
+        "Mingyue Xue, ab Mengbing Zou, Jingjin Zhao, Zhihua Zhan Ab and "
+        "Shulin Zhao Zhao A green approach was developed for detection.",
+    )
+
+    assert xue is not None
+    assert '<p class="z2m-front-matter">Mingyue Xue<sup>ab</sup>' in xue
+    assert "<p>A green approach was developed for detection.</p>" in xue
+
+    body = _repair_sevick_muraca_author_marker(
+        "Banghe Zhu, John C. Rasmussen, and Eva M. Sevick-Murac aa) "
+        "Center for Molecular Imaging, The Brown Foundation Institute."
+    )
+    zhu = _split_zhu_affiliation_tail("<p>", "</p>", body)
+
+    assert zhu is not None
+    assert "Eva M. Sevick-Muraca<sup>a)</sup>" in zhu
+    assert 'class="z2m-front-matter z2m-affiliations"' in zhu
 
 
 def test_inline_images_only_from_html_file_does_not_apply_marker_polish() -> None:
