@@ -11,8 +11,9 @@ from ..url_repair import (
     starts_like_visible_url_fragment,
     strip_wrapping_url_quotes,
     url_fragment_compare_key,
+    url_fragment_keys_match_allowing_lost_hyphens,
 )
-from ..html_links import escape_html_attr_literal
+from ..html_links import escape_html_attr_literal, replace_href_attr_literal
 from .html_fragments import visible_text
 
 
@@ -49,6 +50,13 @@ SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN = re.compile(
     r'(?P<tail>\s*\.\s*[A-Za-z]{2,}'
     r'(?:/[A-Za-z0-9._~:#?\[\]@!$&\'()*+,;=%-]+)*'
     r'(?:/\s+[A-Za-z0-9][A-Za-z0-9._~:#?\[\]@!$&\'()*+,;=%-]+)?)'
+    r'(?P<trailing>[.,;:)]?)',
+    re.IGNORECASE | re.DOTALL,
+)
+PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[^<]{1,900}?https?://[^<\s]{4,260})\s*</a>'
+    r'(?P<tail>\s+[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]{}@!$&\'()*+,;=%-]{1,320})'
     r'(?P<trailing>[.,;:)]?)',
     re.IGNORECASE | re.DOTALL,
 )
@@ -226,7 +234,45 @@ def repair_split_url_anchor_domain_tail(html: str) -> str:
     return SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN.sub(replace, html)
 
 
+def repair_prose_prefixed_url_anchor_tail(html: str) -> str:
+    """Move prose out of URL anchors when only the URL tail continues after them."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = unescape_html_entities_repeated(strip_wrapping_url_quotes(match.group("href")))
+        href_key = url_fragment_compare_key(href)
+        if not href_key:
+            return match.group(0)
+
+        body_text = visible_text(match.group("body"))
+        url_match = re.search(r"(?P<prefix>[\s\S]*?)(?P<head>https?://\S+)\s*$", body_text, re.IGNORECASE)
+        if url_match is None:
+            return match.group(0)
+
+        candidate = repair_broken_visible_url_text(f"{url_match.group('head')}{match.group('tail')}")
+        candidate_url, candidate_trailing = split_url_and_trailing_punct(candidate + (match.group("trailing") or ""))
+        candidate_key = url_fragment_compare_key(candidate_url)
+        if not (
+            url_fragment_keys_match_allowing_lost_hyphens(candidate_key, href_key)
+            or href_key.startswith(candidate_key)
+            or candidate_key.startswith(href_key)
+        ):
+            return match.group(0)
+
+        label = href if url_fragment_keys_match_allowing_lost_hyphens(candidate_key, href_key) else candidate_url
+        attrs = replace_href_attr_literal(match.group("attrs"), label)
+        prefix = _escape_html_text(url_match.group("prefix"))
+        return f'{prefix}<a{attrs}>{_escape_html_text(label)}</a>{candidate_trailing}'
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN.sub(replace, current)
+    return current
+
+
 __all__ = [
+    "PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN",
     "SPLIT_VISIBLE_URL_ANCHOR_PATTERN",
     "SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN",
     "SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN",
@@ -235,6 +281,7 @@ __all__ = [
     "URL_ANCHOR_TEXT_PATTERN",
     "consume_compact_prefix",
     "normalize_double_escaped_url_anchor_text",
+    "repair_prose_prefixed_url_anchor_tail",
     "repair_split_visible_url_anchors",
     "repair_split_url_anchor_block_tail",
     "repair_split_url_anchor_domain_tail",

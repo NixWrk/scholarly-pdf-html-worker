@@ -225,6 +225,7 @@ from .raw_html_polish.url_autolink import (
     autolink_text_urls as _autolink_text_urls,
 )
 from .raw_html_polish.url_anchors import (
+    PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN as _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN,
     SPLIT_VISIBLE_URL_ANCHOR_PATTERN as _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
     SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN as _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN,
     SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN as _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN,
@@ -233,6 +234,7 @@ from .raw_html_polish.url_anchors import (
     URL_ANCHOR_TEXT_PATTERN as _URL_ANCHOR_TEXT_PATTERN,
     consume_compact_prefix as _consume_compact_prefix,
     normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
+    repair_prose_prefixed_url_anchor_tail as _repair_prose_prefixed_url_anchor_tail,
     repair_split_visible_url_anchors as _repair_split_visible_url_anchors,
     repair_split_url_anchor_block_tail as _repair_split_url_anchor_block_tail,
     repair_split_url_anchor_domain_tail as _repair_split_url_anchor_domain_tail,
@@ -2771,13 +2773,6 @@ _CITATION_PREFIX_BODY_PATTERN = re.compile(
 _ESCAPED_ANCHOR_SNIPPET_PATTERN = re.compile(
     r'&lt;a\s+href=(["\'])(?P<href>https?://[^"\']+)\1&gt;(?P<label>https?://[^<]+)&lt;/a&gt;',
     re.IGNORECASE,
-)
-_PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
-    r'(?P<body>[^<]{1,900}?https?://[^<\s]{4,260})\s*</a>'
-    r'(?P<tail>\s+[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]{}@!$&\'()*+,;=%-]{1,320})'
-    r'(?P<trailing>[.,;:)]?)',
-    re.IGNORECASE | re.DOTALL,
 )
 _SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN = re.compile(
     r'(?P<scheme>https?://)\s*'
@@ -5678,43 +5673,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
 
 def _escape_html_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _repair_prose_prefixed_url_anchor_tail(html: str) -> str:
-    """Move prose out of URL anchors when only the URL tail continues after them."""
-
-    def replace(match: re.Match[str]) -> str:
-        href = _unescape_html_entities_repeated(_strip_wrapping_url_quotes(match.group("href")))
-        href_key = _url_fragment_compare_key(href)
-        if not href_key:
-            return match.group(0)
-
-        body_text = _visible_text(match.group("body"))
-        url_match = re.search(r"(?P<prefix>[\s\S]*?)(?P<head>https?://\S+)\s*$", body_text, re.IGNORECASE)
-        if url_match is None:
-            return match.group(0)
-
-        candidate = _repair_broken_visible_url_text(f"{url_match.group('head')}{match.group('tail')}")
-        candidate_url, candidate_trailing = _split_url_and_trailing_punct(candidate + (match.group("trailing") or ""))
-        candidate_key = _url_fragment_compare_key(candidate_url)
-        if not (
-            _url_fragment_keys_match_allowing_lost_hyphens(candidate_key, href_key)
-            or href_key.startswith(candidate_key)
-            or candidate_key.startswith(href_key)
-        ):
-            return match.group(0)
-
-        label = href if _url_fragment_keys_match_allowing_lost_hyphens(candidate_key, href_key) else candidate_url
-        attrs = _replace_href_attr_literal(match.group("attrs"), label)
-        prefix = _escape_html_text(url_match.group("prefix"))
-        return f'{prefix}<a{attrs}>{_escape_html_text(label)}</a>{candidate_trailing}'
-
-    previous = None
-    current = html
-    while previous != current:
-        previous = current
-        current = _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN.sub(replace, current)
-    return current
 
 
 def _repair_split_scheme_url_anchor_runs(html: str) -> str:

@@ -24,6 +24,7 @@ from pdf_html_polish.single_file_html import (
     _RU_BARE_FIG_LEXEME_PATTERN,
     _SKIP_AUTOLINK_TAGS,
     _SLASH_PIPE_ARTIFACT_PATTERN,
+    _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN,
     _SPACED_ESCAPED_INLINE_TAG_PATTERN,
     _SPACED_INLINE_TAG_PATTERN,
     _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
@@ -72,6 +73,7 @@ from pdf_html_polish.single_file_html import (
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
     _repair_page_footnote_ref_links,
+    _repair_prose_prefixed_url_anchor_tail,
     _repair_sevick_muraca_author_marker,
     _repair_sentence_breaks_around_float_units,
     _repair_split_visible_url_anchors,
@@ -158,12 +160,14 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _update_skip_stack is pre_cleanup.update_skip_stack
     assert _SPACED_PROTOCOL_HREF_ATTR_PATTERN is url_anchors.SPACED_PROTOCOL_HREF_ATTR_PATTERN
     assert _SPACED_PROTOCOL_URL_ANCHOR_PATTERN is url_anchors.SPACED_PROTOCOL_URL_ANCHOR_PATTERN
+    assert _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN is url_anchors.PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN
     assert _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN
     assert _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN
     assert _SPLIT_VISIBLE_URL_ANCHOR_PATTERN is url_anchors.SPLIT_VISIBLE_URL_ANCHOR_PATTERN
     assert _URL_ANCHOR_TEXT_PATTERN is url_anchors.URL_ANCHOR_TEXT_PATTERN
     assert _consume_compact_prefix is url_anchors.consume_compact_prefix
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
+    assert _repair_prose_prefixed_url_anchor_tail is url_anchors.repair_prose_prefixed_url_anchor_tail
     assert _repair_split_visible_url_anchors is url_anchors.repair_split_visible_url_anchors
     assert _repair_split_url_anchor_block_tail is url_anchors.repair_split_url_anchor_block_tail
     assert _repair_split_url_anchor_domain_tail is url_anchors.repair_split_url_anchor_domain_tail

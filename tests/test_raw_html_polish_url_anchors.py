@@ -1,6 +1,7 @@
 from pdf_html_polish.raw_html_polish.url_anchors import (
     consume_compact_prefix,
     normalize_double_escaped_url_anchor_text,
+    repair_prose_prefixed_url_anchor_tail,
     repair_split_visible_url_anchors,
     repair_split_url_anchor_block_tail,
     repair_split_url_anchor_domain_tail,
@@ -116,3 +117,22 @@ def test_repair_split_url_anchor_domain_tail_rejects_non_url_visible_text() -> N
     html = '<a href="https://example.org/path">example</a>. org/path'
 
     assert repair_split_url_anchor_domain_tail(html) == html
+
+
+def test_repair_prose_prefixed_url_anchor_tail_moves_prose_prefix_outside_anchor() -> None:
+    url = "https://example.org/path/supplemental"
+    html = f'<p><a href="{url}">Available at: https://example.org/path/</a> supplemental.</p>'
+
+    repaired = repair_prose_prefixed_url_anchor_tail(html)
+
+    assert f'Available at: <a href="{url}">{url}</a>.' in repaired
+    assert ">Available at: https://example.org/path/</a>" not in repaired
+
+
+def test_repair_prose_prefixed_url_anchor_tail_rejects_mismatched_href() -> None:
+    html = (
+        '<p><a href="https://example.org/path/supplemental">'
+        "Available at: https://different.example/path/</a> supplemental.</p>"
+    )
+
+    assert repair_prose_prefixed_url_anchor_tail(html) == html
