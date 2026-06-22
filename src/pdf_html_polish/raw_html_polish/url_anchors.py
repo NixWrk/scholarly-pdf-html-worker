@@ -139,6 +139,13 @@ ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
     r'(?P<next_body>[\s\S]{0,160}?)</a>',
     re.IGNORECASE,
 )
+SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])http://www(?P=quote)[^>]*)>'
+    r'(?P<body>http://www)</a>\s*\.\s*'
+    r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*(?P<next_quote>["\'])http://[^"\']+(?P=next_quote)[^>]*)>'
+    r'(?P<next_body>[\s\S]{1,500}?)</a>',
+    re.IGNORECASE,
+)
 
 
 def _escape_html_text(value: str) -> str:
@@ -725,6 +732,27 @@ def merge_adjacent_same_href_mailto_anchors(html: str) -> str:
     return current
 
 
+def repair_split_www_domain_anchor_with_noisy_href(html: str) -> str:
+    """Recover ``http://www.example`` when the continuation anchor href is OCR-noisy."""
+
+    def replace(match: re.Match[str]) -> str:
+        visible = visible_text(match.group("next_body"))
+        domain_match = re.match(
+            r"\s*(?P<domain>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?P<trailing>[\s\S]*)",
+            visible,
+        )
+        if domain_match is None:
+            return match.group(0)
+        domain = domain_match.group("domain").rstrip(".,;:)")
+        if "." not in domain:
+            return match.group(0)
+        merged_url = f"http://www.{domain}"
+        attrs = replace_href_attr_literal(match.group("attrs"), merged_url)
+        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{_escape_html_text(domain_match.group("trailing"))}'
+
+    return SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN.sub(replace, html)
+
+
 __all__ = [
     "ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN",
     "ADJACENT_SAME_HREF_ANCHOR_PATTERN",
@@ -736,6 +764,7 @@ __all__ = [
     "SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN",
     "SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN",
     "SPLIT_SAME_HREF_DOI_ANCHOR_TEXT_PATTERN",
+    "SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN",
     "SPLIT_VISIBLE_URL_ANCHOR_PATTERN",
     "SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN",
     "SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN",
@@ -760,6 +789,7 @@ __all__ = [
     "repair_split_visible_url_anchors",
     "repair_split_url_anchor_block_tail",
     "repair_split_url_anchor_domain_tail",
+    "repair_split_www_domain_anchor_with_noisy_href",
     "repair_spaced_protocol_url_anchors",
     "unescape_html_entities_repeated",
 ]

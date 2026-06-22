@@ -15,6 +15,7 @@ from pdf_html_polish.raw_html_polish.url_anchors import (
     repair_split_visible_url_anchors,
     repair_split_url_anchor_block_tail,
     repair_split_url_anchor_domain_tail,
+    repair_split_www_domain_anchor_with_noisy_href,
     repair_spaced_protocol_url_anchors,
     unescape_html_entities_repeated,
 )
@@ -261,3 +262,17 @@ def test_merge_adjacent_same_href_mailto_anchors_rejects_different_href() -> Non
     )
 
     assert merge_adjacent_same_href_mailto_anchors(html) == html
+
+
+def test_repair_split_www_domain_anchor_with_noisy_href_recovers_domain() -> None:
+    html = '<p><a href="http://www">http://www</a>. <a href="http://noisy">example.org)</a></p>'
+
+    repaired = repair_split_www_domain_anchor_with_noisy_href(html)
+
+    assert repaired == '<p><a href="http://www.example.org">http://www.example.org</a>)</p>'
+
+
+def test_repair_split_www_domain_anchor_with_noisy_href_rejects_non_domain_tail() -> None:
+    html = '<p><a href="http://www">http://www</a>. <a href="http://noisy">example</a></p>'
+
+    assert repair_split_www_domain_anchor_with_noisy_href(html) == html

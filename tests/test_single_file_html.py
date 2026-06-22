@@ -42,6 +42,7 @@ from pdf_html_polish.single_file_html import (
     _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN,
     _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN,
     _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
+    _SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN,
     _TEXT_NODE_REPAIR_SKIP_TAGS,
     _TRAILING_SPACED_BACKSLASH_PATTERN,
     _URL_ANCHOR_TEXT_PATTERN,
@@ -100,6 +101,7 @@ from pdf_html_polish.single_file_html import (
     _repair_split_visible_url_anchors,
     _repair_split_url_anchor_block_tail,
     _repair_split_url_anchor_domain_tail,
+    _repair_split_www_domain_anchor_with_noisy_href,
     _repair_spaced_protocol_url_anchors,
     _repair_sup_figure_chain_continuations,
     _repair_turkish_urology_byline,
@@ -194,6 +196,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN
     assert _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN
     assert _SPLIT_VISIBLE_URL_ANCHOR_PATTERN is url_anchors.SPLIT_VISIBLE_URL_ANCHOR_PATTERN
+    assert _SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN is url_anchors.SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN
     assert _URL_ANCHOR_TEXT_PATTERN is url_anchors.URL_ANCHOR_TEXT_PATTERN
     assert _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_ANCHOR_CHUNK_PATTERN
     assert _URL_FRAGMENT_TEXT_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_TEXT_CHUNK_PATTERN
@@ -213,6 +216,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _repair_split_visible_url_anchors is url_anchors.repair_split_visible_url_anchors
     assert _repair_split_url_anchor_block_tail is url_anchors.repair_split_url_anchor_block_tail
     assert _repair_split_url_anchor_domain_tail is url_anchors.repair_split_url_anchor_domain_tail
+    assert _repair_split_www_domain_anchor_with_noisy_href is url_anchors.repair_split_www_domain_anchor_with_noisy_href
     assert _repair_spaced_protocol_url_anchors is url_anchors.repair_spaced_protocol_url_anchors
     assert _unescape_html_entities_repeated is url_anchors.unescape_html_entities_repeated
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN

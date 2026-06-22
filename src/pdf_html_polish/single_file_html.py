@@ -238,6 +238,7 @@ from .raw_html_polish.url_anchors import (
     SPLIT_VISIBLE_URL_ANCHOR_PATTERN as _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
     SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN as _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN,
     SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN as _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN,
+    SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN as _SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN,
     SPACED_PROTOCOL_HREF_ATTR_PATTERN as _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
     SPACED_PROTOCOL_URL_ANCHOR_PATTERN as _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
     URL_ANCHOR_TEXT_PATTERN as _URL_ANCHOR_TEXT_PATTERN,
@@ -259,6 +260,7 @@ from .raw_html_polish.url_anchors import (
     repair_split_visible_url_anchors as _repair_split_visible_url_anchors,
     repair_split_url_anchor_block_tail as _repair_split_url_anchor_block_tail,
     repair_split_url_anchor_domain_tail as _repair_split_url_anchor_domain_tail,
+    repair_split_www_domain_anchor_with_noisy_href as _repair_split_www_domain_anchor_with_noisy_href,
     repair_spaced_protocol_url_anchors as _repair_spaced_protocol_url_anchors,
     unescape_html_entities_repeated as _unescape_html_entities_repeated,
 )
@@ -5677,35 +5679,6 @@ def _merge_post_autolink_split_url_anchors(html: str) -> str:
         previous = current
         current = pattern.sub(replace, current)
     return current
-
-
-def _repair_split_www_domain_anchor_with_noisy_href(html: str) -> str:
-    """Recover ``http://www.example`` when the continuation anchor href is OCR-noisy."""
-
-    pattern = re.compile(
-        r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])http://www(?P=quote)[^>]*)>'
-        r'(?P<body>http://www)</a>\s*\.\s*'
-        r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*(?P<next_quote>["\'])http://[^"\']+(?P=next_quote)[^>]*)>'
-        r'(?P<next_body>[\s\S]{1,500}?)</a>',
-        re.IGNORECASE,
-    )
-
-    def replace(match: re.Match[str]) -> str:
-        visible = _visible_text(match.group("next_body"))
-        domain_match = re.match(
-            r"\s*(?P<domain>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?P<trailing>[\s\S]*)",
-            visible,
-        )
-        if domain_match is None:
-            return match.group(0)
-        domain = domain_match.group("domain").rstrip(".,;:)")
-        if "." not in domain:
-            return match.group(0)
-        merged_url = f"http://www.{domain}"
-        attrs = _replace_href_attr_literal(match.group("attrs"), merged_url)
-        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{_escape_html_text(domain_match.group("trailing"))}'
-
-    return pattern.sub(replace, html)
 
 
 def _repair_miswrapped_doi_anchor_labels(html: str) -> str:

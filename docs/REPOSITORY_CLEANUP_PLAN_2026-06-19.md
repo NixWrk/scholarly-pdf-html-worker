@@ -284,9 +284,9 @@ The cleanup policy is deliberately conservative:
 - Started the URL/anchor cleanup by moving spaced-protocol URL anchor repair
   double-escaped URL anchor label normalization, and split-visible URL anchor
   repair, plus paragraph-boundary, domain-tail, prose-prefixed, split-scheme,
-  DOI split, adjacent same-href URL, and adjacent mailto anchor repairs, into
-  `raw_html_polish/url_anchors.py`; `single_file_html.py` keeps the old private
-  pattern/function names as aliases.
+  DOI split, adjacent same-href URL, adjacent mailto, and noisy `http://www`
+  anchor repairs, into `raw_html_polish/url_anchors.py`; `single_file_html.py`
+  keeps the old private pattern/function names as aliases.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target
