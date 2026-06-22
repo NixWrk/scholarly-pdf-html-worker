@@ -147,6 +147,7 @@ from .raw_html_polish.float_units import (
 from .raw_html_polish.frontmatter_footnotes import (
     AUTHOR_BYLINE_NAME_PATTERN as _AUTHOR_BYLINE_NAME_RE,
     SUPERSCRIPT_DIGIT_TRANSLATION as _SUPERSCRIPT_DIGIT_TRANSLATION,
+    looks_affiliation_label_body as _looks_affiliation_label_body,
     looks_author_byline_front_matter as _looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
@@ -3342,15 +3343,6 @@ def _repair_front_matter_page_anchor_markers(body: str) -> str:
 
 
 def _repair_front_matter_marker_ocr(html: str) -> str:
-    def _looks_affiliation_label_body(body: str) -> bool:
-        return bool(
-            re.search(
-                r"(?:Department|University|Institute|Laborator(?:y|ies)|Hospital|College|Centre|Center)",
-                _visible_text(body),
-                re.IGNORECASE,
-            )
-        )
-
     def _repair(match: re.Match[str]) -> str:
         raw = match.group(0)
         body = match.group("body")

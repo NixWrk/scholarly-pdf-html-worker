@@ -160,6 +160,16 @@ def looks_author_marker_ocr_candidate(raw: str) -> bool:
     return marker_like and (text.count(",") >= 2 or "&" in text)
 
 
+def looks_affiliation_label_body(body: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:Department|University|Institute|Laborator(?:y|ies)|Hospital|College|Centre|Center)",
+            visible_text(body),
+            re.IGNORECASE,
+        )
+    )
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -252,6 +262,7 @@ __all__ = [
     "AUTHOR_MARKER_NUMBER_RUN_PATTERN",
     "AUTHOR_MARKER_OCR_SYMBOL_PATTERN",
     "SUPERSCRIPT_DIGIT_TRANSLATION",
+    "looks_affiliation_label_body",
     "looks_author_byline_front_matter",
     "looks_author_marker_ocr_candidate",
     "normalize_front_matter_marker_numbers",

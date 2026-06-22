@@ -1,4 +1,5 @@
 from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
+    looks_affiliation_label_body,
     looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate,
     normalize_front_matter_marker_numbers,
@@ -43,6 +44,11 @@ def test_looks_author_marker_ocr_candidate_rejects_publication_dates() -> None:
     raw = "<p>Received 10.12.2024. Accepted after review.</p>"
 
     assert not looks_author_marker_ocr_candidate(raw)
+
+
+def test_looks_affiliation_label_body_detects_institution_text() -> None:
+    assert looks_affiliation_label_body("1Department of Biomedical Engineering")
+    assert not looks_affiliation_label_body("1Participants completed the trial")
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:

@@ -36,6 +36,7 @@ from pdf_html_polish.single_file_html import (
     _fix_orphaned_sup_tags,
     _fix_false_sup_citations_in_decimals_and_figure_labels,
     _fix_subscript_equation_spill,
+    _looks_affiliation_label_body,
     _looks_author_byline_front_matter,
     _looks_author_marker_ocr_candidate,
     _inline_images_from_html_text,
@@ -127,6 +128,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _unicode_capitalized_name_pair_count is frontmatter_footnotes.unicode_capitalized_name_pair_count
     assert _unicode_glued_author_marker_count is frontmatter_footnotes.unicode_glued_author_marker_count
+    assert _looks_affiliation_label_body is frontmatter_footnotes.looks_affiliation_label_body
     assert _looks_author_byline_front_matter is frontmatter_footnotes.looks_author_byline_front_matter
     assert _looks_author_marker_ocr_candidate is frontmatter_footnotes.looks_author_marker_ocr_candidate
 
