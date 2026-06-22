@@ -146,14 +146,17 @@ from .raw_html_polish.float_units import (
 )
 from .raw_html_polish.frontmatter_footnotes import (
     AUTHOR_BYLINE_NAME_PATTERN as _AUTHOR_BYLINE_NAME_RE,
+    PAGE_HEADER_FOOTER_LINE_PATTERN as _PAGE_HEADER_FOOTER_LINE_PATTERN,
     SUPERSCRIPT_DIGIT_TRANSLATION as _SUPERSCRIPT_DIGIT_TRANSLATION,
     footnote_keywords as _footnote_keywords,
     leading_footnote_number as _leading_footnote_number,
+    looks_affiliation_block as _looks_affiliation_block,
     looks_affiliation_label_body as _looks_affiliation_label_body,
     looks_author_byline_front_matter as _looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
     looks_footnote_block as _looks_footnote_block_impl,
     looks_front_matter_block as _looks_front_matter_block_impl,
+    mark_affiliation_paragraphs as _mark_affiliation_paragraphs,
     mark_front_matter_paragraphs as _mark_front_matter_paragraphs_impl,
     mark_footnote_paragraphs_and_refs as _mark_footnote_paragraphs_and_refs_impl,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
@@ -1125,10 +1128,6 @@ _FALSE_CHEMICAL_FORMULA_SUP_CITATION_PATTERN = re.compile(
 _LINKED_BASE10_MANTISSA_BEFORE_EXP_PATTERN = re.compile(
     r'<sup>\s*<a\b[^>]*\bhref\s*=\s*["\']#ref-10["\'][^>]*>\s*10\s*</a>\s*</sup>\s*'
     r'(?=<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*-?\d{1,2}\s*</sup>)',
-    re.IGNORECASE,
-)
-_PAGE_HEADER_FOOTER_LINE_PATTERN = re.compile(
-    r"\bPage\s+\d+\s+of\s+\d+\b",
     re.IGNORECASE,
 )
 _LEADING_PAGE_ANCHOR_HTML_PATTERN = (
@@ -16131,70 +16130,6 @@ def _looks_nonprose_gap_block(block_html: str) -> bool:
             return True
 
     return False
-
-
-def _looks_affiliation_block(raw: str) -> bool:
-    """Detect long affiliation/author-footnote paragraphs inserted between prose blocks."""
-    if not raw.lstrip().lower().startswith("<p"):
-        return False
-    visible = _visible_text(raw)
-    if len(visible) < 220:
-        return False
-
-    lower = visible.lower()
-    if _PAGE_HEADER_FOOTER_LINE_PATTERN.search(visible):
-        return True
-    numbered_chunks = len(re.findall(r"(?:^|\s)\d{1,2}\s*[A-Z]", visible))
-    org_hits = sum(
-        1
-        for kw in (
-            "university",
-            "department",
-            "centre",
-            "center",
-            "school of medicine",
-            "institute",
-            "hospital",
-            "office",
-            "authors contributed equally",
-        )
-        if kw in lower
-    )
-    has_contact = ("e-mail" in lower) or ("email" in lower) or ("@" in visible)
-
-    if numbered_chunks >= 5 and org_hits >= 2:
-        return True
-    if numbered_chunks >= 4 and has_contact:
-        return True
-    if "authors contributed equally" in lower and numbered_chunks >= 3:
-        return True
-    return False
-
-
-def _mark_affiliation_paragraphs(html: str) -> str:
-    """Add a style hook class to affiliation/author-footnote paragraphs."""
-    pattern = re.compile(r"<p\b([^>]*)>([\s\S]*?)</p>", re.IGNORECASE)
-
-    def _append_class(attrs: str, class_name: str) -> str:
-        class_match = re.search(r'(\bclass\s*=\s*["\'])([^"\']*)(["\'])', attrs, re.IGNORECASE)
-        if class_match is None:
-            return f'{attrs} class="{class_name}"'
-        classes = class_match.group(2).split()
-        if class_name in classes:
-            return attrs
-        merged = " ".join(classes + [class_name]).strip()
-        return attrs[: class_match.start(2)] + merged + attrs[class_match.end(2) :]
-
-    def _mark(match: re.Match[str]) -> str:
-        attrs = match.group(1) or ""
-        body = match.group(2) or ""
-        raw = f"<p{attrs}>{body}</p>"
-        if not _looks_affiliation_block(raw):
-            return match.group(0)
-        marked_attrs = _append_class(attrs, "z2m-affiliations")
-        return f"<p{marked_attrs}>{body}</p>"
-
-    return pattern.sub(_mark, html)
 
 
 def _looks_inline_figure_gap(block_html: str) -> bool:

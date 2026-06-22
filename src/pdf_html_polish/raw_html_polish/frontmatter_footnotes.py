@@ -75,6 +75,10 @@ FOOTNOTE_CLASS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
+PAGE_HEADER_FOOTER_LINE_PATTERN = re.compile(
+    r"\bPage\s+\d+\s+of\s+\d+\b",
+    re.IGNORECASE,
+)
 LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN = re.compile(
     r'\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)+',
     re.IGNORECASE,
@@ -106,6 +110,17 @@ FRONT_MATTER_KEYWORDS = (
     "institute",
     "graduate school",
     "laboratory for",
+)
+AFFILIATION_ORG_KEYWORDS = (
+    "university",
+    "department",
+    "centre",
+    "center",
+    "school of medicine",
+    "institute",
+    "hospital",
+    "office",
+    "authors contributed equally",
 )
 TURKISH_UROLOGY_BYLINE_CORRECTED = (
     "Mehmet Zeynel Keskin<sup>1</sup>, "
@@ -277,6 +292,30 @@ def looks_affiliation_label_body(body: str) -> bool:
             re.IGNORECASE,
         )
     )
+
+
+def looks_affiliation_block(raw: str) -> bool:
+    """Detect long affiliation/author-footnote paragraphs inserted between prose blocks."""
+    if not raw.lstrip().lower().startswith("<p"):
+        return False
+    visible = visible_text(raw)
+    if len(visible) < 220:
+        return False
+
+    lower = visible.lower()
+    if PAGE_HEADER_FOOTER_LINE_PATTERN.search(visible):
+        return True
+    numbered_chunks = len(re.findall(r"(?:^|\s)\d{1,2}\s*[A-Z]", visible))
+    org_hits = sum(1 for keyword in AFFILIATION_ORG_KEYWORDS if keyword in lower)
+    has_contact = ("e-mail" in lower) or ("email" in lower) or ("@" in visible)
+
+    if numbered_chunks >= 5 and org_hits >= 2:
+        return True
+    if numbered_chunks >= 4 and has_contact:
+        return True
+    if "authors contributed equally" in lower and numbered_chunks >= 3:
+        return True
+    return False
 
 
 def leading_footnote_number(raw: str) -> int | None:
@@ -747,6 +786,25 @@ def mark_front_matter_paragraphs(
     return P_OR_H_BLOCK_PATTERN.sub(mark, html)
 
 
+def mark_affiliation_paragraphs(
+    html: str,
+    *,
+    looks_affiliation_block: Callable[[str], bool] = looks_affiliation_block,
+) -> str:
+    """Add a style hook class to affiliation/author-footnote paragraphs."""
+
+    def mark(match: re.Match[str]) -> str:
+        attrs = match.group("open")[2:-1]
+        body = match.group("body") or ""
+        raw = match.group(0)
+        if not looks_affiliation_block(raw):
+            return raw
+        marked_attrs = append_class_to_attrs(attrs, "z2m-affiliations")
+        return f"<p{marked_attrs}>{body}{match.group('close')}"
+
+    return P_BLOCK_PATTERN.sub(mark, html)
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -834,6 +892,7 @@ def repair_affiliation_label_ocr_body(body: str) -> str:
 
 __all__ = [
     "AFFILIATION_LABEL_OCR_PATTERN",
+    "AFFILIATION_ORG_KEYWORDS",
     "AUTHOR_BYLINE_NAME_PATTERN",
     "AUTHOR_EXISTING_SUP_SPACE_PATTERN",
     "AUTHOR_MARKER_NUMBER_RUN_PATTERN",
@@ -847,6 +906,7 @@ __all__ = [
     "P_OR_H_BLOCK_PATTERN",
     "FOOTNOTE_CLASS_PATTERN",
     "PAGE_ANCHOR_PATTERN",
+    "PAGE_HEADER_FOOTER_LINE_PATTERN",
     "PAGE_ID_PATTERN",
     "FRONT_MATTER_KEYWORDS",
     "FRONT_MATTER_MEMAIL_PREFIX_PATTERN",
@@ -862,11 +922,13 @@ __all__ = [
     "ZHU_AFFILIATION_TAIL_PATTERN",
     "footnote_keywords",
     "leading_footnote_number",
+    "looks_affiliation_block",
     "looks_affiliation_label_body",
     "looks_author_byline_front_matter",
     "looks_author_marker_ocr_candidate",
     "looks_footnote_block",
     "looks_front_matter_block",
+    "mark_affiliation_paragraphs",
     "mark_front_matter_paragraphs",
     "mark_footnote_paragraphs_and_refs",
     "normalize_front_matter_marker_numbers",

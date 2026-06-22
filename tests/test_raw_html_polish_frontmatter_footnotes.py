@@ -1,11 +1,13 @@
 from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     footnote_keywords,
     leading_footnote_number,
+    looks_affiliation_block,
     looks_affiliation_label_body,
     looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate,
     looks_footnote_block,
     looks_front_matter_block,
+    mark_affiliation_paragraphs,
     mark_front_matter_paragraphs,
     mark_footnote_paragraphs_and_refs,
     normalize_front_matter_marker_numbers,
@@ -64,6 +66,46 @@ def test_looks_author_marker_ocr_candidate_rejects_publication_dates() -> None:
 def test_looks_affiliation_label_body_detects_institution_text() -> None:
     assert looks_affiliation_label_body("1Department of Biomedical Engineering")
     assert not looks_affiliation_label_body("1Participants completed the trial")
+
+
+def test_looks_affiliation_block_detects_long_numbered_institution_block() -> None:
+    raw = (
+        "<p>1Singapore National Eye Centre, Singapore Eye Research Institute, Singapore. "
+        "2AI Office, Singapore Health Services, Singapore. "
+        "3Nuffield Department of Clinical Neurosciences, University of Oxford, UK. "
+        "4Department of Ophthalmology, Medical University of Vienna, Austria. "
+        "15These authors contributed equally: Zhen Ling Teo, Arun Thirunavukarasu. "
+        "e-mail: daniel.ting@duke-nus.edu.sg</p>"
+    )
+
+    assert looks_affiliation_block(raw)
+    assert not looks_affiliation_block("<p>Short Department note.</p>")
+    assert not looks_affiliation_block("<div>" + raw + "</div>")
+
+
+def test_mark_affiliation_paragraphs_marks_detected_blocks() -> None:
+    html = (
+        "<p>Body text continues here.</p>"
+        "<p>1Singapore National Eye Centre, Singapore Eye Research Institute, Singapore. "
+        "2AI Office, Singapore Health Services, Singapore. "
+        "3Nuffield Department of Clinical Neurosciences, University of Oxford, UK. "
+        "4Department of Ophthalmology, Medical University of Vienna, Austria. "
+        "5Department of Radiology, Stanford University, USA.</p>"
+    )
+
+    marked = mark_affiliation_paragraphs(html)
+
+    assert "<p>Body text continues here.</p>" in marked
+    assert 'class="z2m-affiliations"' in marked
+
+
+def test_mark_affiliation_paragraphs_accepts_detector_callback() -> None:
+    marked = mark_affiliation_paragraphs(
+        '<p class="existing">Plain line.</p>',
+        looks_affiliation_block=lambda _raw: True,
+    )
+
+    assert '<p class="existing z2m-affiliations">Plain line.</p>' == marked
 
 
 def test_leading_footnote_number_reads_sup_and_plain_prefixes() -> None:

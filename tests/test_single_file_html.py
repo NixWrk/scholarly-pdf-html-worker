@@ -19,6 +19,7 @@ from pdf_html_polish.single_file_html import (
     _LEADING_SPACED_BACKSLASH_PATTERN,
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
+    _PAGE_HEADER_FOOTER_LINE_PATTERN,
     _REPEATED_PHRASE_PATTERN,
     _RU_BARE_FIG_LEXEME_PATTERN,
     _SKIP_AUTOLINK_TAGS,
@@ -38,11 +39,13 @@ from pdf_html_polish.single_file_html import (
     _fix_subscript_equation_spill,
     _footnote_keywords,
     _leading_footnote_number,
+    _looks_affiliation_block,
     _looks_affiliation_label_body,
     _looks_author_byline_front_matter,
     _looks_author_marker_ocr_candidate,
     _looks_footnote_block,
     _looks_front_matter_block,
+    _mark_affiliation_paragraphs,
     _mark_front_matter_paragraphs,
     _mark_footnote_paragraphs_and_refs,
     _inline_images_from_html_text,
@@ -141,8 +144,10 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _strip_protocol_sentinel_leaks is pre_cleanup.strip_protocol_sentinel_leaks
     assert _update_skip_stack is pre_cleanup.update_skip_stack
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
+    assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN
     assert _unicode_capitalized_name_pair_count is frontmatter_footnotes.unicode_capitalized_name_pair_count
     assert _unicode_glued_author_marker_count is frontmatter_footnotes.unicode_glued_author_marker_count
+    assert _looks_affiliation_block is frontmatter_footnotes.looks_affiliation_block
     assert _looks_affiliation_label_body is frontmatter_footnotes.looks_affiliation_label_body
     assert _looks_author_byline_front_matter is frontmatter_footnotes.looks_author_byline_front_matter
     assert _looks_author_marker_ocr_candidate is frontmatter_footnotes.looks_author_marker_ocr_candidate
@@ -154,6 +159,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _repair_xue_byline_abstract_split is frontmatter_footnotes.repair_xue_byline_abstract_split
     assert _repair_sevick_muraca_author_marker is frontmatter_footnotes.repair_sevick_muraca_author_marker
     assert _split_zhu_affiliation_tail is frontmatter_footnotes.split_zhu_affiliation_tail
+    assert _mark_affiliation_paragraphs is frontmatter_footnotes.mark_affiliation_paragraphs
     assert _repair_page_footnote_ref_links is frontmatter_footnotes.repair_page_footnote_ref_links
     assert _split_url_footnote_prose_tails is frontmatter_footnotes.split_url_footnote_prose_tails
 
