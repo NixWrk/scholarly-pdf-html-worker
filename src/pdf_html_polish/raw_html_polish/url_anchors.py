@@ -146,6 +146,16 @@ SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN = re.compile(
     r'(?P<next_body>[\s\S]{1,500}?)</a>',
     re.IGNORECASE,
 )
+POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[^<]{1,260})</a>'
+    r'(?P<join>\s*\.?\s*)'
+    r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*(?P<next_quote>["\'])(?P<next_href>https?://[^"\']+)'
+    r'(?P=next_quote)[^>]*)>'
+    r'(?P<next_body>[^<]{1,500})</a>'
+    r'(?P<tail>\s*[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{0,220})?',
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _escape_html_text(value: str) -> str:
@@ -753,11 +763,63 @@ def repair_split_www_domain_anchor_with_noisy_href(html: str) -> str:
     return SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN.sub(replace, html)
 
 
+def merge_post_autolink_split_url_anchors(html: str) -> str:
+    """Merge URL anchors that were split by OCR and then autolinked separately."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = strip_wrapping_url_quotes(match.group("href"))
+        next_href = strip_wrapping_url_quotes(match.group("next_href"))
+        body = visible_text(match.group("body"))
+        next_body = visible_text(match.group("next_body"))
+        tail = match.group("tail") or ""
+
+        combined = f"{body}{match.group('join')}{next_body}{tail}"
+        repaired = repair_broken_visible_url_text(combined)
+        if not starts_like_visible_url_fragment(repaired):
+            return match.group(0)
+        repaired_key = url_fragment_compare_key(repaired)
+        next_href_key = url_fragment_compare_key(next_href)
+        href_key = url_fragment_compare_key(href)
+        if not repaired_key:
+            return match.group(0)
+        if not (
+            next_href_key.startswith(repaired_key)
+            or repaired_key.startswith(next_href_key)
+            or (href_key and href_key != next_href_key and next_href_key.startswith(href_key))
+        ):
+            return match.group(0)
+
+        repaired_url, repaired_trailing = split_url_and_trailing_punct(repaired)
+        repaired_key = url_fragment_compare_key(repaired_url)
+        label = next_href if next_href_key.startswith(repaired_key) and len(repaired_key) >= len(next_href_key) - 4 else repaired_url
+        merged_url, trailing = split_url_and_trailing_punct(label)
+        if not trailing:
+            trailing = repaired_trailing
+        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
+            return match.group(0)
+        attrs = re.sub(
+            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
+            lambda m: f'{m.group(1)}"{escape_html_attr_literal(merged_url)}"',
+            match.group("next_attrs"),
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN.sub(replace, current)
+    return current
+
+
 __all__ = [
     "ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN",
     "ADJACENT_SAME_HREF_ANCHOR_PATTERN",
     "ADJACENT_SAME_MAILTO_ANCHOR_PATTERN",
     "IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN",
+    "POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN",
     "PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN",
     "SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN",
     "SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN",
@@ -775,6 +837,7 @@ __all__ = [
     "URL_FRAGMENT_TEXT_CHUNK_PATTERN",
     "consume_compact_prefix",
     "looks_like_split_same_href_text_label",
+    "merge_post_autolink_split_url_anchors",
     "merge_adjacent_same_href_mailto_anchors",
     "merge_adjacent_same_href_url_anchors",
     "merge_split_same_href_doi_anchors",

@@ -3,6 +3,7 @@ from pdf_html_polish.raw_html_polish.url_anchors import (
     looks_like_split_same_href_text_label,
     merge_adjacent_same_href_mailto_anchors,
     merge_adjacent_same_href_url_anchors,
+    merge_post_autolink_split_url_anchors,
     merge_split_same_href_doi_anchors,
     normalize_double_escaped_url_anchor_text,
     normalize_mailto_address,
@@ -276,3 +277,25 @@ def test_repair_split_www_domain_anchor_with_noisy_href_rejects_non_domain_tail(
     html = '<p><a href="http://www">http://www</a>. <a href="http://noisy">example</a></p>'
 
     assert repair_split_www_domain_anchor_with_noisy_href(html) == html
+
+
+def test_merge_post_autolink_split_url_anchors_repairs_split_domain_and_tail() -> None:
+    url = "https://www.mathworks.com/matlabcentral/fileexchange/33484-linear-deming-regression"
+    html = (
+        '<p><a href="https://www">https://www</a>. '
+        f'<a href="{url}">mathworks.com/matlabcentral/fileexchange/334</a> '
+        "84-linear-deming-regression.</p>"
+    )
+
+    repaired = merge_post_autolink_split_url_anchors(html)
+
+    assert repaired == f'<p><a href="{url}">{url}</a>.</p>'
+
+
+def test_merge_post_autolink_split_url_anchors_rejects_mismatched_continuation() -> None:
+    html = (
+        '<p><a href="https://www">https://www</a>. '
+        '<a href="https://example.org/path">different.org/path</a></p>'
+    )
+
+    assert merge_post_autolink_split_url_anchors(html) == html

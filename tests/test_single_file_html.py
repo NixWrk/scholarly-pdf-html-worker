@@ -24,6 +24,7 @@ from pdf_html_polish.single_file_html import (
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     _PAGE_HEADER_FOOTER_LINE_PATTERN,
+    _POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN,
     _REPEATED_PHRASE_PATTERN,
     _RU_BARE_FIG_LEXEME_PATTERN,
     _SKIP_AUTOLINK_TAGS,
@@ -71,6 +72,7 @@ from pdf_html_polish.single_file_html import (
     _mark_footnote_paragraphs_and_refs,
     _merge_adjacent_same_href_mailto_anchors,
     _merge_adjacent_same_href_url_anchors,
+    _merge_post_autolink_split_url_anchors,
     _merge_split_same_href_doi_anchors,
     _inline_images_from_html_text,
     _link_figure_refs,
@@ -160,6 +162,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _refresh_inlined_data_urls_by_cache is html_images.refresh_inlined_data_urls_by_cache
     assert _NESTED_FIG_LINK_PATTERN is html_links.NESTED_FIG_LINK_PATTERN
     assert _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN is html_links.NESTED_SAME_HREF_INTERNAL_LINK_PATTERN
+    assert _POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN is url_anchors.POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN
     assert _unwrap_nested_fig_links is html_links.unwrap_nested_fig_links
     assert _unwrap_nested_same_href_internal_links is html_links.unwrap_nested_same_href_internal_links
     assert _REPEATED_PHRASE_PATTERN is text_cleanup.REPEATED_PHRASE_PATTERN
@@ -204,6 +207,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _looks_like_split_same_href_text_label is url_anchors.looks_like_split_same_href_text_label
     assert _merge_adjacent_same_href_mailto_anchors is url_anchors.merge_adjacent_same_href_mailto_anchors
     assert _merge_adjacent_same_href_url_anchors is url_anchors.merge_adjacent_same_href_url_anchors
+    assert _merge_post_autolink_split_url_anchors is url_anchors.merge_post_autolink_split_url_anchors
     assert _merge_split_same_href_doi_anchors is url_anchors.merge_split_same_href_doi_anchors
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
     assert _normalize_mailto_address is url_anchors.normalize_mailto_address

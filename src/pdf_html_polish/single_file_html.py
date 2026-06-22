@@ -229,6 +229,7 @@ from .raw_html_polish.url_anchors import (
     ADJACENT_SAME_HREF_ANCHOR_PATTERN as _ADJACENT_SAME_HREF_ANCHOR_PATTERN,
     ADJACENT_SAME_MAILTO_ANCHOR_PATTERN as _ADJACENT_SAME_MAILTO_ANCHOR_PATTERN,
     IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN as _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN,
+    POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN as _POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN,
     PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN as _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN,
     SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN as _SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN,
     SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN as _SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN,
@@ -248,6 +249,7 @@ from .raw_html_polish.url_anchors import (
     looks_like_split_same_href_text_label as _looks_like_split_same_href_text_label,
     merge_adjacent_same_href_mailto_anchors as _merge_adjacent_same_href_mailto_anchors,
     merge_adjacent_same_href_url_anchors as _merge_adjacent_same_href_url_anchors,
+    merge_post_autolink_split_url_anchors as _merge_post_autolink_split_url_anchors,
     merge_split_same_href_doi_anchors as _merge_split_same_href_doi_anchors,
     normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
     normalize_mailto_address as _normalize_mailto_address,
@@ -5618,67 +5620,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
 
 def _escape_html_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _merge_post_autolink_split_url_anchors(html: str) -> str:
-    """Merge URL anchors that were split by OCR and then autolinked separately."""
-
-    def replace(match: re.Match[str]) -> str:
-        href = _strip_wrapping_url_quotes(match.group("href"))
-        next_href = _strip_wrapping_url_quotes(match.group("next_href"))
-        body = _visible_text(match.group("body"))
-        next_body = _visible_text(match.group("next_body"))
-        tail = match.group("tail") or ""
-
-        combined = f"{body}{match.group('join')}{next_body}{tail}"
-        repaired = _repair_broken_visible_url_text(combined)
-        if not _starts_like_visible_url_fragment(repaired):
-            return match.group(0)
-        repaired_key = _url_fragment_compare_key(repaired)
-        next_href_key = _url_fragment_compare_key(next_href)
-        href_key = _url_fragment_compare_key(href)
-        if not repaired_key:
-            return match.group(0)
-        if not (
-            next_href_key.startswith(repaired_key)
-            or repaired_key.startswith(next_href_key)
-            or (href_key and href_key != next_href_key and next_href_key.startswith(href_key))
-        ):
-            return match.group(0)
-
-        repaired_url, repaired_trailing = _split_url_and_trailing_punct(repaired)
-        repaired_key = _url_fragment_compare_key(repaired_url)
-        label = next_href if next_href_key.startswith(repaired_key) and len(repaired_key) >= len(next_href_key) - 4 else repaired_url
-        merged_url, trailing = _split_url_and_trailing_punct(label)
-        if not trailing:
-            trailing = repaired_trailing
-        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
-            return match.group(0)
-        attrs = re.sub(
-            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
-            lambda m: f'{m.group(1)}"{_escape_html_attr(merged_url)}"',
-            match.group("next_attrs"),
-            count=1,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
-
-    pattern = re.compile(
-        r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
-        r'(?P<body>[^<]{1,260})</a>'
-        r'(?P<join>\s*\.?\s*)'
-        r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*(?P<next_quote>["\'])(?P<next_href>https?://[^"\']+)(?P=next_quote)[^>]*)>'
-        r'(?P<next_body>[^<]{1,500})</a>'
-        r'(?P<tail>\s*[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{0,220})?',
-        re.IGNORECASE | re.DOTALL,
-    )
-
-    previous = None
-    current = html
-    while previous != current:
-        previous = current
-        current = pattern.sub(replace, current)
-    return current
 
 
 def _repair_miswrapped_doi_anchor_labels(html: str) -> str:
