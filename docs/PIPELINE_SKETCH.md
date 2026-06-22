@@ -2,7 +2,15 @@
 
 Current production path in this extraction:
 
-1. `pdf-html-polish --pdf ...`
+1. `pdf-html-polish-clean --pdf ...`
+   - receives exact local PDF paths from the caller
+   - runs the conversion stage
+   - runs the repair-enabled converted-root quality loop
+   - collects final audited HTML under `<quality-output-dir>/final_html`
+
+Internal conversion stage:
+
+1. `pdf-html-polish --pdf ... --export-mode html`
    - receives exact local PDF paths from the caller
    - does not inspect Zotero metadata, collections, WebDAV, or Web API state
 
@@ -32,10 +40,15 @@ Current production path in this extraction:
 
 The former EN-to-RU translation runner and publisher web-HTML polish commands
 are intentionally outside this repository. The public automation boundary is
-file-based: PDF in, polished EN HTML out.
+file-based: PDF in, audited polished EN HTML out.
 
 `01.en.raw.html` is not enough to reproduce production citation/internal-link
 behavior. Use `scripts/pdf_profile_lab.py` plus `_source_filename_map.csv` for
 link-sensitive repolish checks. `scripts/repolish_en_from_raw.py` deliberately
 does not build or pass PDF citation profiles and should only be used for
 raw-HTML-only polish checks.
+
+For a new PDF, do not stop at the internal conversion stage when the goal is the
+cleanest result. The accumulated repair knowledge is applied by the clean
+wrapper's quality loop, and the downstream artifact should be the collected
+`final_html/*.html` file.

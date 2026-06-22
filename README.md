@@ -6,7 +6,15 @@ This repository keeps the PDF-to-HTML polish path and its audit/quality-loop hel
 
 The public automation boundary is file-based: pass local PDF files and an output directory. Zotero collection lookup, queueing, WebDAV mirroring, and write-back belong to the main Zotero orchestrator.
 
+For the clean production path, use `pdf-html-polish-clean`. It runs the PDF
+conversion stage and then the repair-enabled quality loop, collecting the final
+audited HTML under the quality run's `final_html/` directory. The lower-level
+`pdf-html-polish` command remains available when a caller needs only the first
+conversion stage.
+
 ## Pipeline
+
+Clean production pipeline:
 
 1. Receive one or more local PDF paths.
 2. Stage PDFs with short deterministic aliases for Marker.
@@ -19,6 +27,11 @@ The public automation boundary is file-based: pass local PDF files and an output
 5. Save HTML stages:
    - `01.en.raw.html`
    - `02.en.polish.html`
+6. Run `llm_quality_loop.py observe --converted-roots` in repair-enabled mode.
+   This reuses the converted raw stage, applies the accumulated deterministic
+   repolish, PDF/P62 recovery, auto-repair, audit, and gate checks.
+7. Collect the audited `02.en.polish.html` files from the quality run into
+   `final_html/`.
 
 For the full production order, including direct Zotero-storage PDF inputs,
 post-conversion quality-loop repair, audit, and gate criteria, see
@@ -39,7 +52,35 @@ Runtime requirements outside this package:
 The Docker image installs `marker-pdf==1.10.2`, which provides `marker` and
 `marker_single`.
 
+## Clean PDF To Audited Polished HTML
+
+Use this command for a new document when the goal is the cleanest HTML this
+repository can produce from its accumulated rules and repair stages:
+
+```powershell
+pdf-html-polish-clean `
+  --pdf "D:\work\paper.pdf" `
+  --output-dir "D:\work\paper_pdf_html" `
+  --quality-output-dir "D:\work\paper_pdf_html_quality" `
+  --jobs 32
+```
+
+The primary conversion artifacts stay in `--output-dir`. The quality run writes
+audit, repair, and gate reports under `--quality-output-dir`. The final audited
+HTML files are collected here:
+
+```text
+D:\work\paper_pdf_html_quality\final_html\
+```
+
+If a gate comparison against a compatible previous run is needed, add
+`--previous-entry <quality_history_entry.json>`. For ordinary one-document
+processing, the quality reports are still useful even without a previous entry.
+
 ## Convert PDF Files To Polished EN HTML
+
+This lower-level command runs only the conversion and first polish stage. It is
+useful for diagnostics, but it is not the full clean production pipeline.
 
 ```powershell
 pdf-html-polish `

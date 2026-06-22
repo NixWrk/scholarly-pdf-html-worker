@@ -156,6 +156,19 @@ corpus. For the current branch, EN runs should stay on the default EN target.
 
 ## Observe Production Converted Stages
 
+For new PDF documents, prefer the clean wrapper:
+
+```powershell
+pdf-html-polish-clean `
+  --pdf D:\work\paper.pdf `
+  --output-dir D:\work\paper_pdf_html `
+  --quality-output-dir D:\work\paper_pdf_html_quality
+```
+
+It runs the conversion stage and then this `observe --converted-roots` path,
+collecting the final audited HTML in
+`D:\work\paper_pdf_html_quality\final_html\`.
+
 For production output under `data/html/converted/.../_pdf_html_polish_stages`
 (or older runs under `_z2m_stages`),
 the default `observe --converted-roots` path now treats the converted tree as
