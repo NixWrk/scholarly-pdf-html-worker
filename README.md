@@ -22,6 +22,10 @@ Clean production pipeline:
      Zotero/pdf.js overlay JSON.
    - Citation/internal-link recovery in EN polish is not derived from
      `01.en.raw.html` alone.
+   - During converted-stage quality runs, raw HTML citation-style inference is
+     also used as a fallback. High-confidence styles are accepted, and
+     medium-confidence author-year evidence is accepted so author-year PDFs do
+     not silently lose bibliography links.
 5. Save HTML stages:
    - `01.en.raw.html`
    - `02.en.polish.html`
@@ -106,6 +110,12 @@ link quality. The production path also passes a citation profile built from the
 source PDF, optionally enriched with Zotero/pdf.js overlays. Raw-only repolish
 helpers can be useful for text, float, math, or layout checks, but they are not
 valid for citation/internal-link regression checks.
+
+The EN polish audit also guards this boundary: if an author-year article has
+`ref-*` bibliography targets but no body links to them, the quality loop reports
+`P99` as an error instead of publishing a silently unlinked result.
+The P55 audit/auto-repair path preserves author-year links when the anchor label
+matches the target bibliography entry by surname and year.
 
 Production converted-stage storage has a strict HTML contract. For each article
 directory, the only retained HTML files are:

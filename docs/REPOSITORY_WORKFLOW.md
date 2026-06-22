@@ -188,6 +188,10 @@ python scripts\llm_quality_loop.py observe `
 
 1. `prepare_converted_raw_cache` copies every production `01.en.raw.html` into
    an internal `_converted_raw_source/raw_cache`.
+   The generated citation-profile fallback accepts high-confidence inferred
+   styles and medium-confidence author-year evidence; that keeps converted PDF
+   articles with author-year prose from falling back to `unknown:low` and losing
+   bibliography link recovery.
 
 2. If `_source_filename_map.csv` or `full_source_filename_map.csv` is found
    above the converted roots, `source_pdf_path` is copied into the converted
@@ -210,6 +214,11 @@ python scripts\llm_quality_loop.py observe `
 
 6. `audit_en_polish.py` runs with PDF diagnostics and the resolved PDF map when
    available.
+   Citation-style audit treats an author-year article with bibliography
+   `ref-*` targets but zero body `#ref-*` links as `P99` error, so missing
+   author-year bibliography links cannot pass the final quality gate silently.
+   P55 audit and auto-repair keep valid author-year `#ref-*` links when the
+   anchor label matches the bibliography target by surname and year.
 
 7. P62 marker recovery planning runs when configured.
 

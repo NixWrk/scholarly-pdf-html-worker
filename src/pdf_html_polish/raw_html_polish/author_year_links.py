@@ -14,6 +14,7 @@ from .references_links import (
     LI_ID_PATTERN,
     PAGE_ANCHOR_PATTERN,
     REF_ANCHOR_PATTERN,
+    references_heading_search,
     replace_href_and_link_class,
 )
 
@@ -22,12 +23,123 @@ PdfAnnotationLabelKeys = Callable[[Any | None], set[str]]
 NormalizePdfAnnotationLabel = Callable[[str], str]
 
 
+PROTECTED_AUTHOR_YEAR_LINKIFY_PATTERN = re.compile(
+    r"<a\b[\s\S]*?</a>|<script\b[\s\S]*?</script>|<style\b[\s\S]*?</style>|"
+    r"<math\b[\s\S]*?</math>|<[^>]+>",
+    re.IGNORECASE,
+)
+PLAIN_AUTHOR_YEAR_CITATION_PATTERN = re.compile(
+    r"\b"
+    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    r"(?:\s+(?:et\s+al\.?|and\s+"
+    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    r"|(?:&|&amp;)\s*"
+    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    r"))?"
+    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
+
+
 def _default_pdf_annotation_reference_label_keys(citation_profile: Any | None) -> set[str]:
     return set()
 
 
 def _default_normalize_pdf_annotation_label(value: str) -> str:
     return re.sub(r"\s+", " ", visible_text(value)).strip(" \t\r\n.,;:")
+
+
+def author_year_label_tokens_and_year(label: str) -> tuple[list[str], str]:
+    text = html_lib.unescape(visible_text(label))
+    year_match = re.search(r"\b\d{4}[a-z]?\b", text, re.IGNORECASE)
+    year = year_match.group(0).casefold() if year_match is not None else ""
+    text = re.sub(r"\b\d{4}[a-z]?\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bet\s+al\.?", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[\(\)\[\],.;:]+|&", " ", text)
+    tokens = [
+        token.casefold().strip(".")
+        for token in re.findall(
+            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+",
+            text,
+        )
+        if token.casefold().strip(".") not in {"and", "et", "al"}
+        and len(token.strip(". ")) > 1
+    ]
+    return list(dict.fromkeys(tokens)), year
+
+
+def reference_text_matches_author_year(ref_text: str, name_tokens: list[str], year: str) -> bool:
+    if not name_tokens or not year:
+        return False
+    ref_lower = html_lib.unescape(ref_text).casefold()
+    ref_years = {
+        found.casefold()
+        for found in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)
+    }
+    if year.casefold() not in ref_years:
+        return False
+    for token in name_tokens:
+        if re.search(
+            rf"(?<![a-z\u00c0-\u00ff]){re.escape(token)}(?![a-z\u00c0-\u00ff])",
+            ref_lower,
+            re.IGNORECASE,
+        ) is None:
+            return False
+    return True
+
+
+def reference_text_by_number(html: str) -> dict[int, str]:
+    references: dict[int, str] = {}
+    for li_match in LI_BLOCK_PATTERN.finditer(html):
+        attrs = li_match.group(1) or ""
+        id_match = LI_ID_PATTERN.search(attrs)
+        if id_match is None:
+            continue
+        references[int(id_match.group(2))] = visible_text(li_match.group(2))
+    return references
+
+
+def link_plain_author_year_citations(html: str) -> str:
+    """Link plain author-year citation labels to matching bibliography targets."""
+    if "ref-" not in html:
+        return html
+    reference_texts = reference_text_by_number(html)
+    if not reference_texts:
+        return html
+    references_heading = references_heading_search(html, allow_notes_heading=True)
+    if references_heading is None:
+        return html
+
+    body_html = html[: references_heading.start()]
+    references_html = html[references_heading.start() :]
+
+    def matching_target(label: str) -> int | None:
+        tokens, year = author_year_label_tokens_and_year(label)
+        matches = [
+            target
+            for target, ref_text in reference_texts.items()
+            if reference_text_matches_author_year(ref_text, tokens, year)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def replace_text_segment(segment: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            label = match.group(0)
+            target = matching_target(label)
+            if target is None:
+                return label
+            return f'<a href="#ref-{target}" class="z2m-ref-link">{label}</a>'
+
+        return PLAIN_AUTHOR_YEAR_CITATION_PATTERN.sub(replace, segment)
+
+    parts = PROTECTED_AUTHOR_YEAR_LINKIFY_PATTERN.split(body_html)
+    separators = PROTECTED_AUTHOR_YEAR_LINKIFY_PATTERN.findall(body_html)
+    rebuilt: list[str] = []
+    for index, part in enumerate(parts):
+        rebuilt.append(replace_text_segment(part))
+        if index < len(separators):
+            rebuilt.append(separators[index])
+    return "".join(rebuilt) + references_html
 
 
 def unwrap_author_year_ref_links(
@@ -116,29 +228,7 @@ def unwrap_author_year_ref_links(
             return author_tail_pattern.search(left_text[-140:]) is not None
         return False
 
-    def author_year_name_tokens(label: str) -> list[str]:
-        cleaned = html_lib.unescape(label)
-        cleaned = re.sub(r"\b\d{4}[a-z]?\b", " ", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\bet\s+al\.?", " ", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"[\(\)\[\],.;:]+", " ", cleaned)
-        tokens = [
-            token.casefold()
-            for token in re.findall(
-                r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+",
-                cleaned,
-            )
-            if token.casefold().strip(".") not in {"and", "et", "al"}
-            and len(token.strip(". ")) > 1
-        ]
-        return list(dict.fromkeys(tokens))
-
-    reference_text_by_num: dict[int, str] = {}
-    for li_match in LI_BLOCK_PATTERN.finditer(html):
-        attrs = li_match.group(1) or ""
-        id_match = LI_ID_PATTERN.search(attrs)
-        if id_match is None:
-            continue
-        reference_text_by_num[int(id_match.group(2))] = visible_text(li_match.group(2))
+    reference_text_by_num = reference_text_by_number(html)
 
     year_labels_by_target: dict[int, set[str]] = {}
     for anchor_match in REF_ANCHOR_PATTERN.finditer(html):
@@ -195,28 +285,9 @@ def unwrap_author_year_ref_links(
             return target not in repeated_year_targets
         return any(surname in ref_lower for surname in surnames)
 
-    def reference_text_matches_author_year(ref_text: str, name_tokens: list[str], year: str) -> bool:
-        if not name_tokens or not year:
-            return False
-        ref_lower = html_lib.unescape(ref_text).casefold()
-        ref_years = {
-            found.casefold()
-            for found in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)
-        }
-        if year.casefold() not in ref_years:
-            return False
-        for token in name_tokens:
-            if re.search(
-                rf"(?<![a-z\u00c0-\u00ff]){re.escape(token)}(?![a-z\u00c0-\u00ff])",
-                ref_lower,
-                re.IGNORECASE,
-            ) is None:
-                return False
-        return True
-
     def author_year_matching_ref_target(label: str, right_text: str) -> int | None:
         year = normalized_year_label(label) or right_hand_year_label(right_text)
-        tokens = author_year_name_tokens(label)
+        tokens, _ = author_year_label_tokens_and_year(label)
         if not year or not tokens:
             return None
         matches = [

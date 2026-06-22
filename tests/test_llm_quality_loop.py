@@ -4107,12 +4107,70 @@ def test_prepare_converted_raw_cache_infers_citation_style_from_raw_html(tmp_pat
     assert article["citation_style"] == "unknown"
     assert article["citation_confidence"] == "low"
     assert profile["source"] == "converted_raw_html"
-    assert profile["source_policy"] == "use_inferred_style_only_when_high_confidence"
+    assert profile["source_policy"] == "use_high_confidence_or_medium_author_year_inferred_style"
     assert profile["inferred_style"] == "bracket_numeric"
     assert profile["inferred_confidence"] == "medium"
     assert profile["bracket_numeric_count"] == 7
     assert manifest["profile_status_counts"] == {"converted_raw_html_inferred": 1}
     assert manifest["profile_style_counts"] == {"unknown:low": 1}
+
+
+def test_prepare_converted_raw_cache_uses_medium_author_year_inference(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "lib" / "KEY" / "111" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text(
+        "<html><body><p>"
+        "Glasauer et al. (2002), Metcalfe and Gresty (1992), Seemungal et al. (2007), "
+        "Loomis et al. (2001), Klem et al. (1999), Hilgetag et al. (2001), "
+        "Oliveri et al. (2000), Bestmann et al. (2002), and Brandt et al. (2002) "
+        "define an author-year converted PDF."
+        "</p></body></html>",
+        encoding="utf-8",
+    )
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+
+    manifest = prepare_converted_raw_cache([root], tmp_path / "source")
+
+    article = manifest["articles"][0]
+    profile = json.loads(Path(article["profile_path"]).read_text(encoding="utf-8"))
+    assert article["citation_style"] == "author_year"
+    assert article["citation_confidence"] == "medium"
+    assert profile["inferred_style"] == "author_year"
+    assert profile["inferred_confidence"] == "medium"
+    assert manifest["profile_style_counts"] == {"author_year:medium": 1}
+
+
+def test_prepare_converted_raw_cache_ignores_bibliography_for_author_year_inference(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "lib" / "KEY" / "111" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text(
+        "<html><body>"
+        "<p>Locomotion not only in humans is based on spinal pattern generators.1 "
+        "Recent imaging studies showed the supraspinal network.2,3</p>"
+        "<h2>References</h2><ol>"
+        '<li id="ref-1">Jahn, K., A. Deutschlander, T. Stephan, et al. 2008. Example.</li>'
+        '<li id="ref-2">Jahn, K., A. Deutschlander, T. Stephan, et al. 2004. Example.</li>'
+        '<li id="ref-3">Wagner, J., T. Stephan, R. Kalla, et al. 2008. Example.</li>'
+        '<li id="ref-4">O&apos;Keefe, J. 1976. Example.</li>'
+        '<li id="ref-5">Taube, J.S. 2007. Example.</li>'
+        '<li id="ref-6">Hafting, T., M. Fyhn, S. Molden, et al. 2005. Example.</li>'
+        '<li id="ref-7">McNaughton, B.L., F.P. Battaglia, O. Jensen, et al. 2006. Example.</li>'
+        '<li id="ref-8">Ekstrom, A.D., M.J. Kahana, J.B. Caplan, et al. 2003. Example.</li>'
+        "</ol></body></html>",
+        encoding="utf-8",
+    )
+    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+
+    manifest = prepare_converted_raw_cache([root], tmp_path / "source")
+
+    article = manifest["articles"][0]
+    profile = json.loads(Path(article["profile_path"]).read_text(encoding="utf-8"))
+    assert article["citation_style"] == "unknown"
+    assert article["citation_confidence"] == "low"
+    assert profile["inferred_style"] == "unknown"
+    assert profile["inferred_confidence"] == "low"
 
 
 def test_prepare_converted_raw_cache_ids_do_not_shift_when_new_sources_appear(tmp_path: Path) -> None:

@@ -67,6 +67,7 @@ from .raw_html_polish import (
     run_polish_phases,
 )
 from .raw_html_polish.author_year_links import (
+    link_plain_author_year_citations as _link_plain_author_year_citations,
     recover_trailing_citation_after_author_year_ref as _recover_trailing_citation_after_author_year_ref,
     repair_roman_suffix_author_year_ref_link_splits as _repair_roman_suffix_author_year_ref_link_splits,
     unwrap_author_year_page_links as _unwrap_author_year_page_links,
@@ -20810,6 +20811,8 @@ def _polish_phase_references_and_links(state: RawPolishState, context: RawPolish
         polished = _repair_nested_reference_links(polished)
         polished = _unwrap_malformed_ref_anchor_openings(polished)
         polished = _unwrap_author_year_ref_links(polished, citation_profile=citation_profile)
+        if _citation_profile_is_author_year(citation_profile):
+            polished = _link_plain_author_year_citations(polished)
         polished = _repair_roman_suffix_author_year_ref_link_splits(polished)
         polished = _repair_author_year_footnote_ref_links(polished, citation_profile=citation_profile)
         polished = _repair_acronym_footnote_ref_citations(polished)
@@ -20858,6 +20861,8 @@ def _polish_phase_references_and_links(state: RawPolishState, context: RawPolish
         polished = _repair_nested_reference_links(polished)
         polished = _unwrap_malformed_ref_anchor_openings(polished)
         polished = _fix_false_sup_citations_in_decimals_and_figure_labels(polished)
+        if _citation_profile_is_author_year(citation_profile):
+            polished = _link_plain_author_year_citations(polished)
         if _citation_profile_is_high_confidence_superscript_numeric(citation_profile):
             polished = _wrap_plain_ref_links_as_superscript_citations(polished)
             polished = _normalize_spacing_after_ref_superscripts(polished)

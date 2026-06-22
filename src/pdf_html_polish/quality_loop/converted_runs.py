@@ -14,6 +14,7 @@ from typing import Any, Iterable
 from pdf_html_polish.citation_profile import infer_citation_style_from_text
 from pdf_html_polish.html_links import count_same_document_absolute_fragment_links
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
+from pdf_html_polish.raw_html_polish.references_links import references_heading_search
 
 from .run_utils import (
     article_dir_from_stage,
@@ -125,16 +126,21 @@ def _is_bracket_ref_link_for_style(ref_match: re.Match[str], html: str) -> bool:
 
 
 def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, Any]:
-    text = _html_plain_text_for_profile(raw_html)
+    references_heading = references_heading_search(raw_html, allow_notes_heading=True)
+    profile_html = raw_html[: references_heading.start()] if references_heading is not None else raw_html
+    text = _html_plain_text_for_profile(profile_html)
     inferred_style, inferred_confidence, paren_count, bracket_count = infer_citation_style_from_text(text)
-    style = inferred_style if inferred_confidence == "high" else "unknown"
-    confidence = inferred_confidence if inferred_confidence == "high" else "low"
+    usable_inferred_style = inferred_confidence == "high" or (
+        inferred_style == "author_year" and inferred_confidence == "medium"
+    )
+    style = inferred_style if usable_inferred_style else "unknown"
+    confidence = inferred_confidence if usable_inferred_style else "low"
     return {
         "status": "converted_raw_html_inferred",
         "style": style,
         "confidence": confidence,
         "source": "converted_raw_html",
-        "source_policy": "use_inferred_style_only_when_high_confidence",
+        "source_policy": "use_high_confidence_or_medium_author_year_inferred_style",
         "inferred_style": inferred_style,
         "inferred_confidence": inferred_confidence,
         "source_raw_stage_path": str(raw_path),

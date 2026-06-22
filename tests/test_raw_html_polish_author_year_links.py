@@ -1,6 +1,7 @@
 from pdf_html_polish import single_file_html
 from pdf_html_polish.raw_html_polish import author_year_links
 from pdf_html_polish.raw_html_polish.author_year_links import (
+    link_plain_author_year_citations,
     recover_trailing_citation_after_author_year_ref,
     repair_roman_suffix_author_year_ref_link_splits,
     unwrap_author_year_page_links,
@@ -66,7 +67,46 @@ def test_recover_trailing_citation_after_author_year_ref() -> None:
     )
 
 
+def test_link_plain_author_year_citations_matches_bibliography_by_name_and_year() -> None:
+    html = (
+        "<p>Navigation relies on vestibular cues (Glasauer et al., 2002; "
+        "Metcalfe and Gresty, 1992; Unknown et al., 2002).</p>"
+        "<h4>References</h4><ol>"
+        '<li id="ref-12">Glasauer, S., Amorim, M.A. and Berthoz, A. (2002) Example.</li>'
+        '<li id="ref-20">Metcalfe, T. and Gresty, M. (1992) Example.</li>'
+        "</ol>"
+    )
+
+    linked = link_plain_author_year_citations(html)
+
+    assert '<a href="#ref-12" class="z2m-ref-link">Glasauer et al., 2002</a>' in linked
+    assert '<a href="#ref-20" class="z2m-ref-link">Metcalfe and Gresty, 1992</a>' in linked
+    assert "Unknown et al., 2002" in linked
+    assert 'href="#ref-1"' not in linked
+
+
+def test_polish_html_document_links_plain_author_year_citations_after_cleanup() -> None:
+    html = (
+        "<html><body>"
+        "<p>Navigation relies on vestibular cues (Glasauer et al., 2002; "
+        "Metcalfe and Gresty, 1992).</p>"
+        "<h4>References</h4><p><ul>"
+        '<li id="ref-12">Glasauer, S., Amorim, M.A. and Berthoz, A. (2002) Example.</li>'
+        '<li id="ref-20">Metcalfe, T. and Gresty, M. (1992) Example.</li>'
+        "</ul></p></body></html>"
+    )
+
+    polished = single_file_html.polish_html_document(
+        html,
+        citation_profile={"style": "author_year", "confidence": "medium"},
+    )
+
+    assert '<a href="#ref-12" class="z2m-ref-link">Glasauer et al., 2002</a>' in polished
+    assert '<a href="#ref-20" class="z2m-ref-link">Metcalfe and Gresty, 1992)</a>' in polished
+
+
 def test_single_file_html_keeps_author_year_link_compatibility_surface() -> None:
+    assert single_file_html._link_plain_author_year_citations is author_year_links.link_plain_author_year_citations
     assert (
         single_file_html._repair_roman_suffix_author_year_ref_link_splits
         is author_year_links.repair_roman_suffix_author_year_ref_link_splits

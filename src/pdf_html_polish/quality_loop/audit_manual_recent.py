@@ -54,6 +54,10 @@ from pdf_html_polish.quality_loop.audit_p62 import (
 )
 from pdf_html_polish.quality_loop.audit_p71 import known_ocr_token_defects
 from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEADING_RE, is_references_block
+from pdf_html_polish.raw_html_polish.author_year_links import (
+    author_year_label_tokens_and_year,
+    reference_text_matches_author_year,
+)
 
 
 DOI_SPLIT_PLAIN_RE = re.compile(r"\bdoi:\s*10\.\d{4,9}/\s+[A-Za-z0-9]", re.IGNORECASE)
@@ -109,6 +113,11 @@ SINGLE_STAT_REF_RE = re.compile(
     r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size)\b"
     r"[\s\S]{0,180}?<a\b[^>]*\bhref\s*=\s*['\"]#ref-(?P<num>\d{1,3})['\"][^>]*>"
     r"\s*(?P=num)\s*</a>",
+    re.IGNORECASE,
+)
+REF_TARGET_TEXT_RE = re.compile(
+    r"<(?P<tag>li|p|div)\b(?P<attrs>[^>]*\bid\s*=\s*([\"'])ref-(?P<num>\d{1,4})\3[^>]*)>"
+    r"(?P<body>[\s\S]*?)</(?P=tag)>",
     re.IGNORECASE,
 )
 TABLE_CAPTION_ID_RE = re.compile(
@@ -564,6 +573,30 @@ def block_is_float_or_table_context(block: Block) -> bool:
 
 def reference_target_numbers(html: str) -> set[int]:
     return {int(number) for number in re.findall(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", html, re.IGNORECASE)}
+
+
+def reference_texts_by_number(html: str) -> dict[int, str]:
+    references: dict[int, str] = {}
+    for match in REF_TARGET_TEXT_RE.finditer(html):
+        references[int(match.group("num"))] = strip_tags(match.group("body"))
+    return references
+
+
+def author_year_anchor_matches_reference(
+    reference_texts: dict[int, str],
+    *,
+    target: int,
+    label: str,
+    right_text: str,
+) -> bool:
+    ref_text = reference_texts.get(target)
+    if not ref_text:
+        return False
+    for candidate in (label, f"{label} {right_text[:120]}"):
+        tokens, year = author_year_label_tokens_and_year(candidate)
+        if reference_text_matches_author_year(ref_text, tokens, year):
+            return True
+    return False
 
 
 def non_reference_body_blocks(blocks: list[Block]) -> Iterable[Block]:
@@ -1070,6 +1103,7 @@ def meine_recent_link_structure_defects(
     slim_html = structure_html(polish_html)
     plain = plain_text(slim_html)
     ref_targets = deps.reference_target_numbers(slim_html)
+    reference_texts = reference_texts_by_number(slim_html)
     fig_targets = deps.figure_target_keys(slim_html)
     body_blocks = list(deps.non_reference_body_blocks(polish_blocks))
 
@@ -1409,6 +1443,13 @@ def meine_recent_link_structure_defects(
                 and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE) is not None
             )
             if deps.author_year_text_re.search(label) is None and not surname_author_year_fragment:
+                continue
+            if author_year_anchor_matches_reference(
+                reference_texts,
+                target=int(match.group("num")),
+                label=label,
+                right_text=right_text,
+            ):
                 continue
             defects.append(
                 make_defect(

@@ -142,6 +142,23 @@ def test_citation_style_consistency_defects_reports_numeric_ref_in_author_year_a
     assert defects[0].first_broken_stage == "02.en.polish.html"
 
 
+def test_citation_style_consistency_defects_reports_missing_author_year_ref_links() -> None:
+    html = (
+        "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
+        "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
+        "define the author-year style.</p>"
+        '<p id="ref-1">Smith J. Example.</p>'
+        '<p id="ref-2">Jones J. Example.</p>'
+        '<p id="ref-3">Gupta A. Example.</p>'
+    )
+
+    defects = _citation_style_defects(html)
+
+    assert [defect.id for defect in defects] == ["P99"]
+    assert defects[0].extra["ref_id_count"] == 3
+    assert defects[0].extra["ref_link_count"] == 0
+
+
 def test_citation_style_consistency_defects_ignores_parenthetical_numeric_dominant_article() -> None:
     numeric_citations = [
         f'<p>Numeric citation evidence <a href="#ref-{idx}" class="z2m-ref-link">({idx})</a>.</p>'

@@ -15,6 +15,7 @@ REF_ANCHOR_BODY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
+REF_ID_RE = re.compile(r"\bid\s*=\s*['\"]ref-\d+['\"]", re.IGNORECASE)
 AUTHOR_YEAR_STYLE_TEXT_RE = re.compile(
     r"\b"
     r"[A-Z][A-Za-z'\u2019.-]+"
@@ -367,8 +368,6 @@ def citation_style_consistency_defects(
     ref_anchor_body_re: re.Pattern[str] = REF_ANCHOR_BODY_RE,
     author_year_style_text_re: re.Pattern[str] = AUTHOR_YEAR_STYLE_TEXT_RE,
 ) -> list[Defect]:
-    del polish_html
-
     body_blocks = list(non_reference_body_blocks(polish_blocks))
     body_text = " ".join(block.text for block in body_blocks)
     html_author_year_count = len(author_year_style_text_re.findall(body_text))
@@ -380,6 +379,33 @@ def citation_style_consistency_defects(
     html_author_year_evidence = html_author_year_count >= 6
     if not (pdf_author_year_evidence or html_author_year_evidence):
         return []
+
+    ref_id_count = len(REF_ID_RE.findall(polish_html))
+    ref_link_count = len(REF_LINK_RE.findall(polish_html))
+    if ref_id_count >= 3 and ref_link_count == 0:
+        first_body_block = body_blocks[0] if body_blocks else polish_blocks[0] if polish_blocks else None
+        return [
+            make_defect(
+                defect_id="P99",
+                cc_class="CC-02/CC-13/CC-14",
+                check="Author-year article has bibliography targets but no body reference links",
+                severity="error",
+                block=first_body_block,
+                snippet=first_body_block.text if first_body_block is not None else body_text[:240],
+                stage=stage,
+                hypothesis="Article-level citation style evidence was author-year, but bibliography link recovery produced no #ref links.",
+                proposed_fix_layer="Converted raw citation-profile fallback and author-year bibliography link recovery",
+                regression_test="When converted raw HTML has medium author-year evidence, the cached profile keeps author_year so citations link to #ref targets.",
+                extra={
+                    "ref_id_count": ref_id_count,
+                    "ref_link_count": ref_link_count,
+                    "html_author_year_count": html_author_year_count,
+                    "pdf_author_year_count": pdf_author_year_count,
+                    "pdf_citation_dest_links": pdf_citation_dest_links,
+                    "pdf_author_year_link_labels": pdf_author_year_link_labels,
+                },
+            )
+        ]
 
     bracket_citation_count = len(re.findall(r"\[\s*\d", body_text))
     numeric_ref_link_count = sum(

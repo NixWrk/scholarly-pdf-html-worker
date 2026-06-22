@@ -145,6 +145,23 @@ def test_author_year_reference_repairs_stop_before_references() -> None:
     assert '<p id="ref-2"><a href="#ref-2">2</a> Reference text.</p>' in unwrapped_numbers
 
 
+def test_author_year_reference_repair_preserves_matching_bibliography_links() -> None:
+    html = (
+        '<p>Navigation relied on <a href="#ref-20" class="z2m-ref-link">'
+        'Metcalfe and Gresty, 1992</a> and '
+        '<a href="#ref-25" class="z2m-ref-link">Seemungal et al., 2007)</a>.</p>'
+        "<h4>References</h4><ol>"
+        '<li id="ref-20">Metcalfe, T. and Gresty, M. (1992) Example.</li>'
+        '<li id="ref-25">Seemungal, B.M., Glasauer, S. and Bronstein, A.M. (2007) Example.</li>'
+        "</ol>"
+    )
+
+    repaired, count = unwrap_author_year_ref_anchors(html)
+
+    assert count == 0
+    assert repaired == html
+
+
 def test_author_year_numeric_repair_handles_p59_map_labels() -> None:
     html = (
         '<p>map <sup><a href="#ref-1" class="z2m-ref-link">1</a></sup>: doll, cat; '

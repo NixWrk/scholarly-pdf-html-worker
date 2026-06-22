@@ -3568,6 +3568,39 @@ def test_analyze_pair_reports_recent_meine_manual_blind_spots() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_analyze_pair_does_not_flag_matching_author_year_ref_links_as_p55() -> None:
+    audit = _load_audit_module()
+    tmp_path = _make_temp_dir()
+    try:
+        stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        raw_path = stage_dir / "01.en.raw.html"
+        polish_path = stage_dir / "02.en.polish.html"
+        raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+        polish_path.write_text(
+            "\n".join(
+                [
+                    "<html><body>",
+                    '<p>Navigation relied on <a href="#ref-20" class="z2m-ref-link">'
+                    "Metcalfe and Gresty, 1992</a> and "
+                    '<a href="#ref-25" class="z2m-ref-link">Seemungal et al., 2007)</a>.</p>',
+                    "<h4>References</h4><ol>",
+                    '<li id="ref-20">Metcalfe, T. and Gresty, M. (1992) Example.</li>',
+                    '<li id="ref-25">Seemungal, B.M., Glasauer, S. and Bronstein, A.M. (2007) Example.</li>',
+                    "</ol></body></html>",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = audit.analyze_pair(raw_path, polish_path)
+
+        defect_ids = {defect["id"] for defect in result["defects_found"]}
+        assert "P55" not in defect_ids
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_analyze_pair_ignores_pdf_verified_numeric_threshold_range_for_p73() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()

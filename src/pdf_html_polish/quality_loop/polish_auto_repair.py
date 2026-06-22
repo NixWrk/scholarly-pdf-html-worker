@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 import re
 
+from pdf_html_polish.raw_html_polish.author_year_links import (
+    author_year_label_tokens_and_year,
+    reference_text_matches_author_year,
+)
 from pdf_html_polish.single_file_html import (
     _current_figure_target_keys,
     _link_spaced_multipanel_figure_refs,
@@ -175,6 +179,30 @@ def reference_target_numbers(html: str) -> set[int]:
     return {int(match.group("num")) for match in REF_ID_RE.finditer(html)}
 
 
+def reference_texts_by_number(html: str) -> dict[int, str]:
+    references: dict[int, str] = {}
+    for match in REF_TARGET_BLOCK_RE.finditer(html):
+        references[int(match.group("num"))] = visible_html_text(match.group("body"))
+    return references
+
+
+def author_year_anchor_matches_reference(
+    reference_texts: dict[int, str],
+    *,
+    target: int,
+    label: str,
+    right_text: str,
+) -> bool:
+    ref_text = reference_texts.get(target)
+    if not ref_text:
+        return False
+    for candidate in (label, f"{label} {right_text[:120]}"):
+        tokens, year = author_year_label_tokens_and_year(candidate)
+        if reference_text_matches_author_year(ref_text, tokens, year):
+            return True
+    return False
+
+
 def split_before_references_for_repair(html: str) -> tuple[str, str]:
     positions: list[int] = []
     heading = REFERENCES_HEADING_RE.search(html)
@@ -237,6 +265,7 @@ def looks_like_author_year_ref_anchor(label: str, right_text: str) -> bool:
 
 def unwrap_author_year_ref_anchors(html: str) -> tuple[str, int]:
     before_references, references_and_after = split_before_references_for_repair(html)
+    reference_texts = reference_texts_by_number(html)
     repairs = 0
 
     def replace(match: re.Match[str]) -> str:
@@ -244,6 +273,13 @@ def unwrap_author_year_ref_anchors(html: str) -> tuple[str, int]:
         label = visible_html_text(match.group("body"))
         right_text = visible_html_text(before_references[match.end() : match.end() + 140])
         if not looks_like_author_year_ref_anchor(label, right_text):
+            return match.group(0)
+        if author_year_anchor_matches_reference(
+            reference_texts,
+            target=int(match.group("num")),
+            label=label,
+            right_text=right_text,
+        ):
             return match.group(0)
         repairs += 1
         return match.group("body")
