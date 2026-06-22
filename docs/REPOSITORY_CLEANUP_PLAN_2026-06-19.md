@@ -318,6 +318,11 @@ The cleanup policy is deliberately conservative:
   author-year citation text guard pattern and direct owner tests. Plain-prose
   page-link cleanup and author-year unwrap/recovery remain as later, higher-risk
   slices.
+- Moved plain-prose page-link unwrapping and duplicate `See` page-anchor tail
+  cleanup into `raw_html_polish/references_links.py` with direct owner tests.
+  The remaining reference-link work in `single_file_html.py` is now mostly
+  author-year unwrap/recovery and broader statistical/citation false-positive
+  logic.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

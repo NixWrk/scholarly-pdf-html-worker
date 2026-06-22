@@ -19,8 +19,10 @@ from pdf_html_polish.raw_html_polish.references_links import (
     strip_reference_visible_number,
     unwrap_broken_internal_semantic_links,
     unwrap_broken_page_anchor_links,
+    unwrap_duplicate_see_page_anchor_tails,
     unwrap_page_reference_page_links,
     unwrap_page_reference_ref_links,
+    unwrap_plain_prose_page_links,
     unwrap_reference_list_page_links,
     unwrap_reference_list_page_number_links,
     unwrap_stale_numeric_page_links,
@@ -181,6 +183,28 @@ def test_unwrap_stale_numeric_page_links_preserves_explicit_page_references() ->
     )
 
 
+def test_unwrap_plain_prose_page_links_preserves_semantic_short_labels() -> None:
+    html = (
+        '<p><a href="#page-1">ordinary prose fragments from article body</a> '
+        '<a href="#page-2">Figure 2</a> '
+        '<a href="#page-3">Smith et al. 2020</a></p>'
+    )
+
+    assert unwrap_plain_prose_page_links(html) == (
+        '<p>ordinary prose fragments from article body '
+        '<a href="#page-2">Figure 2</a> '
+        'Smith et al. 2020</p>'
+    )
+
+
+def test_unwrap_duplicate_see_page_anchor_tails_keeps_first_anchor() -> None:
+    html = '<p><a href="#page-8">See</a><a href="#page-8">page 12</a> for details.</p>'
+
+    assert unwrap_duplicate_see_page_anchor_tails(html) == (
+        '<p><a href="#page-8">See</a> page 12 for details.</p>'
+    )
+
+
 def test_unwrap_broken_page_anchor_links_preserves_working_page_ids() -> None:
     html = '<span id="page-2"></span><p><a href="#page-2">page 2</a> <a href="#page-9">orphaned prose</a></p>'
 
@@ -220,8 +244,10 @@ def test_single_file_html_keeps_legacy_private_reference_aliases() -> None:
     assert single_file_html._retarget_mismatched_ref_link_labels is retarget_mismatched_ref_link_labels
     assert single_file_html._unwrap_broken_internal_semantic_links is unwrap_broken_internal_semantic_links
     assert single_file_html._unwrap_broken_page_anchor_links is unwrap_broken_page_anchor_links
+    assert single_file_html._unwrap_duplicate_see_page_anchor_tails is unwrap_duplicate_see_page_anchor_tails
     assert single_file_html._unwrap_page_reference_page_links is unwrap_page_reference_page_links
     assert single_file_html._unwrap_page_reference_ref_links is unwrap_page_reference_ref_links
+    assert single_file_html._unwrap_plain_prose_page_links is unwrap_plain_prose_page_links
     assert single_file_html._unwrap_reference_list_page_links is unwrap_reference_list_page_links
     assert single_file_html._unwrap_reference_list_page_number_links is unwrap_reference_list_page_number_links
     assert single_file_html._unwrap_stale_numeric_page_links is unwrap_stale_numeric_page_links

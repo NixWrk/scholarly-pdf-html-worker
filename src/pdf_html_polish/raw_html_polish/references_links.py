@@ -660,6 +660,44 @@ def unwrap_stale_numeric_page_links(html: str, language_policy: Any) -> str:
     return PAGE_ANCHOR_PATTERN.sub(replace, html)
 
 
+def unwrap_plain_prose_page_links(html: str) -> str:
+    """Drop page anchors that wrap ordinary prose fragments."""
+    if "#page-" not in html:
+        return html
+
+    semantic_label = re.compile(
+        r"^\s*(?:"
+        r"(?:Fig(?:s|ure)?|Figures?|Table|Tables|Box|Section|Appendix|Eq(?:n|uation)?\.?|Equation)"
+        r"\.?\s+[A-Za-z0-9IVXLCM.\-вЂ“]+|"
+        r"\[\s*\d|"
+        r"\(?S?\d+(?:[-вЂ“]\s*S?\d+)?\s*(?:Tables?|Figures?|Files?|Data)?\)?"
+        r")",
+        re.IGNORECASE,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        label = visible_text(match.group("body"))
+        if re.fullmatch(r"[A-Z]{2,6}", label.strip()) is not None:
+            left_text = visible_text(html[max(0, match.start() - 48): match.start()])
+            if re.search(r"\b(?:page|pp?\.?|section|chapter)\s*$", left_text, re.IGNORECASE) is None:
+                return match.group("body")
+        if len(re.findall(r"[A-Za-z]{2,}", label)) < 3:
+            return match.group(0)
+        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label) is not None:
+            return match.group("body")
+        if semantic_label.match(label):
+            if re.match(r"^\s*\d+(?:\.\d+){1,}\.?\s+[A-Z]", label) and len(
+                re.findall(r"[A-Za-z]{2,}", label)
+            ) >= 3:
+                return match.group("body")
+            return match.group(0)
+        if re.search(r"\b(?:copyright|creative commons|doi|https?|www\.)\b", label, re.IGNORECASE):
+            return match.group(0)
+        return match.group("body")
+
+    return PAGE_ANCHOR_PATTERN.sub(replace, html)
+
+
 def unwrap_page_reference_page_links(html: str, language_policy: Any) -> str:
     """Remove page-anchor links from explicit page-reference labels."""
     if "#page-" not in html:
@@ -673,6 +711,22 @@ def unwrap_page_reference_page_links(html: str, language_policy: Any) -> str:
         return match.group(0)
 
     return PAGE_ANCHOR_PATTERN.sub(replace, html)
+
+
+def unwrap_duplicate_see_page_anchor_tails(html: str) -> str:
+    """Unwrap page-number tails when Marker split one "See page N" page anchor."""
+    if "#page-" not in html:
+        return html
+
+    pattern = re.compile(
+        r'(?P<first><a\b(?P<attrs1>[^>]*\bhref\s*=\s*(?P<q1>["\'])#(?P<target>page-[^"\']+)(?P=q1)[^>]*)>'
+        r"\s*See\s*</a>)"
+        r"\s*"
+        r'<a\b[^>]*\bhref\s*=\s*(?P<q2>["\'])#(?P=target)(?P=q2)[^>]*>'
+        r"(?P<body>\s*(?:pages?|pp?\.?)?\s*\d{1,4}[\)\]\.,;:]*\s*)</a>",
+        re.IGNORECASE,
+    )
+    return pattern.sub(lambda match: f"{match.group('first')} {match.group('body').strip()}", html)
 
 
 def unwrap_broken_page_anchor_links(html: str) -> str:
