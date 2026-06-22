@@ -1,9 +1,11 @@
 from pdf_html_polish.raw_html_polish.url_anchors import (
     consume_compact_prefix,
     looks_like_split_same_href_text_label,
+    merge_adjacent_same_href_mailto_anchors,
     merge_adjacent_same_href_url_anchors,
     merge_split_same_href_doi_anchors,
     normalize_double_escaped_url_anchor_text,
+    normalize_mailto_address,
     normalize_same_href_text_anchor_label,
     repair_prose_prefixed_url_anchor_tail,
     repair_split_doi_head_tail_anchors,
@@ -237,3 +239,25 @@ def test_merge_adjacent_same_href_url_anchors_merges_url_fragment_label() -> Non
     repaired = merge_adjacent_same_href_url_anchors(html)
 
     assert repaired == f'<p><a href="{url}">{url}</a></p>'
+
+
+def test_normalize_mailto_address_repairs_latex_underscore_and_spaces() -> None:
+    assert normalize_mailto_address(" user\\protect _name @ example.com ") == "user_name@example.com"
+
+
+def test_merge_adjacent_same_href_mailto_anchors_merges_visible_email() -> None:
+    href = "mailto:user_name@example.com"
+    html = f'<p><a href="{href}">user_</a> <a href="{href}">name@example.com)</a></p>'
+
+    repaired = merge_adjacent_same_href_mailto_anchors(html)
+
+    assert repaired == '<p><a href="mailto:user_name@example.com">user_name@example.com</a>)</p>'
+
+
+def test_merge_adjacent_same_href_mailto_anchors_rejects_different_href() -> None:
+    html = (
+        '<p><a href="mailto:first@example.com">first@</a> '
+        '<a href="mailto:second@example.com">example.com</a></p>'
+    )
+
+    assert merge_adjacent_same_href_mailto_anchors(html) == html

@@ -132,6 +132,13 @@ IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN = re.compile(
     r'(?P<next_body>[\s\S]{0,500}?)</a>',
     re.IGNORECASE,
 )
+ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']mailto:)[^>]*)>'
+    r'(?P<body>[\s\S]{0,160}?)</a>\s+'
+    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']mailto:)[^>]*)>'
+    r'(?P<next_body>[\s\S]{0,160}?)</a>',
+    re.IGNORECASE,
+)
 
 
 def _escape_html_text(value: str) -> str:
@@ -677,9 +684,51 @@ def merge_adjacent_same_href_url_anchors(html: str) -> str:
     return current
 
 
+def normalize_mailto_address(address: str) -> str:
+    normalized = html_lib.unescape(address).strip()
+    normalized = normalized.replace("\\protect _", "_").replace("\\_", "_")
+    return re.sub(r"\s+", "", normalized)
+
+
+def merge_adjacent_same_href_mailto_anchors(html: str) -> str:
+    """Merge OCR-split mailto anchors that point to the same address."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = href_attr_literal(match.group("attrs"))
+        next_href = href_attr_literal(match.group("next_attrs"))
+        if href is None or next_href is None:
+            return match.group(0)
+        if href.lower() != next_href.lower() or not href.lower().startswith("mailto:"):
+            return match.group(0)
+
+        visible_label = re.sub(r"\s+", "", visible_text(match.group("body")) + visible_text(match.group("next_body")))
+        label_match = re.match(
+            r"(?P<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?P<trailing>[\]).,;:]*)$",
+            visible_label,
+        )
+        if label_match is None:
+            return match.group(0)
+
+        label = label_match.group("email")
+        address = normalize_mailto_address(href[len("mailto:") :])
+        if label.lower() != address.lower():
+            return match.group(0)
+        escaped_href = escape_html_attr_literal(f"mailto:{address}")
+        escaped_label = _escape_html_text(label)
+        return f'<a href="{escaped_href}">{escaped_label}</a>{_escape_html_text(label_match.group("trailing"))}'
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = ADJACENT_SAME_MAILTO_ANCHOR_PATTERN.sub(replace, current)
+    return current
+
+
 __all__ = [
     "ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN",
     "ADJACENT_SAME_HREF_ANCHOR_PATTERN",
+    "ADJACENT_SAME_MAILTO_ANCHOR_PATTERN",
     "IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN",
     "PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN",
     "SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN",
@@ -697,9 +746,11 @@ __all__ = [
     "URL_FRAGMENT_TEXT_CHUNK_PATTERN",
     "consume_compact_prefix",
     "looks_like_split_same_href_text_label",
+    "merge_adjacent_same_href_mailto_anchors",
     "merge_adjacent_same_href_url_anchors",
     "merge_split_same_href_doi_anchors",
     "normalize_double_escaped_url_anchor_text",
+    "normalize_mailto_address",
     "normalize_same_href_text_anchor_label",
     "repair_prose_prefixed_url_anchor_tail",
     "repair_split_doi_head_tail_anchors",
