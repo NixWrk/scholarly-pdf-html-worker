@@ -226,12 +226,14 @@ from .raw_html_polish.url_autolink import (
 )
 from .raw_html_polish.url_anchors import (
     SPLIT_VISIBLE_URL_ANCHOR_PATTERN as _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
+    SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN as _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN,
     SPACED_PROTOCOL_HREF_ATTR_PATTERN as _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
     SPACED_PROTOCOL_URL_ANCHOR_PATTERN as _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
     URL_ANCHOR_TEXT_PATTERN as _URL_ANCHOR_TEXT_PATTERN,
     consume_compact_prefix as _consume_compact_prefix,
     normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
     repair_split_visible_url_anchors as _repair_split_visible_url_anchors,
+    repair_split_url_anchor_block_tail as _repair_split_url_anchor_block_tail,
     repair_spaced_protocol_url_anchors as _repair_spaced_protocol_url_anchors,
 )
 from .semantic_labels import (
@@ -2765,13 +2767,6 @@ _CITATION_PREFIX_BODY_PATTERN = re.compile(
 )
 _ESCAPED_ANCHOR_SNIPPET_PATTERN = re.compile(
     r'&lt;a\s+href=(["\'])(?P<href>https?://[^"\']+)\1&gt;(?P<label>https?://[^<]+)&lt;/a&gt;',
-    re.IGNORECASE,
-)
-_SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']*[-_])(?P=quote)[^>]*)>'
-    r'(?P<body>https?://[\s\S]{0,500}?[-_])</a>'
-    r'(?:\s*</p>\s*<p(?:\s+[^>]*)?>|\s+)\s*'
-    r'(?P<tail>[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{1,300})',
     re.IGNORECASE,
 )
 _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN = re.compile(
@@ -5699,31 +5694,6 @@ def _unescape_html_entities_repeated(value: str) -> str:
             return current
         current = unescaped
     return current
-
-
-def _repair_split_url_anchor_block_tail(html: str) -> str:
-    """Join a URL anchor split at a paragraph boundary."""
-
-    def replace(match: re.Match[str]) -> str:
-        href = _strip_wrapping_url_quotes(match.group("href"))
-        body = _visible_text(match.group("body"))
-        if _compact_visible_url_fragment(href) != _compact_visible_url_fragment(body):
-            return match.group(0)
-
-        merged_url, trailing = _split_url_and_trailing_punct(f"{href}{match.group('tail')}")
-        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
-            return match.group(0)
-
-        attrs = re.sub(
-            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
-            lambda m: f'{m.group(1)}"{_escape_html_attr(merged_url)}"',
-            match.group("attrs"),
-            count=1,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
-
-    return _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN.sub(replace, html)
 
 
 def _repair_split_url_anchor_domain_tail(html: str) -> str:

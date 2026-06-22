@@ -2,6 +2,7 @@ from pdf_html_polish.raw_html_polish.url_anchors import (
     consume_compact_prefix,
     normalize_double_escaped_url_anchor_text,
     repair_split_visible_url_anchors,
+    repair_split_url_anchor_block_tail,
     repair_spaced_protocol_url_anchors,
 )
 
@@ -71,3 +72,23 @@ def test_repair_split_visible_url_anchors_leaves_unmatched_tail() -> None:
     html = '<a href="https://example.org/path">https://example.org/</a> different tail'
 
     assert repair_split_visible_url_anchors(html) == html
+
+
+def test_repair_split_url_anchor_block_tail_repairs_paragraph_boundary() -> None:
+    html = (
+        '<p>Online at <a href="http://www.niepce-letters-and-">'
+        "http://www.niepce-letters-and-</a></p>"
+        "<p>documents.com/book/#/906/ (Date accessed, 18 March 2017)</p>"
+    )
+
+    repaired = repair_split_url_anchor_block_tail(html)
+
+    expected_url = "http://www.niepce-letters-and-documents.com/book/#/906/"
+    assert f'<a href="{expected_url}">{expected_url}</a> (Date accessed' in repaired
+    assert "letters-and-</a></p>" not in repaired
+
+
+def test_repair_split_url_anchor_block_tail_rejects_non_url_tail() -> None:
+    html = '<a href="http://example-">http://example-</a> not-a-domain'
+
+    assert repair_split_url_anchor_block_tail(html) == html

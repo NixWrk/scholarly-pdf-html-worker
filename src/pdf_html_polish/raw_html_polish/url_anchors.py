@@ -6,9 +6,12 @@ import re
 from ..url_repair import (
     BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
     compact_visible_url_fragment,
+    split_url_and_trailing_punct,
     starts_like_visible_url_fragment,
+    strip_wrapping_url_quotes,
     url_fragment_compare_key,
 )
+from ..html_links import escape_html_attr_literal
 from .html_fragments import visible_text
 
 
@@ -30,6 +33,13 @@ URL_ANCHOR_TEXT_PATTERN = re.compile(
 SPLIT_VISIBLE_URL_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
     r'(?P<body>[\s\S]{0,500}?)</a>(?P<tail>\s*[^<]{1,300})',
+    re.IGNORECASE,
+)
+SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']*[-_])(?P=quote)[^>]*)>'
+    r'(?P<body>https?://[\s\S]{0,500}?[-_])</a>'
+    r'(?:\s*</p>\s*<p(?:\s+[^>]*)?>|\s+)\s*'
+    r'(?P<tail>[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{1,300})',
     re.IGNORECASE,
 )
 
@@ -135,13 +145,40 @@ def repair_split_visible_url_anchors(html: str) -> str:
     return SPLIT_VISIBLE_URL_ANCHOR_PATTERN.sub(replace, html)
 
 
+def repair_split_url_anchor_block_tail(html: str) -> str:
+    """Join a URL anchor split at a paragraph boundary."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = strip_wrapping_url_quotes(match.group("href"))
+        body = visible_text(match.group("body"))
+        if compact_visible_url_fragment(href) != compact_visible_url_fragment(body):
+            return match.group(0)
+
+        merged_url, trailing = split_url_and_trailing_punct(f"{href}{match.group('tail')}")
+        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
+            return match.group(0)
+
+        attrs = re.sub(
+            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
+            lambda m: f'{m.group(1)}"{escape_html_attr_literal(merged_url)}"',
+            match.group("attrs"),
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
+
+    return SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN.sub(replace, html)
+
+
 __all__ = [
     "SPLIT_VISIBLE_URL_ANCHOR_PATTERN",
+    "SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN",
     "SPACED_PROTOCOL_HREF_ATTR_PATTERN",
     "SPACED_PROTOCOL_URL_ANCHOR_PATTERN",
     "URL_ANCHOR_TEXT_PATTERN",
     "consume_compact_prefix",
     "normalize_double_escaped_url_anchor_text",
     "repair_split_visible_url_anchors",
+    "repair_split_url_anchor_block_tail",
     "repair_spaced_protocol_url_anchors",
 ]
