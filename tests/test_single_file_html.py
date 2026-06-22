@@ -25,8 +25,11 @@ from pdf_html_polish.single_file_html import (
     _SKIP_AUTOLINK_TAGS,
     _SLASH_PIPE_ARTIFACT_PATTERN,
     _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN,
+    _SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN,
+    _SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN,
     _SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN,
     _SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN,
+    _SPLIT_SAME_HREF_DOI_ANCHOR_TEXT_PATTERN,
     _SPACED_ESCAPED_INLINE_TAG_PATTERN,
     _SPACED_INLINE_TAG_PATTERN,
     _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
@@ -60,6 +63,7 @@ from pdf_html_polish.single_file_html import (
     _mark_affiliation_paragraphs,
     _mark_front_matter_paragraphs,
     _mark_footnote_paragraphs_and_refs,
+    _merge_split_same_href_doi_anchors,
     _inline_images_from_html_text,
     _link_figure_refs,
     _link_unlinked_numeric_superscripts_to_existing_refs,
@@ -78,6 +82,8 @@ from pdf_html_polish.single_file_html import (
     _repair_latin_detached_accent_artifacts_in_visible_text,
     _repair_page_footnote_ref_links,
     _repair_prose_prefixed_url_anchor_tail,
+    _repair_split_doi_head_tail_anchors,
+    _repair_split_doi_url_anchor_path_tails,
     _repair_sevick_muraca_author_marker,
     _repair_sentence_breaks_around_float_units,
     _repair_split_scheme_url_anchor_fragments,
@@ -167,8 +173,11 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _SPACED_PROTOCOL_HREF_ATTR_PATTERN is url_anchors.SPACED_PROTOCOL_HREF_ATTR_PATTERN
     assert _SPACED_PROTOCOL_URL_ANCHOR_PATTERN is url_anchors.SPACED_PROTOCOL_URL_ANCHOR_PATTERN
     assert _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN is url_anchors.PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN
+    assert _SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN is url_anchors.SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN
+    assert _SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN is url_anchors.SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN
     assert _SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN is url_anchors.SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN
     assert _SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN is url_anchors.SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN
+    assert _SPLIT_SAME_HREF_DOI_ANCHOR_TEXT_PATTERN is url_anchors.SPLIT_SAME_HREF_DOI_ANCHOR_TEXT_PATTERN
     assert _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN
     assert _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN
     assert _SPLIT_VISIBLE_URL_ANCHOR_PATTERN is url_anchors.SPLIT_VISIBLE_URL_ANCHOR_PATTERN
@@ -176,8 +185,11 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_ANCHOR_CHUNK_PATTERN
     assert _URL_FRAGMENT_TEXT_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_TEXT_CHUNK_PATTERN
     assert _consume_compact_prefix is url_anchors.consume_compact_prefix
+    assert _merge_split_same_href_doi_anchors is url_anchors.merge_split_same_href_doi_anchors
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
     assert _repair_prose_prefixed_url_anchor_tail is url_anchors.repair_prose_prefixed_url_anchor_tail
+    assert _repair_split_doi_head_tail_anchors is url_anchors.repair_split_doi_head_tail_anchors
+    assert _repair_split_doi_url_anchor_path_tails is url_anchors.repair_split_doi_url_anchor_path_tails
     assert _repair_split_scheme_url_anchor_fragments is url_anchors.repair_split_scheme_url_anchor_fragments
     assert _repair_split_scheme_url_anchor_runs is url_anchors.repair_split_scheme_url_anchor_runs
     assert _repair_split_visible_url_anchors is url_anchors.repair_split_visible_url_anchors

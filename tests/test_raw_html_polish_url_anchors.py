@@ -1,7 +1,10 @@
 from pdf_html_polish.raw_html_polish.url_anchors import (
     consume_compact_prefix,
+    merge_split_same_href_doi_anchors,
     normalize_double_escaped_url_anchor_text,
     repair_prose_prefixed_url_anchor_tail,
+    repair_split_doi_head_tail_anchors,
+    repair_split_doi_url_anchor_path_tails,
     repair_split_scheme_url_anchor_fragments,
     repair_split_scheme_url_anchor_runs,
     repair_split_visible_url_anchors,
@@ -170,3 +173,31 @@ def test_repair_split_scheme_url_anchor_fragments_rejects_mismatched_next_href()
     )
 
     assert repair_split_scheme_url_anchor_fragments(html) == html
+
+
+def test_merge_split_same_href_doi_anchors_merges_short_middle_fragment() -> None:
+    href = "https://doi.org/10.1234/example.5678"
+    html = f'<p><a href="{href}">doi: 10.1234/</a>example.<a href="{href}">5678</a></p>'
+
+    repaired = merge_split_same_href_doi_anchors(html)
+
+    assert repaired == f'<p>doi: <a href="{href}">10.1234/example.5678</a></p>'
+
+
+def test_repair_split_doi_head_tail_anchors_merges_visible_doi_tail() -> None:
+    href = "https://doi.org/10.1234/example.5678"
+    html = f'<p>doi: 10.1234/ <a href="{href}">example.5678</a></p>'
+
+    repaired = repair_split_doi_head_tail_anchors(html)
+
+    assert repaired == f'<p>doi: <a href="{href}">10.1234/example.5678</a></p>'
+
+
+def test_repair_split_doi_url_anchor_path_tails_merges_ocr_path_tail() -> None:
+    head = "https://doi.org/10.1146/annure"
+    merged = "https://doi.org/10.1146/annurev.bioeng.2018.01"
+    html = f'<p><a href="{head}">{head}</a> v.bioeng.2018.01.</p>'
+
+    repaired = repair_split_doi_url_anchor_path_tails(html)
+
+    assert repaired == f'<p><a href="{merged}">{merged}</a>.</p>'
