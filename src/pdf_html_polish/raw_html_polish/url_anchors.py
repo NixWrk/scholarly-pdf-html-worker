@@ -3,7 +3,11 @@ from __future__ import annotations
 import html as html_lib
 import re
 
-from ..url_repair import BROKEN_PLAIN_URL_PROTOCOL_PATTERN, compact_visible_url_fragment
+from ..url_repair import (
+    BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
+    compact_visible_url_fragment,
+    starts_like_visible_url_fragment,
+)
 
 
 SPACED_PROTOCOL_HREF_ATTR_PATTERN = re.compile(
@@ -14,6 +18,12 @@ SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']https?:\s+//[^"\']+["\'][^>]*)>'
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
+)
+URL_ANCHOR_TEXT_PATTERN = re.compile(
+    r'(?P<open><a\b[^>]*\bhref\s*=\s*(["\'])https?://[^"\']+\2[^>]*>)'
+    r'(?P<body>[^<]{1,800})'
+    r'(?P<close></a>)',
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -48,8 +58,23 @@ def repair_spaced_protocol_url_anchors(html: str) -> str:
     return SPACED_PROTOCOL_URL_ANCHOR_PATTERN.sub(replace_anchor, html)
 
 
+def normalize_double_escaped_url_anchor_text(html: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        body = match.group("body")
+        if "&amp;amp;" not in body:
+            return match.group(0)
+        visible = html_lib.unescape(body)
+        if not starts_like_visible_url_fragment(visible):
+            return match.group(0)
+        return f'{match.group("open")}{body.replace("&amp;amp;", "&amp;")}{match.group("close")}'
+
+    return URL_ANCHOR_TEXT_PATTERN.sub(replace, html)
+
+
 __all__ = [
     "SPACED_PROTOCOL_HREF_ATTR_PATTERN",
     "SPACED_PROTOCOL_URL_ANCHOR_PATTERN",
+    "URL_ANCHOR_TEXT_PATTERN",
+    "normalize_double_escaped_url_anchor_text",
     "repair_spaced_protocol_url_anchors",
 ]

@@ -31,6 +31,7 @@ from pdf_html_polish.single_file_html import (
     _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN,
     _TEXT_NODE_REPAIR_SKIP_TAGS,
     _TRAILING_SPACED_BACKSLASH_PATTERN,
+    _URL_ANCHOR_TEXT_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _cleanup_marker_escape_artifacts,
@@ -56,6 +57,7 @@ from pdf_html_polish.single_file_html import (
     _link_section_refs,
     _late_recover_orphan_figure_anchors_and_links,
     _normalize_spaced_inline_sup_sub_tags,
+    _normalize_double_escaped_url_anchor_text,
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
@@ -148,6 +150,8 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _update_skip_stack is pre_cleanup.update_skip_stack
     assert _SPACED_PROTOCOL_HREF_ATTR_PATTERN is url_anchors.SPACED_PROTOCOL_HREF_ATTR_PATTERN
     assert _SPACED_PROTOCOL_URL_ANCHOR_PATTERN is url_anchors.SPACED_PROTOCOL_URL_ANCHOR_PATTERN
+    assert _URL_ANCHOR_TEXT_PATTERN is url_anchors.URL_ANCHOR_TEXT_PATTERN
+    assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
     assert _repair_spaced_protocol_url_anchors is url_anchors.repair_spaced_protocol_url_anchors
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN

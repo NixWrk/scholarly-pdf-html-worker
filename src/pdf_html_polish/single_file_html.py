@@ -227,6 +227,8 @@ from .raw_html_polish.url_autolink import (
 from .raw_html_polish.url_anchors import (
     SPACED_PROTOCOL_HREF_ATTR_PATTERN as _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
     SPACED_PROTOCOL_URL_ANCHOR_PATTERN as _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
+    URL_ANCHOR_TEXT_PATTERN as _URL_ANCHOR_TEXT_PATTERN,
+    normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
     repair_spaced_protocol_url_anchors as _repair_spaced_protocol_url_anchors,
 )
 from .semantic_labels import (
@@ -2813,12 +2815,6 @@ _URL_FRAGMENT_TEXT_CHUNK_PATTERN = re.compile(
 _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN = re.compile(
     r'\s*<a\b(?P<attrs>[^>]*\bhref\s*=\s*(["\'])(?P<href>https?://[^"\']+)\2[^>]*)>'
     r'(?P<body>[^<]{1,260})</a>',
-    re.IGNORECASE | re.DOTALL,
-)
-_URL_ANCHOR_TEXT_PATTERN = re.compile(
-    r'(?P<open><a\b[^>]*\bhref\s*=\s*(["\'])https?://[^"\']+\2[^>]*>)'
-    r'(?P<body>[^<]{1,800})'
-    r'(?P<close></a>)',
     re.IGNORECASE | re.DOTALL,
 )
 _ADJACENT_SAME_HREF_ANCHOR_PATTERN = re.compile(
@@ -5976,19 +5972,6 @@ def _repair_split_scheme_url_anchor_fragments(html: str) -> str:
         current = _repair_split_scheme_url_anchor_runs(current)
         current = _SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN.sub(replace, current)
     return current
-
-
-def _normalize_double_escaped_url_anchor_text(html: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        body = match.group("body")
-        if "&amp;amp;" not in body:
-            return match.group(0)
-        visible = html_lib.unescape(body)
-        if not _starts_like_visible_url_fragment(visible):
-            return match.group(0)
-        return f'{match.group("open")}{body.replace("&amp;amp;", "&amp;")}{match.group("close")}'
-
-    return _URL_ANCHOR_TEXT_PATTERN.sub(replace, html)
 
 
 def _normalize_same_href_text_anchor_label(label: str) -> str:

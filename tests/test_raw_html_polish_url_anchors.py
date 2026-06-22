@@ -1,4 +1,7 @@
-from pdf_html_polish.raw_html_polish.url_anchors import repair_spaced_protocol_url_anchors
+from pdf_html_polish.raw_html_polish.url_anchors import (
+    normalize_double_escaped_url_anchor_text,
+    repair_spaced_protocol_url_anchors,
+)
 
 
 def test_repair_spaced_protocol_url_anchors_repairs_href_and_label() -> None:
@@ -27,3 +30,17 @@ def test_repair_spaced_protocol_url_anchors_fast_path_without_http() -> None:
     html = "<p>No URL here.</p>"
 
     assert repair_spaced_protocol_url_anchors(html) == html
+
+
+def test_normalize_double_escaped_url_anchor_text_repairs_url_label() -> None:
+    html = '<a href="https://example.org/?a=1&amp;b=2">https://example.org/?a=1&amp;amp;b=2</a>'
+
+    assert normalize_double_escaped_url_anchor_text(html) == (
+        '<a href="https://example.org/?a=1&amp;b=2">https://example.org/?a=1&amp;b=2</a>'
+    )
+
+
+def test_normalize_double_escaped_url_anchor_text_ignores_non_url_label() -> None:
+    html = '<a href="https://example.org/?a=1&amp;b=2">Research &amp;amp; development</a>'
+
+    assert normalize_double_escaped_url_anchor_text(html) == html
