@@ -29,12 +29,14 @@ from pdf_html_polish.single_file_html import (
     _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
     _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
     _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN,
+    _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
     _TEXT_NODE_REPAIR_SKIP_TAGS,
     _TRAILING_SPACED_BACKSLASH_PATTERN,
     _URL_ANCHOR_TEXT_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _cleanup_marker_escape_artifacts,
+    _consume_compact_prefix,
     _figure_caption_num_from_visible,
     _fix_common_mojibake,
     _fix_orphaned_sup_tags,
@@ -70,6 +72,7 @@ from pdf_html_polish.single_file_html import (
     _repair_page_footnote_ref_links,
     _repair_sevick_muraca_author_marker,
     _repair_sentence_breaks_around_float_units,
+    _repair_split_visible_url_anchors,
     _repair_spaced_protocol_url_anchors,
     _repair_sup_figure_chain_continuations,
     _repair_turkish_urology_byline,
@@ -150,8 +153,11 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _update_skip_stack is pre_cleanup.update_skip_stack
     assert _SPACED_PROTOCOL_HREF_ATTR_PATTERN is url_anchors.SPACED_PROTOCOL_HREF_ATTR_PATTERN
     assert _SPACED_PROTOCOL_URL_ANCHOR_PATTERN is url_anchors.SPACED_PROTOCOL_URL_ANCHOR_PATTERN
+    assert _SPLIT_VISIBLE_URL_ANCHOR_PATTERN is url_anchors.SPLIT_VISIBLE_URL_ANCHOR_PATTERN
     assert _URL_ANCHOR_TEXT_PATTERN is url_anchors.URL_ANCHOR_TEXT_PATTERN
+    assert _consume_compact_prefix is url_anchors.consume_compact_prefix
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
+    assert _repair_split_visible_url_anchors is url_anchors.repair_split_visible_url_anchors
     assert _repair_spaced_protocol_url_anchors is url_anchors.repair_spaced_protocol_url_anchors
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN

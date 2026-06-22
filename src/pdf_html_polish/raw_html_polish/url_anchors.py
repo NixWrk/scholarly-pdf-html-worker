@@ -7,7 +7,9 @@ from ..url_repair import (
     BROKEN_PLAIN_URL_PROTOCOL_PATTERN,
     compact_visible_url_fragment,
     starts_like_visible_url_fragment,
+    url_fragment_compare_key,
 )
+from .html_fragments import visible_text
 
 
 SPACED_PROTOCOL_HREF_ATTR_PATTERN = re.compile(
@@ -24,6 +26,11 @@ URL_ANCHOR_TEXT_PATTERN = re.compile(
     r'(?P<body>[^<]{1,800})'
     r'(?P<close></a>)',
     re.IGNORECASE | re.DOTALL,
+)
+SPLIT_VISIBLE_URL_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[\s\S]{0,500}?)</a>(?P<tail>\s*[^<]{1,300})',
+    re.IGNORECASE,
 )
 
 
@@ -71,10 +78,70 @@ def normalize_double_escaped_url_anchor_text(html: str) -> str:
     return URL_ANCHOR_TEXT_PATTERN.sub(replace, html)
 
 
+def consume_compact_prefix(text: str, compact_prefix: str) -> tuple[str, str] | None:
+    if not compact_prefix:
+        return "", text
+
+    index = 0
+    for pos, char in enumerate(text):
+        if char.isspace():
+            continue
+        if index >= len(compact_prefix) or char != compact_prefix[index]:
+            return None
+        index += 1
+        if index == len(compact_prefix):
+            return text[: pos + 1], text[pos + 1 :]
+    return None
+
+
+def repair_split_visible_url_anchors(html: str) -> str:
+    """Keep a URL anchor's visible text intact when OCR split the URL after the link."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = match.group("href")
+        body_text = visible_text(match.group("body"))
+        if not body_text:
+            return match.group(0)
+
+        lead = ""
+        url_text = body_text
+        lead_match = re.match(r"(?P<lead>(?:online|available|found)\s+at:\s*)(?P<url>https?://[\s\S]+)$", body_text, re.IGNORECASE)
+        if lead_match is not None:
+            lead = lead_match.group("lead")
+            url_text = lead_match.group("url")
+
+        href_compact = compact_visible_url_fragment(href)
+        body_compact = compact_visible_url_fragment(url_text)
+        href_key = url_fragment_compare_key(href)
+        body_key = url_fragment_compare_key(url_text)
+        if not (href_compact.startswith(body_compact) or href_key.startswith(body_key)):
+            return match.group(0)
+
+        needed_tail = (
+            href_compact[len(body_compact) :]
+            if href_compact.startswith(body_compact)
+            else href_key[len(body_key) :]
+        )
+        if not needed_tail:
+            return match.group(0)
+        consumed = consume_compact_prefix(match.group("tail"), needed_tail)
+        if consumed is None:
+            return match.group(0)
+
+        _, tail_rest = consumed
+        attrs = match.group("attrs")
+        return f'{lead}<a{attrs}>{href}</a>{tail_rest}'
+
+    return SPLIT_VISIBLE_URL_ANCHOR_PATTERN.sub(replace, html)
+
+
 __all__ = [
+    "SPLIT_VISIBLE_URL_ANCHOR_PATTERN",
     "SPACED_PROTOCOL_HREF_ATTR_PATTERN",
     "SPACED_PROTOCOL_URL_ANCHOR_PATTERN",
     "URL_ANCHOR_TEXT_PATTERN",
+    "consume_compact_prefix",
     "normalize_double_escaped_url_anchor_text",
+    "repair_split_visible_url_anchors",
     "repair_spaced_protocol_url_anchors",
 ]

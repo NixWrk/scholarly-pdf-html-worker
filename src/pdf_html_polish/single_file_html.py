@@ -225,10 +225,13 @@ from .raw_html_polish.url_autolink import (
     autolink_text_urls as _autolink_text_urls,
 )
 from .raw_html_polish.url_anchors import (
+    SPLIT_VISIBLE_URL_ANCHOR_PATTERN as _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
     SPACED_PROTOCOL_HREF_ATTR_PATTERN as _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
     SPACED_PROTOCOL_URL_ANCHOR_PATTERN as _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
     URL_ANCHOR_TEXT_PATTERN as _URL_ANCHOR_TEXT_PATTERN,
+    consume_compact_prefix as _consume_compact_prefix,
     normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
+    repair_split_visible_url_anchors as _repair_split_visible_url_anchors,
     repair_spaced_protocol_url_anchors as _repair_spaced_protocol_url_anchors,
 )
 from .semantic_labels import (
@@ -2762,11 +2765,6 @@ _CITATION_PREFIX_BODY_PATTERN = re.compile(
 )
 _ESCAPED_ANCHOR_SNIPPET_PATTERN = re.compile(
     r'&lt;a\s+href=(["\'])(?P<href>https?://[^"\']+)\1&gt;(?P<label>https?://[^<]+)&lt;/a&gt;',
-    re.IGNORECASE,
-)
-_SPLIT_VISIBLE_URL_ANCHOR_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
-    r'(?P<body>[\s\S]{0,500}?)</a>(?P<tail>\s*[^<]{1,300})',
     re.IGNORECASE,
 )
 _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN = re.compile(
@@ -5701,63 +5699,6 @@ def _unescape_html_entities_repeated(value: str) -> str:
             return current
         current = unescaped
     return current
-
-
-def _consume_compact_prefix(text: str, compact_prefix: str) -> tuple[str, str] | None:
-    if not compact_prefix:
-        return "", text
-
-    index = 0
-    for pos, char in enumerate(text):
-        if char.isspace():
-            continue
-        if index >= len(compact_prefix) or char != compact_prefix[index]:
-            return None
-        index += 1
-        if index == len(compact_prefix):
-            return text[: pos + 1], text[pos + 1 :]
-    return None
-
-
-def _repair_split_visible_url_anchors(html: str) -> str:
-    """Keep a URL anchor's visible text intact when OCR split the URL after the link."""
-
-    def replace(match: re.Match[str]) -> str:
-        href = match.group("href")
-        body_text = _visible_text(match.group("body"))
-        if not body_text:
-            return match.group(0)
-
-        lead = ""
-        url_text = body_text
-        lead_match = re.match(r"(?P<lead>(?:online|available|found)\s+at:\s*)(?P<url>https?://[\s\S]+)$", body_text, re.IGNORECASE)
-        if lead_match is not None:
-            lead = lead_match.group("lead")
-            url_text = lead_match.group("url")
-
-        href_compact = _compact_visible_url_fragment(href)
-        body_compact = _compact_visible_url_fragment(url_text)
-        href_key = _url_fragment_compare_key(href)
-        body_key = _url_fragment_compare_key(url_text)
-        if not (href_compact.startswith(body_compact) or href_key.startswith(body_key)):
-            return match.group(0)
-
-        needed_tail = (
-            href_compact[len(body_compact) :]
-            if href_compact.startswith(body_compact)
-            else href_key[len(body_key) :]
-        )
-        if not needed_tail:
-            return match.group(0)
-        consumed = _consume_compact_prefix(match.group("tail"), needed_tail)
-        if consumed is None:
-            return match.group(0)
-
-        _, tail_rest = consumed
-        attrs = match.group("attrs")
-        return f'{lead}<a{attrs}>{href}</a>{tail_rest}'
-
-    return _SPLIT_VISIBLE_URL_ANCHOR_PATTERN.sub(replace, html)
 
 
 def _repair_split_url_anchor_block_tail(html: str) -> str:

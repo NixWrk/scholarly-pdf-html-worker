@@ -1,5 +1,7 @@
 from pdf_html_polish.raw_html_polish.url_anchors import (
+    consume_compact_prefix,
     normalize_double_escaped_url_anchor_text,
+    repair_split_visible_url_anchors,
     repair_spaced_protocol_url_anchors,
 )
 
@@ -44,3 +46,28 @@ def test_normalize_double_escaped_url_anchor_text_ignores_non_url_label() -> Non
     html = '<a href="https://example.org/?a=1&amp;b=2">Research &amp;amp; development</a>'
 
     assert normalize_double_escaped_url_anchor_text(html) == html
+
+
+def test_consume_compact_prefix_ignores_whitespace() -> None:
+    assert consume_compact_prefix(" 20 17.00020 rest", "2017.00020") == (" 20 17.00020", " rest")
+    assert consume_compact_prefix(" 20x", "2017") is None
+
+
+def test_repair_split_visible_url_anchors_repairs_ocr_tail() -> None:
+    url = "http://journal.frontiersin.org/article/10.3389/fncir.2017.00020/full#supplementary-material"
+    html = (
+        '<p>Found <a href="http://journal.frontiersin.org/article/10.3389/fncir.2017.00020/full#supplementary-material">'
+        "online at: http://journal.frontiersin.org/article/10.3389/fncir.</a> "
+        "2017.00020/full#supplementary-material</p>"
+    )
+
+    repaired = repair_split_visible_url_anchors(html)
+
+    assert f'Found online at: <a href="{url}">{url}</a></p>' in repaired
+    assert "fncir.</a> 2017.00020" not in repaired
+
+
+def test_repair_split_visible_url_anchors_leaves_unmatched_tail() -> None:
+    html = '<a href="https://example.org/path">https://example.org/</a> different tail'
+
+    assert repair_split_visible_url_anchors(html) == html
