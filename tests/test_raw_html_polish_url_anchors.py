@@ -3,7 +3,9 @@ from pdf_html_polish.raw_html_polish.url_anchors import (
     normalize_double_escaped_url_anchor_text,
     repair_split_visible_url_anchors,
     repair_split_url_anchor_block_tail,
+    repair_split_url_anchor_domain_tail,
     repair_spaced_protocol_url_anchors,
+    unescape_html_entities_repeated,
 )
 
 
@@ -92,3 +94,25 @@ def test_repair_split_url_anchor_block_tail_rejects_non_url_tail() -> None:
     html = '<a href="http://example-">http://example-</a> not-a-domain'
 
     assert repair_split_url_anchor_block_tail(html) == html
+
+
+def test_unescape_html_entities_repeated_unwraps_nested_entities() -> None:
+    assert unescape_html_entities_repeated("https://example.org/?a=1&amp;amp;b=2") == "https://example.org/?a=1&b=2"
+
+
+def test_repair_split_url_anchor_domain_tail_repairs_dot_domain_tail() -> None:
+    html = (
+        '<p>Journal page <a href="http://www.dovepress">http://www.dovepress</a>. '
+        "com/testimonials.php to read quotes.</p>"
+    )
+
+    repaired = repair_split_url_anchor_domain_tail(html)
+
+    assert ">http://www.dovepress.com/testimonials.php</a> to read quotes." in repaired
+    assert "www.dovepress</a>. com" not in repaired
+
+
+def test_repair_split_url_anchor_domain_tail_rejects_non_url_visible_text() -> None:
+    html = '<a href="https://example.org/path">example</a>. org/path'
+
+    assert repair_split_url_anchor_domain_tail(html) == html

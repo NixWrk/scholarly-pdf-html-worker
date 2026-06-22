@@ -227,6 +227,7 @@ from .raw_html_polish.url_autolink import (
 from .raw_html_polish.url_anchors import (
     SPLIT_VISIBLE_URL_ANCHOR_PATTERN as _SPLIT_VISIBLE_URL_ANCHOR_PATTERN,
     SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN as _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN,
+    SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN as _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN,
     SPACED_PROTOCOL_HREF_ATTR_PATTERN as _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
     SPACED_PROTOCOL_URL_ANCHOR_PATTERN as _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
     URL_ANCHOR_TEXT_PATTERN as _URL_ANCHOR_TEXT_PATTERN,
@@ -234,7 +235,9 @@ from .raw_html_polish.url_anchors import (
     normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
     repair_split_visible_url_anchors as _repair_split_visible_url_anchors,
     repair_split_url_anchor_block_tail as _repair_split_url_anchor_block_tail,
+    repair_split_url_anchor_domain_tail as _repair_split_url_anchor_domain_tail,
     repair_spaced_protocol_url_anchors as _repair_spaced_protocol_url_anchors,
+    unescape_html_entities_repeated as _unescape_html_entities_repeated,
 )
 from .semantic_labels import (
     extended_data_figure_key_from_visible_number as _extended_data_figure_key_from_visible_number,
@@ -2768,15 +2771,6 @@ _CITATION_PREFIX_BODY_PATTERN = re.compile(
 _ESCAPED_ANCHOR_SNIPPET_PATTERN = re.compile(
     r'&lt;a\s+href=(["\'])(?P<href>https?://[^"\']+)\1&gt;(?P<label>https?://[^<]+)&lt;/a&gt;',
     re.IGNORECASE,
-)
-_SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
-    r'(?P<body>[^<]{1,260})</a>'
-    r'(?P<tail>\s*\.\s*[A-Za-z]{2,}'
-    r'(?:/[A-Za-z0-9._~:#?\[\]@!$&\'()*+,;=%-]+)*'
-    r'(?:/\s+[A-Za-z0-9][A-Za-z0-9._~:#?\[\]@!$&\'()*+,;=%-]+)?)'
-    r'(?P<trailing>[.,;:)]?)',
-    re.IGNORECASE | re.DOTALL,
 )
 _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
@@ -5684,52 +5678,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
 
 def _escape_html_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _unescape_html_entities_repeated(value: str) -> str:
-    current = value
-    for _ in range(4):
-        unescaped = html_lib.unescape(current)
-        if unescaped == current:
-            return current
-        current = unescaped
-    return current
-
-
-def _repair_split_url_anchor_domain_tail(html: str) -> str:
-    """Join a partial URL anchor with its visible ``.com/...`` tail."""
-
-    def replace(match: re.Match[str]) -> str:
-        href = _unescape_html_entities_repeated(_strip_wrapping_url_quotes(match.group("href")))
-        body = _visible_text(match.group("body")).strip()
-        href_key = _url_fragment_compare_key(href)
-        body_key = _url_fragment_compare_key(body)
-        if not body_key or not (href_key == body_key or href_key.startswith(body_key)):
-            return match.group(0)
-        if not re.search(r"\b(?:https?://|www\.)", body, re.IGNORECASE):
-            return match.group(0)
-
-        candidate = _repair_broken_visible_url_text(f"{body}{match.group('tail')}")
-        candidate = re.sub(r"\s+", "", candidate)
-        if not candidate.lower().startswith(("http://", "https://")):
-            scheme_match = re.match(r"(?P<scheme>https?://)", href, re.IGNORECASE)
-            if scheme_match is None:
-                return match.group(0)
-            candidate = f"{scheme_match.group('scheme')}{candidate}"
-        merged_url, trailing = _split_url_and_trailing_punct(candidate + match.group("trailing"))
-        if not re.search(r"\.[A-Za-z]{2,}(?:[/:?#]|$)", merged_url, re.IGNORECASE):
-            return match.group(0)
-
-        attrs = re.sub(
-            r'(\bhref\s*=\s*)(["\'])(.*?)\2',
-            lambda m: f'{m.group(1)}"{_escape_html_attr(merged_url)}"',
-            match.group("attrs"),
-            count=1,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        return f'<a{attrs}>{_escape_html_text(merged_url)}</a>{trailing}'
-
-    return _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN.sub(replace, html)
 
 
 def _repair_prose_prefixed_url_anchor_tail(html: str) -> str:

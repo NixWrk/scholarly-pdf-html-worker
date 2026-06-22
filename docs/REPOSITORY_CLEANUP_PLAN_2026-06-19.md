@@ -283,9 +283,9 @@ The cleanup policy is deliberately conservative:
   old private names as aliases so sentence/float repair callers do not change.
 - Started the URL/anchor cleanup by moving spaced-protocol URL anchor repair
   double-escaped URL anchor label normalization, and split-visible URL anchor
-  repair, plus paragraph-boundary split URL anchor repair, into
-  `raw_html_polish/url_anchors.py`; `single_file_html.py` keeps the old private
-  pattern/function names as aliases.
+  repair, plus paragraph-boundary and domain-tail split URL anchor repairs,
+  into `raw_html_polish/url_anchors.py`; `single_file_html.py` keeps the old
+  private pattern/function names as aliases.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target
