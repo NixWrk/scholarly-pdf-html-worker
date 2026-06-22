@@ -30,6 +30,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         marker-pdf==1.10.2 \
         "requests>=2.31" \
         "psutil>=5.9" \
+        "pytest>=8" \
         "mini-racer>=0.12" \
         "pymupdf>=1.24" \
         "pypdf>=4"
