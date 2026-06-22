@@ -158,10 +158,16 @@ from .raw_html_polish.frontmatter_footnotes import (
     mark_footnote_paragraphs_and_refs as _mark_footnote_paragraphs_and_refs_impl,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
+    repair_confirmed_front_matter_artifacts as _repair_confirmed_front_matter_artifacts,
+    repair_confirmed_front_matter_email_artifacts_body as _repair_confirmed_front_matter_email_artifacts_body,
     repair_front_matter_marker_ocr as _repair_front_matter_marker_ocr_impl,
     repair_front_matter_page_anchor_markers as _repair_front_matter_page_anchor_markers_impl,
     repair_page_footnote_ref_links as _repair_page_footnote_ref_links,
+    repair_sevick_muraca_author_marker as _repair_sevick_muraca_author_marker,
+    repair_turkish_urology_byline as _repair_turkish_urology_byline,
+    repair_xue_byline_abstract_split as _repair_xue_byline_abstract_split,
     split_url_footnote_prose_tails as _split_url_footnote_prose_tails,
+    split_zhu_affiliation_tail as _split_zhu_affiliation_tail,
     unicode_capitalized_name_pair_count as _unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count as _unicode_glued_author_marker_count,
 )
@@ -3252,143 +3258,6 @@ def _repair_front_matter_marker_ocr(html: str) -> str:
         html,
         looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
     )
-
-
-_TURKISH_UROLOGY_BYLINE_CORRECTED = (
-    "Mehmet Zeynel Keskin<sup>1</sup>, "
-    "Erkin Karaca<sup>1</sup>, "
-    "Murat U\u00e7ar<sup>2</sup>, "
-    "Erhan Ate\u015f<sup>3</sup>, "
-    "Cem Y\u00fccel<sup>1</sup>, and "
-    "Yusuf \u00d6zlem \u0130lbey<sup>1</sup>"
-)
-_TURKISH_UROLOGY_BYLINE_PATTERN = re.compile(
-    r"(?P<n1>Mehmet\s+Zeynel\s+Keskin),\s+"
-    r"(?P<n2>Erkin\s+Karaca)\s*,\s+"
-    r"(?P<n3>Murat\s+Uçar),\s+"
-    r"(?P<n4>Erhan\s+Ateş),\s+"
-    r"(?P<n5>Cem\s+Yücel)\s*,\s+and\s+"
-    r"(?P<n6>Yusuf\s+Özlem\s+İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b",
-    re.IGNORECASE,
-)
-_TURKISH_UROLOGY_VISIBLE_BYLINE_PATTERN = re.compile(
-    r"Mehmet\s+Zeynel\s+Keskin,\s+Erkin\s+Karaca\s*,\s+Murat\s+\S+ar,\s+"
-    r"Erhan\s+\S+,\s+Cem\s+\S+cel\s*,\s+and\s+Yusuf\s+\S+zlem\s+\S+lbey\s+"
-    r"1\s+1\s+2\s+3\s+1\s+1\b",
-    re.IGNORECASE,
-)
-_XUE_BYLINE_ABSTRACT_PATTERN = re.compile(
-    r"^\s*Mingyue\s+Xue,\s*ab\s+Mengbing\s+Zou,\s+Jingjin\s+Zhao,\s+"
-    r"Zhihua\s+Zhan\s+Ab\s+and\s+Shulin\s+Zhao\s+Zhao\s+"
-    r"(?P<tail>A\s+green\s+approach[\s\S]*)$",
-    re.IGNORECASE,
-)
-_ZHU_AFFILIATION_TAIL_PATTERN = re.compile(
-    r"^(?P<byline>Banghe\s+Zhu\s*,\s*John\s+C\.\s+Rasmussen,\s+and\s+"
-    r"Eva\s+M\.\s+Sevick-Muraca<sup>a\)</sup>)\s+"
-    r"(?P<affil>Center\s+for\s+Molecular\s+Imaging[\s\S]*)$",
-    re.IGNORECASE,
-)
-_FRONT_MATTER_MEMAIL_PREFIX_PATTERN = re.compile(
-    r"\bM(?=e-mail\s*:\s*[A-Za-z0-9._%+-]+@)",
-    re.IGNORECASE,
-)
-_FRONT_MATTER_UNIFI_CONTEXT_PATTERN = re.compile(
-    r"\b(?:University\s+of\s+Florence|Governi|Carfagni|Puggelli|Furferi|Volpe)\b",
-    re.IGNORECASE,
-)
-_FRONT_MATTER_UNFI_EMAIL_PATTERN = re.compile(r"@unfi\.it\b", re.IGNORECASE)
-_SEVICK_MURACA_MARKER_PATTERN = re.compile(
-    r"\bEva\s+M\.\s+Sevick-Murac[\s\u00a0]*(?:a[\s\u00a0]*){2}\)",
-    re.IGNORECASE,
-)
-
-
-def _repair_turkish_urology_byline(body: str) -> str:
-    def _replace(match: re.Match[str]) -> str:
-        return (
-            f"{match.group('n1')}<sup>1</sup>, "
-            f"{match.group('n2')}<sup>1</sup>, "
-            f"{match.group('n3')}<sup>2</sup>, "
-            f"{match.group('n4')}<sup>3</sup>, "
-            f"{match.group('n5')}<sup>1</sup>, and "
-            f"{match.group('n6')}<sup>1</sup>"
-        )
-
-    repaired = _TURKISH_UROLOGY_BYLINE_PATTERN.sub(_replace, body)
-    if repaired != body:
-        return repaired
-    if _TURKISH_UROLOGY_VISIBLE_BYLINE_PATTERN.search(_visible_text(body)) is not None:
-        return _TURKISH_UROLOGY_BYLINE_CORRECTED
-    return body
-
-
-def _repair_confirmed_front_matter_email_artifacts_body(body: str, visible: str | None = None) -> str:
-    visible = _visible_text(body) if visible is None else visible
-    if "Me-mail:" in visible:
-        body = _FRONT_MATTER_MEMAIL_PREFIX_PATTERN.sub("", body)
-
-    if "@unfi.it" in visible.lower() and _FRONT_MATTER_UNIFI_CONTEXT_PATTERN.search(visible) is not None:
-        body = _FRONT_MATTER_UNFI_EMAIL_PATTERN.sub("@unifi.it", body)
-
-    return body
-
-
-def _repair_xue_byline_abstract_split(open_tag: str, close_tag: str, body: str) -> str | None:
-    xue_match = _XUE_BYLINE_ABSTRACT_PATTERN.match(_visible_text(body))
-    if xue_match is None:
-        return None
-    tail = xue_match.group("tail")
-    byline = (
-        "Mingyue Xue<sup>ab</sup>, Mengbing Zou<sup>a</sup>, "
-        "Jingjin Zhao<sup>*a</sup>, Zhihua Zhan<sup>ab</sup> and "
-        "Shulin Zhao<sup>*a</sup>"
-    )
-    front_open = _add_class_attr(open_tag, "z2m-front-matter")
-    return f"{front_open}{byline}{close_tag}\n<p>{_escape_html_text(tail)}</p>"
-
-
-def _repair_sevick_muraca_author_marker(body: str) -> str:
-    return _SEVICK_MURACA_MARKER_PATTERN.sub("Eva M. Sevick-Muraca<sup>a)</sup>", body)
-
-
-def _split_zhu_affiliation_tail(open_tag: str, close_tag: str, body: str) -> str | None:
-    zhu_match = _ZHU_AFFILIATION_TAIL_PATTERN.match(body)
-    if zhu_match is None:
-        return None
-    front_open = _add_class_attr(open_tag, "z2m-front-matter")
-    affil_open = _add_class_attr(open_tag, "z2m-front-matter")
-    affil_open = _add_class_attr(affil_open, "z2m-affiliations")
-    return (
-        f"{front_open}{zhu_match.group('byline')}{close_tag}\n"
-        f"{affil_open}{_escape_html_text(zhu_match.group('affil'))}{close_tag}"
-    )
-
-
-def _repair_confirmed_front_matter_artifacts(html: str) -> str:
-    """Repair front-matter artefacts confirmed by PDF text-layer/render checks."""
-
-    def _repair(match: re.Match[str]) -> str:
-        open_tag = match.group("open")
-        close_tag = match.group("close")
-        body = match.group("body")
-        visible = _visible_text(body)
-
-        body = _repair_confirmed_front_matter_email_artifacts_body(body, visible)
-        body = _repair_turkish_urology_byline(body)
-
-        split = _repair_xue_byline_abstract_split(open_tag, close_tag, body)
-        if split is not None:
-            return split
-
-        body = _repair_sevick_muraca_author_marker(body)
-        split = _split_zhu_affiliation_tail(open_tag, close_tag, body)
-        if split is not None:
-            return split
-
-        return f"{open_tag}{body}{close_tag}"
-
-    return _P_BLOCK_PATTERN.sub(_repair, html)
 
 
 def _looks_footnote_block(raw: str) -> bool:

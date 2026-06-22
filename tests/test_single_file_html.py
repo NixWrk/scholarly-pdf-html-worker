@@ -54,6 +54,7 @@ from pdf_html_polish.single_file_html import (
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
+    _repair_confirmed_front_matter_artifacts,
     _repair_confirmed_front_matter_email_artifacts_body,
     _repair_front_matter_marker_ocr,
     _repair_front_matter_page_anchor_markers,
@@ -147,6 +148,12 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _looks_author_marker_ocr_candidate is frontmatter_footnotes.looks_author_marker_ocr_candidate
     assert _leading_footnote_number is frontmatter_footnotes.leading_footnote_number
     assert _footnote_keywords is frontmatter_footnotes.footnote_keywords
+    assert _repair_confirmed_front_matter_artifacts is frontmatter_footnotes.repair_confirmed_front_matter_artifacts
+    assert _repair_confirmed_front_matter_email_artifacts_body is frontmatter_footnotes.repair_confirmed_front_matter_email_artifacts_body
+    assert _repair_turkish_urology_byline is frontmatter_footnotes.repair_turkish_urology_byline
+    assert _repair_xue_byline_abstract_split is frontmatter_footnotes.repair_xue_byline_abstract_split
+    assert _repair_sevick_muraca_author_marker is frontmatter_footnotes.repair_sevick_muraca_author_marker
+    assert _split_zhu_affiliation_tail is frontmatter_footnotes.split_zhu_affiliation_tail
     assert _repair_page_footnote_ref_links is frontmatter_footnotes.repair_page_footnote_ref_links
     assert _split_url_footnote_prose_tails is frontmatter_footnotes.split_url_footnote_prose_tails
 

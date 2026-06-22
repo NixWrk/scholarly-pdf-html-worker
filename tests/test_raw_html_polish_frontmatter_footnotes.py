@@ -9,11 +9,17 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     mark_front_matter_paragraphs,
     mark_footnote_paragraphs_and_refs,
     normalize_front_matter_marker_numbers,
+    repair_confirmed_front_matter_artifacts,
+    repair_confirmed_front_matter_email_artifacts_body,
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,
     repair_front_matter_marker_ocr,
     repair_front_matter_page_anchor_markers,
     repair_page_footnote_ref_links,
+    repair_sevick_muraca_author_marker,
+    repair_turkish_urology_byline,
+    repair_xue_byline_abstract_split,
+    split_zhu_affiliation_tail,
     split_url_footnote_prose_tails,
     unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count,
@@ -222,6 +228,67 @@ def test_repair_front_matter_marker_ocr_repairs_affiliation_list_items() -> None
     )
 
     assert "<li><sup>1</sup>Department of A. <sup>2</sup>University of B</li>" in repaired
+
+
+def test_repair_confirmed_front_matter_email_artifacts_body() -> None:
+    body = (
+        "University of Florence contacts: lapo.governi@unfi.it. "
+        "For correspondence Me-mail: michael.deistler@uni-tuebingen.de"
+    )
+
+    repaired = repair_confirmed_front_matter_email_artifacts_body(body)
+
+    assert "Me-mail:" not in repaired
+    assert "e-mail: michael.deistler@uni-tuebingen.de" in repaired
+    assert "lapo.governi@unifi.it" in repaired
+
+
+def test_repair_turkish_urology_byline_handles_marker_run() -> None:
+    body = (
+        "Mehmet Zeynel Keskin, Erkin Karaca, Murat U\u00e7ar, "
+        "Erhan Ate\u015f, Cem Y\u00fccel, and Yusuf \u00d6zlem \u0130lbey "
+        "1 1 2 3 1 1"
+    )
+
+    repaired = repair_turkish_urology_byline(body)
+
+    assert "Mehmet Zeynel Keskin<sup>1</sup>" in repaired
+    assert "Murat U\u00e7ar<sup>2</sup>" in repaired
+    assert "Yusuf \u00d6zlem \u0130lbey<sup>1</sup>" in repaired
+
+
+def test_repair_confirmed_front_matter_artifacts_splits_known_blocks() -> None:
+    xue_html = (
+        "<p>Mingyue Xue, ab Mengbing Zou, Jingjin Zhao, Zhihua Zhan Ab and "
+        "Shulin Zhao Zhao A green approach was developed for detection.</p>"
+    )
+
+    xue = repair_confirmed_front_matter_artifacts(xue_html)
+
+    assert '<p class="z2m-front-matter">Mingyue Xue<sup>ab</sup>' in xue
+    assert "<p>A green approach was developed for detection.</p>" in xue
+
+    body = repair_sevick_muraca_author_marker(
+        "Banghe Zhu, John C. Rasmussen, and Eva M. Sevick-Murac aa) "
+        "Center for Molecular Imaging, The Brown Foundation Institute."
+    )
+    zhu = split_zhu_affiliation_tail("<p>", "</p>", body)
+
+    assert zhu is not None
+    assert "Eva M. Sevick-Muraca<sup>a)</sup>" in zhu
+    assert 'class="z2m-front-matter z2m-affiliations"' in zhu
+
+
+def test_repair_xue_byline_abstract_split_escapes_tail() -> None:
+    repaired = repair_xue_byline_abstract_split(
+        "<p>",
+        "</p>",
+        "Mingyue Xue, ab Mengbing Zou, Jingjin Zhao, Zhihua Zhan Ab and "
+        "Shulin Zhao Zhao A green approach & detection.",
+    )
+
+    assert repaired is not None
+    assert "<p>A green approach &amp; detection.</p>" in repaired
 
 
 def test_mark_front_matter_paragraphs_uses_callback() -> None:

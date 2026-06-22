@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import html as html_lib
 import re
 
 from .html_fragments import add_class_attr, add_id_attr, append_class_to_attrs, node_has_class, visible_text
@@ -105,6 +106,54 @@ FRONT_MATTER_KEYWORDS = (
     "institute",
     "graduate school",
     "laboratory for",
+)
+TURKISH_UROLOGY_BYLINE_CORRECTED = (
+    "Mehmet Zeynel Keskin<sup>1</sup>, "
+    "Erkin Karaca<sup>1</sup>, "
+    "Murat U\u00e7ar<sup>2</sup>, "
+    "Erhan Ate\u015f<sup>3</sup>, "
+    "Cem Y\u00fccel<sup>1</sup>, and "
+    "Yusuf \u00d6zlem \u0130lbey<sup>1</sup>"
+)
+TURKISH_UROLOGY_BYLINE_PATTERN = re.compile(
+    r"(?P<n1>Mehmet\s+Zeynel\s+Keskin),\s+"
+    r"(?P<n2>Erkin\s+Karaca)\s*,\s+"
+    r"(?P<n3>Murat\s+Uçar),\s+"
+    r"(?P<n4>Erhan\s+Ateş),\s+"
+    r"(?P<n5>Cem\s+Yücel)\s*,\s+and\s+"
+    r"(?P<n6>Yusuf\s+Özlem\s+İlbey)\s+1\s+1\s+2\s+3\s+1\s+1\b",
+    re.IGNORECASE,
+)
+TURKISH_UROLOGY_VISIBLE_BYLINE_PATTERN = re.compile(
+    r"Mehmet\s+Zeynel\s+Keskin,\s+Erkin\s+Karaca\s*,\s+Murat\s+\S+ar,\s+"
+    r"Erhan\s+\S+,\s+Cem\s+\S+cel\s*,\s+and\s+Yusuf\s+\S+zlem\s+\S+lbey\s+"
+    r"1\s+1\s+2\s+3\s+1\s+1\b",
+    re.IGNORECASE,
+)
+XUE_BYLINE_ABSTRACT_PATTERN = re.compile(
+    r"^\s*Mingyue\s+Xue,\s*ab\s+Mengbing\s+Zou,\s+Jingjin\s+Zhao,\s+"
+    r"Zhihua\s+Zhan\s+Ab\s+and\s+Shulin\s+Zhao\s+Zhao\s+"
+    r"(?P<tail>A\s+green\s+approach[\s\S]*)$",
+    re.IGNORECASE,
+)
+ZHU_AFFILIATION_TAIL_PATTERN = re.compile(
+    r"^(?P<byline>Banghe\s+Zhu\s*,\s*John\s+C\.\s+Rasmussen,\s+and\s+"
+    r"Eva\s+M\.\s+Sevick-Muraca<sup>a\)</sup>)\s+"
+    r"(?P<affil>Center\s+for\s+Molecular\s+Imaging[\s\S]*)$",
+    re.IGNORECASE,
+)
+FRONT_MATTER_MEMAIL_PREFIX_PATTERN = re.compile(
+    r"\bM(?=e-mail\s*:\s*[A-Za-z0-9._%+-]+@)",
+    re.IGNORECASE,
+)
+FRONT_MATTER_UNIFI_CONTEXT_PATTERN = re.compile(
+    r"\b(?:University\s+of\s+Florence|Governi|Carfagni|Puggelli|Furferi|Volpe)\b",
+    re.IGNORECASE,
+)
+FRONT_MATTER_UNFI_EMAIL_PATTERN = re.compile(r"@unfi\.it\b", re.IGNORECASE)
+SEVICK_MURACA_MARKER_PATTERN = re.compile(
+    r"\bEva\s+M\.\s+Sevick-Murac[\s\u00a0]*(?:a[\s\u00a0]*){2}\)",
+    re.IGNORECASE,
 )
 
 
@@ -579,6 +628,97 @@ def repair_front_matter_marker_ocr(
     return LI_BLOCK_PATTERN.sub(repair_li, repaired)
 
 
+def _escape_html_text(value: str) -> str:
+    return html_lib.escape(value, quote=False)
+
+
+def repair_turkish_urology_byline(body: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return (
+            f"{match.group('n1')}<sup>1</sup>, "
+            f"{match.group('n2')}<sup>1</sup>, "
+            f"{match.group('n3')}<sup>2</sup>, "
+            f"{match.group('n4')}<sup>3</sup>, "
+            f"{match.group('n5')}<sup>1</sup>, and "
+            f"{match.group('n6')}<sup>1</sup>"
+        )
+
+    repaired = TURKISH_UROLOGY_BYLINE_PATTERN.sub(replace, body)
+    if repaired != body:
+        return repaired
+    if TURKISH_UROLOGY_VISIBLE_BYLINE_PATTERN.search(visible_text(body)) is not None:
+        return TURKISH_UROLOGY_BYLINE_CORRECTED
+    return body
+
+
+def repair_confirmed_front_matter_email_artifacts_body(body: str, visible: str | None = None) -> str:
+    visible = visible_text(body) if visible is None else visible
+    if "Me-mail:" in visible:
+        body = FRONT_MATTER_MEMAIL_PREFIX_PATTERN.sub("", body)
+
+    if "@unfi.it" in visible.lower() and FRONT_MATTER_UNIFI_CONTEXT_PATTERN.search(visible) is not None:
+        body = FRONT_MATTER_UNFI_EMAIL_PATTERN.sub("@unifi.it", body)
+
+    return body
+
+
+def repair_xue_byline_abstract_split(open_tag: str, close_tag: str, body: str) -> str | None:
+    xue_match = XUE_BYLINE_ABSTRACT_PATTERN.match(visible_text(body))
+    if xue_match is None:
+        return None
+    tail = xue_match.group("tail")
+    byline = (
+        "Mingyue Xue<sup>ab</sup>, Mengbing Zou<sup>a</sup>, "
+        "Jingjin Zhao<sup>*a</sup>, Zhihua Zhan<sup>ab</sup> and "
+        "Shulin Zhao<sup>*a</sup>"
+    )
+    front_open = add_class_attr(open_tag, "z2m-front-matter")
+    return f"{front_open}{byline}{close_tag}\n<p>{_escape_html_text(tail)}</p>"
+
+
+def repair_sevick_muraca_author_marker(body: str) -> str:
+    return SEVICK_MURACA_MARKER_PATTERN.sub("Eva M. Sevick-Muraca<sup>a)</sup>", body)
+
+
+def split_zhu_affiliation_tail(open_tag: str, close_tag: str, body: str) -> str | None:
+    zhu_match = ZHU_AFFILIATION_TAIL_PATTERN.match(body)
+    if zhu_match is None:
+        return None
+    front_open = add_class_attr(open_tag, "z2m-front-matter")
+    affil_open = add_class_attr(open_tag, "z2m-front-matter")
+    affil_open = add_class_attr(affil_open, "z2m-affiliations")
+    return (
+        f"{front_open}{zhu_match.group('byline')}{close_tag}\n"
+        f"{affil_open}{_escape_html_text(zhu_match.group('affil'))}{close_tag}"
+    )
+
+
+def repair_confirmed_front_matter_artifacts(html: str) -> str:
+    """Repair front-matter artefacts confirmed by PDF text-layer/render checks."""
+
+    def repair(match: re.Match[str]) -> str:
+        open_tag = match.group("open")
+        close_tag = match.group("close")
+        body = match.group("body")
+        visible = visible_text(body)
+
+        body = repair_confirmed_front_matter_email_artifacts_body(body, visible)
+        body = repair_turkish_urology_byline(body)
+
+        split = repair_xue_byline_abstract_split(open_tag, close_tag, body)
+        if split is not None:
+            return split
+
+        body = repair_sevick_muraca_author_marker(body)
+        split = split_zhu_affiliation_tail(open_tag, close_tag, body)
+        if split is not None:
+            return split
+
+        return f"{open_tag}{body}{close_tag}"
+
+    return P_BLOCK_PATTERN.sub(repair, html)
+
+
 def mark_front_matter_paragraphs(
     html: str,
     *,
@@ -709,8 +849,17 @@ __all__ = [
     "PAGE_ANCHOR_PATTERN",
     "PAGE_ID_PATTERN",
     "FRONT_MATTER_KEYWORDS",
+    "FRONT_MATTER_MEMAIL_PREFIX_PATTERN",
+    "FRONT_MATTER_UNFI_EMAIL_PATTERN",
+    "FRONT_MATTER_UNIFI_CONTEXT_PATTERN",
+    "SEVICK_MURACA_MARKER_PATTERN",
     "SUPERSCRIPT_DIGIT_TRANSLATION",
     "SUP_PATTERN",
+    "TURKISH_UROLOGY_BYLINE_CORRECTED",
+    "TURKISH_UROLOGY_BYLINE_PATTERN",
+    "TURKISH_UROLOGY_VISIBLE_BYLINE_PATTERN",
+    "XUE_BYLINE_ABSTRACT_PATTERN",
+    "ZHU_AFFILIATION_TAIL_PATTERN",
     "footnote_keywords",
     "leading_footnote_number",
     "looks_affiliation_label_body",
@@ -721,11 +870,17 @@ __all__ = [
     "mark_front_matter_paragraphs",
     "mark_footnote_paragraphs_and_refs",
     "normalize_front_matter_marker_numbers",
+    "repair_confirmed_front_matter_artifacts",
+    "repair_confirmed_front_matter_email_artifacts_body",
     "repair_affiliation_label_ocr_body",
     "repair_author_marker_ocr_body",
     "repair_front_matter_marker_ocr",
     "repair_front_matter_page_anchor_markers",
     "repair_page_footnote_ref_links",
+    "repair_sevick_muraca_author_marker",
+    "repair_turkish_urology_byline",
+    "repair_xue_byline_abstract_split",
+    "split_zhu_affiliation_tail",
     "split_url_footnote_prose_tails",
     "unicode_capitalized_name_pair_count",
     "unicode_glued_author_marker_count",
