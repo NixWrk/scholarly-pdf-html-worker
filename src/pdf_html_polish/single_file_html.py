@@ -153,6 +153,7 @@ from .raw_html_polish.frontmatter_footnotes import (
     looks_author_byline_front_matter as _looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
     looks_footnote_block as _looks_footnote_block_impl,
+    looks_front_matter_block as _looks_front_matter_block_impl,
     mark_front_matter_paragraphs as _mark_front_matter_paragraphs_impl,
     mark_footnote_paragraphs_and_refs as _mark_footnote_paragraphs_and_refs_impl,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
@@ -3226,97 +3227,10 @@ def _update_citation_skip_stack(tag_fragment: str, skip_stack: list[str]) -> Non
 
 
 def _looks_front_matter_block(raw: str) -> bool:
-    if not re.match(r"\s*<(?:p|h[1-6])\b", raw, re.IGNORECASE):
-        return False
-    if _looks_affiliation_block(raw):
-        return True
-
-    visible = _visible_text(raw)
-    if not visible:
-        return False
-    lower = visible.lower()
-    if re.match(r"^\s*(?:abstract|introduction)\b", lower):
-        return False
-    if len(visible) > 900 and not re.match(
-        r"^\s*(?:keywords|received|accepted|published|copyright|funding|"
-        r"competing|conflicts?|data availability|correspondence|e-mail|email)\b",
-        lower,
-    ):
-        long_author_markers = (
-            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible))
-            + len(
-                re.findall(
-                    r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\s+"
-                    r"\d{1,2}\s*(?:[,\.]\s*\d{1,2}){0,5}",
-                    visible,
-                )
-            )
-        )
-        if long_author_markers < 2:
-            return False
-
-    front_keywords = (
-        "keywords:",
-        "electronic supplementary material",
-        "e-mail:",
-        "email:",
-        "correspondence:",
-        "competing interest:",
-        "competing interests:",
-        "funding:",
-        "received:",
-        "accepted:",
-        "published online",
-        "check for updates",
-        "author to whom",
-        "authors contributed equally",
-        "open access",
-        "the author(s)",
-        "creative commons",
-        "department of",
-        "university",
-        "institute",
-        "graduate school",
-        "laboratory for",
+    return _looks_front_matter_block_impl(
+        raw,
+        looks_affiliation_block=_looks_affiliation_block,
     )
-    if any(keyword in lower for keyword in front_keywords):
-        return True
-    if "contributed equally" in lower and (_leading_footnote_number(raw) is not None or "author" in lower):
-        return True
-    if _looks_author_byline_front_matter(raw, visible):
-        return True
-
-    glued_author_markers = len(
-        re.findall(
-            r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\d{1,2}[\*\u2020\u2021]?",
-            visible,
-        )
-    )
-    if glued_author_markers >= 2 and (visible.count(",") >= 1 or "&" in visible):
-        return True
-
-    if len(visible) > 260 and len(re.findall(r"[.!?](?:\s|$)", visible)) >= 2:
-        has_author_marker_residue = (
-            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible)) >= 2
-            or _unicode_glued_author_marker_count(visible) >= 3
-        )
-        if not has_author_marker_residue:
-            return False
-
-    name_like = max(
-        len(re.findall(r"\b[A-Z][A-Za-z.'-]+\s+[A-Z][A-Za-z.'-]+\b", visible)),
-        _unicode_capitalized_name_pair_count(visible),
-    )
-    sup_marker_hits = len(re.findall(r"<sup\b[^>]*>\s*[\d,\s*\u2020\u2021-]+\s*</sup>", raw, re.IGNORECASE))
-    glued_marker_hits = max(
-        len(re.findall(r"\b[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3}\d{1,2}(?:,\d{1,2})*", visible)),
-        _unicode_glued_author_marker_count(visible),
-    )
-    if name_like >= 3 and (sup_marker_hits >= 2 or glued_marker_hits >= 2):
-        return True
-    if name_like >= 5 and visible.count(",") >= 4 and len(visible) < 900:
-        return True
-    return False
 
 
 def _mark_front_matter_paragraphs(html: str) -> str:

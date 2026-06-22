@@ -266,6 +266,10 @@ The cleanup policy is deliberately conservative:
   `raw_html_polish/frontmatter_footnotes.py` with an explicit
   `looks_front_matter_block` callback; `single_file_html.py` keeps the old
   private wrapper.
+- Moved frontmatter block classification into
+  `raw_html_polish/frontmatter_footnotes.py` with an explicit
+  `looks_affiliation_block` callback; `single_file_html.py` keeps the old
+  private wrapper.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

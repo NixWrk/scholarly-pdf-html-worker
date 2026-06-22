@@ -42,6 +42,7 @@ from pdf_html_polish.single_file_html import (
     _looks_author_byline_front_matter,
     _looks_author_marker_ocr_candidate,
     _looks_footnote_block,
+    _looks_front_matter_block,
     _mark_front_matter_paragraphs,
     _mark_footnote_paragraphs_and_refs,
     _inline_images_from_html_text,
@@ -160,6 +161,11 @@ def test_single_file_mark_front_matter_paragraphs_wrapper() -> None:
 
     assert '<p class="z2m-front-matter">Keywords: mobility</p>' in marked
     assert "<p>Introduction starts here.</p>" in marked
+
+
+def test_single_file_looks_front_matter_block_wrapper() -> None:
+    assert _looks_front_matter_block("<p>Keywords: mobility</p>")
+    assert not _looks_front_matter_block("<p>Introduction starts here.</p>")
 
 
 def test_single_file_footnote_block_wrapper_uses_float_caption_guards() -> None:

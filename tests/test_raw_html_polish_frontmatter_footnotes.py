@@ -5,6 +5,7 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate,
     looks_footnote_block,
+    looks_front_matter_block,
     mark_front_matter_paragraphs,
     mark_footnote_paragraphs_and_refs,
     normalize_front_matter_marker_numbers,
@@ -87,6 +88,30 @@ def test_looks_footnote_block_accepts_notes_and_rejects_captions() -> None:
         figure_caption_num_from_visible=lambda _text: 1,
         table_caption_key_from_visible=lambda _text: None,
     )
+
+
+def test_looks_front_matter_block_uses_affiliation_callback() -> None:
+    assert looks_front_matter_block(
+        "<p>Plain institutional line.</p>",
+        looks_affiliation_block=lambda _raw: True,
+    )
+
+
+def test_looks_front_matter_block_accepts_keywords_and_rejects_intro() -> None:
+    assert looks_front_matter_block(
+        "<p>Keywords: navigation, mobility</p>",
+        looks_affiliation_block=lambda _raw: False,
+    )
+    assert not looks_front_matter_block(
+        "<p>Introduction This starts the paper.</p>",
+        looks_affiliation_block=lambda _raw: False,
+    )
+
+
+def test_looks_front_matter_block_accepts_author_byline() -> None:
+    raw = "<p>Alice Smith<sup>1</sup>, Bob Jones<sup>2</sup></p>"
+
+    assert looks_front_matter_block(raw, looks_affiliation_block=lambda _raw: False)
 
 
 def test_mark_footnote_paragraphs_and_refs_marks_definition_and_matching_ref() -> None:

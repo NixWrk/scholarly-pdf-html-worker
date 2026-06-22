@@ -82,6 +82,30 @@ LEADING_URL_FOOTNOTE_ANCHOR_PATTERN = re.compile(
     r'\s*<a\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
+FRONT_MATTER_KEYWORDS = (
+    "keywords:",
+    "electronic supplementary material",
+    "e-mail:",
+    "email:",
+    "correspondence:",
+    "competing interest:",
+    "competing interests:",
+    "funding:",
+    "received:",
+    "accepted:",
+    "published online",
+    "check for updates",
+    "author to whom",
+    "authors contributed equally",
+    "open access",
+    "the author(s)",
+    "creative commons",
+    "department of",
+    "university",
+    "institute",
+    "graduate school",
+    "laboratory for",
+)
 
 
 def unicode_capitalized_name_pair_count(text: str) -> int:
@@ -263,6 +287,80 @@ def looks_footnote_block(
     if lower.startswith(("abstract", "introduction", "references", "bibliography")):
         return False
     return len(re.findall(r"[A-Za-z]{3,}", text)) >= 6
+
+
+def looks_front_matter_block(
+    raw: str,
+    *,
+    looks_affiliation_block: Callable[[str], bool],
+) -> bool:
+    if not re.match(r"\s*<(?:p|h[1-6])\b", raw, re.IGNORECASE):
+        return False
+    if looks_affiliation_block(raw):
+        return True
+
+    visible = visible_text(raw)
+    if not visible:
+        return False
+    lower = visible.lower()
+    if re.match(r"^\s*(?:abstract|introduction)\b", lower):
+        return False
+    if len(visible) > 900 and not re.match(
+        r"^\s*(?:keywords|received|accepted|published|copyright|funding|"
+        r"competing|conflicts?|data availability|correspondence|e-mail|email)\b",
+        lower,
+    ):
+        long_author_markers = (
+            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible))
+            + len(
+                re.findall(
+                    r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\s+"
+                    r"\d{1,2}\s*(?:[,\.]\s*\d{1,2}){0,5}",
+                    visible,
+                )
+            )
+        )
+        if long_author_markers < 2:
+            return False
+
+    if any(keyword in lower for keyword in FRONT_MATTER_KEYWORDS):
+        return True
+    if "contributed equally" in lower and (leading_footnote_number(raw) is not None or "author" in lower):
+        return True
+    if looks_author_byline_front_matter(raw, visible):
+        return True
+
+    glued_author_markers = len(
+        re.findall(
+            r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\d{1,2}[\*\u2020\u2021]?",
+            visible,
+        )
+    )
+    if glued_author_markers >= 2 and (visible.count(",") >= 1 or "&" in visible):
+        return True
+
+    if len(visible) > 260 and len(re.findall(r"[.!?](?:\s|$)", visible)) >= 2:
+        has_author_marker_residue = (
+            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible)) >= 2
+            or unicode_glued_author_marker_count(visible) >= 3
+        )
+        if not has_author_marker_residue:
+            return False
+
+    name_like = max(
+        len(re.findall(r"\b[A-Z][A-Za-z.'-]+\s+[A-Z][A-Za-z.'-]+\b", visible)),
+        unicode_capitalized_name_pair_count(visible),
+    )
+    sup_marker_hits = len(re.findall(r"<sup\b[^>]*>\s*[\d,\s*\u2020\u2021-]+\s*</sup>", raw, re.IGNORECASE))
+    glued_marker_hits = max(
+        len(re.findall(r"\b[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3}\d{1,2}(?:,\d{1,2})*", visible)),
+        unicode_glued_author_marker_count(visible),
+    )
+    if name_like >= 3 and (sup_marker_hits >= 2 or glued_marker_hits >= 2):
+        return True
+    if name_like >= 5 and visible.count(",") >= 4 and len(visible) < 900:
+        return True
+    return False
 
 
 def mark_footnote_paragraphs_and_refs(
@@ -610,6 +708,7 @@ __all__ = [
     "FOOTNOTE_CLASS_PATTERN",
     "PAGE_ANCHOR_PATTERN",
     "PAGE_ID_PATTERN",
+    "FRONT_MATTER_KEYWORDS",
     "SUPERSCRIPT_DIGIT_TRANSLATION",
     "SUP_PATTERN",
     "footnote_keywords",
@@ -618,6 +717,7 @@ __all__ = [
     "looks_author_byline_front_matter",
     "looks_author_marker_ocr_candidate",
     "looks_footnote_block",
+    "looks_front_matter_block",
     "mark_front_matter_paragraphs",
     "mark_footnote_paragraphs_and_refs",
     "normalize_front_matter_marker_numbers",
