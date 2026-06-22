@@ -178,6 +178,50 @@ Use `--audit-converted-existing` only for a readonly inspection of existing
 `02.en.polish.html` files. That mode deliberately does not repolish and does
 not run repair stages, so it is not the canonical final quality check.
 
+## Required Observe Acceptance Gate
+
+For production-quality validation and for meaningful behavior refactors, the
+required gate is a full repair-enabled observe run over the converted corpus.
+Do not replace it with a readonly audit, a raw-only repolish, or a partial
+article sample when declaring repository quality unchanged.
+
+The required command shape is:
+
+```powershell
+python scripts\llm_quality_loop.py observe `
+  --converted-roots "<production-conversion-root>" `
+  --out-dir "review_runs\<descriptive_observe_run_id>" `
+  --run-id "<descriptive_observe_run_id>" `
+  --previous-entry "<previous-compatible-quality_history_entry.json>" `
+  --jobs <parallel-worker-count>
+```
+
+The acceptance checklist is:
+
+- The observe run completes without process errors.
+- The configured test command exits with code `0`.
+- The final audit used for `quality_history_entry.json` exits with code `0`.
+- `source_pdf_map.json` is `ready`; for Zotero-backed production corpora, every
+  article is either mapped to an existing Zotero/source PDF or explicitly
+  recorded as unavailable.
+- Repair stages run according to the gate config. When P62 image recovery or
+  `polish_auto_repair` patches articles, the final quality history must come
+  from the post-repair rerun audit.
+- `quality_compare.json` compares against a compatible previous entry. A
+  successful quality-neutral refactor has `regression_count=0`; remaining gate
+  failures must be explicit mandatory-review backlog, not hidden regressions.
+- `quality_gate_report.json` is the authoritative gate result. A failing gate
+  may be accepted only as documented follow-up when the compare report shows no
+  regressions and the remaining mandatory items are enumerated.
+
+The 2026-06-22 reference run
+`review_runs\full_pdf_to_polish_repair_observe_20260622_01` is the current
+example of this required gate shape: it repolished the converted full
+PDF-to-polish corpus, ran the test suite, used Zotero source-PDF mapping,
+executed P62 recovery and polish auto-repair, reran targeted audit after
+patches, and compared against
+`review_runs\full_pdf_to_polish_from_source_map_chunked_audit_20260620_02\quality_history_entry.json`.
+
 ## Quality Loop For Existing Cached Runs
 
 Use this mode when the input is already a cached run with `raw_cache/` and

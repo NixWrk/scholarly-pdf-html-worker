@@ -145,10 +145,15 @@ from .raw_html_polish.float_units import (
     table_caption_key_from_visible as _table_caption_key_from_visible,
 )
 from .raw_html_polish.frontmatter_footnotes import (
+    AUTHOR_BYLINE_NAME_PATTERN as _AUTHOR_BYLINE_NAME_RE,
     SUPERSCRIPT_DIGIT_TRANSLATION as _SUPERSCRIPT_DIGIT_TRANSLATION,
+    looks_author_byline_front_matter as _looks_author_byline_front_matter,
+    looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
     normalize_front_matter_marker_numbers as _normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
+    unicode_capitalized_name_pair_count as _unicode_capitalized_name_pair_count,
+    unicode_glued_author_marker_count as _unicode_glued_author_marker_count,
 )
 from .raw_html_polish.references_links import (
     LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN as _LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN,
@@ -3211,97 +3216,6 @@ def _update_citation_skip_stack(tag_fragment: str, skip_stack: list[str]) -> Non
         skip_stack.append(tag_name)
 
 
-def _unicode_capitalized_name_pair_count(text: str) -> int:
-    token_re = re.compile(r"[^\W\d_][^\W\d_.'-]*", re.UNICODE)
-    tokens = list(token_re.finditer(text))
-    count = 0
-    for left, right in zip(tokens, tokens[1:]):
-        if not re.fullmatch(r"\s+", text[left.end() : right.start()]):
-            continue
-        if left.group(0)[0].isupper() and right.group(0)[0].isupper():
-            count += 1
-    return count
-
-
-def _unicode_glued_author_marker_count(text: str) -> int:
-    if len(text) > 2000:
-        text = text[:2000]
-    text = text.translate(_SUPERSCRIPT_DIGIT_TRANSLATION)
-    token = r"[^\W\d_][^\W\d_.'-]*"
-    marker_re = re.compile(
-        rf"(?<!\w)(?P<name>{token}(?:\s+{token}){{0,3}})\s*,?\s*\d{{1,2}}(?:,\d{{1,2}})*",
-        re.UNICODE,
-    )
-    count = 0
-    for match in marker_re.finditer(text):
-        name_tokens = re.findall(token, match.group("name"), re.UNICODE)
-        if name_tokens and name_tokens[-1][0].isupper():
-            count += 1
-    return count
-
-
-_AUTHOR_BYLINE_NAME_RE = re.compile(
-    r"\b"
-    r"(?:[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]*|[A-Z]\.)"
-    r"(?:\s+(?:[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]*|[A-Z]\.)){1,5}"
-    r"\b",
-    re.UNICODE,
-)
-
-
-def _looks_author_byline_front_matter(raw: str, visible: str) -> bool:
-    if len(visible) < 6 or len(visible) > 450:
-        return False
-    lower = visible.lower()
-    marker_visible = visible.translate(_SUPERSCRIPT_DIGIT_TRANSLATION)
-    if re.match(r"^\s*(?:abstract|introduction|references|bibliography)\b", lower):
-        return False
-    if len(re.findall(r"[.!?](?:\s|$)", visible)) >= 2:
-        return False
-    if re.search(
-        r"\b(?:are|is|was|were|has|have|had|using|used|support|supports|"
-        r"show|shows|shown|study|studies|method|methods|results?|participants?|"
-        r"patients?|models?|devices?|figure|table)\b",
-        lower,
-    ):
-        return False
-    if re.search(r"\b(?:box|fig(?:ure)?s?|table|section|appendix|equations?|eqs?\.?)\s+\d", lower):
-        return False
-
-    sup_marker_hits = len(
-        re.findall(
-            r"<sup\b[^>]*>\s*(?:<a\b[^>]*>\s*)?\d{1,2}(?:\s*[,.\-]\s*\d{1,2}){0,6}",
-            raw,
-            re.IGNORECASE | re.DOTALL,
-        )
-    )
-    glued_marker_hits = max(
-        len(
-            re.findall(
-                r"\b[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff.'-]+"
-                r"(?:\s+[A-Z][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff.'-]+){1,5}"
-                r"\s*\d{1,2}(?:\s*[,.\-]\s*\d{1,2}){0,6}",
-                marker_visible,
-            )
-        ),
-        _unicode_glued_author_marker_count(visible),
-    )
-    if sup_marker_hits == 0 and glued_marker_hits == 0:
-        return False
-
-    name_hits = len(_AUTHOR_BYLINE_NAME_RE.findall(visible))
-    if name_hits < 1:
-        return False
-    if name_hits >= 2 and (sup_marker_hits >= 1 or glued_marker_hits >= 1):
-        return True
-
-    # Single-author bylines are often just "Name <sup>1,2</sup>" before Abstract.
-    residue = _AUTHOR_BYLINE_NAME_RE.sub(" ", visible)
-    residue = re.sub(r"\b(?:and|or|et\s+al)\b", " ", residue, flags=re.IGNORECASE)
-    residue = re.sub(r"[\d\s,.;:*()\[\]\-\u2013\u2014\u2020\u2021&]+", " ", residue)
-    return len(residue.strip()) <= 12
-
-
 def _looks_front_matter_block(raw: str) -> bool:
     if not re.match(r"\s*<(?:p|h[1-6])\b", raw, re.IGNORECASE):
         return False
@@ -3418,36 +3332,6 @@ def _mark_front_matter_paragraphs(html: str) -> str:
         return f"<{tag_name}{marked_attrs}>{match.group('body')}{match.group('close')}"
 
     return _P_OR_H_BLOCK_PATTERN.sub(_mark, html)
-
-
-def _looks_author_marker_ocr_candidate(raw: str) -> bool:
-    visible = _visible_text(raw)
-    if not visible or len(visible) > 4000:
-        return False
-    lower = visible.lower()
-    marker_visible = visible.translate(_SUPERSCRIPT_DIGIT_TRANSLATION)
-    if re.match(r"^\s*(?:abstract|introduction)\b", lower):
-        return False
-    name_like = len(re.findall(r"\b[A-Z][A-Za-z.'-]+\s+[A-Z][A-Za-z.'-]+\b", visible))
-    glued_author_markers = len(
-        re.findall(
-            r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\d{1,2}[\*\u2020\u2021\u22a0\u2709]?",
-            marker_visible,
-        )
-    )
-    if glued_author_markers >= 2 and (visible.count(",") >= 1 or "&" in visible):
-        return True
-    if name_like < 3:
-        return False
-    marker_like = (
-        re.search(r"[\u00c2\u0412]?\u00a9\s*\d", marker_visible) is not None
-        or re.search(r"\b\d{1,2}\.\d{1,2}\.\d{1,2}\b", marker_visible) is not None
-        or re.search(r"(?:\b[A-Z][A-Za-z.'-]+\s+){1,5}\d{1,2}\s+\d{1,2}\b", marker_visible) is not None
-        or re.search(r"\b[A-Z][A-Za-z.'-]+\d{1,2}[\*\u2020\u2021\u22a0\u2709]?(?:,|&|$)", marker_visible) is not None
-    )
-    if re.match(r"^\s*(?:received|accepted|published)\b", lower) and not marker_like:
-        return False
-    return marker_like and (visible.count(",") >= 2 or "&" in visible)
 
 
 def _repair_front_matter_page_anchor_markers(body: str) -> str:

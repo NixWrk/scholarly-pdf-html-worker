@@ -6,8 +6,10 @@ from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
 from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup
+from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
     _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
+    _AUTHOR_BYLINE_NAME_RE,
     _BACKSLASH_BEFORE_QUOTE_PATTERN,
     _ESCAPED_INLINE_TAG_PATTERN,
     _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN,
@@ -34,6 +36,8 @@ from pdf_html_polish.single_file_html import (
     _fix_orphaned_sup_tags,
     _fix_false_sup_citations_in_decimals_and_figure_labels,
     _fix_subscript_equation_spill,
+    _looks_author_byline_front_matter,
+    _looks_author_marker_ocr_candidate,
     _inline_images_from_html_text,
     _link_figure_refs,
     _link_unlinked_numeric_superscripts_to_existing_refs,
@@ -56,6 +60,8 @@ from pdf_html_polish.single_file_html import (
     _unwrap_nested_fig_links,
     _unwrap_nested_same_href_internal_links,
     _strip_protocol_sentinel_leaks,
+    _unicode_capitalized_name_pair_count,
+    _unicode_glued_author_marker_count,
     _update_skip_stack,
     _validate_data_url,
     close_katex_v8_context,
@@ -117,6 +123,11 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _cleanup_marker_escape_artifacts is pre_cleanup.cleanup_marker_escape_artifacts
     assert _strip_protocol_sentinel_leaks is pre_cleanup.strip_protocol_sentinel_leaks
     assert _update_skip_stack is pre_cleanup.update_skip_stack
+    assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
+    assert _unicode_capitalized_name_pair_count is frontmatter_footnotes.unicode_capitalized_name_pair_count
+    assert _unicode_glued_author_marker_count is frontmatter_footnotes.unicode_glued_author_marker_count
+    assert _looks_author_byline_front_matter is frontmatter_footnotes.looks_author_byline_front_matter
+    assert _looks_author_marker_ocr_candidate is frontmatter_footnotes.looks_author_marker_ocr_candidate
 
 
 def test_inline_images_from_html_file() -> None:

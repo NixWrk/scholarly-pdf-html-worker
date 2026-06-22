@@ -94,6 +94,11 @@ The cleanup policy is deliberately conservative:
 - Before the full PDF-to-polish HTML pipeline, first run the existing
   polish/repolish path and audit reports to confirm there is no quality or
   behavior drift.
+- For production-quality validation and behavior-neutral refactor acceptance,
+  use the required repair-enabled `llm_quality_loop.py observe --converted-roots`
+  gate described in `docs/REPOSITORY_WORKFLOW.md`. The 2026-06-22 reference
+  shape is the full converted-root observe with tests, Zotero PDF map, P62
+  recovery, polish auto-repair, post-repair audit, compare, and gate report.
 - Only after that parity check passes, run the full PDF-to-polish HTML flow.
 
 ## Immediate Execution Queue
@@ -101,7 +106,9 @@ The cleanup policy is deliberately conservative:
 1. Treat the full source-PDF pipeline run
    `review_runs/full_pdf_to_polish_from_source_map_chunked_20260620_01` plus
    audit `review_runs/full_pdf_to_polish_from_source_map_chunked_audit_20260620_02`
-   as the current production baseline.
+   as the current production baseline. Treat
+   `review_runs/full_pdf_to_polish_repair_observe_20260622_01` as the current
+   required observe-gate example for quality-neutral refactor validation.
 2. Triage full-PDF-only audit clusters before broad refactors: source-PDF
    mapping is incomplete for converted-root audits, 51 items remain in the
    re-OCR queue, and the full run still has accepted/queued repair candidates
@@ -227,6 +234,13 @@ The cleanup policy is deliberately conservative:
   generic skip-stack wiring into `raw_html_polish/pre_cleanup.py` with direct
   tests; citation-specific skip-stack logic intentionally remains in
   `single_file_html.py`.
+- Documented the full repair-enabled converted-root observe as the mandatory
+  acceptance gate for production-quality validation and behavior-neutral
+  refactors.
+- Continued the `single_file_html.py` frontmatter decomposition by moving
+  author byline/marker classifier helpers into
+  `raw_html_polish/frontmatter_footnotes.py`; compatibility aliases remain in
+  `single_file_html.py` and direct owner tests cover the moved logic.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target
