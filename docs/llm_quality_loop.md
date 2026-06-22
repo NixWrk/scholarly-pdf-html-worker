@@ -159,7 +159,7 @@ corpus. For the current branch, EN runs should stay on the default EN target.
 For new PDF documents, prefer the clean wrapper:
 
 ```powershell
-pdf-html-polish-clean `
+pdf-html-polish `
   --pdf D:\work\paper.pdf `
   --output-dir D:\work\paper_pdf_html `
   --quality-output-dir D:\work\paper_pdf_html_quality

@@ -2,7 +2,7 @@
 
 Current production path in this extraction:
 
-1. `pdf-html-polish-clean --pdf ...`
+1. `pdf-html-polish --pdf ...`
    - receives exact local PDF paths from the caller
    - runs the conversion stage
    - runs the repair-enabled converted-root quality loop
@@ -10,7 +10,7 @@ Current production path in this extraction:
 
 Internal conversion stage:
 
-1. `pdf-html-polish --pdf ... --export-mode html`
+1. `pdf_html_polish.pipeline.run_pipeline(... export_mode="html")`
    - receives exact local PDF paths from the caller
    - does not inspect Zotero metadata, collections, WebDAV, or Web API state
 

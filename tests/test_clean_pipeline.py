@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
 
+from pdf_html_polish.cli.clean_convert import build_parser
 from pdf_html_polish.clean_pipeline import (
     CleanPipelineOptions,
     build_observe_command,
@@ -35,6 +37,20 @@ def _summary(output_dir: Path, *, failed_total: int = 0) -> PipelineSummary:
 
 def test_default_quality_output_dir_sits_next_to_conversion_output(tmp_path: Path) -> None:
     assert default_quality_output_dir(tmp_path / "paper_run") == tmp_path / "paper_run_quality"
+
+
+def test_public_console_scripts_only_expose_clean_pipeline() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    scripts = pyproject["project"]["scripts"]
+
+    assert scripts["pdf-html-polish"] == "pdf_html_polish.cli.clean_convert:main"
+    assert scripts["pdf-html-polish-clean"] == "pdf_html_polish.cli.clean_convert:main"
+
+
+def test_clean_public_parser_does_not_offer_partial_export_mode() -> None:
+    parser = build_parser()
+
+    assert "--export-mode" not in parser.format_help()
 
 
 def test_build_observe_command_uses_repair_enabled_converted_root_defaults(tmp_path: Path) -> None:

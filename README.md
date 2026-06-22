@@ -6,11 +6,9 @@ This repository keeps the PDF-to-HTML polish path and its audit/quality-loop hel
 
 The public automation boundary is file-based: pass local PDF files and an output directory. Zotero collection lookup, queueing, WebDAV mirroring, and write-back belong to the main Zotero orchestrator.
 
-For the clean production path, use `pdf-html-polish-clean`. It runs the PDF
-conversion stage and then the repair-enabled quality loop, collecting the final
-audited HTML under the quality run's `final_html/` directory. The lower-level
-`pdf-html-polish` command remains available when a caller needs only the first
-conversion stage.
+The public command `pdf-html-polish` always runs the clean production pipeline:
+PDF conversion followed by the repair-enabled quality loop, with final audited
+HTML collected under the quality run's `final_html/` directory.
 
 ## Pipeline
 
@@ -58,7 +56,7 @@ Use this command for a new document when the goal is the cleanest HTML this
 repository can produce from its accumulated rules and repair stages:
 
 ```powershell
-pdf-html-polish-clean `
+pdf-html-polish `
   --pdf "D:\work\paper.pdf" `
   --output-dir "D:\work\paper_pdf_html" `
   --quality-output-dir "D:\work\paper_pdf_html_quality" `
@@ -77,18 +75,13 @@ If a gate comparison against a compatible previous run is needed, add
 `--previous-entry <quality_history_entry.json>`. For ordinary one-document
 processing, the quality reports are still useful even without a previous entry.
 
-## Convert PDF Files To Polished EN HTML
+## Conversion Stage
 
-This lower-level command runs only the conversion and first polish stage. It is
-useful for diagnostics, but it is not the full clean production pipeline.
-
-```powershell
-pdf-html-polish `
-  --pdf "D:\work\paper.pdf" `
-  --output-dir "D:\work\pdf-html-output" `
-  --zotero-overlay-dir "D:\work\zotero-overlays" `
-  --export-mode html
-```
+The first-stage converter is now an internal implementation detail of the clean
+pipeline, not a public production mode. The clean CLI still accepts conversion
+options such as `--zotero-overlay-dir`, `--no-cuda`, `--model-cache-dir`, and
+Marker command overrides, but it always follows conversion with repair-enabled
+quality processing.
 
 Output HTML stages are saved under each article folder in
 `_pdf_html_polish_stages`. Audit and repolish helpers also recognize the legacy
@@ -115,11 +108,12 @@ Multiple PDFs can be passed by repeating `--pdf`:
 pdf-html-polish `
   --pdf "D:\work\paper-1.pdf" `
   --pdf "D:\work\paper-2.pdf" `
-  --output-dir "D:\work\pdf-html-output" `
-  --export-mode html
+  --output-dir "D:\work\pdf-html-output"
 ```
 
-The installed public converter remains `pdf-html-polish`; the Zotero orchestration image name is `zotero-pdf-html-worker:local`.
+The installed public converter is `pdf-html-polish`; `pdf-html-polish-clean` is
+kept as a compatibility alias for the same clean pipeline. The Zotero
+orchestration image name is `zotero-pdf-html-worker:local`.
 
 ## Container Notes
 

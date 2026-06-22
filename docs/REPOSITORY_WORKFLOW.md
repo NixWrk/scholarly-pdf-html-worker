@@ -6,11 +6,11 @@ that new production runs, quality checks, and cleanup patches should follow.
 
 ## Operating Boundary
 
-`pdf-html-polish-clean` is the canonical file-based PDF-to-audited-polished-HTML
-tool. It runs the PDF conversion stage and then the repair-enabled quality loop
-over the converted raw stages. The production input is a list of existing local
-PDF files plus an output directory. Those PDF paths may point directly into
-Zotero storage, for example:
+`pdf-html-polish` is the canonical file-based PDF-to-audited-polished-HTML tool.
+It runs the PDF conversion stage and then the repair-enabled quality loop over
+the converted raw stages. The production input is a list of existing local PDF
+files plus an output directory. Those PDF paths may point directly into Zotero
+storage, for example:
 
 ```powershell
 C:\PC\Zotero\Zotero_Elvis_Data\storage\ABC12345\paper.pdf
@@ -22,18 +22,16 @@ conversion. `source_exports`, filename maps, and converted-stage metadata are
 fallbacks for diagnostics and historical runs, not the preferred production
 entry point.
 
-The clean public CLI is:
+The public CLI is:
 
 ```powershell
-pdf-html-polish-clean --pdf <local-pdf> --output-dir <run-dir>
+pdf-html-polish --pdf <local-pdf> --output-dir <run-dir>
 ```
 
-Repeat `--pdf` for batches. The lower-level `pdf-html-polish --export-mode html`
-command remains available for diagnostics and for callers that intentionally
-want only the conversion stage. For new document processing, do not treat that
-first-stage output as final when the goal is the cleanest HTML. Use
-`pdf-html-polish-clean` and take the final audited HTML from the quality run's
-`final_html/` directory.
+Repeat `--pdf` for batches. There is no public partial-conversion production
+mode. For new document processing, the command always follows conversion with
+the repair-enabled quality loop. Take the final audited HTML from the quality
+run's `final_html/` directory.
 
 Zotero collection lookup and Zotero write-back are not part of the public CLI in
 this extraction. If a caller wants to process a Zotero library, it should resolve
@@ -45,7 +43,7 @@ Use this route for a new PDF when the goal is the maximum cleanup available from
 the accumulated repository rules and repair stages.
 
 ```powershell
-pdf-html-polish-clean `
+pdf-html-polish `
   --pdf "C:\PC\Zotero\Zotero_Elvis_Data\storage\ABC12345\paper.pdf" `
   --output-dir "review_runs\paper_YYYYMMDD_01" `
   --quality-output-dir "review_runs\paper_YYYYMMDD_01_quality" `
@@ -81,28 +79,27 @@ Important reports for deciding whether the document is clean enough:
 
 ## Production Conversion Sequence
 
-The clean CLI performs this sequence internally. Run these stages manually only
-when debugging a specific boundary.
+The public CLI performs this sequence internally. The first-stage converter is
+an internal implementation detail; do not expose it as a Zotero worker
+production mode.
 
 1. Select source PDFs.
 
    Use existing local PDF paths. Direct Zotero storage paths are valid. Keep the
    selected path list stable if the run will be used as a quality baseline.
 
-2. Start the PDF conversion stage.
+2. Start the clean PDF-to-polish pipeline.
 
    ```powershell
    pdf-html-polish `
      --pdf "C:\PC\Zotero\Zotero_Elvis_Data\storage\ABC12345\paper.pdf" `
      --pdf "C:\PC\Zotero\Zotero_Elvis_Data\storage\DEF67890\paper.pdf" `
      --output-dir "review_runs\pdf_to_polish_YYYYMMDD_01" `
-     --export-mode html
+     --quality-output-dir "review_runs\pdf_to_polish_YYYYMMDD_01_quality"
    ```
 
    Add `--zotero-overlay-dir <dir>` only when prebuilt Zotero/pdf.js
-   `*.overlays.json` files are part of the run. For normal production use,
-   prefer the equivalent `pdf-html-polish-clean` command so the quality loop is
-   not skipped.
+   `*.overlays.json` files are part of the run.
 
 3. `discover_source_pdfs` validates direct PDF paths.
 
@@ -162,9 +159,10 @@ when debugging a specific boundary.
 
 ## Mandatory Quality Loop After Production Conversion
 
-After a lower-level production PDF-to-polish conversion run, run the quality loop
-against the converted root. `pdf-html-polish-clean` does this automatically.
-This is the normal post-conversion check and repair path.
+The public `pdf-html-polish` command runs the quality loop automatically. If a
+developer manually creates a converted root while debugging an internal boundary,
+they must run the same quality loop against that converted root before using the
+HTML downstream.
 
 ```powershell
 python scripts\llm_quality_loop.py observe `
@@ -355,9 +353,9 @@ A run is production-ready when all of the following are true:
 
 - The input PDF list is stable and points to existing local PDFs, including
   direct Zotero storage paths when appropriate.
-- `pdf-html-polish-clean` completed, or the equivalent manual sequence
-  `pdf-html-polish --export-mode html` plus repair-enabled
-  `llm_quality_loop.py observe --converted-roots ...` completed.
+- `pdf-html-polish` completed, or the equivalent internal manual sequence
+  conversion stage plus repair-enabled `llm_quality_loop.py observe
+  --converted-roots ...` completed.
 - The primary conversion stage completed with `failed=0`.
 - The output root contains `_source_filename_map.csv` and article directories
   with `_pdf_html_polish_stages/01.en.raw.html` and

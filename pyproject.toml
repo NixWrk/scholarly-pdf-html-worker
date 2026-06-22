@@ -29,7 +29,7 @@ math = [
 ]
 
 [project.scripts]
-pdf-html-polish = "pdf_html_polish.cli.convert_file:main"
+pdf-html-polish = "pdf_html_polish.cli.clean_convert:main"
 pdf-html-polish-clean = "pdf_html_polish.cli.clean_convert:main"
 
 [tool.setuptools.packages.find]
