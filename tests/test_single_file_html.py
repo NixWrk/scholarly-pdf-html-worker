@@ -36,9 +36,12 @@ from pdf_html_polish.single_file_html import (
     _fix_orphaned_sup_tags,
     _fix_false_sup_citations_in_decimals_and_figure_labels,
     _fix_subscript_equation_spill,
+    _footnote_keywords,
+    _leading_footnote_number,
     _looks_affiliation_label_body,
     _looks_author_byline_front_matter,
     _looks_author_marker_ocr_candidate,
+    _looks_footnote_block,
     _inline_images_from_html_text,
     _link_figure_refs,
     _link_unlinked_numeric_superscripts_to_existing_refs,
@@ -131,6 +134,14 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _looks_affiliation_label_body is frontmatter_footnotes.looks_affiliation_label_body
     assert _looks_author_byline_front_matter is frontmatter_footnotes.looks_author_byline_front_matter
     assert _looks_author_marker_ocr_candidate is frontmatter_footnotes.looks_author_marker_ocr_candidate
+    assert _leading_footnote_number is frontmatter_footnotes.leading_footnote_number
+    assert _footnote_keywords is frontmatter_footnotes.footnote_keywords
+
+
+def test_single_file_footnote_block_wrapper_uses_float_caption_guards() -> None:
+    raw = "<p><sup>1</sup> Tensile strength is determined by materials testing methods for polymers.</p>"
+
+    assert _looks_footnote_block(raw)
 
 
 def test_inline_images_from_html_file() -> None:

@@ -247,6 +247,10 @@ The cleanup policy is deliberately conservative:
 - Moved the frontmatter affiliation-label body detector into
   `raw_html_polish/frontmatter_footnotes.py` with a compatibility alias in
   `single_file_html.py`.
+- Moved footnote detector helpers (`leading_footnote_number`,
+  `footnote_keywords`, and the callback-backed `looks_footnote_block`) into
+  `raw_html_polish/frontmatter_footnotes.py`; `single_file_html.py` keeps the
+  old private names where callers still use them.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

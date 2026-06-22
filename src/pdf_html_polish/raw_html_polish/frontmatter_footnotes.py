@@ -46,6 +46,14 @@ AFFILIATION_LABEL_OCR_PATTERN = re.compile(
     r")(?P<num>\d{1,2})\s*(?=[A-Z])",
     re.IGNORECASE,
 )
+FOOTNOTE_P_NODE_PATTERN = re.compile(
+    r'^(?P<open><p\b[^>]*>)(?P<body>[\s\S]*)(?P<close></p>)$',
+    re.IGNORECASE,
+)
+LEADING_PAGE_SPAN_PATTERN = re.compile(
+    r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)+',
+    re.IGNORECASE,
+)
 
 
 def unicode_capitalized_name_pair_count(text: str) -> int:
@@ -170,6 +178,65 @@ def looks_affiliation_label_body(body: str) -> bool:
     )
 
 
+def leading_footnote_number(raw: str) -> int | None:
+    match = FOOTNOTE_P_NODE_PATTERN.match(raw)
+    if match is None:
+        return None
+    body = match.group("body")
+    leading = LEADING_PAGE_SPAN_PATTERN.sub("", body)
+    leading = re.sub(r"^\s*<a\b[^>]*>\s*", "", leading, count=1, flags=re.IGNORECASE)
+    sup_match = re.match(
+        r"\s*<sup\b[^>]*>\s*(?:<a\b[^>]*>\s*)?(\d{1,2})(?:\s*</a>)?\s*</sup>(?=\s|\S)",
+        leading,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if sup_match is not None:
+        return int(sup_match.group(1))
+    text_match = re.match(r"^\s*(\d{1,2})(?=\s+[A-Z]|(?:https?://|www\.))", visible_text(leading), re.IGNORECASE)
+    if text_match is not None:
+        return int(text_match.group(1))
+    return None
+
+
+def footnote_keywords(text: str) -> set[str]:
+    text = re.sub(r"^\s*\d{1,2}\s+", "", text)
+    stop = {
+        "before",
+        "after",
+        "which",
+        "where",
+        "these",
+        "those",
+        "their",
+        "there",
+        "material",
+    }
+    words = [word.lower() for word in re.findall(r"[A-Za-z][A-Za-z-]{5,}", text)]
+    return {word for word in words[:12] if word not in stop}
+
+
+def looks_footnote_block(
+    raw: str,
+    *,
+    figure_caption_num_from_visible: Callable[[str], object | None],
+    table_caption_key_from_visible: Callable[[str], object | None],
+) -> bool:
+    number = leading_footnote_number(raw)
+    if number is None or number <= 0 or number > 20:
+        return False
+    text = visible_text(raw)
+    if re.search(r"(?:https?://|www\.)", text, re.IGNORECASE):
+        return len(text) <= 700
+    if len(text) < 35 or len(text) > 700:
+        return False
+    if figure_caption_num_from_visible(text) is not None or table_caption_key_from_visible(text) is not None:
+        return False
+    lower = text.lower()
+    if lower.startswith(("abstract", "introduction", "references", "bibliography")):
+        return False
+    return len(re.findall(r"[A-Za-z]{3,}", text)) >= 6
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -261,10 +328,15 @@ __all__ = [
     "AUTHOR_EXISTING_SUP_SPACE_PATTERN",
     "AUTHOR_MARKER_NUMBER_RUN_PATTERN",
     "AUTHOR_MARKER_OCR_SYMBOL_PATTERN",
+    "FOOTNOTE_P_NODE_PATTERN",
+    "LEADING_PAGE_SPAN_PATTERN",
     "SUPERSCRIPT_DIGIT_TRANSLATION",
+    "footnote_keywords",
+    "leading_footnote_number",
     "looks_affiliation_label_body",
     "looks_author_byline_front_matter",
     "looks_author_marker_ocr_candidate",
+    "looks_footnote_block",
     "normalize_front_matter_marker_numbers",
     "repair_affiliation_label_ocr_body",
     "repair_author_marker_ocr_body",

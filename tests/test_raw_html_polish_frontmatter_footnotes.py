@@ -1,7 +1,10 @@
 from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
+    footnote_keywords,
+    leading_footnote_number,
     looks_affiliation_label_body,
     looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate,
+    looks_footnote_block,
     normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,
@@ -49,6 +52,36 @@ def test_looks_author_marker_ocr_candidate_rejects_publication_dates() -> None:
 def test_looks_affiliation_label_body_detects_institution_text() -> None:
     assert looks_affiliation_label_body("1Department of Biomedical Engineering")
     assert not looks_affiliation_label_body("1Participants completed the trial")
+
+
+def test_leading_footnote_number_reads_sup_and_plain_prefixes() -> None:
+    assert leading_footnote_number('<p><span id="page-1"></span><sup>2</sup> Note text.</p>') == 2
+    assert leading_footnote_number("<p>3 https://example.org note.</p>") == 3
+    assert leading_footnote_number("<div><sup>1</sup> Not a paragraph.</div>") is None
+
+
+def test_footnote_keywords_uses_long_non_stop_words() -> None:
+    assert footnote_keywords("1 Tensile strength material appears before testing") == {
+        "tensile",
+        "strength",
+        "appears",
+        "testing",
+    }
+
+
+def test_looks_footnote_block_accepts_notes_and_rejects_captions() -> None:
+    raw = "<p><sup>1</sup> Tensile strength is determined by materials testing methods for polymers.</p>"
+
+    assert looks_footnote_block(
+        raw,
+        figure_caption_num_from_visible=lambda _text: None,
+        table_caption_key_from_visible=lambda _text: None,
+    )
+    assert not looks_footnote_block(
+        raw,
+        figure_caption_num_from_visible=lambda _text: 1,
+        table_caption_key_from_visible=lambda _text: None,
+    )
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:
