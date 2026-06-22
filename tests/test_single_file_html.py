@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
-from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup, url_anchors, url_text_repair
+from pdf_html_polish.raw_html_polish import doi_anchors, html_fragments, pre_cleanup, url_anchors, url_text_repair
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
     _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
@@ -15,6 +15,7 @@ from pdf_html_polish.single_file_html import (
     _AUTHOR_BYLINE_NAME_RE,
     _BACKSLASH_BEFORE_QUOTE_PATTERN,
     _BROKEN_URL_ANCHOR_LABEL_PATTERN,
+    _DOI_METADATA_BODY_BOUNDARY_PATTERN,
     _ESCAPED_INLINE_TAG_PATTERN,
     _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN,
     _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN,
@@ -25,8 +26,10 @@ from pdf_html_polish.single_file_html import (
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     _PAGE_HEADER_FOOTER_LINE_PATTERN,
+    _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN,
     _POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN,
     _REPEATED_PHRASE_PATTERN,
+    _REFERENCE_PARAGRAPH_ATTR_PATTERN,
     _RU_BARE_FIG_LEXEME_PATTERN,
     _SKIP_AUTOLINK_TAGS,
     _SLASH_PIPE_ARTIFACT_PATTERN,
@@ -89,6 +92,7 @@ from pdf_html_polish.single_file_html import (
     _refresh_inlined_data_urls_by_hint,
     _repair_broken_plain_url_text,
     _repair_broken_url_anchor_labels,
+    _repair_doi_anchor_swallowed_prose_tails,
     _repair_figure_ref_links_misclassified_as_refs,
     _repair_confirmed_front_matter_artifacts,
     _repair_confirmed_front_matter_email_artifacts_body,
@@ -96,6 +100,7 @@ from pdf_html_polish.single_file_html import (
     _repair_front_matter_page_anchor_markers,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
+    _repair_miswrapped_doi_anchor_labels,
     _repair_page_footnote_ref_links,
     _repair_prose_prefixed_url_anchor_tail,
     _repair_split_doi_head_tail_anchors,
@@ -118,6 +123,7 @@ from pdf_html_polish.single_file_html import (
     _split_zhu_affiliation_tail,
     _split_url_footnote_prose_tails,
     _split_trailing_prose_url,
+    _split_doi_metadata_body_paragraphs,
     _split_table_units_before_section_headings,
     _to_data_url,
     _unescape_inline_sup_sub,
@@ -185,6 +191,9 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _TRAILING_SPACED_BACKSLASH_PATTERN is pre_cleanup.TRAILING_SPACED_BACKSLASH_PATTERN
     assert _BACKSLASH_BEFORE_QUOTE_PATTERN is pre_cleanup.BACKSLASH_BEFORE_QUOTE_PATTERN
     assert _BROKEN_URL_ANCHOR_LABEL_PATTERN is url_text_repair.BROKEN_URL_ANCHOR_LABEL_PATTERN
+    assert _DOI_METADATA_BODY_BOUNDARY_PATTERN is doi_anchors.DOI_METADATA_BODY_BOUNDARY_PATTERN
+    assert _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN is doi_anchors.PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN
+    assert _REFERENCE_PARAGRAPH_ATTR_PATTERN is doi_anchors.REFERENCE_PARAGRAPH_ATTR_PATTERN
     assert _TRAILING_PROSE_URL_PATTERN is url_text_repair.TRAILING_PROSE_URL_PATTERN
     assert _INLINE_OR_DISPLAY_TEX_PATTERN is pre_cleanup.INLINE_OR_DISPLAY_TEX_PATTERN
     assert _RU_BARE_FIG_LEXEME_PATTERN is pre_cleanup.RU_BARE_FIG_LEXEME_PATTERN
@@ -232,6 +241,9 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _unescape_html_entities_repeated is url_anchors.unescape_html_entities_repeated
     assert _repair_broken_plain_url_text is url_text_repair.repair_broken_plain_url_text
     assert _repair_broken_url_anchor_labels is url_text_repair.repair_broken_url_anchor_labels
+    assert _repair_doi_anchor_swallowed_prose_tails is doi_anchors.repair_doi_anchor_swallowed_prose_tails
+    assert _repair_miswrapped_doi_anchor_labels is doi_anchors.repair_miswrapped_doi_anchor_labels
+    assert _split_doi_metadata_body_paragraphs is doi_anchors.split_doi_metadata_body_paragraphs
     assert _split_trailing_prose_url is url_text_repair.split_trailing_prose_url
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN

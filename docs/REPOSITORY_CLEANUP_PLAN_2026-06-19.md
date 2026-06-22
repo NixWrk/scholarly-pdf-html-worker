@@ -291,6 +291,10 @@ The cleanup policy is deliberately conservative:
   broken visible URL anchor label normalization now live in
   `raw_html_polish/url_text_repair.py`; `single_file_html.py` keeps the old
   private function names as aliases.
+- Split DOI anchor cleanup from URL anchors: miswrapped DOI labels, DOI anchors
+  with swallowed prose tails, and DOI metadata/body paragraph splitting now live
+  in `raw_html_polish/doi_anchors.py`; `single_file_html.py` keeps the old
+  private function/pattern names as aliases.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

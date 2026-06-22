@@ -66,6 +66,14 @@ from .raw_html_polish import (
     default_polish_phase_names,
     run_polish_phases,
 )
+from .raw_html_polish.doi_anchors import (
+    DOI_METADATA_BODY_BOUNDARY_PATTERN as _DOI_METADATA_BODY_BOUNDARY_PATTERN,
+    PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN as _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN,
+    REFERENCE_PARAGRAPH_ATTR_PATTERN as _REFERENCE_PARAGRAPH_ATTR_PATTERN,
+    repair_doi_anchor_swallowed_prose_tails as _repair_doi_anchor_swallowed_prose_tails,
+    repair_miswrapped_doi_anchor_labels as _repair_miswrapped_doi_anchor_labels,
+    split_doi_metadata_body_paragraphs as _split_doi_metadata_body_paragraphs,
+)
 from .raw_html_polish.html_fragments import (
     CLOSE_TAG_PATTERN as _CLOSE_TAG_PATTERN,
     DIV_TAG_PATTERN as _DIV_TAG_PATTERN,
@@ -283,44 +291,14 @@ from .text_cleanup import (
     REPEATED_PHRASE_PATTERN as _REPEATED_PHRASE_PATTERN,
     drop_repeated_phrases,
 )
-from .url_repair import split_url_and_trailing_punct as _split_url_and_trailing_punct
-
-
 _HEAD_CLOSE_PATTERN = re.compile(r"</head>", re.IGNORECASE)
 _BODY_PATTERN = re.compile(r"(<body\b[^>]*>)(.*?)(</body>)", re.IGNORECASE | re.DOTALL)
 _URL_PATTERN = re.compile(r"(?P<url>(?:https?://|www\.)[^\s<>\"]+)", re.IGNORECASE)
-_DOI_METADATA_BODY_BOUNDARY_PATTERN = re.compile(
-    r"(?P<doi>(?:\b(?:DOI|doi)\s*:\s*)?(?:"
-    r"<a\b(?=[^>]*\bhref\s*=\s*['\"]https?://(?:dx\.)?doi\.org/10\.)[^>]*>[\s\S]{0,400}?</a>"
-    r"|https?://(?:dx\.)?doi\.org/10\.[^\s<]+"
-    r"|10\.\d{4,9}/[^\s<]+"
-    r"))"
-    r"(?P<space>\s+)"
-    r"(?P<tail>(?:</?(?:span|em|i|b|strong)\b[^>]*>\s*)*"
-    r"(?:the|this|we|in|as|or|depicted|generated|lines)\b[\s\S]{20,})",
-    re.IGNORECASE,
-)
-_PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN = re.compile(
-    r"(?P<doi>(?:\b(?:DOI|doi)\s*:\s*)?(?:"
-    r"<a\b(?=[^>]*\bhref\s*=\s*['\"]https?://(?:dx\.)?doi\.org/10\.1371/journal\.pone\.[^'\"]+\.t\d+)"
-    r"[^>]*>[\s\S]{0,400}?</a>"
-    r"|https?://(?:dx\.)?doi\.org/10\.1371/journal\.pone\.[^\s<]+\.t\d+\b"
-    r"|10\.1371/journal\.pone\.[^\s<]+\.t\d+\b"
-    r"))"
-    r"(?P<space>\s+)"
-    r"(?P<tail>[\s\S]{35,})",
-    re.IGNORECASE,
-)
 _WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN = re.compile(
     r"^\s*\d{6,9},\s+\d{4},\s+[A-Za-z0-9]+,\s+Downloaded\s+from\s+"
     r"https://onlinelibrary\.wiley\.com/doi/\S+\s+by\s+[\s\S]{0,900}?"
     r"Wiley\s+Online\s+Library\b[\s\S]{0,900}?"
     r"(?:Terms\s+and\s+Conditions|Creative\s+Commons\s+License)\b",
-    re.IGNORECASE,
-)
-_REFERENCE_PARAGRAPH_ATTR_PATTERN = re.compile(
-    r"\b(?:id\s*=\s*['\"]ref-\d+|"
-    r"class\s*=\s*['\"][^'\"]*(?:z2m-reference|z2m-bibliography|references|bibliography))",
     re.IGNORECASE,
 )
 _JOURNAL_PAGE_FURNITURE_PATTERN = re.compile(
@@ -5617,130 +5595,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
 
 def _escape_html_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _repair_miswrapped_doi_anchor_labels(html: str) -> str:
-    """Move prose out of DOI anchors when OCR split the DOI after a slash."""
-    pattern = re.compile(
-        r'<a\b(?P<attrs>[^>]*)>'
-        r'(?P<body>(?:(?!</a>).)*?\bdoi:\s*10\.\d{4,9}/\s*)</a>'
-        r'\s*(?P<tail>[^\s<]+)',
-        re.IGNORECASE | re.DOTALL,
-    )
-
-    def _replace(match: re.Match[str]) -> str:
-        href = _extract_href_attr(match.group("attrs")) or ""
-        href_match = re.match(r"https?://(?:dx\.)?doi\.org/(?P<doi>10\..+)$", href, re.IGNORECASE)
-        if href_match is None:
-            return match.group(0)
-        href_doi = href_match.group("doi")
-        body = match.group("body")
-        doi_match = re.search(r"(?P<prefix>[\s\S]*?\bdoi:\s*)(?P<head>10\.\d{4,9}/)\s*$", body, re.IGNORECASE)
-        if doi_match is None:
-            return match.group(0)
-        full_doi = doi_match.group("head") + match.group("tail")
-        if full_doi.rstrip(".,;:") != href_doi.rstrip(".,;:"):
-            return match.group(0)
-        full_doi, trailing = _split_url_and_trailing_punct(full_doi)
-        attrs = match.group("attrs")
-        label = _escape_html_text(full_doi)
-        return f'{doi_match.group("prefix")}<a{attrs}>{label}</a>{trailing}'
-
-    return pattern.sub(_replace, html)
-
-
-def _repair_doi_anchor_swallowed_prose_tails(html: str) -> str:
-    """Move prose tails out of DOI anchors whose href swallowed paragraph text."""
-    if "doi.org/10." not in html.lower():
-        return html
-
-    broken_block_tail = re.compile(
-        r"(?P<open><p\b[^>]*>\s*(?:DOI\s*:\s*)?)"
-        r"<a\b[^>]*\bhref\s*=\s*(?P<quote>['\"])"
-        r"(?P<url>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
-        r"\s*</p>\s*<p>\s*(?P<head>[A-Za-z][A-Za-z-]*)\s*(?P=quote)[^>]*>"
-        r"(?P<label>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
-        r"\s+(?P=head)\s*</a>\s*(?P<rest>[\s\S]*?</p>)",
-        re.IGNORECASE,
-    )
-    href_tail = re.compile(
-        r"(?P<open><p\b[^>]*>\s*(?:DOI\s*:\s*)?)"
-        r"<a\b[^>]*\bhref\s*=\s*(?P<quote>['\"])"
-        r"(?P<url>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
-        r"(?P<tail>\s+[A-Za-z][A-Za-z-]{2,80})(?P=quote)[^>]*>"
-        r"(?P<label>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
-        r"(?P=tail)</a>\s*(?P<rest>[\s\S]*?)</p>",
-        re.IGNORECASE,
-    )
-
-    def _doi_paragraph(open_tag: str, url: str) -> str:
-        escaped_url = _escape_html_attr(url)
-        return f'{open_tag}<a href="{escaped_url}">{_escape_html_text(url)}</a></p>'
-
-    def _replace_broken_block(match: re.Match[str]) -> str:
-        url = match.group("url")
-        if match.group("label").rstrip(".,;:") != url.rstrip(".,;:"):
-            return match.group(0)
-        tail = f"{match.group('head')} {match.group('rest').lstrip()}"
-        return f"{_doi_paragraph(match.group('open'), url)}\n<p>{tail}"
-
-    def _replace_href_tail(match: re.Match[str]) -> str:
-        url = match.group("url")
-        if match.group("label").rstrip(".,;:") != url.rstrip(".,;:"):
-            return match.group(0)
-        tail = f"{match.group('tail').strip()} {match.group('rest').lstrip()}".rstrip()
-        tail_text = _visible_text(tail)
-        if len(tail_text) < 25 or len(tail_text.split()) < 4:
-            return match.group(0)
-        return f"{_doi_paragraph(match.group('open'), url)}\n<p>{tail}</p>"
-
-    previous = None
-    current = html
-    while previous != current:
-        previous = current
-        current = broken_block_tail.sub(_replace_broken_block, current)
-        current = href_tail.sub(_replace_href_tail, current)
-    return current
-
-
-def _split_doi_metadata_body_paragraphs(html: str) -> str:
-    """Split DOI/front-matter metadata from body prose when both share one paragraph."""
-    lowered = html.lower()
-    if "doi" not in lowered and "10." not in html:
-        return html
-
-    def replace(match: re.Match[str]) -> str:
-        open_tag = match.group("open")
-        if _REFERENCE_PARAGRAPH_ATTR_PATTERN.search(open_tag):
-            return match.group(0)
-
-        body = match.group("body")
-        boundary = _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN.search(body)
-        is_plos_table_doi = boundary is not None
-        if boundary is None:
-            boundary = _DOI_METADATA_BODY_BOUNDARY_PATTERN.search(body)
-        if boundary is None:
-            return match.group(0)
-        if _node_has_class(open_tag, "z2m-front-matter") and not is_plos_table_doi:
-            return match.group(0)
-
-        left_body = body[: boundary.end("doi")].rstrip()
-        right_body = body[boundary.start("tail") :].lstrip()
-        right_text = _visible_text(right_body)
-        if len(right_text) < 35 or len(right_text.split()) < 5:
-            return match.group(0)
-
-        prefix_text = _visible_text(body[: boundary.start("doi")])
-        if len(prefix_text) > 500 and not is_plos_table_doi and not re.search(
-            r"\b(?:fig(?:ure)?|table|doi|copyright|license|received|published|available|plos)\b",
-            prefix_text,
-            re.IGNORECASE,
-        ):
-            return match.group(0)
-
-        return f"{open_tag}{left_body}{match.group('close')}\n<p>{right_body}</p>"
-
-    return _P_BLOCK_PATTERN.sub(replace, html)
 
 
 _TABLE_UNIT_TRAILING_BODY_AFTER_TABLE_DOI_NOTE_PATTERN = re.compile(
