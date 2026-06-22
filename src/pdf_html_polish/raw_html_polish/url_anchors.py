@@ -8,6 +8,7 @@ from ..url_repair import (
     compact_visible_url_fragment,
     repair_broken_visible_url_text,
     split_url_and_trailing_punct,
+    split_url_fragment_text_prose_tail,
     starts_like_visible_url_fragment,
     strip_wrapping_url_quotes,
     url_fragment_compare_key,
@@ -58,6 +59,31 @@ PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN = re.compile(
     r'(?P<body>[^<]{1,900}?https?://[^<\s]{4,260})\s*</a>'
     r'(?P<tail>\s+[A-Za-z0-9][A-Za-z0-9._~:/?#\[\]{}@!$&\'()*+,;=%-]{1,320})'
     r'(?P<trailing>[.,;:)]?)',
+    re.IGNORECASE | re.DOTALL,
+)
+SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN = re.compile(
+    r'(?P<scheme>https?://)\s*'
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[^<]{1,260})</a>'
+    r'(?P<mid>(?:\s*/\s*[A-Za-z0-9._~:/?#\[\]@!$&\'*+,;=%-]*){0,8}\s*)'
+    r'(?:<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*(?P<next_quote>["\'])(?P<next_href>https?://[^"\']+)'
+    r'(?P=next_quote)[^>]*)>(?P<next_body>[^<]{1,260})</a>'
+    r'(?P<after>(?:\s*/\s*[A-Za-z0-9._~:/?#\[\]@!$&\'*+,;=%-]*){0,8}\s*))?',
+    re.IGNORECASE | re.DOTALL,
+)
+SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN = re.compile(
+    r'(?P<scheme>https?://)\s*'
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[^<]{1,260})</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+URL_FRAGMENT_TEXT_CHUNK_PATTERN = re.compile(
+    r'\s*(?P<text>[/#?&=._~:;,%A-Za-z0-9!$\'()*+\[\]{}-]+(?:\s+[/#?&=._~:;,%A-Za-z0-9!$\'()*+\[\]{}-]+){0,4})',
+    re.IGNORECASE,
+)
+URL_FRAGMENT_ANCHOR_CHUNK_PATTERN = re.compile(
+    r'\s*<a\b(?P<attrs>[^>]*\bhref\s*=\s*(["\'])(?P<href>https?://[^"\']+)\2[^>]*)>'
+    r'(?P<body>[^<]{1,260})</a>',
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -271,17 +297,139 @@ def repair_prose_prefixed_url_anchor_tail(html: str) -> str:
     return current
 
 
+def repair_split_scheme_url_anchor_runs(html: str) -> str:
+    """Join ``https://`` plus a run of same-href anchors/path fragments."""
+    out_parts: list[str] = []
+    cursor = 0
+    search_pos = 0
+    repairs = 0
+
+    while True:
+        match = SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN.search(html, search_pos)
+        if match is None:
+            break
+
+        href = html_lib.unescape(strip_wrapping_url_quotes(match.group("href")))
+        href_key = url_fragment_compare_key(href)
+        if not href_key:
+            search_pos = match.end()
+            continue
+
+        pos = match.end()
+        visible_parts = [f"{match.group('scheme')}{visible_text(match.group('body'))}"]
+        best_end: int | None = None
+        best_trailing = ""
+        consumed_chunks = 0
+        while consumed_chunks < 32 and pos < len(html):
+            anchor = URL_FRAGMENT_ANCHOR_CHUNK_PATTERN.match(html, pos)
+            if anchor is not None:
+                anchor_href = unescape_html_entities_repeated(strip_wrapping_url_quotes(anchor.group("href")))
+                if url_fragment_compare_key(anchor_href) != href_key:
+                    break
+                visible_parts.append(visible_text(anchor.group("body")))
+                pos = anchor.end()
+                consumed_chunks += 1
+            else:
+                chunk = URL_FRAGMENT_TEXT_CHUNK_PATTERN.match(html, pos)
+                if chunk is None:
+                    break
+                text, consumed_text_len = split_url_fragment_text_prose_tail(chunk.group("text"))
+                if not text:
+                    break
+                stripped = text.lstrip()
+                previous_piece = visible_parts[-1].rstrip() if visible_parts else ""
+                query_continuation = ("?" in "".join(visible_parts) or "&" in "".join(visible_parts)) and bool(
+                    re.match(r"[A-Za-z0-9+%_.=&-]", stripped)
+                )
+                domain_tail_continuation = previous_piece.endswith(".") and bool(re.match(r"[A-Za-z0-9]", stripped))
+                if not (
+                    stripped.startswith(("/", "#", "?", "&"))
+                    or query_continuation
+                    or domain_tail_continuation
+                ):
+                    break
+                visible_parts.append(text)
+                pos = chunk.start("text") + consumed_text_len
+                consumed_chunks += 1
+
+            candidate = repair_broken_visible_url_text("".join(visible_parts))
+            candidate_url, candidate_trailing = split_url_and_trailing_punct(candidate)
+            candidate_key = url_fragment_compare_key(candidate_url)
+            if url_fragment_keys_match_allowing_lost_hyphens(candidate_key, href_key) or (
+                candidate_key.endswith("=") or href_key.endswith("=")
+            ) and url_fragment_keys_match_allowing_lost_hyphens(candidate_key.rstrip("="), href_key.rstrip("=")):
+                best_end = pos
+                best_trailing = candidate_trailing
+                break
+
+        if best_end is None:
+            search_pos = match.end()
+            continue
+
+        out_parts.append(html[cursor:match.start()])
+        attrs = replace_href_attr_literal(match.group("attrs"), href)
+        out_parts.append(f'<a{attrs}>{_escape_html_text(href)}</a>{best_trailing}')
+        cursor = best_end
+        search_pos = best_end
+        repairs += 1
+
+    if repairs == 0:
+        return html
+    out_parts.append(html[cursor:])
+    return "".join(out_parts)
+
+
+def repair_split_scheme_url_anchor_fragments(html: str) -> str:
+    """Join ``https://`` text with same-href URL anchors split across path fragments."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = unescape_html_entities_repeated(strip_wrapping_url_quotes(match.group("href")))
+        next_href = match.group("next_href")
+        next_body = ""
+        if next_href is not None:
+            next_href = unescape_html_entities_repeated(strip_wrapping_url_quotes(next_href))
+            if url_fragment_compare_key(next_href) != url_fragment_compare_key(href):
+                return match.group(0)
+            next_body = visible_text(match.group("next_body") or "")
+
+        candidate = (
+            f"{match.group('scheme')}{visible_text(match.group('body'))}"
+            f"{match.group('mid') or ''}{next_body}{match.group('after') or ''}"
+        )
+        candidate = repair_broken_visible_url_text(candidate)
+        if url_fragment_compare_key(candidate) != url_fragment_compare_key(href):
+            return match.group(0)
+        consumed_tail = match.group("after") if next_href is not None else match.group("mid")
+        suffix = " " if (consumed_tail or "").endswith(" ") else ""
+        attrs = replace_href_attr_literal(match.group("attrs"), href)
+        return f'<a{attrs}>{_escape_html_text(href)}</a>{suffix}'
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = repair_split_scheme_url_anchor_runs(current)
+        current = SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN.sub(replace, current)
+    return current
+
+
 __all__ = [
     "PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN",
+    "SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN",
+    "SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN",
     "SPLIT_VISIBLE_URL_ANCHOR_PATTERN",
     "SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN",
     "SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN",
     "SPACED_PROTOCOL_HREF_ATTR_PATTERN",
     "SPACED_PROTOCOL_URL_ANCHOR_PATTERN",
     "URL_ANCHOR_TEXT_PATTERN",
+    "URL_FRAGMENT_ANCHOR_CHUNK_PATTERN",
+    "URL_FRAGMENT_TEXT_CHUNK_PATTERN",
     "consume_compact_prefix",
     "normalize_double_escaped_url_anchor_text",
     "repair_prose_prefixed_url_anchor_tail",
+    "repair_split_scheme_url_anchor_fragments",
+    "repair_split_scheme_url_anchor_runs",
     "repair_split_visible_url_anchors",
     "repair_split_url_anchor_block_tail",
     "repair_split_url_anchor_domain_tail",

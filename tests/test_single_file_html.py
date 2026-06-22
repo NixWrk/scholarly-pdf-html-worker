@@ -25,6 +25,8 @@ from pdf_html_polish.single_file_html import (
     _SKIP_AUTOLINK_TAGS,
     _SLASH_PIPE_ARTIFACT_PATTERN,
     _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN,
+    _SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN,
+    _SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN,
     _SPACED_ESCAPED_INLINE_TAG_PATTERN,
     _SPACED_INLINE_TAG_PATTERN,
     _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
@@ -36,6 +38,8 @@ from pdf_html_polish.single_file_html import (
     _TEXT_NODE_REPAIR_SKIP_TAGS,
     _TRAILING_SPACED_BACKSLASH_PATTERN,
     _URL_ANCHOR_TEXT_PATTERN,
+    _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN,
+    _URL_FRAGMENT_TEXT_CHUNK_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _cleanup_marker_escape_artifacts,
@@ -76,6 +80,8 @@ from pdf_html_polish.single_file_html import (
     _repair_prose_prefixed_url_anchor_tail,
     _repair_sevick_muraca_author_marker,
     _repair_sentence_breaks_around_float_units,
+    _repair_split_scheme_url_anchor_fragments,
+    _repair_split_scheme_url_anchor_runs,
     _repair_split_visible_url_anchors,
     _repair_split_url_anchor_block_tail,
     _repair_split_url_anchor_domain_tail,
@@ -161,13 +167,19 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _SPACED_PROTOCOL_HREF_ATTR_PATTERN is url_anchors.SPACED_PROTOCOL_HREF_ATTR_PATTERN
     assert _SPACED_PROTOCOL_URL_ANCHOR_PATTERN is url_anchors.SPACED_PROTOCOL_URL_ANCHOR_PATTERN
     assert _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN is url_anchors.PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN
+    assert _SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN is url_anchors.SPLIT_SCHEME_URL_ANCHOR_FRAGMENTS_PATTERN
+    assert _SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN is url_anchors.SPLIT_SCHEME_URL_ANCHOR_HEAD_PATTERN
     assert _SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN
     assert _SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN is url_anchors.SPLIT_URL_ANCHOR_DOMAIN_TAIL_PATTERN
     assert _SPLIT_VISIBLE_URL_ANCHOR_PATTERN is url_anchors.SPLIT_VISIBLE_URL_ANCHOR_PATTERN
     assert _URL_ANCHOR_TEXT_PATTERN is url_anchors.URL_ANCHOR_TEXT_PATTERN
+    assert _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_ANCHOR_CHUNK_PATTERN
+    assert _URL_FRAGMENT_TEXT_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_TEXT_CHUNK_PATTERN
     assert _consume_compact_prefix is url_anchors.consume_compact_prefix
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
     assert _repair_prose_prefixed_url_anchor_tail is url_anchors.repair_prose_prefixed_url_anchor_tail
+    assert _repair_split_scheme_url_anchor_fragments is url_anchors.repair_split_scheme_url_anchor_fragments
+    assert _repair_split_scheme_url_anchor_runs is url_anchors.repair_split_scheme_url_anchor_runs
     assert _repair_split_visible_url_anchors is url_anchors.repair_split_visible_url_anchors
     assert _repair_split_url_anchor_block_tail is url_anchors.repair_split_url_anchor_block_tail
     assert _repair_split_url_anchor_domain_tail is url_anchors.repair_split_url_anchor_domain_tail
