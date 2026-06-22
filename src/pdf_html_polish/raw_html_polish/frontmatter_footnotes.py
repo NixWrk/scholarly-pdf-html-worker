@@ -58,6 +58,10 @@ P_BLOCK_PATTERN = re.compile(
     r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
     re.IGNORECASE,
 )
+P_OR_H_BLOCK_PATTERN = re.compile(
+    r'(?P<open><(?P<tag>p|h[1-6])\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></(?P=tag)>)',
+    re.IGNORECASE,
+)
 LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>([\s\S]*?)</li>", re.IGNORECASE)
 SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 PAGE_ANCHOR_PATTERN = re.compile(
@@ -477,6 +481,34 @@ def repair_front_matter_marker_ocr(
     return LI_BLOCK_PATTERN.sub(repair_li, repaired)
 
 
+def mark_front_matter_paragraphs(
+    html: str,
+    *,
+    looks_front_matter_block: Callable[[str], bool],
+    max_front_matter_blocks: int = 40,
+) -> str:
+    block_index = 0
+
+    def mark(match: re.Match[str]) -> str:
+        nonlocal block_index
+        block_index += 1
+        open_tag = match.group("open")
+        open_match = re.match(r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>", open_tag, re.IGNORECASE)
+        if open_match is None:
+            return match.group(0)
+        tag_name = open_match.group("tag")
+        attrs = open_match.group("attrs") or ""
+        raw = match.group(0)
+        if block_index > max_front_matter_blocks:
+            return raw
+        if not looks_front_matter_block(raw):
+            return raw
+        marked_attrs = append_class_to_attrs(attrs, "z2m-front-matter")
+        return f"<{tag_name}{marked_attrs}>{match.group('body')}{match.group('close')}"
+
+    return P_OR_H_BLOCK_PATTERN.sub(mark, html)
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -574,6 +606,7 @@ __all__ = [
     "LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN",
     "LI_BLOCK_PATTERN",
     "P_BLOCK_PATTERN",
+    "P_OR_H_BLOCK_PATTERN",
     "FOOTNOTE_CLASS_PATTERN",
     "PAGE_ANCHOR_PATTERN",
     "PAGE_ID_PATTERN",
@@ -585,6 +618,7 @@ __all__ = [
     "looks_author_byline_front_matter",
     "looks_author_marker_ocr_candidate",
     "looks_footnote_block",
+    "mark_front_matter_paragraphs",
     "mark_footnote_paragraphs_and_refs",
     "normalize_front_matter_marker_numbers",
     "repair_affiliation_label_ocr_body",

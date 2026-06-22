@@ -5,6 +5,7 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate,
     looks_footnote_block,
+    mark_front_matter_paragraphs,
     mark_footnote_paragraphs_and_refs,
     normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body,
@@ -196,6 +197,30 @@ def test_repair_front_matter_marker_ocr_repairs_affiliation_list_items() -> None
     )
 
     assert "<li><sup>1</sup>Department of A. <sup>2</sup>University of B</li>" in repaired
+
+
+def test_mark_front_matter_paragraphs_uses_callback() -> None:
+    html = "<p>Keywords: mobility</p><p>Body paragraph.</p>"
+
+    marked = mark_front_matter_paragraphs(
+        html,
+        looks_front_matter_block=lambda raw: "Keywords:" in raw,
+    )
+
+    assert '<p class="z2m-front-matter">Keywords: mobility</p>' in marked
+    assert "<p>Body paragraph.</p>" in marked
+
+
+def test_mark_front_matter_paragraphs_respects_block_limit() -> None:
+    html = "".join(f"<p>Front {idx}</p>" for idx in range(42))
+
+    marked = mark_front_matter_paragraphs(
+        html,
+        looks_front_matter_block=lambda _raw: True,
+        max_front_matter_blocks=1,
+    )
+
+    assert marked.count("z2m-front-matter") == 1
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:

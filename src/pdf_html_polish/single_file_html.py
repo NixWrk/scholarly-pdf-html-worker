@@ -153,6 +153,7 @@ from .raw_html_polish.frontmatter_footnotes import (
     looks_author_byline_front_matter as _looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
     looks_footnote_block as _looks_footnote_block_impl,
+    mark_front_matter_paragraphs as _mark_front_matter_paragraphs_impl,
     mark_footnote_paragraphs_and_refs as _mark_footnote_paragraphs_and_refs_impl,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
@@ -3319,27 +3320,10 @@ def _looks_front_matter_block(raw: str) -> bool:
 
 
 def _mark_front_matter_paragraphs(html: str) -> str:
-    block_index = 0
-    max_front_matter_blocks = 40
-
-    def _mark(match: re.Match[str]) -> str:
-        nonlocal block_index
-        block_index += 1
-        open_tag = match.group("open")
-        open_match = re.match(r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>", open_tag, re.IGNORECASE)
-        if open_match is None:
-            return match.group(0)
-        tag_name = open_match.group("tag")
-        attrs = open_match.group("attrs") or ""
-        raw = match.group(0)
-        if block_index > max_front_matter_blocks:
-            return raw
-        if not _looks_front_matter_block(raw):
-            return raw
-        marked_attrs = _append_class_to_attrs(attrs, "z2m-front-matter")
-        return f"<{tag_name}{marked_attrs}>{match.group('body')}{match.group('close')}"
-
-    return _P_OR_H_BLOCK_PATTERN.sub(_mark, html)
+    return _mark_front_matter_paragraphs_impl(
+        html,
+        looks_front_matter_block=_looks_front_matter_block,
+    )
 
 
 def _repair_front_matter_page_anchor_markers(body: str) -> str:
