@@ -207,6 +207,8 @@ from .raw_html_polish.references_links import (
     PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN as _PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN,
     PAGE_ANCHOR_BRACKET_REF_NUM_STRIP_PATTERN as _PAGE_ANCHOR_BRACKET_REF_NUM_STRIP_PATTERN,
     PAGE_ANCHOR_BRACKET_REF_TRAILING_PUNCT_PATTERN as _PAGE_ANCHOR_BRACKET_REF_TRAILING_PUNCT_PATTERN,
+    REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN as _REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN,
+    REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN as _REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN,
     REFERENCE_LINE_PREFIX_ONLY_PATTERN as _REFERENCE_LINE_PREFIX_ONLY_PATTERN,
     VISIBLE_REF_NUM_PATTERN as _VISIBLE_REF_NUM_PATTERN,
     line_prefixed_reference_number_match as _line_prefixed_reference_number_match,
@@ -223,6 +225,8 @@ from .raw_html_polish.references_links import (
     strip_leading_reference_line_number_pairs_in_list_items as _strip_leading_reference_line_number_pairs_in_list_items,
     strip_page_anchor_bracket_ref_num_prefix as _strip_page_anchor_bracket_ref_num_prefix,
     strip_reference_visible_number as _strip_reference_visible_number,
+    unwrap_reference_list_page_links as _unwrap_reference_list_page_links,
+    unwrap_reference_list_page_number_links as _unwrap_reference_list_page_number_links,
 )
 from .raw_html_polish.presentation import (
     cleanup_empty_html_blocks as _cleanup_empty_html_blocks,
@@ -615,22 +619,6 @@ _NUMERIC_PAGE_ANCHOR_PATTERN = re.compile(
 _REF_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#ref-(?P<num>\d+)["\'][^>]*)>'
     r'(?P<body>[\s\S]*?)</a>',
-    re.IGNORECASE,
-)
-_REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN = re.compile(
-    r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
-    r'(?:(?:<(?:b|strong|i|em)\b[^>]*>\s*)*)?)'
-    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
-    r'(?P<body>\s*(?:<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*)?\d{1,4}\.?\s*(?:</span>)?\s*)'
-    r'</a>',
-    re.IGNORECASE,
-)
-_REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN = re.compile(
-    r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
-    r'<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*\d{1,4}\.?\s*</span>\s*)'
-    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
-    r'(?P<body>\s*\d{1,4}\.?\s*)'
-    r'</a>\s*',
     re.IGNORECASE,
 )
 _AUTHOR_YEAR_CITATION_TEXT_PATTERN = re.compile(
@@ -11594,54 +11582,6 @@ def _repair_ref_links_with_leading_closing_punctuation(html: str) -> str:
         )
 
     return _REF_ANCHOR_PATTERN.sub(_replace, html)
-
-
-def _unwrap_reference_list_page_number_links(html: str) -> str:
-    """Remove Marker page links from leading bibliography item numbers."""
-    if "#page-" not in html or "z2m-ref-num" not in html:
-        return html
-
-    def _replace(match: re.Match[str]) -> str:
-        label = re.sub(r"\s+", " ", _visible_text(match.group("body"))).strip()
-        if label != f"{match.group('num')}." and label != match.group("num"):
-            return match.group(0)
-        return f"{match.group('open')}{match.group('body')}"
-
-    repaired = _REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN.sub(_replace, html)
-
-    def _drop_duplicate(match: re.Match[str]) -> str:
-        label = re.sub(r"\s+", " ", _visible_text(match.group("body"))).strip()
-        if label != f"{match.group('num')}." and label != match.group("num"):
-            return match.group(0)
-        return match.group("open")
-
-    return _REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN.sub(_drop_duplicate, repaired)
-
-
-def _unwrap_reference_list_page_links(html: str) -> str:
-    """Remove residual PDF page links inside normalized bibliography entries."""
-    if "#page-" not in html or "ref-" not in html:
-        return html
-
-    def _unwrap_anchors(fragment: str) -> str:
-        return _PAGE_ANCHOR_PATTERN.sub(lambda match: match.group("body"), fragment)
-
-    def _replace_li(match: re.Match[str]) -> str:
-        attrs = match.group(1) or ""
-        body = match.group(2) or ""
-        if _LI_ID_PATTERN.search(attrs) is None:
-            return match.group(0)
-        return f"<li{attrs}>{_unwrap_anchors(body)}</li>"
-
-    repaired = _LI_BLOCK_PATTERN.sub(_replace_li, html)
-
-    def _replace_p(match: re.Match[str]) -> str:
-        open_tag = match.group("open")
-        if _LI_ID_PATTERN.search(open_tag) is None:
-            return match.group(0)
-        return f'{open_tag}{_unwrap_anchors(match.group("body"))}{match.group("close")}'
-
-    return _P_BLOCK_PATTERN.sub(_replace_p, repaired)
 
 
 def _unwrap_page_reference_ref_links(html: str, language_policy: PolishLanguagePolicy) -> str:

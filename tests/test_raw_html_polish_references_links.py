@@ -9,6 +9,8 @@ from pdf_html_polish.raw_html_polish.references_links import (
     strip_leading_reference_line_number_pair,
     strip_leading_reference_line_number_pairs_in_list_items,
     strip_reference_visible_number,
+    unwrap_reference_list_page_links,
+    unwrap_reference_list_page_number_links,
 )
 
 
@@ -59,6 +61,46 @@ def test_reference_number_artifact_stripping() -> None:
     assert strip_embedded_reference_number_artifacts("Journal 12. of tests") == "Journal of tests"
 
 
+def test_unwrap_reference_list_page_number_links_keeps_normalized_ref_number() -> None:
+    html = (
+        '<ol><li id="ref-3">'
+        '<a href="#page-12"><span class="z2m-ref-num">3.</span></a> Smith A.'
+        "</li></ol>"
+    )
+
+    assert unwrap_reference_list_page_number_links(html) == (
+        '<ol><li id="ref-3"><span class="z2m-ref-num">3.</span> Smith A.</li></ol>'
+    )
+
+
+def test_unwrap_reference_list_page_number_links_drops_duplicate_page_number() -> None:
+    html = (
+        '<ol><li id="ref-3">'
+        '<span class="z2m-ref-num">3.</span> <a href="#page-12">3.</a> Smith A.'
+        "</li></ol>"
+    )
+
+    assert unwrap_reference_list_page_number_links(html) == (
+        '<ol><li id="ref-3"><span class="z2m-ref-num">3.</span> Smith A.</li></ol>'
+    )
+
+
+def test_unwrap_reference_list_page_links_only_changes_reference_nodes() -> None:
+    html = (
+        '<ol><li id="ref-2">Smith <a href="#page-10">101</a> Journal.</li>'
+        '<li>Other <a href="#page-11">102</a></li></ol>'
+        '<p id="ref-3">Doe <a href="#page-12">103</a> Book.</p>'
+    )
+
+    assert unwrap_reference_list_page_links(html) == (
+        '<ol><li id="ref-2">Smith 101 Journal.</li>'
+        '<li>Other <a href="#page-11">102</a></li></ol>'
+        '<p id="ref-3">Doe 103 Book.</p>'
+    )
+
+
 def test_single_file_html_keeps_legacy_private_reference_aliases() -> None:
     assert single_file_html._reference_visible_number is reference_visible_number
     assert single_file_html._references_heading_search is references_heading_search
+    assert single_file_html._unwrap_reference_list_page_links is unwrap_reference_list_page_links
+    assert single_file_html._unwrap_reference_list_page_number_links is unwrap_reference_list_page_number_links

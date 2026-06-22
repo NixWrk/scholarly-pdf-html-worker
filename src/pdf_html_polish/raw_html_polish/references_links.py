@@ -5,8 +5,36 @@ from __future__ import annotations
 import re
 
 from ..html_references import NOTES_AND_REFERENCES_HEADING_PATTERN, REFERENCES_HEADING_PATTERN
+from .html_fragments import visible_text
 
 
+LI_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])ref-(\d+)["\']', re.IGNORECASE)
+LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.IGNORECASE | re.DOTALL)
+PAGE_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
+    r'(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
+P_BLOCK_PATTERN = re.compile(
+    r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
+    re.IGNORECASE,
+)
+REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN = re.compile(
+    r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
+    r'(?:(?:<(?:b|strong|i|em)\b[^>]*>\s*)*)?)'
+    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
+    r'(?P<body>\s*(?:<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*)?\d{1,4}\.?\s*(?:</span>)?\s*)'
+    r'</a>',
+    re.IGNORECASE,
+)
+REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN = re.compile(
+    r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
+    r'<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*\d{1,4}\.?\s*</span>\s*)'
+    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
+    r'(?P<body>\s*\d{1,4}\.?\s*)'
+    r'</a>\s*',
+    re.IGNORECASE,
+)
 PAGE_ANCHOR_BRACKET_REF_NUM_STRIP_PATTERN = re.compile(
     r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)*'
     r'(?:'
@@ -54,7 +82,6 @@ REFERENCE_LINE_PREFIX_ONLY_PATTERN = re.compile(
     r'(?=(?:<[^>]+>\s*)*\S)',
     re.IGNORECASE,
 )
-LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.IGNORECASE | re.DOTALL)
 
 
 def references_heading_search(html: str, *, allow_notes_heading: bool = False) -> re.Match[str] | None:
@@ -286,3 +313,51 @@ def strip_embedded_reference_number_artifacts(body: str) -> str:
         count=1,
         flags=re.IGNORECASE,
     )
+
+
+def unwrap_reference_list_page_number_links(html: str) -> str:
+    """Remove Marker page links from leading bibliography item numbers."""
+    if "#page-" not in html or "z2m-ref-num" not in html:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        label = re.sub(r"\s+", " ", visible_text(match.group("body"))).strip()
+        if label != f"{match.group('num')}." and label != match.group("num"):
+            return match.group(0)
+        return f"{match.group('open')}{match.group('body')}"
+
+    repaired = REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN.sub(replace, html)
+
+    def drop_duplicate(match: re.Match[str]) -> str:
+        label = re.sub(r"\s+", " ", visible_text(match.group("body"))).strip()
+        if label != f"{match.group('num')}." and label != match.group("num"):
+            return match.group(0)
+        return match.group("open")
+
+    return REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN.sub(drop_duplicate, repaired)
+
+
+def unwrap_reference_list_page_links(html: str) -> str:
+    """Remove residual PDF page links inside normalized bibliography entries."""
+    if "#page-" not in html or "ref-" not in html:
+        return html
+
+    def unwrap_anchors(fragment: str) -> str:
+        return PAGE_ANCHOR_PATTERN.sub(lambda match: match.group("body"), fragment)
+
+    def replace_li(match: re.Match[str]) -> str:
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        if LI_ID_PATTERN.search(attrs) is None:
+            return match.group(0)
+        return f"<li{attrs}>{unwrap_anchors(body)}</li>"
+
+    repaired = LI_BLOCK_PATTERN.sub(replace_li, html)
+
+    def replace_p(match: re.Match[str]) -> str:
+        open_tag = match.group("open")
+        if LI_ID_PATTERN.search(open_tag) is None:
+            return match.group(0)
+        return f'{open_tag}{unwrap_anchors(match.group("body"))}{match.group("close")}'
+
+    return P_BLOCK_PATTERN.sub(replace_p, repaired)

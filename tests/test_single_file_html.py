@@ -5,7 +5,15 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
-from pdf_html_polish.raw_html_polish import doi_anchors, html_fragments, page_furniture, pre_cleanup, url_anchors, url_text_repair
+from pdf_html_polish.raw_html_polish import (
+    doi_anchors,
+    html_fragments,
+    page_furniture,
+    pre_cleanup,
+    references_links,
+    url_anchors,
+    url_text_repair,
+)
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
     _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
@@ -34,6 +42,8 @@ from pdf_html_polish.single_file_html import (
     _POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN,
     _PUBLISHER_CHROME_BLOCK_PATTERNS,
     _REPEATED_PHRASE_PATTERN,
+    _REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN,
+    _REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN,
     _REFERENCE_PARAGRAPH_ATTR_PATTERN,
     _RU_BARE_FIG_LEXEME_PATTERN,
     _SKIP_AUTOLINK_TAGS,
@@ -144,6 +154,8 @@ from pdf_html_polish.single_file_html import (
     _unescape_html_entities_repeated,
     _unwrap_nested_fig_links,
     _unwrap_nested_same_href_internal_links,
+    _unwrap_reference_list_page_links,
+    _unwrap_reference_list_page_number_links,
     _strip_protocol_sentinel_leaks,
     _strip_pdf_running_header_prefix_from_body,
     _strip_plain_visible_prefix_from_body,
@@ -221,6 +233,8 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _PDF_RUNNING_HEADER_PREFIX_PATTERNS is page_furniture.PDF_RUNNING_HEADER_PREFIX_PATTERNS
     assert _PUBLISHER_CHROME_BLOCK_PATTERNS is page_furniture.PUBLISHER_CHROME_BLOCK_PATTERNS
     assert _WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN is page_furniture.WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN
+    assert _REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN is references_links.REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN
+    assert _REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN is references_links.REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN
     assert _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.AUX_PROTOCOL_SENTINEL_LEAK_PATTERN
     assert _fix_common_mojibake is pre_cleanup.fix_common_mojibake
     assert _cleanup_marker_escape_artifacts is pre_cleanup.cleanup_marker_escape_artifacts
@@ -274,6 +288,8 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _repair_miswrapped_doi_anchor_labels is doi_anchors.repair_miswrapped_doi_anchor_labels
     assert _split_doi_metadata_body_paragraphs is doi_anchors.split_doi_metadata_body_paragraphs
     assert _split_trailing_prose_url is url_text_repair.split_trailing_prose_url
+    assert _unwrap_reference_list_page_links is references_links.unwrap_reference_list_page_links
+    assert _unwrap_reference_list_page_number_links is references_links.unwrap_reference_list_page_number_links
     assert _strip_leading_pdf_line_number_from_body is page_furniture.strip_leading_pdf_line_number_from_body
     assert _strip_pdf_running_header_prefix_from_body is page_furniture.strip_pdf_running_header_prefix_from_body
     assert _strip_plain_visible_prefix_from_body is page_furniture.strip_plain_visible_prefix_from_body

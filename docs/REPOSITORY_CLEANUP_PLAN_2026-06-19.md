@@ -115,9 +115,11 @@ The cleanup policy is deliberately conservative:
    despite passing the gate.
 3. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
    tuple left in `single_file_html.py` after the pre-cleanup extraction.
-4. Start the frontmatter/footnote cluster in small slices, using
-   `raw_html_polish/frontmatter_footnotes.py` as the package owner.
-5. Preserve old private aliases in `single_file_html.py` while tests still
+4. Continue reference/internal link cleanup in small slices, using
+   `raw_html_polish/references_links.py` for page/ref unwrap and retarget
+   helpers before touching the heavier author-year/citation families.
+5. Split tests next to the package modules that now own behavior, while
+   preserving old private aliases in `single_file_html.py` as long as tests
    import them.
 6. After the `single_file_html.py` polish pass, run polish/audit parity before
    the full PDF-to-polish HTML pipeline.
@@ -300,6 +302,11 @@ The cleanup policy is deliberately conservative:
   running-header/line-number strip helpers into `raw_html_polish/page_furniture.py`;
   `single_file_html.py` keeps the old private names as aliases for float/sentence
   callers.
+- Started reference/internal link cleanup by moving reference-list page-number
+  and residual page-link unwrapping into `raw_html_polish/references_links.py`
+  with direct owner tests; retarget, explicit page-reference, stale numeric,
+  semantic internal-link, and author-year helpers remain in `single_file_html.py`
+  for later small slices.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target
