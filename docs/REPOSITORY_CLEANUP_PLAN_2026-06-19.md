@@ -295,6 +295,11 @@ The cleanup policy is deliberately conservative:
   with swallowed prose tails, and DOI metadata/body paragraph splitting now live
   in `raw_html_polish/doi_anchors.py`; `single_file_html.py` keeps the old
   private function/pattern names as aliases.
+- Started the page furniture cleanup by moving page header/footer removal,
+  repeated running furniture detection, publisher chrome page dropping, and PDF
+  running-header/line-number strip helpers into `raw_html_polish/page_furniture.py`;
+  `single_file_html.py` keeps the old private names as aliases for float/sentence
+  callers.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

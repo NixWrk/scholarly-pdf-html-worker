@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
-from pdf_html_polish.raw_html_polish import doi_anchors, html_fragments, pre_cleanup, url_anchors, url_text_repair
+from pdf_html_polish.raw_html_polish import doi_anchors, html_fragments, page_furniture, pre_cleanup, url_anchors, url_text_repair
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
     _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
@@ -22,12 +22,17 @@ from pdf_html_polish.single_file_html import (
     _IMAGE_CACHE_KEY_ATTR_PATTERN,
     _IMG_SRC_PATTERN,
     _INLINE_OR_DISPLAY_TEX_PATTERN,
+    _JOURNAL_PAGE_FURNITURE_PATTERN,
     _LEADING_SPACED_BACKSLASH_PATTERN,
+    _LEADING_PAGE_ANCHOR_HTML_PATTERN,
     _NESTED_FIG_LINK_PATTERN,
     _NESTED_SAME_HREF_INTERNAL_LINK_PATTERN,
     _PAGE_HEADER_FOOTER_LINE_PATTERN,
+    _PDF_LINE_NUMBER_CONTINUATION_BODY_PATTERN,
+    _PDF_RUNNING_HEADER_PREFIX_PATTERNS,
     _PLOS_TABLE_DOI_BODY_BOUNDARY_PATTERN,
     _POST_AUTOLINK_SPLIT_URL_ANCHOR_PATTERN,
+    _PUBLISHER_CHROME_BLOCK_PATTERNS,
     _REPEATED_PHRASE_PATTERN,
     _REFERENCE_PARAGRAPH_ATTR_PATTERN,
     _RU_BARE_FIG_LEXEME_PATTERN,
@@ -54,10 +59,15 @@ from pdf_html_polish.single_file_html import (
     _URL_ANCHOR_TEXT_PATTERN,
     _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN,
     _URL_FRAGMENT_TEXT_CHUNK_PATTERN,
+    _WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN,
     _add_figure_anchors,
     _add_section_anchors,
     _cleanup_marker_escape_artifacts,
     _consume_compact_prefix,
+    _drop_page_header_footer_paragraphs,
+    _drop_publisher_chrome_pages,
+    _drop_repeated_page_furniture,
+    _expand_span_start_to_leading_image_paragraph,
     _figure_caption_num_from_visible,
     _fix_common_mojibake,
     _fix_orphaned_sup_tags,
@@ -72,6 +82,8 @@ from pdf_html_polish.single_file_html import (
     _looks_footnote_block,
     _looks_front_matter_block,
     _looks_like_split_same_href_text_label,
+    _looks_repeated_page_furniture_text,
+    _looks_running_header_line,
     _mark_affiliation_paragraphs,
     _mark_front_matter_paragraphs,
     _mark_footnote_paragraphs_and_refs,
@@ -87,6 +99,7 @@ from pdf_html_polish.single_file_html import (
     _normalize_spaced_inline_sup_sub_tags,
     _normalize_double_escaped_url_anchor_text,
     _normalize_mailto_address,
+    _normalize_page_furniture_key,
     _normalize_same_href_text_anchor_label,
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
@@ -120,6 +133,7 @@ from pdf_html_polish.single_file_html import (
     _recover_unique_bare_source_named_figure_units,
     _restore_shielded_data_image_srcs,
     _shield_renderable_data_image_srcs,
+    _strip_leading_pdf_line_number_from_body,
     _split_zhu_affiliation_tail,
     _split_url_footnote_prose_tails,
     _split_trailing_prose_url,
@@ -131,6 +145,8 @@ from pdf_html_polish.single_file_html import (
     _unwrap_nested_fig_links,
     _unwrap_nested_same_href_internal_links,
     _strip_protocol_sentinel_leaks,
+    _strip_pdf_running_header_prefix_from_body,
+    _strip_plain_visible_prefix_from_body,
     _unicode_capitalized_name_pair_count,
     _unicode_glued_author_marker_count,
     _update_skip_stack,
@@ -199,6 +215,12 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _RU_BARE_FIG_LEXEME_PATTERN is pre_cleanup.RU_BARE_FIG_LEXEME_PATTERN
     assert _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN
     assert _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN is url_anchors.IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN
+    assert _JOURNAL_PAGE_FURNITURE_PATTERN is page_furniture.JOURNAL_PAGE_FURNITURE_PATTERN
+    assert _LEADING_PAGE_ANCHOR_HTML_PATTERN is page_furniture.LEADING_PAGE_ANCHOR_HTML_PATTERN
+    assert _PDF_LINE_NUMBER_CONTINUATION_BODY_PATTERN is page_furniture.PDF_LINE_NUMBER_CONTINUATION_BODY_PATTERN
+    assert _PDF_RUNNING_HEADER_PREFIX_PATTERNS is page_furniture.PDF_RUNNING_HEADER_PREFIX_PATTERNS
+    assert _PUBLISHER_CHROME_BLOCK_PATTERNS is page_furniture.PUBLISHER_CHROME_BLOCK_PATTERNS
+    assert _WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN is page_furniture.WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN
     assert _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.AUX_PROTOCOL_SENTINEL_LEAK_PATTERN
     assert _fix_common_mojibake is pre_cleanup.fix_common_mojibake
     assert _cleanup_marker_escape_artifacts is pre_cleanup.cleanup_marker_escape_artifacts
@@ -220,13 +242,20 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_ANCHOR_CHUNK_PATTERN
     assert _URL_FRAGMENT_TEXT_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_TEXT_CHUNK_PATTERN
     assert _consume_compact_prefix is url_anchors.consume_compact_prefix
+    assert _drop_page_header_footer_paragraphs is page_furniture.drop_page_header_footer_paragraphs
+    assert _drop_publisher_chrome_pages is page_furniture.drop_publisher_chrome_pages
+    assert _drop_repeated_page_furniture is page_furniture.drop_repeated_page_furniture
+    assert _expand_span_start_to_leading_image_paragraph is page_furniture.expand_span_start_to_leading_image_paragraph
     assert _looks_like_split_same_href_text_label is url_anchors.looks_like_split_same_href_text_label
+    assert _looks_repeated_page_furniture_text is page_furniture.looks_repeated_page_furniture_text
+    assert _looks_running_header_line is page_furniture.looks_running_header_line
     assert _merge_adjacent_same_href_mailto_anchors is url_anchors.merge_adjacent_same_href_mailto_anchors
     assert _merge_adjacent_same_href_url_anchors is url_anchors.merge_adjacent_same_href_url_anchors
     assert _merge_post_autolink_split_url_anchors is url_anchors.merge_post_autolink_split_url_anchors
     assert _merge_split_same_href_doi_anchors is url_anchors.merge_split_same_href_doi_anchors
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
     assert _normalize_mailto_address is url_anchors.normalize_mailto_address
+    assert _normalize_page_furniture_key is page_furniture.normalize_page_furniture_key
     assert _normalize_same_href_text_anchor_label is url_anchors.normalize_same_href_text_anchor_label
     assert _repair_prose_prefixed_url_anchor_tail is url_anchors.repair_prose_prefixed_url_anchor_tail
     assert _repair_split_doi_head_tail_anchors is url_anchors.repair_split_doi_head_tail_anchors
@@ -245,6 +274,9 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _repair_miswrapped_doi_anchor_labels is doi_anchors.repair_miswrapped_doi_anchor_labels
     assert _split_doi_metadata_body_paragraphs is doi_anchors.split_doi_metadata_body_paragraphs
     assert _split_trailing_prose_url is url_text_repair.split_trailing_prose_url
+    assert _strip_leading_pdf_line_number_from_body is page_furniture.strip_leading_pdf_line_number_from_body
+    assert _strip_pdf_running_header_prefix_from_body is page_furniture.strip_pdf_running_header_prefix_from_body
+    assert _strip_plain_visible_prefix_from_body is page_furniture.strip_plain_visible_prefix_from_body
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN
     assert _unicode_capitalized_name_pair_count is frontmatter_footnotes.unicode_capitalized_name_pair_count
