@@ -115,13 +115,12 @@ The cleanup policy is deliberately conservative:
    despite passing the gate.
 3. Remove or explicitly retire the stale `_MOJIBAKE_REPLACEMENTS` compatibility
    tuple left in `single_file_html.py` after the pre-cleanup extraction.
-4. Continue reference/internal link cleanup in small slices, using
-   `raw_html_polish/references_links.py` for page/ref unwrap and retarget
-   helpers before touching the heavier author-year/citation families.
-5. Split tests next to the package modules that now own behavior, while
-   preserving old private aliases in `single_file_html.py` as long as tests
-   import them.
-6. After the `single_file_html.py` polish pass, run polish/audit parity before
+4. Stop broad `single_file_html.py` refactoring after the final author-year
+   link cleanup slice. Do not start citation recovery, figure/table float, or
+   sentence-break refactors without a new defect-driven reason.
+5. Split tests next to package modules only when code ownership moves; preserve
+   old private aliases in `single_file_html.py` as long as tests import them.
+6. Now run polish/audit parity before
    the full PDF-to-polish HTML pipeline.
 7. Run the full PDF-to-polish HTML flow only after the parity gate passes.
 
@@ -323,6 +322,11 @@ The cleanup policy is deliberately conservative:
   The remaining reference-link work in `single_file_html.py` is now mostly
   author-year unwrap/recovery and broader statistical/citation false-positive
   logic.
+- Final pre-gate refactor slice: moved author-year ref/page link cleanup,
+  roman-suffix author-year split repair, and trailing citation recovery into
+  `raw_html_polish/author_year_links.py` with direct owner tests. Stop broad
+  refactoring here and move to the required polish/audit parity gate before any
+  full PDF-to-polish validation.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target
