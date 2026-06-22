@@ -28,6 +28,13 @@ REF_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
+AUTHOR_YEAR_CITATION_TEXT_PATTERN = re.compile(
+    r"\b"
+    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+    r"(?:\s+(?:et\s+al\.?|and\s+[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+|&\s*[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+))?"
+    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
+    re.IGNORECASE,
+)
 P_BLOCK_PATTERN = re.compile(
     r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
     re.IGNORECASE,
@@ -393,6 +400,223 @@ def repair_ref_links_with_leading_closing_punctuation(html: str) -> str:
         )
 
     return REF_ANCHOR_PATTERN.sub(replace, html)
+
+
+def replace_href_and_link_class(attrs: str, href: str, class_name: str) -> str:
+    attrs = re.sub(
+        r'\bhref\s*=\s*(["\'])#[^"\']+\1',
+        f'href="{href}"',
+        attrs,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', attrs, re.IGNORECASE | re.DOTALL)
+    if class_match is None:
+        return f'{attrs} class="{class_name}"'
+    classes = [
+        cls
+        for cls in class_match.group(2).split()
+        if cls not in {"z2m-ref-link", "z2m-fig-link", "z2m-table-link", "z2m-eq-link"}
+    ]
+    if class_name not in classes:
+        classes.append(class_name)
+    return attrs[: class_match.start(2)] + " ".join(classes) + attrs[class_match.end(2) :]
+
+
+def retarget_mismatched_ref_link_labels(html: str) -> str:
+    """Keep visible numeric citation labels aligned with their #ref target."""
+    if "#ref-" not in html:
+        return html
+    ref_numbers = {int(match.group(2)) for match in LI_ID_PATTERN.finditer(html)}
+    if not ref_numbers:
+        return html
+
+    def is_valid_visible_ref(number: int) -> bool:
+        return number in ref_numbers and not (1800 <= number <= 2099)
+
+    def render_numeric_label(label: str) -> str | None:
+        if re.search(r"[A-Za-z]", label):
+            return None
+        if re.fullmatch(
+            r"[\s\(\[\]\),.;:\-\u2010\u2011\u2012\u2013\u2014\d]+",
+            label,
+        ) is None:
+            return None
+        numbers = [int(value) for value in re.findall(r"\d{1,4}", label)]
+        if not numbers or any(not is_valid_visible_ref(number) for number in numbers):
+            return None
+        if any(value.startswith("0") for value in re.findall(r"\d{2,4}", label)):
+            return None
+
+        def link_number(num_match: re.Match[str]) -> str:
+            number_text = num_match.group(0)
+            number = int(number_text)
+            return f'<a href="#ref-{number}" class="z2m-ref-link">{number_text}</a>'
+
+        return re.sub(r"\d{1,4}", link_number, label)
+
+    def looks_like_page_reference_label(label: str) -> bool:
+        normalized = re.sub(r"\s+", " ", label).strip()
+        return re.search(
+            r"(?:"
+            r"\b(?:see|cf)\.?\s+(?:p|pp|page|pages)\.?\s*\d|"
+            r"\b(?:p|pp|page|pages)\.?\s*\d|"
+            r"\u0441\u043c\.?\s*\u0441\.?\s*\d"
+            r")",
+            normalized,
+            re.IGNORECASE,
+        ) is not None
+
+    def looks_like_author_year_context(label: str, left_text: str) -> bool:
+        label_for_pattern = re.sub(r"(\d{4}[a-z]?)[\),.;:]+$", r"\1", label.strip(), flags=re.IGNORECASE)
+        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label_for_pattern):
+            return True
+        if not re.fullmatch(r"\(?\d{4}[a-z]?\)?[\),.;:]*", label.strip(), re.IGNORECASE):
+            return False
+        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(f"{left_text[-180:]} {label_for_pattern}"):
+            return True
+        author_tail = re.compile(
+            r"(?:\(|;|,|\bby\s+)?\s*"
+            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+            r"(?:\s+[a-z])?"
+            r"(?:\s+(?:et\s+al\.?|and|&)\s+"
+            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
+            r"(?:\s+[a-z])?|\s+et\s+al\.?)?"
+            r"(?:,|\.)?\s*$"
+        )
+        return author_tail.search(left_text[-120:]) is not None
+
+    def should_preserve_invalid_single_label(match: re.Match[str], label: str, visible_number: int) -> bool:
+        left_text = visible_text(html[max(0, match.start() - 180): match.start()])
+        if 1800 <= visible_number <= 2099 and looks_like_author_year_context(label, left_text):
+            return True
+        if looks_like_page_reference_label(label):
+            return True
+        if re.fullmatch(r"\s*\d{3,4}[\)\]\.,;:]*\s*", label) and re.search(
+            r"[-\u2212]?\d+\.\d+\s*$",
+            left_text,
+        ):
+            return True
+        return False
+
+    def replace(match: re.Match[str]) -> str:
+        label = visible_text(match.group("body"))
+        numbers = [int(num) for num in re.findall(r"\d{1,4}", label)]
+        if len(numbers) > 1:
+            rendered = render_numeric_label(label)
+            if rendered is not None and int(match.group("num")) not in numbers:
+                return rendered
+            return match.group(0)
+        if len(numbers) != 1:
+            return match.group(0)
+        visible_number = numbers[0]
+        if visible_number == int(match.group("num")):
+            return match.group(0)
+        if not is_valid_visible_ref(visible_number):
+            if should_preserve_invalid_single_label(match, label, visible_number):
+                return match.group(0)
+            return match.group("body")
+        attrs = replace_href_and_link_class(match.group("attrs"), f"#ref-{visible_number}", "z2m-ref-link")
+        return f'<a{attrs}>{match.group("body")}</a>'
+
+    return REF_ANCHOR_PATTERN.sub(replace, html)
+
+
+def repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
+    """Move OCR-swallowed decimal/unit text back out of citation anchors."""
+    if "#ref-" not in html:
+        return html
+    ref_numbers = {int(match.group(2)) for match in LI_ID_PATTERN.finditer(html)}
+    if not ref_numbers:
+        return html
+
+    def valid_cite(
+        cite_text: str,
+        target_text: str,
+        *,
+        allow_near_target: bool = False,
+        allow_wrong_target: bool = False,
+    ) -> int | None:
+        if not cite_text or cite_text.startswith("0"):
+            return None
+        try:
+            cite = int(cite_text)
+            target = int(target_text)
+        except ValueError:
+            return None
+        if cite not in ref_numbers or 1800 <= cite <= 2099:
+            return None
+        if target == cite or (allow_near_target and abs(target - cite) <= 1) or allow_wrong_target:
+            return cite
+        return None
+
+    decimal_pattern = re.compile(
+        r"(?P<prefix>(?<![\w.])[-\u2212]?\d+\.\d+)\s+"
+        r"(?P<sup_open><sup\b[^>]*>\s*)?"
+        r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"][^>]*)>"
+        r"\s*(?P<lead>\d)(?P<cite>\d{2,3})(?P<trail>[\)\]\.,;:]*)\s*</a>"
+        r"(?P<sup_close>\s*</sup>)?",
+        re.IGNORECASE | re.DOTALL,
+    )
+    percent_pattern = re.compile(
+        r"(?P<prefix>\d)\s+"
+        r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"][^>]*)>"
+        r"\s*%(?P<cite>\d{1,3})(?P<trail>[\)\]\.,;:]*)\s*</a>",
+        re.IGNORECASE | re.DOTALL,
+    )
+    slash_unit_pattern = re.compile(
+        r"(?P<prefix>\b(?:mL|ml|L|mm|cm|m|um|nm|Вµm)\s*/)\s*"
+        r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#ref-(?P<target>\d+)['\"][^>]*)>"
+        r"\s*s(?P<cite>\d{1,3})(?P<trail>[\)\]\.,;:]*)\s*</a>",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    def anchor(attrs: str, cite: int, label: str) -> str:
+        fixed_attrs = replace_href_and_link_class(attrs, f"#ref-{cite}", "z2m-ref-link")
+        return f"<a{fixed_attrs}>{label}</a>"
+
+    def replace_decimal(match: re.Match[str]) -> str:
+        full_text = f"{match.group('lead')}{match.group('cite')}"
+        try:
+            full_number = int(full_text)
+            target_number = int(match.group("target"))
+        except ValueError:
+            full_number = -1
+            target_number = -1
+        if full_number in ref_numbers and abs(target_number - full_number) <= 1:
+            return match.group(0)
+        cite = valid_cite(match.group("cite"), match.group("target"), allow_near_target=True)
+        if cite is None:
+            cite = valid_cite(
+                match.group("cite"),
+                match.group("target"),
+                allow_wrong_target=full_number not in ref_numbers,
+            )
+        if cite is None:
+            return match.group(0)
+        cite_anchor = anchor(match.group("attrs"), cite, str(cite))
+        if match.group("sup_open") and match.group("sup_close"):
+            cite_anchor = f"{match.group('sup_open')}{cite_anchor}{match.group('sup_close')}"
+        return (
+            f"{match.group('prefix')}{match.group('lead')}"
+            f"{cite_anchor}{match.group('trail')}"
+        )
+
+    def replace_percent(match: re.Match[str]) -> str:
+        cite = valid_cite(match.group("cite"), match.group("target"))
+        if cite is None:
+            return match.group(0)
+        return f"{match.group('prefix')}%{anchor(match.group('attrs'), cite, str(cite))}{match.group('trail')}"
+
+    def replace_slash_unit(match: re.Match[str]) -> str:
+        cite = valid_cite(match.group("cite"), match.group("target"))
+        if cite is None:
+            return match.group(0)
+        return f"{match.group('prefix')}s{anchor(match.group('attrs'), cite, str(cite))}{match.group('trail')}"
+
+    repaired = decimal_pattern.sub(replace_decimal, html)
+    repaired = percent_pattern.sub(replace_percent, repaired)
+    return slash_unit_pattern.sub(replace_slash_unit, repaired)
 
 
 def unwrap_page_reference_ref_links(html: str, language_policy: Any) -> str:

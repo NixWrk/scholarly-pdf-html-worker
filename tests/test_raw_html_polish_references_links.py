@@ -1,5 +1,6 @@
 from pdf_html_polish import single_file_html
 from pdf_html_polish.raw_html_polish.references_links import (
+    AUTHOR_YEAR_CITATION_TEXT_PATTERN,
     PAGE_ANCHOR_PATTERN,
     REF_ANCHOR_PATTERN,
     REFERENCE_PAGE_ID_PATTERN,
@@ -8,7 +9,9 @@ from pdf_html_polish.raw_html_polish.references_links import (
     reference_visible_number,
     references_heading_match,
     references_heading_search,
+    repair_ref_links_absorbed_decimal_or_unit_text,
     repair_ref_links_with_leading_closing_punctuation,
+    retarget_mismatched_ref_link_labels,
     strip_duplicate_reference_number_artifacts,
     strip_embedded_reference_number_artifacts,
     strip_leading_reference_line_number_pair,
@@ -124,6 +127,36 @@ def test_repair_ref_links_with_leading_closing_punctuation_moves_punctuation_out
     )
 
 
+def test_retarget_mismatched_ref_link_labels_relinks_or_unwraps_numeric_labels() -> None:
+    html = (
+        '<p><a href="#ref-1">2</a> and <a href="#ref-3">1, 2</a> '
+        'but Smith <a href="#ref-9">2019)</a> and orphan <a href="#ref-9">325</a>.</p>'
+        '<ol><li id="ref-1">One.</li><li id="ref-2">Two.</li></ol>'
+    )
+
+    assert retarget_mismatched_ref_link_labels(html) == (
+        '<p><a href="#ref-2" class="z2m-ref-link">2</a> and '
+        '<a href="#ref-1" class="z2m-ref-link">1</a>, '
+        '<a href="#ref-2" class="z2m-ref-link">2</a> '
+        'but Smith <a href="#ref-9">2019)</a> and orphan 325.</p>'
+        '<ol><li id="ref-1">One.</li><li id="ref-2">Two.</li></ol>'
+    )
+
+
+def test_repair_ref_links_absorbed_decimal_or_unit_text_repairs_percent_and_unit() -> None:
+    html = (
+        '<p>Success was 7 <a href="#ref-12" class="z2m-ref-link">%12</a> '
+        'and flow mL/ <a href="#ref-7">s7</a>.</p>'
+        '<ol><li id="ref-7">Seven.</li><li id="ref-12">Twelve.</li></ol>'
+    )
+
+    assert repair_ref_links_absorbed_decimal_or_unit_text(html) == (
+        '<p>Success was 7%<a href="#ref-12" class="z2m-ref-link">12</a> '
+        'and flow mL/s<a href="#ref-7" class="z2m-ref-link">7</a>.</p>'
+        '<ol><li id="ref-7">Seven.</li><li id="ref-12">Twelve.</li></ol>'
+    )
+
+
 def test_unwrap_page_reference_ref_links_uses_language_policy() -> None:
     html = '<p>См. с. <a href="#ref-34" class="z2m-ref-link">34</a>; cite <a href="#ref-3">3</a>.</p>'
 
@@ -169,6 +202,7 @@ def test_unwrap_broken_internal_semantic_links_preserves_page_number_labels() ->
 
 
 def test_single_file_html_keeps_legacy_private_reference_aliases() -> None:
+    assert single_file_html._AUTHOR_YEAR_CITATION_TEXT_PATTERN is AUTHOR_YEAR_CITATION_TEXT_PATTERN
     assert single_file_html._PAGE_ANCHOR_PATTERN is PAGE_ANCHOR_PATTERN
     assert single_file_html._REFERENCE_PAGE_ID_PATTERN is REFERENCE_PAGE_ID_PATTERN
     assert single_file_html._REF_ANCHOR_PATTERN is REF_ANCHOR_PATTERN
@@ -176,9 +210,14 @@ def test_single_file_html_keeps_legacy_private_reference_aliases() -> None:
     assert single_file_html._reference_visible_number is reference_visible_number
     assert single_file_html._references_heading_search is references_heading_search
     assert (
+        single_file_html._repair_ref_links_absorbed_decimal_or_unit_text
+        is repair_ref_links_absorbed_decimal_or_unit_text
+    )
+    assert (
         single_file_html._repair_ref_links_with_leading_closing_punctuation
         is repair_ref_links_with_leading_closing_punctuation
     )
+    assert single_file_html._retarget_mismatched_ref_link_labels is retarget_mismatched_ref_link_labels
     assert single_file_html._unwrap_broken_internal_semantic_links is unwrap_broken_internal_semantic_links
     assert single_file_html._unwrap_broken_page_anchor_links is unwrap_broken_page_anchor_links
     assert single_file_html._unwrap_page_reference_page_links is unwrap_page_reference_page_links
