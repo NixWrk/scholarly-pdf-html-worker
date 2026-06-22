@@ -11,6 +11,7 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     repair_author_marker_ocr_body,
     repair_front_matter_page_anchor_markers,
     repair_page_footnote_ref_links,
+    split_url_footnote_prose_tails,
     unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count,
     valid_front_matter_marker_numbers,
@@ -142,6 +143,32 @@ def test_repair_page_footnote_ref_links_leaves_unmatched_page_links() -> None:
     )
 
     assert repair_page_footnote_ref_links(html) == html
+
+
+def test_split_url_footnote_prose_tails_detaches_long_body_tail() -> None:
+    tail = (
+        "This paragraph continues with enough ordinary prose words to make the "
+        "tail look like article body content rather than a footnote fragment."
+    )
+    html = (
+        '<p class="z2m-footnote"><span id="page-2"></span>'
+        '<a href="https://example.org">1 https://example.org</a> '
+        f"{tail}</p>"
+    )
+
+    split = split_url_footnote_prose_tails(html)
+
+    assert '<p class="z2m-footnote"><span id="page-2"></span><a href="https://example.org">1 https://example.org</a></p>' in split
+    assert f'<p block-type="Text">{tail}</p>' in split
+
+
+def test_split_url_footnote_prose_tails_keeps_short_tails() -> None:
+    html = (
+        '<p class="z2m-footnote"><a href="https://example.org">'
+        "1 https://example.org</a> Short note.</p>"
+    )
+
+    assert split_url_footnote_prose_tails(html) == html
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:

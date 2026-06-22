@@ -61,6 +61,7 @@ from pdf_html_polish.single_file_html import (
     _recover_unique_bare_source_named_figure_units,
     _restore_shielded_data_image_srcs,
     _shield_renderable_data_image_srcs,
+    _split_url_footnote_prose_tails,
     _split_table_units_before_section_headings,
     _to_data_url,
     _unescape_inline_sup_sub,
@@ -139,6 +140,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _leading_footnote_number is frontmatter_footnotes.leading_footnote_number
     assert _footnote_keywords is frontmatter_footnotes.footnote_keywords
     assert _repair_page_footnote_ref_links is frontmatter_footnotes.repair_page_footnote_ref_links
+    assert _split_url_footnote_prose_tails is frontmatter_footnotes.split_url_footnote_prose_tails
 
 
 def test_single_file_footnote_block_wrapper_uses_float_caption_guards() -> None:

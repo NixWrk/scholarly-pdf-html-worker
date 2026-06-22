@@ -257,6 +257,8 @@ The cleanup policy is deliberately conservative:
 - Moved page-linked footnote reference repair into
   `raw_html_polish/frontmatter_footnotes.py`; `single_file_html.py` now imports
   the old private name directly from the package owner.
+- Moved URL-leading footnote prose-tail splitting into
+  `raw_html_polish/frontmatter_footnotes.py`.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

@@ -158,6 +158,7 @@ from .raw_html_polish.frontmatter_footnotes import (
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
     repair_front_matter_page_anchor_markers as _repair_front_matter_page_anchor_markers_impl,
     repair_page_footnote_ref_links as _repair_page_footnote_ref_links,
+    split_url_footnote_prose_tails as _split_url_footnote_prose_tails,
     unicode_capitalized_name_pair_count as _unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count as _unicode_glued_author_marker_count,
 )
@@ -3502,64 +3503,6 @@ def _mark_footnote_paragraphs_and_refs(html: str) -> str:
         citation_tag_is_protected=_citation_tag_is_protected,
         numeric_superscript_context_allows_citation=_numeric_superscript_context_allows_citation,
     )
-
-
-def _split_url_footnote_prose_tails(html: str) -> str:
-    """Detach body prose that was merged into a leading URL footnote paragraph."""
-    if "z2m-footnote" not in html:
-        return html
-
-    footnote_class_re = re.compile(
-        r'\bclass\s*=\s*(["\'])(?=[^"\']*\bz2m-footnote\b)[^"\']*\1',
-        re.IGNORECASE,
-    )
-    page_span_re = re.compile(
-        r'\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)+',
-        re.IGNORECASE,
-    )
-    leading_anchor_re = re.compile(r'\s*<a\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</a>', re.IGNORECASE)
-
-    def _is_leading_url_footnote_anchor(anchor_match: re.Match[str]) -> bool:
-        attrs = anchor_match.group("attrs")
-        visible = _visible_text(anchor_match.group("body")).strip()
-        href_is_url = re.search(r'\bhref\s*=\s*(["\'])(?:https?://|www\.)', attrs, re.IGNORECASE) is not None
-        visible_has_url = re.search(r"(?:https?://|www\.)", visible, re.IGNORECASE) is not None
-        has_number = re.match(r"^\d{1,2}(?=\s|https?://|www\.)", visible, re.IGNORECASE) is not None
-        return has_number and (href_is_url or visible_has_url)
-
-    def _split(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        if footnote_class_re.search(raw) is None:
-            return raw
-        body = match.group("body")
-        cursor = 0
-        found_anchor = False
-        while True:
-            span_match = page_span_re.match(body, cursor)
-            if span_match is not None:
-                cursor = span_match.end()
-            anchor_match = leading_anchor_re.match(body, cursor)
-            if anchor_match is None or not _is_leading_url_footnote_anchor(anchor_match):
-                break
-            cursor = anchor_match.end()
-            found_anchor = True
-
-        if not found_anchor:
-            return raw
-        tail = body[cursor:].lstrip()
-        tail_text = _visible_text(tail).strip()
-        if len(re.findall(r"[A-Za-z]{3,}", tail_text)) < 12:
-            return raw
-        if not re.match(r'^[A-Z"(\[]', tail_text):
-            return raw
-
-        footnote_body = body[:cursor].rstrip()
-        return (
-            f"{match.group('open')}{footnote_body}{match.group('close')}"
-            f'<p block-type="Text">{tail}{match.group("close")}'
-        )
-
-    return _P_BLOCK_PATTERN.sub(_split, html)
 
 
 def _node_protects_citations(raw: str) -> bool:

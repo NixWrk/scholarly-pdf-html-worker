@@ -69,6 +69,14 @@ FOOTNOTE_CLASS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
+LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN = re.compile(
+    r'\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)+',
+    re.IGNORECASE,
+)
+LEADING_URL_FOOTNOTE_ANCHOR_PATTERN = re.compile(
+    r'\s*<a\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
 
 
 def unicode_capitalized_name_pair_count(text: str) -> int:
@@ -387,6 +395,54 @@ def repair_page_footnote_ref_links(html: str) -> str:
     return P_BLOCK_PATTERN.sub(repair_block, html)
 
 
+def split_url_footnote_prose_tails(html: str) -> str:
+    """Detach body prose that was merged into a leading URL footnote paragraph."""
+    if "z2m-footnote" not in html:
+        return html
+
+    def is_leading_url_footnote_anchor(anchor_match: re.Match[str]) -> bool:
+        attrs = anchor_match.group("attrs")
+        visible = visible_text(anchor_match.group("body")).strip()
+        href_is_url = re.search(r'\bhref\s*=\s*(["\'])(?:https?://|www\.)', attrs, re.IGNORECASE) is not None
+        visible_has_url = re.search(r"(?:https?://|www\.)", visible, re.IGNORECASE) is not None
+        has_number = re.match(r"^\d{1,2}(?=\s|https?://|www\.)", visible, re.IGNORECASE) is not None
+        return has_number and (href_is_url or visible_has_url)
+
+    def split(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if FOOTNOTE_CLASS_PATTERN.search(raw) is None:
+            return raw
+        body = match.group("body")
+        cursor = 0
+        found_anchor = False
+        while True:
+            span_match = LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN.match(body, cursor)
+            if span_match is not None:
+                cursor = span_match.end()
+            anchor_match = LEADING_URL_FOOTNOTE_ANCHOR_PATTERN.match(body, cursor)
+            if anchor_match is None or not is_leading_url_footnote_anchor(anchor_match):
+                break
+            cursor = anchor_match.end()
+            found_anchor = True
+
+        if not found_anchor:
+            return raw
+        tail = body[cursor:].lstrip()
+        tail_text = visible_text(tail).strip()
+        if len(re.findall(r"[A-Za-z]{3,}", tail_text)) < 12:
+            return raw
+        if not re.match(r'^[A-Z"(\[]', tail_text):
+            return raw
+
+        footnote_body = body[:cursor].rstrip()
+        return (
+            f"{match.group('open')}{footnote_body}{match.group('close')}"
+            f'<p block-type="Text">{tail}{match.group("close")}'
+        )
+
+    return P_BLOCK_PATTERN.sub(split, html)
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -480,6 +536,8 @@ __all__ = [
     "AUTHOR_MARKER_OCR_SYMBOL_PATTERN",
     "FOOTNOTE_P_NODE_PATTERN",
     "LEADING_PAGE_SPAN_PATTERN",
+    "LEADING_URL_FOOTNOTE_ANCHOR_PATTERN",
+    "LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN",
     "P_BLOCK_PATTERN",
     "FOOTNOTE_CLASS_PATTERN",
     "PAGE_ANCHOR_PATTERN",
@@ -498,6 +556,7 @@ __all__ = [
     "repair_author_marker_ocr_body",
     "repair_front_matter_page_anchor_markers",
     "repair_page_footnote_ref_links",
+    "split_url_footnote_prose_tails",
     "unicode_capitalized_name_pair_count",
     "unicode_glued_author_marker_count",
     "valid_front_matter_marker_numbers",
