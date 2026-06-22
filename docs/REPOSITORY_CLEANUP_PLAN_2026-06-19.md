@@ -251,6 +251,9 @@ The cleanup policy is deliberately conservative:
   `footnote_keywords`, and the callback-backed `looks_footnote_block`) into
   `raw_html_polish/frontmatter_footnotes.py`; `single_file_html.py` keeps the
   old private names where callers still use them.
+- Moved footnote paragraph/reference marking into
+  `raw_html_polish/frontmatter_footnotes.py` with explicit callbacks for
+  float-caption guards and citation safety checks.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

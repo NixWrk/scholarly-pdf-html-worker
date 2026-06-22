@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import re
 
-from .html_fragments import visible_text
+from .html_fragments import add_class_attr, add_id_attr, append_class_to_attrs, visible_text
 
 SUPERSCRIPT_DIGIT_TRANSLATION = str.maketrans(
     {
@@ -54,6 +54,11 @@ LEADING_PAGE_SPAN_PATTERN = re.compile(
     r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)+',
     re.IGNORECASE,
 )
+P_BLOCK_PATTERN = re.compile(
+    r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
+    re.IGNORECASE,
+)
+SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 
 
 def unicode_capitalized_name_pair_count(text: str) -> int:
@@ -237,6 +242,82 @@ def looks_footnote_block(
     return len(re.findall(r"[A-Za-z]{3,}", text)) >= 6
 
 
+def mark_footnote_paragraphs_and_refs(
+    html: str,
+    *,
+    figure_caption_num_from_visible: Callable[[str], object | None],
+    table_caption_key_from_visible: Callable[[str], object | None],
+    citation_tag_is_protected: Callable[[str], bool],
+    numeric_superscript_context_allows_citation: Callable[[str, int, int], bool],
+) -> str:
+    footnote_keyword_map: dict[int, set[str]] = {}
+
+    def mark_footnote(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if not looks_footnote_block(
+            raw,
+            figure_caption_num_from_visible=figure_caption_num_from_visible,
+            table_caption_key_from_visible=table_caption_key_from_visible,
+        ):
+            return raw
+        number = leading_footnote_number(raw)
+        if number is None:
+            return raw
+        footnote_keyword_map[number] = footnote_keywords(visible_text(raw))
+        attrs = match.group("open")[2:-1]
+        marked_attrs = append_class_to_attrs(attrs, "z2m-footnote")
+        marked_open = add_id_attr(f"<p{marked_attrs}>", f"footnote-{number}")
+        return f"{marked_open}{match.group('body')}{match.group('close')}"
+
+    marked = P_BLOCK_PATTERN.sub(mark_footnote, html)
+    if not footnote_keyword_map:
+        return marked
+
+    def mark_ref(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        open_tag = match.group("open")
+        if citation_tag_is_protected(open_tag):
+            return raw
+        body = match.group("body")
+
+        def replace_sup(sup_match: re.Match[str]) -> str:
+            sup_raw = sup_match.group(0)
+            if "z2m-footnote-ref" in sup_raw or "<a " in sup_raw.lower():
+                return sup_raw
+            inner = visible_text(sup_match.group(1))
+            if not re.fullmatch(r"\d{1,2}", inner):
+                range_numbers = [int(value) for value in re.findall(r"\d{1,2}", inner)]
+                if (
+                    len(range_numbers) < 2
+                    or not re.fullmatch(r"\s*\d{1,2}(?:\s*(?:[,;\-\u2013\u2014])\s*\d{1,2}){1,12}\s*", inner)
+                    or any(number not in footnote_keyword_map for number in range_numbers)
+                    or not numeric_superscript_context_allows_citation(body, sup_match.start(), sup_match.end())
+                ):
+                    return sup_raw
+                open_end = sup_raw.find(">")
+                if open_end < 0:
+                    return sup_raw
+                sup_open = add_class_attr(sup_raw[: open_end + 1], "z2m-footnote-ref")
+                return f"{sup_open}{sup_match.group(1)}</sup>"
+            number = int(inner)
+            keywords = footnote_keyword_map.get(number)
+            if not keywords:
+                return sup_raw
+            left_text = visible_text(body[: sup_match.start()]).lower()
+            if not any(keyword in left_text for keyword in keywords):
+                return sup_raw
+            open_end = sup_raw.find(">")
+            if open_end < 0:
+                return sup_raw
+            sup_open = add_class_attr(sup_raw[: open_end + 1], "z2m-footnote-ref")
+            return f"{sup_open}{sup_match.group(1)}</sup>"
+
+        new_body = SUP_PATTERN.sub(replace_sup, body)
+        return f"{open_tag}{new_body}{match.group('close')}"
+
+    return P_BLOCK_PATTERN.sub(mark_ref, marked)
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -330,13 +411,16 @@ __all__ = [
     "AUTHOR_MARKER_OCR_SYMBOL_PATTERN",
     "FOOTNOTE_P_NODE_PATTERN",
     "LEADING_PAGE_SPAN_PATTERN",
+    "P_BLOCK_PATTERN",
     "SUPERSCRIPT_DIGIT_TRANSLATION",
+    "SUP_PATTERN",
     "footnote_keywords",
     "leading_footnote_number",
     "looks_affiliation_label_body",
     "looks_author_byline_front_matter",
     "looks_author_marker_ocr_candidate",
     "looks_footnote_block",
+    "mark_footnote_paragraphs_and_refs",
     "normalize_front_matter_marker_numbers",
     "repair_affiliation_label_ocr_body",
     "repair_author_marker_ocr_body",

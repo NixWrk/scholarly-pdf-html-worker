@@ -153,6 +153,7 @@ from .raw_html_polish.frontmatter_footnotes import (
     looks_author_byline_front_matter as _looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
     looks_footnote_block as _looks_footnote_block_impl,
+    mark_footnote_paragraphs_and_refs as _mark_footnote_paragraphs_and_refs_impl,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
     repair_front_matter_page_anchor_markers as _repair_front_matter_page_anchor_markers_impl,
@@ -3493,68 +3494,13 @@ def _looks_footnote_block(raw: str) -> bool:
 
 
 def _mark_footnote_paragraphs_and_refs(html: str) -> str:
-    footnote_keywords: dict[int, set[str]] = {}
-
-    def _mark_footnote(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        if not _looks_footnote_block(raw):
-            return raw
-        number = _leading_footnote_number(raw)
-        if number is None:
-            return raw
-        footnote_keywords[number] = _footnote_keywords(_visible_text(raw))
-        attrs = match.group("open")[2:-1]
-        marked_attrs = _append_class_to_attrs(attrs, "z2m-footnote")
-        marked_open = _add_id_attr(f"<p{marked_attrs}>", f"footnote-{number}")
-        return f"{marked_open}{match.group('body')}{match.group('close')}"
-
-    marked = _P_BLOCK_PATTERN.sub(_mark_footnote, html)
-    if not footnote_keywords:
-        return marked
-
-    def _mark_ref(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        open_tag = match.group("open")
-        if _citation_tag_is_protected(open_tag):
-            return raw
-        body = match.group("body")
-
-        def replace_sup(sup_match: re.Match[str]) -> str:
-            sup_raw = sup_match.group(0)
-            if "z2m-footnote-ref" in sup_raw or "<a " in sup_raw.lower():
-                return sup_raw
-            inner = _visible_text(sup_match.group(1))
-            if not re.fullmatch(r"\d{1,2}", inner):
-                range_numbers = [int(value) for value in re.findall(r"\d{1,2}", inner)]
-                if (
-                    len(range_numbers) < 2
-                    or not re.fullmatch(r"\s*\d{1,2}(?:\s*(?:[,;\-\u2013\u2014])\s*\d{1,2}){1,12}\s*", inner)
-                    or any(number not in footnote_keywords for number in range_numbers)
-                    or not _numeric_superscript_context_allows_citation(body, sup_match.start(), sup_match.end())
-                ):
-                    return sup_raw
-                open_end = sup_raw.find(">")
-                if open_end < 0:
-                    return sup_raw
-                sup_open = _add_class_attr(sup_raw[: open_end + 1], "z2m-footnote-ref")
-                return f"{sup_open}{sup_match.group(1)}</sup>"
-            number = int(inner)
-            keywords = footnote_keywords.get(number)
-            if not keywords:
-                return sup_raw
-            left_text = _visible_text(body[: sup_match.start()]).lower()
-            if not any(keyword in left_text for keyword in keywords):
-                return sup_raw
-            open_end = sup_raw.find(">")
-            if open_end < 0:
-                return sup_raw
-            sup_open = _add_class_attr(sup_raw[: open_end + 1], "z2m-footnote-ref")
-            return f"{sup_open}{sup_match.group(1)}</sup>"
-
-        new_body = _SUP_PATTERN.sub(replace_sup, body)
-        return f"{open_tag}{new_body}{match.group('close')}"
-
-    return _P_BLOCK_PATTERN.sub(_mark_ref, marked)
+    return _mark_footnote_paragraphs_and_refs_impl(
+        html,
+        figure_caption_num_from_visible=_figure_caption_num_from_visible,
+        table_caption_key_from_visible=_table_caption_key_from_visible,
+        citation_tag_is_protected=_citation_tag_is_protected,
+        numeric_superscript_context_allows_citation=_numeric_superscript_context_allows_citation,
+    )
 
 
 def _repair_page_footnote_ref_links(html: str) -> str:

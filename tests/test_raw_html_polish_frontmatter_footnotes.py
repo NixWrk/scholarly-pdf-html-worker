@@ -5,6 +5,7 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate,
     looks_footnote_block,
+    mark_footnote_paragraphs_and_refs,
     normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,
@@ -82,6 +83,42 @@ def test_looks_footnote_block_accepts_notes_and_rejects_captions() -> None:
         figure_caption_num_from_visible=lambda _text: 1,
         table_caption_key_from_visible=lambda _text: None,
     )
+
+
+def test_mark_footnote_paragraphs_and_refs_marks_definition_and_matching_ref() -> None:
+    html = (
+        "<p>Low tensile strength<sup>1</sup> remains important.</p>"
+        "<p><sup>1</sup> Tensile strength is determined by materials testing methods.</p>"
+    )
+
+    marked = mark_footnote_paragraphs_and_refs(
+        html,
+        figure_caption_num_from_visible=lambda _text: None,
+        table_caption_key_from_visible=lambda _text: None,
+        citation_tag_is_protected=lambda _open_tag: False,
+        numeric_superscript_context_allows_citation=lambda _body, _start, _end: True,
+    )
+
+    assert 'class="z2m-footnote"' in marked
+    assert 'id="footnote-1"' in marked
+    assert 'strength<sup class="z2m-footnote-ref">1</sup>' in marked
+
+
+def test_mark_footnote_paragraphs_and_refs_skips_protected_ref_blocks() -> None:
+    html = (
+        "<p class=\"z2m-front-matter\">Low tensile strength<sup>1</sup>.</p>"
+        "<p><sup>1</sup> Tensile strength is determined by materials testing methods.</p>"
+    )
+
+    marked = mark_footnote_paragraphs_and_refs(
+        html,
+        figure_caption_num_from_visible=lambda _text: None,
+        table_caption_key_from_visible=lambda _text: None,
+        citation_tag_is_protected=lambda open_tag: "z2m-front-matter" in open_tag,
+        numeric_superscript_context_allows_citation=lambda _body, _start, _end: True,
+    )
+
+    assert 'class="z2m-front-matter">Low tensile strength<sup>1</sup>' in marked
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:

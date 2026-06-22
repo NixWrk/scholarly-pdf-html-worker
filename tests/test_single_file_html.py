@@ -42,6 +42,7 @@ from pdf_html_polish.single_file_html import (
     _looks_author_byline_front_matter,
     _looks_author_marker_ocr_candidate,
     _looks_footnote_block,
+    _mark_footnote_paragraphs_and_refs,
     _inline_images_from_html_text,
     _link_figure_refs,
     _link_unlinked_numeric_superscripts_to_existing_refs,
@@ -142,6 +143,18 @@ def test_single_file_footnote_block_wrapper_uses_float_caption_guards() -> None:
     raw = "<p><sup>1</sup> Tensile strength is determined by materials testing methods for polymers.</p>"
 
     assert _looks_footnote_block(raw)
+
+
+def test_single_file_mark_footnote_wrapper_marks_matching_ref() -> None:
+    html = (
+        "<p>Low tensile strength<sup>1</sup> remains important.</p>"
+        "<p><sup>1</sup> Tensile strength is determined by materials testing methods.</p>"
+    )
+
+    marked = _mark_footnote_paragraphs_and_refs(html)
+
+    assert 'id="footnote-1"' in marked
+    assert 'strength<sup class="z2m-footnote-ref">1</sup>' in marked
 
 
 def test_inline_images_from_html_file() -> None:
