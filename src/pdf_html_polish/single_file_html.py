@@ -224,6 +224,11 @@ from .raw_html_polish.url_autolink import (
     autolink_plain_urls as _autolink_plain_urls,
     autolink_text_urls as _autolink_text_urls,
 )
+from .raw_html_polish.url_anchors import (
+    SPACED_PROTOCOL_HREF_ATTR_PATTERN as _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
+    SPACED_PROTOCOL_URL_ANCHOR_PATTERN as _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
+    repair_spaced_protocol_url_anchors as _repair_spaced_protocol_url_anchors,
+)
 from .semantic_labels import (
     extended_data_figure_key_from_visible_number as _extended_data_figure_key_from_visible_number,
     figure_key_from_visible_number as _figure_key_from_visible_number,
@@ -2866,15 +2871,6 @@ _ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]{0,160}?)</a>\s+'
     r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']mailto:)[^>]*)>'
     r'(?P<next_body>[\s\S]{0,160}?)</a>',
-    re.IGNORECASE,
-)
-_SPACED_PROTOCOL_HREF_ATTR_PATTERN = re.compile(
-    r'(?P<prefix>\bhref\s*=\s*)(?P<quote>["\'])(?P<scheme>https?:)\s+//(?P<rest>[^"\']+)(?P=quote)',
-    re.IGNORECASE,
-)
-_SPACED_PROTOCOL_URL_ANCHOR_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']https?:\s+//[^"\']+["\'][^>]*)>'
-    r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
 _DEFAULT_READABILITY_STYLE = """
@@ -6449,33 +6445,6 @@ def _repair_broken_plain_url_text(html: str) -> str:
         out.append(repair_text(part))
 
     return "".join(out)
-
-
-def _repair_spaced_protocol_url_anchors(html: str) -> str:
-    """Join OCR spaces in URL anchor href protocols such as ``http: //``."""
-    if "http" not in html.lower():
-        return html
-
-    def fix_href(attrs: str) -> tuple[str, str | None]:
-        fixed_href: str | None = None
-
-        def replace_attr(match: re.Match[str]) -> str:
-            nonlocal fixed_href
-            fixed_href = f"{match.group('scheme')}//{match.group('rest')}"
-            return f"{match.group('prefix')}{match.group('quote')}{fixed_href}{match.group('quote')}"
-
-        return _SPACED_PROTOCOL_HREF_ATTR_PATTERN.sub(replace_attr, attrs, count=1), fixed_href
-
-    def replace_anchor(match: re.Match[str]) -> str:
-        attrs, fixed_href = fix_href(match.group("attrs"))
-        body = match.group("body")
-        if fixed_href and "<" not in body:
-            fixed_body = _BROKEN_PLAIN_URL_PROTOCOL_PATTERN.sub(r"\1", body)
-            if _compact_visible_url_fragment(fixed_body).lower() == _compact_visible_url_fragment(fixed_href).lower():
-                body = _escape_html_text(fixed_href)
-        return f"<a{attrs}>{body}</a>"
-
-    return _SPACED_PROTOCOL_URL_ANCHOR_PATTERN.sub(replace_anchor, html)
 
 
 def _repair_broken_url_anchor_labels(html: str) -> str:

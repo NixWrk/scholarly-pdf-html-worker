@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
-from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup
+from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup, url_anchors
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
     _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
@@ -26,6 +26,8 @@ from pdf_html_polish.single_file_html import (
     _SLASH_PIPE_ARTIFACT_PATTERN,
     _SPACED_ESCAPED_INLINE_TAG_PATTERN,
     _SPACED_INLINE_TAG_PATTERN,
+    _SPACED_PROTOCOL_HREF_ATTR_PATTERN,
+    _SPACED_PROTOCOL_URL_ANCHOR_PATTERN,
     _SPLIT_ESCAPED_INLINE_OPEN_TAG_PATTERN,
     _TEXT_NODE_REPAIR_SKIP_TAGS,
     _TRAILING_SPACED_BACKSLASH_PATTERN,
@@ -66,6 +68,7 @@ from pdf_html_polish.single_file_html import (
     _repair_page_footnote_ref_links,
     _repair_sevick_muraca_author_marker,
     _repair_sentence_breaks_around_float_units,
+    _repair_spaced_protocol_url_anchors,
     _repair_sup_figure_chain_continuations,
     _repair_turkish_urology_byline,
     _repair_xue_byline_abstract_split,
@@ -143,6 +146,9 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _cleanup_marker_escape_artifacts is pre_cleanup.cleanup_marker_escape_artifacts
     assert _strip_protocol_sentinel_leaks is pre_cleanup.strip_protocol_sentinel_leaks
     assert _update_skip_stack is pre_cleanup.update_skip_stack
+    assert _SPACED_PROTOCOL_HREF_ATTR_PATTERN is url_anchors.SPACED_PROTOCOL_HREF_ATTR_PATTERN
+    assert _SPACED_PROTOCOL_URL_ANCHOR_PATTERN is url_anchors.SPACED_PROTOCOL_URL_ANCHOR_PATTERN
+    assert _repair_spaced_protocol_url_anchors is url_anchors.repair_spaced_protocol_url_anchors
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN
     assert _unicode_capitalized_name_pair_count is frontmatter_footnotes.unicode_capitalized_name_pair_count
