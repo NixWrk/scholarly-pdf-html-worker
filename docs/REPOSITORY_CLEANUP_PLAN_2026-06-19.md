@@ -307,6 +307,12 @@ The cleanup policy is deliberately conservative:
   with direct owner tests; retarget, explicit page-reference, stale numeric,
   semantic internal-link, and author-year helpers remain in `single_file_html.py`
   for later small slices.
+- Continued reference/internal link cleanup by moving leading-closing punctuation
+  ref-link repair, explicit page-reference ref/page unwrapping, stale numeric
+  page-link unwrapping, and broken page/semantic internal-link cleanup into
+  `raw_html_polish/references_links.py` with direct owner tests. The heavier
+  retarget, absorbed decimal/unit, plain-prose page-link, and author-year
+  families remain in `single_file_html.py`.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

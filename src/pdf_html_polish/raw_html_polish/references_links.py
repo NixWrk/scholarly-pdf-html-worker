@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from ..html_references import NOTES_AND_REFERENCES_HEADING_PATTERN, REFERENCES_HEADING_PATTERN
 from .html_fragments import visible_text
@@ -10,8 +11,20 @@ from .html_fragments import visible_text
 
 LI_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])ref-(\d+)["\']', re.IGNORECASE)
 LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.IGNORECASE | re.DOTALL)
+REFERENCE_PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
 PAGE_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
+    r'(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
+SEMANTIC_INTERNAL_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])#'
+    r'(?P<target>(?:table|page)-[^"\']+)(?P=quote)[^>]*)>'
+    r'(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
+REF_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#ref-(?P<num>\d+)["\'][^>]*)>'
     r'(?P<body>[\s\S]*?)</a>',
     re.IGNORECASE,
 )
@@ -361,3 +374,137 @@ def unwrap_reference_list_page_links(html: str) -> str:
         return f'{open_tag}{unwrap_anchors(match.group("body"))}{match.group("close")}'
 
     return P_BLOCK_PATTERN.sub(replace_p, repaired)
+
+
+def repair_ref_links_with_leading_closing_punctuation(html: str) -> str:
+    """Move a leading closing parenthesis/bracket back outside a citation link."""
+    if "#ref-" not in html:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        label = visible_text(match.group("body"))
+        label_match = re.fullmatch(r"(?P<lead>[\)\]])\s*(?P<num>\d{1,3})(?P<trail>[,.;:]*)", label)
+        if label_match is None or label_match.group("num") != match.group("num"):
+            return match.group(0)
+        return (
+            f'{label_match.group("lead")}'
+            f'<a{match.group("attrs")}>{label_match.group("num")}</a>'
+            f'{label_match.group("trail")}'
+        )
+
+    return REF_ANCHOR_PATTERN.sub(replace, html)
+
+
+def unwrap_page_reference_ref_links(html: str, language_policy: Any) -> str:
+    """Remove bibliography links from explicit page references."""
+    if "#ref-" not in html:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        label = visible_text(match.group("body"))
+        left_text = visible_text(html[max(0, match.start() - 48): match.start()])
+        if language_policy.looks_like_page_reference(label, left_text=left_text):
+            return match.group("body")
+        return match.group(0)
+
+    return REF_ANCHOR_PATTERN.sub(replace, html)
+
+
+def unwrap_stale_numeric_page_links(html: str, language_policy: Any) -> str:
+    """Remove leftover page anchors that wrap citation-like numeric labels."""
+    if "#page-" not in html:
+        return html
+
+    numeric_label = re.compile(
+        r"^\s*[\[\(]?\s*\d{1,4}"
+        r"(?:\s*(?:[,;]|&|and|[-\u2010\u2011\u2012\u2013\u2014])\s*\d{1,4})*"
+        r"[\]\)\.,;:]*\s*$",
+        re.IGNORECASE,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        label = visible_text(match.group("body"))
+        left_text = visible_text(html[max(0, match.start() - 80): match.start()])
+        if language_policy.looks_like_page_reference(label, left_text=left_text):
+            return match.group(0)
+        if re.search(r"\b(?:pages?|pp?\.?|sheet|slide)\s*$", left_text, re.IGNORECASE):
+            return match.group(0)
+        if numeric_label.fullmatch(label) is None:
+            return match.group(0)
+        return match.group("body")
+
+    return PAGE_ANCHOR_PATTERN.sub(replace, html)
+
+
+def unwrap_page_reference_page_links(html: str, language_policy: Any) -> str:
+    """Remove page-anchor links from explicit page-reference labels."""
+    if "#page-" not in html:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        label = visible_text(match.group("body"))
+        left_text = visible_text(html[max(0, match.start() - 48): match.start()])
+        if language_policy.looks_like_page_reference(label, left_text=left_text):
+            return match.group("body")
+        return match.group(0)
+
+    return PAGE_ANCHOR_PATTERN.sub(replace, html)
+
+
+def unwrap_broken_page_anchor_links(html: str) -> str:
+    """Drop #page-* links that no longer have a matching page anchor id."""
+    if "#page-" not in html:
+        return html
+    page_ids = {match.group(2) for match in REFERENCE_PAGE_ID_PATTERN.finditer(html)}
+    if not page_ids:
+        return PAGE_ANCHOR_PATTERN.sub(lambda match: match.group("body"), html)
+
+    def replace(match: re.Match[str]) -> str:
+        href_match = re.search(
+            r'\bhref\s*=\s*(["\'])#(?P<target>page-[^"\']+)\1',
+            match.group("attrs"),
+            re.IGNORECASE,
+        )
+        if href_match is None or href_match.group("target") in page_ids:
+            return match.group(0)
+        return match.group("body")
+
+    return PAGE_ANCHOR_PATTERN.sub(replace, html)
+
+
+def unwrap_broken_internal_semantic_links(html: str) -> str:
+    """Drop late broken table/page links without stripping preserved citation markup."""
+    if 'href="#' not in html and "href='#" not in html:
+        return html
+    ids = {
+        match.group("id")
+        for match in re.finditer(
+            r'\bid\s*=\s*(["\'])(?P<id>[^"\']+)\1',
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+    }
+
+    def replace(match: re.Match[str]) -> str:
+        target = match.group("target")
+        if target in ids:
+            return match.group(0)
+        if target.startswith("page-"):
+            label = visible_text(match.group("body")).strip()
+            left_text = visible_text(html[max(0, match.start() - 100) : match.start()])
+            if re.fullmatch(
+                r"[\[\(]?\s*(?:pages?|pp?\.?|p\.?)?\s*\d{1,4}[\)\]\.,;:]?",
+                label,
+                re.IGNORECASE,
+            ):
+                return match.group(0)
+            if re.search(
+                r"\b(?:fig(?:ure)?|figs?|figures?|table|СЂРёСЃСѓРЅРѕРє|С„РёРіСѓСЂР°|С‚Р°Р±Р»РёС†Р°)\s*$",
+                left_text,
+                re.IGNORECASE,
+            ):
+                if re.fullmatch(r"\d{1,4}[A-Za-zРђ-РЇР°-СЏ]?", label):
+                    return match.group(0)
+        return match.group("body")
+
+    return SEMANTIC_INTERNAL_ANCHOR_PATTERN.sub(replace, html)
