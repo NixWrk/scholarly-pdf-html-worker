@@ -45,6 +45,8 @@ def test_public_console_scripts_only_expose_clean_pipeline() -> None:
 
     assert scripts["pdf-html-polish"] == "pdf_html_polish.cli.clean_convert:main"
     assert scripts["pdf-html-polish-clean"] == "pdf_html_polish.cli.clean_convert:main"
+    assert scripts["pdf-html-polish-stage-contract"] == "pdf_html_polish.cli.stage_contract:main"
+    assert "pdf-html-convert" not in scripts
 
 
 def test_clean_public_parser_does_not_offer_partial_export_mode() -> None:
@@ -103,16 +105,57 @@ def test_collect_final_html_copies_audited_polish_outputs(tmp_path: Path) -> Non
 def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_path: Path) -> None:
     conversion_dir = tmp_path / "converted"
     quality_dir = tmp_path / "quality"
+    article_id = "converted_article_a"
     logs: list[str] = []
     observe_calls: list[tuple[list[str], Path | None]] = []
 
     def fake_pipeline_runner(*_args):
-        conversion_dir.mkdir(parents=True)
+        stage_dir = conversion_dir / "article_a" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "01.en.raw.html").write_text("<html><body>raw</body></html>", encoding="utf-8")
+        (stage_dir / "02.en.polish.html").write_text("<html><body>stale</body></html>", encoding="utf-8")
+        (conversion_dir / "article_a" / "article_a.html").write_text(
+            "<html><body>extra</body></html>",
+            encoding="utf-8",
+        )
         return _summary(conversion_dir)
 
     def fake_observe_runner(command, cwd, log):
         observe_calls.append((list(command), cwd))
-        final_stage = quality_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+        source_run = quality_dir / "_converted_raw_source"
+        source_run.mkdir(parents=True)
+        (source_run / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "articles": [
+                        {
+                            "article_id": article_id,
+                            "raw_stage_path": str(conversion_dir / "article_a" / "_z2m_stages" / "01.en.raw.html"),
+                            "source_polish_path": str(
+                                conversion_dir / "article_a" / "_z2m_stages" / "02.en.polish.html"
+                            ),
+                        }
+                    ]
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (quality_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "source_run_dir": str(source_run),
+                    "code_commit": "abc123",
+                    "working_tree_dirty": False,
+                    "articles": [{"article": article_id}],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        final_stage = quality_dir / "audit_tree" / article_id / "02.en.polish.html"
         final_stage.parent.mkdir(parents=True)
         final_stage.write_text("<html><body>audited</body></html>", encoding="utf-8")
         if log is not None:
@@ -146,6 +189,12 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
     assert summary.final_html.artifacts[0].final_path.read_text(encoding="utf-8") == (
         "<html><body>audited</body></html>"
     )
+    assert summary.converted_stage_publish_report is not None
+    assert summary.converted_stage_publish_report["stage_contract_status"] == "pass"
+    assert (conversion_dir / "article_a" / "_z2m_stages" / "02.en.polish.html").read_text(encoding="utf-8") == (
+        "<html><body>audited</body></html>"
+    )
+    assert not (conversion_dir / "article_a" / "article_a.html").exists()
     assert "observe ok" in logs
 
 

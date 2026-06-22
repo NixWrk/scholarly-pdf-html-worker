@@ -10,6 +10,7 @@ from pdf_html_polish.clean_pipeline import (
 from pdf_html_polish.export_modes import ExportMode
 from pdf_html_polish.marker_runner import MarkerRunner
 from pdf_html_polish.pipeline import PipelineOptions
+from pdf_html_polish.stage_contract import PUBLISH_REPORT_NAME
 
 
 def _log(message: str) -> None:
@@ -129,6 +130,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"converted={summary.conversion_summary.converted_total}", flush=True)
     print(f"failed={summary.conversion_summary.failed_total}", flush=True)
     print(f"observe_exit_code={summary.observe_exit_code}", flush=True)
+    if summary.converted_stage_publish_report is not None:
+        publish_report = summary.converted_stage_publish_report
+        print(
+            "converted_stage_publish="
+            f"published:{publish_report.get('published_count')} "
+            f"removed_extra_html:{publish_report.get('removed_extra_html_count')} "
+            f"contract:{publish_report.get('stage_contract_status')}",
+            flush=True,
+        )
+        print(
+            f"converted_stage_publish_report={summary.quality_output_dir / PUBLISH_REPORT_NAME}",
+            flush=True,
+        )
     print(f"final_html_dir={summary.final_html.final_html_dir}", flush=True)
     print(f"final_html_count={len(summary.final_html.artifacts)}", flush=True)
     print(f"final_html_manifest={summary.final_html.manifest_path}", flush=True)

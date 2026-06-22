@@ -56,6 +56,10 @@ The command performs both major stages:
    under `--output-dir`.
 2. `llm_quality_loop.py observe --converted-roots <output-dir>` runs the
    repair-enabled repolish/audit/recovery loop under `--quality-output-dir`.
+3. The clean pipeline publishes the audited quality-run `02.en.polish.html`
+   back into the converted stage directory and verifies that the article
+   directory keeps exactly two HTML files: `01.en.raw.html` and the latest
+   audited `02.en.polish.html`.
 
 The final HTML for downstream use is:
 
@@ -63,10 +67,12 @@ The final HTML for downstream use is:
 <quality-output-dir>\final_html\<article-id>.html
 ```
 
-The original converted tree remains unchanged by the observe stage. This is
-intentional: the quality run is the auditable final artifact set. Its
-`audit_tree\<article-id>\02.en.polish.html` files are the source for
-`final_html/`.
+The low-level `observe` command remains read-only with respect to the converted
+tree. The public `pdf-html-polish` pipeline adds the explicit publication step
+after `observe`, so the converted tree does not retain stale generated HTML
+copies. The quality run is still the auditable final artifact set, and its
+`audit_tree\<article-id>\02.en.polish.html` files are the source for both
+`final_html/` and the published converted-stage polish.
 
 Important reports for deciding whether the document is clean enough:
 
@@ -76,6 +82,7 @@ Important reports for deciding whether the document is clean enough:
 - `polish_auto_repair_report.json`
 - `manual_review_queue.json`
 - `article_review\index.html`
+- `converted_stage_publish_report.json`
 
 ## Production Conversion Sequence
 
@@ -100,6 +107,10 @@ production mode.
 
    Add `--zotero-overlay-dir <dir>` only when prebuilt Zotero/pdf.js
    `*.overlays.json` files are part of the run.
+
+   On success, the converted article directory is normalized to the storage
+   contract. There should be no extra `.html` files beside the raw/polish stage
+   pair.
 
 3. `discover_source_pdfs` validates direct PDF paths.
 
@@ -228,6 +239,32 @@ Use `--audit-converted-existing` only for a readonly inspection of existing
 `02.en.polish.html` files. That mode deliberately does not repolish and does
 not run repair stages, so it is not the canonical final quality check.
 
+After a manual `observe` run finishes and is accepted, publish the audited
+polish back into the converted tree before handing that tree to downstream
+automation. Run the publish command first as a dry-run, then repeat with
+`--apply` only after the report points at the intended converted root:
+
+```powershell
+pdf-html-polish-stage-contract publish `
+  --quality-run-dir "review_runs\pdf_to_polish_YYYYMMDD_01_quality" `
+  --converted-root "review_runs\pdf_to_polish_YYYYMMDD_01" `
+  --out-report "C:\tmp\publish_latest_dry_run.json"
+```
+
+The publication step never modifies `01.en.raw.html`. It replaces the matching
+source `02.en.polish.html` with the audited quality-run polish, prunes stale
+generated HTML copies, and writes `converted_stage_publish_report.json`.
+
+Use this verification command to prove an existing converted tree already
+satisfies the two-HTML storage contract:
+
+```powershell
+pdf-html-polish-stage-contract verify `
+  --root "D:\Elvis_projects\Zotero_Automation\Zotero_automatization\data\html\converted" `
+  --out-report "C:\tmp\converted_stage_contract.json" `
+  --fail-on-violations
+```
+
 ## Required Observe Acceptance Gate
 
 For production-quality validation and for meaningful behavior refactors, the
@@ -263,6 +300,10 @@ The acceptance checklist is:
 - `quality_gate_report.json` is the authoritative gate result. A failing gate
   may be accepted only as documented follow-up when the compare report shows no
   regressions and the remaining mandatory items are enumerated.
+- If the converted tree will be reused downstream, the audited polish has been
+  published back with `pdf-html-polish-stage-contract publish --apply`, and
+  `converted_stage_publish_report.json` records
+  `stage_contract_status=pass`.
 
 The 2026-06-22 reference run
 `review_runs\full_pdf_to_polish_repair_observe_20260622_01` is the current
@@ -360,8 +401,13 @@ A run is production-ready when all of the following are true:
 - The output root contains `_source_filename_map.csv` and article directories
   with `_pdf_html_polish_stages/01.en.raw.html` and
   `_pdf_html_polish_stages/02.en.polish.html`.
+- The converted article directories satisfy the two-HTML storage contract:
+  exactly `01.en.raw.html` plus the latest audited `02.en.polish.html`; no
+  stale generated `.html` copies remain.
 - The repair-enabled quality run completed and collected final audited HTML in
   `<quality-output-dir>\final_html\`.
+- `converted_stage_publish_report.json` exists and has
+  `stage_contract_status=pass`.
 - `source_pdf_map.json` maps source PDFs for the corpus or records explicit
   unavailable candidates.
 - P62 recovery and polish auto-repair reports were produced when enabled by the

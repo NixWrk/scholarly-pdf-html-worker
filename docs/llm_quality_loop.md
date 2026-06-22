@@ -179,6 +179,13 @@ production converted tree. This keeps the production check aligned with the
 normal cached raw loop instead of only auditing stale `02.en.polish.html`
 artifacts.
 
+The public `pdf-html-polish` command adds the production publication step after
+this read-only observe pass: audited `audit_tree/<article>/02.en.polish.html`
+is copied back over the matching converted-stage `02.en.polish.html`, stale
+generated HTML copies are pruned, and `converted_stage_publish_report.json`
+confirms the two-HTML storage contract. For a manual observe run, use
+`pdf-html-polish-stage-contract publish` for the same publication step.
+
 ```powershell
 python scripts\llm_quality_loop.py observe `
   --converted-roots D:\Elvis_projects\Zotero_automatization\data\html\converted `

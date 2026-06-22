@@ -28,7 +28,10 @@ Clean production pipeline:
 6. Run `llm_quality_loop.py observe --converted-roots` in repair-enabled mode.
    This reuses the converted raw stage, applies the accumulated deterministic
    repolish, PDF/P62 recovery, auto-repair, audit, and gate checks.
-7. Collect the audited `02.en.polish.html` files from the quality run into
+7. Publish the audited `02.en.polish.html` from the quality run back into the
+   converted stage directory and enforce the two-HTML storage contract:
+   `01.en.raw.html` plus the latest audited `02.en.polish.html`.
+8. Collect the audited `02.en.polish.html` files from the quality run into
    `final_html/`.
 
 For the full production order, including direct Zotero-storage PDF inputs,
@@ -71,6 +74,14 @@ HTML files are collected here:
 D:\work\paper_pdf_html_quality\final_html\
 ```
 
+The converted article directory is also normalized after the quality loop:
+only the raw stage and the latest audited polish stage remain as HTML files.
+The publication/verification report is written to:
+
+```text
+D:\work\paper_pdf_html_quality\converted_stage_publish_report.json
+```
+
 If a gate comparison against a compatible previous run is needed, add
 `--previous-entry <quality_history_entry.json>`. For ordinary one-document
 processing, the quality reports are still useful even without a previous entry.
@@ -95,6 +106,32 @@ link quality. The production path also passes a citation profile built from the
 source PDF, optionally enriched with Zotero/pdf.js overlays. Raw-only repolish
 helpers can be useful for text, float, math, or layout checks, but they are not
 valid for citation/internal-link regression checks.
+
+Production converted-stage storage has a strict HTML contract. For each article
+directory, the only retained HTML files are:
+
+- `01.en.raw.html`
+- `02.en.polish.html`
+
+The public clean pipeline writes the audited latest polish back into
+`02.en.polish.html` and prunes stale generated HTML copies. To audit an existing
+converted tree without changing it:
+
+```powershell
+pdf-html-polish-stage-contract verify `
+  --root "D:\Elvis_projects\Zotero_Automation\Zotero_automatization\data\html\converted" `
+  --out-report "C:\tmp\converted_stage_contract.json"
+```
+
+To publish a completed quality run back into a converted tree, first run without
+`--apply` and inspect the report, then repeat with `--apply`:
+
+```powershell
+pdf-html-polish-stage-contract publish `
+  --quality-run-dir "D:\work\paper_pdf_html_quality" `
+  --converted-root "D:\work\paper_pdf_html" `
+  --out-report "C:\tmp\paper_publish_dry_run.json"
+```
 
 For link-sensitive repolish experiments, use `scripts/pdf_profile_lab.py` with a
 `_source_filename_map.csv` beside the raw stages. The CSV must include

@@ -6,12 +6,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 from .marker_runner import MarkerRunner
 from .models import PipelineSummary
 from .pipeline import run_pipeline
 from .pipeline_options import PipelineOptions
+from .stage_contract import publish_latest_polish_from_quality_run
 
 
 QUALITY_LOOP_SCRIPT = "scripts/llm_quality_loop.py"
@@ -36,6 +37,9 @@ class CleanPipelineOptions:
     no_append_history: bool = True
     skip_quality_tests: bool = False
     fail_on_gate: bool = False
+    publish_latest_to_converted: bool = True
+    prune_extra_html: bool = True
+    publish_report_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,7 @@ class CleanPipelineSummary:
     run_id: str
     observe_command: tuple[str, ...]
     observe_exit_code: int
+    converted_stage_publish_report: dict[str, Any] | None
     final_html: FinalHtmlCollection
 
 
@@ -285,6 +290,25 @@ def run_clean_pipeline(
     if observe_exit_code != 0:
         raise RuntimeError(f"Quality observe failed with exit code {observe_exit_code}.")
 
+    converted_stage_publish_report: dict[str, Any] | None = None
+    if options.publish_latest_to_converted:
+        converted_stage_publish_report = publish_latest_polish_from_quality_run(
+            quality_output_dir,
+            converted_roots=[converted_root],
+            apply=True,
+            prune_extra_html=options.prune_extra_html,
+            out_report=(
+                Path(options.publish_report_path).expanduser().resolve(strict=False)
+                if options.publish_report_path
+                else None
+            ),
+        )
+        if converted_stage_publish_report.get("stage_contract_status") != "pass":
+            raise RuntimeError(
+                "Converted stage HTML contract failed after publishing latest polish "
+                f"(failing={converted_stage_publish_report.get('stage_contract_failing_article_count')})."
+            )
+
     final_html = collect_final_html(
         quality_output_dir,
         final_html_dir=(
@@ -305,5 +329,6 @@ def run_clean_pipeline(
         run_id=run_id,
         observe_command=tuple(observe_command),
         observe_exit_code=observe_exit_code,
+        converted_stage_publish_report=converted_stage_publish_report,
         final_html=final_html,
     )
