@@ -10,6 +10,7 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,
     repair_front_matter_page_anchor_markers,
+    repair_page_footnote_ref_links,
     unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count,
     valid_front_matter_marker_numbers,
@@ -119,6 +120,28 @@ def test_mark_footnote_paragraphs_and_refs_skips_protected_ref_blocks() -> None:
     )
 
     assert 'class="z2m-front-matter">Low tensile strength<sup>1</sup>' in marked
+
+
+def test_repair_page_footnote_ref_links_restores_page_linked_marker() -> None:
+    html = (
+        '<p>Low tensile strength <a href="#page-7">x1</a> remains important.</p>'
+        '<p class="z2m-footnote"><span id="page-7"></span><sup>1</sup> '
+        "Tensile strength is determined by materials testing methods.</p>"
+    )
+
+    repaired = repair_page_footnote_ref_links(html)
+
+    assert 'strengthx<sup class="z2m-footnote-ref">1</sup> remains' in repaired
+
+
+def test_repair_page_footnote_ref_links_leaves_unmatched_page_links() -> None:
+    html = (
+        '<p>Low tensile strength <a href="#page-8">1</a> remains important.</p>'
+        '<p class="z2m-footnote"><span id="page-7"></span><sup>1</sup> '
+        "Tensile strength is determined by materials testing methods.</p>"
+    )
+
+    assert repair_page_footnote_ref_links(html) == html
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:

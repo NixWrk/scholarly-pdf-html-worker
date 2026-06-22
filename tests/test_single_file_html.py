@@ -55,6 +55,7 @@ from pdf_html_polish.single_file_html import (
     _repair_front_matter_page_anchor_markers,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
+    _repair_page_footnote_ref_links,
     _repair_sentence_breaks_around_float_units,
     _repair_sup_figure_chain_continuations,
     _recover_unique_bare_source_named_figure_units,
@@ -137,6 +138,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _looks_author_marker_ocr_candidate is frontmatter_footnotes.looks_author_marker_ocr_candidate
     assert _leading_footnote_number is frontmatter_footnotes.leading_footnote_number
     assert _footnote_keywords is frontmatter_footnotes.footnote_keywords
+    assert _repair_page_footnote_ref_links is frontmatter_footnotes.repair_page_footnote_ref_links
 
 
 def test_single_file_footnote_block_wrapper_uses_float_caption_guards() -> None:

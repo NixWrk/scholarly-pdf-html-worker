@@ -59,6 +59,16 @@ P_BLOCK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
+PAGE_ANCHOR_PATTERN = re.compile(
+    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
+    r'(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
+FOOTNOTE_CLASS_PATTERN = re.compile(
+    r'\bclass\s*=\s*(["\'])(?=[^"\']*\bz2m-footnote\b)[^"\']*\1',
+    re.IGNORECASE,
+)
+PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
 
 
 def unicode_capitalized_name_pair_count(text: str) -> int:
@@ -318,6 +328,65 @@ def mark_footnote_paragraphs_and_refs(
     return P_BLOCK_PATTERN.sub(mark_ref, marked)
 
 
+def repair_page_footnote_ref_links(html: str) -> str:
+    """Convert page-linked OCR footnote markers back to superscript notes."""
+    if "#page-" not in html or "z2m-footnote" not in html:
+        return html
+
+    footnote_page_ids: set[str] = set()
+    footnote_numbers: set[int] = set()
+    for block in P_BLOCK_PATTERN.finditer(html):
+        raw = block.group(0)
+        if FOOTNOTE_CLASS_PATTERN.search(raw) is None:
+            continue
+        footnote_numbers.update(int(num) for num in re.findall(r"<sup\b[^>]*>\s*(\d{1,2})\s*</sup>", raw, re.IGNORECASE))
+        footnote_numbers.update(
+            int(num)
+            for num in re.findall(r"(?<!\d)(\d{1,2})(?=(?:\s+https?://|\s+www\.|https?://|www\.))", visible_text(raw), re.IGNORECASE)
+        )
+        leading_number = leading_footnote_number(raw)
+        if leading_number is not None:
+            footnote_numbers.add(leading_number)
+        for page_match in PAGE_ID_PATTERN.finditer(raw):
+            footnote_page_ids.add(page_match.group(2))
+
+    if not footnote_page_ids or not footnote_numbers:
+        return html
+
+    def repair_block(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        if FOOTNOTE_CLASS_PATTERN.search(raw) is not None:
+            return raw
+
+        def replace_anchor(anchor_match: re.Match[str]) -> str:
+            attrs = anchor_match.group("attrs")
+            target_match = re.search(r'\bhref\s*=\s*(["\'])#(?P<target>page-[^"\']+)\1', attrs, re.IGNORECASE)
+            if target_match is None or target_match.group("target") not in footnote_page_ids:
+                return anchor_match.group(0)
+            label = visible_text(anchor_match.group("body")).strip()
+            label_match = re.fullmatch(r"(?P<prefix>[A-Za-z]?)(?P<num>\d{1,2})(?P<trail>[\)\]\.,;:]*)", label)
+            if label_match is None:
+                return anchor_match.group(0)
+            number = int(label_match.group("num"))
+            if number not in footnote_numbers:
+                return anchor_match.group(0)
+            return (
+                f'{label_match.group("prefix")}'
+                f'<sup class="z2m-footnote-ref">{number}</sup>'
+                f'{label_match.group("trail")}'
+            )
+
+        body = PAGE_ANCHOR_PATTERN.sub(replace_anchor, match.group("body"))
+        body = re.sub(
+            r'(\b[A-Za-z]{3,})\s+([A-Za-z])(<sup class="z2m-footnote-ref">\d{1,2}</sup>)',
+            r"\1\2\3",
+            body,
+        )
+        return f"{match.group('open')}{body}{match.group('close')}"
+
+    return P_BLOCK_PATTERN.sub(repair_block, html)
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -412,6 +481,9 @@ __all__ = [
     "FOOTNOTE_P_NODE_PATTERN",
     "LEADING_PAGE_SPAN_PATTERN",
     "P_BLOCK_PATTERN",
+    "FOOTNOTE_CLASS_PATTERN",
+    "PAGE_ANCHOR_PATTERN",
+    "PAGE_ID_PATTERN",
     "SUPERSCRIPT_DIGIT_TRANSLATION",
     "SUP_PATTERN",
     "footnote_keywords",
@@ -425,6 +497,7 @@ __all__ = [
     "repair_affiliation_label_ocr_body",
     "repair_author_marker_ocr_body",
     "repair_front_matter_page_anchor_markers",
+    "repair_page_footnote_ref_links",
     "unicode_capitalized_name_pair_count",
     "unicode_glued_author_marker_count",
     "valid_front_matter_marker_numbers",
