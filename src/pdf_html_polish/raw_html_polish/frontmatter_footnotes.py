@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import re
 
-from .html_fragments import add_class_attr, add_id_attr, append_class_to_attrs, visible_text
+from .html_fragments import add_class_attr, add_id_attr, append_class_to_attrs, node_has_class, visible_text
 
 SUPERSCRIPT_DIGIT_TRANSLATION = str.maketrans(
     {
@@ -58,6 +58,7 @@ P_BLOCK_PATTERN = re.compile(
     r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
     re.IGNORECASE,
 )
+LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>([\s\S]*?)</li>", re.IGNORECASE)
 SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 PAGE_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
@@ -443,6 +444,39 @@ def split_url_footnote_prose_tails(html: str) -> str:
     return P_BLOCK_PATTERN.sub(split, html)
 
 
+def repair_front_matter_marker_ocr(
+    html: str,
+    *,
+    looks_like_ocr_split_word_join: Callable[[str, str], bool],
+) -> str:
+    def repair(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        body = match.group("body")
+        if node_has_class(raw, "z2m-front-matter"):
+            body = repair_front_matter_page_anchor_markers(
+                body,
+                looks_like_ocr_split_word_join=looks_like_ocr_split_word_join,
+            )
+        if node_has_class(raw, "z2m-front-matter") and looks_author_marker_ocr_candidate(raw):
+            body = repair_author_marker_ocr_body(body)
+        if node_has_class(raw, "z2m-front-matter") and looks_affiliation_label_body(body):
+            body = repair_affiliation_label_ocr_body(body)
+        if node_has_class(raw, "z2m-affiliations"):
+            body = repair_affiliation_label_ocr_body(body)
+        return f"{match.group('open')}{body}{match.group('close')}"
+
+    repaired = P_BLOCK_PATTERN.sub(repair, html)
+
+    def repair_li(match: re.Match[str]) -> str:
+        attrs = match.group(1) or ""
+        body = match.group(2)
+        if looks_affiliation_label_body(body):
+            body = repair_affiliation_label_ocr_body(body)
+        return f"<li{attrs}>{body}</li>"
+
+    return LI_BLOCK_PATTERN.sub(repair_li, repaired)
+
+
 def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
@@ -538,6 +572,7 @@ __all__ = [
     "LEADING_PAGE_SPAN_PATTERN",
     "LEADING_URL_FOOTNOTE_ANCHOR_PATTERN",
     "LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN",
+    "LI_BLOCK_PATTERN",
     "P_BLOCK_PATTERN",
     "FOOTNOTE_CLASS_PATTERN",
     "PAGE_ANCHOR_PATTERN",
@@ -554,6 +589,7 @@ __all__ = [
     "normalize_front_matter_marker_numbers",
     "repair_affiliation_label_ocr_body",
     "repair_author_marker_ocr_body",
+    "repair_front_matter_marker_ocr",
     "repair_front_matter_page_anchor_markers",
     "repair_page_footnote_ref_links",
     "split_url_footnote_prose_tails",

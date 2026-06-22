@@ -9,6 +9,7 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,
+    repair_front_matter_marker_ocr,
     repair_front_matter_page_anchor_markers,
     repair_page_footnote_ref_links,
     split_url_footnote_prose_tails,
@@ -169,6 +170,32 @@ def test_split_url_footnote_prose_tails_keeps_short_tails() -> None:
     )
 
     assert split_url_footnote_prose_tails(html) == html
+
+
+def test_repair_front_matter_marker_ocr_repairs_author_and_affiliation_blocks() -> None:
+    html = (
+        '<p class="z2m-front-matter">Alice Smith1, Bob Jones2, Carol Roe3</p>'
+        '<p class="z2m-affiliations">1Department of A. 2University of B</p>'
+    )
+
+    repaired = repair_front_matter_marker_ocr(
+        html,
+        looks_like_ocr_split_word_join=lambda _word, _letter: False,
+    )
+
+    assert "Alice Smith<sup>1</sup>, Bob Jones<sup>2</sup>, Carol Roe<sup>3</sup>" in repaired
+    assert "<sup>1</sup>Department of A. <sup>2</sup>University of B" in repaired
+
+
+def test_repair_front_matter_marker_ocr_repairs_affiliation_list_items() -> None:
+    html = "<ul><li>1Department of A. 2University of B</li></ul>"
+
+    repaired = repair_front_matter_marker_ocr(
+        html,
+        looks_like_ocr_split_word_join=lambda _word, _letter: False,
+    )
+
+    assert "<li><sup>1</sup>Department of A. <sup>2</sup>University of B</li>" in repaired
 
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:

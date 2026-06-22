@@ -156,6 +156,7 @@ from .raw_html_polish.frontmatter_footnotes import (
     mark_footnote_paragraphs_and_refs as _mark_footnote_paragraphs_and_refs_impl,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
+    repair_front_matter_marker_ocr as _repair_front_matter_marker_ocr_impl,
     repair_front_matter_page_anchor_markers as _repair_front_matter_page_anchor_markers_impl,
     repair_page_footnote_ref_links as _repair_page_footnote_ref_links,
     split_url_footnote_prose_tails as _split_url_footnote_prose_tails,
@@ -3349,29 +3350,10 @@ def _repair_front_matter_page_anchor_markers(body: str) -> str:
 
 
 def _repair_front_matter_marker_ocr(html: str) -> str:
-    def _repair(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        body = match.group("body")
-        if _node_has_class(raw, "z2m-front-matter"):
-            body = _repair_front_matter_page_anchor_markers(body)
-        if _node_has_class(raw, "z2m-front-matter") and _looks_author_marker_ocr_candidate(raw):
-            body = _repair_author_marker_ocr_body(body)
-        if _node_has_class(raw, "z2m-front-matter") and _looks_affiliation_label_body(body):
-            body = _repair_affiliation_label_ocr_body(body)
-        if _node_has_class(raw, "z2m-affiliations"):
-            body = _repair_affiliation_label_ocr_body(body)
-        return f"{match.group('open')}{body}{match.group('close')}"
-
-    repaired = _P_BLOCK_PATTERN.sub(_repair, html)
-
-    def _repair_li(match: re.Match[str]) -> str:
-        attrs = match.group(1) or ""
-        body = match.group(2)
-        if _looks_affiliation_label_body(body):
-            body = _repair_affiliation_label_ocr_body(body)
-        return f"<li{attrs}>{body}</li>"
-
-    return _LI_BLOCK_PATTERN.sub(_repair_li, repaired)
+    return _repair_front_matter_marker_ocr_impl(
+        html,
+        looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
+    )
 
 
 def _repair_confirmed_front_matter_artifacts(html: str) -> str:
