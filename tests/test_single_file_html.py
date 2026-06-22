@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from pdf_html_polish import html_images, html_links, text_cleanup
-from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup, url_anchors
+from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup, url_anchors, url_text_repair
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
     _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
@@ -14,6 +14,7 @@ from pdf_html_polish.single_file_html import (
     _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
     _AUTHOR_BYLINE_NAME_RE,
     _BACKSLASH_BEFORE_QUOTE_PATTERN,
+    _BROKEN_URL_ANCHOR_LABEL_PATTERN,
     _ESCAPED_INLINE_TAG_PATTERN,
     _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN,
     _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN,
@@ -46,6 +47,7 @@ from pdf_html_polish.single_file_html import (
     _SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN,
     _TEXT_NODE_REPAIR_SKIP_TAGS,
     _TRAILING_SPACED_BACKSLASH_PATTERN,
+    _TRAILING_PROSE_URL_PATTERN,
     _URL_ANCHOR_TEXT_PATTERN,
     _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN,
     _URL_FRAGMENT_TEXT_CHUNK_PATTERN,
@@ -85,6 +87,8 @@ from pdf_html_polish.single_file_html import (
     _normalize_same_href_text_anchor_label,
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
+    _repair_broken_plain_url_text,
+    _repair_broken_url_anchor_labels,
     _repair_figure_ref_links_misclassified_as_refs,
     _repair_confirmed_front_matter_artifacts,
     _repair_confirmed_front_matter_email_artifacts_body,
@@ -113,6 +117,7 @@ from pdf_html_polish.single_file_html import (
     _shield_renderable_data_image_srcs,
     _split_zhu_affiliation_tail,
     _split_url_footnote_prose_tails,
+    _split_trailing_prose_url,
     _split_table_units_before_section_headings,
     _to_data_url,
     _unescape_inline_sup_sub,
@@ -179,6 +184,8 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _LEADING_SPACED_BACKSLASH_PATTERN is pre_cleanup.LEADING_SPACED_BACKSLASH_PATTERN
     assert _TRAILING_SPACED_BACKSLASH_PATTERN is pre_cleanup.TRAILING_SPACED_BACKSLASH_PATTERN
     assert _BACKSLASH_BEFORE_QUOTE_PATTERN is pre_cleanup.BACKSLASH_BEFORE_QUOTE_PATTERN
+    assert _BROKEN_URL_ANCHOR_LABEL_PATTERN is url_text_repair.BROKEN_URL_ANCHOR_LABEL_PATTERN
+    assert _TRAILING_PROSE_URL_PATTERN is url_text_repair.TRAILING_PROSE_URL_PATTERN
     assert _INLINE_OR_DISPLAY_TEX_PATTERN is pre_cleanup.INLINE_OR_DISPLAY_TEX_PATTERN
     assert _RU_BARE_FIG_LEXEME_PATTERN is pre_cleanup.RU_BARE_FIG_LEXEME_PATTERN
     assert _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN
@@ -223,6 +230,9 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _repair_split_www_domain_anchor_with_noisy_href is url_anchors.repair_split_www_domain_anchor_with_noisy_href
     assert _repair_spaced_protocol_url_anchors is url_anchors.repair_spaced_protocol_url_anchors
     assert _unescape_html_entities_repeated is url_anchors.unescape_html_entities_repeated
+    assert _repair_broken_plain_url_text is url_text_repair.repair_broken_plain_url_text
+    assert _repair_broken_url_anchor_labels is url_text_repair.repair_broken_url_anchor_labels
+    assert _split_trailing_prose_url is url_text_repair.split_trailing_prose_url
     assert _AUTHOR_BYLINE_NAME_RE is frontmatter_footnotes.AUTHOR_BYLINE_NAME_PATTERN
     assert _PAGE_HEADER_FOOTER_LINE_PATTERN is frontmatter_footnotes.PAGE_HEADER_FOOTER_LINE_PATTERN
     assert _unicode_capitalized_name_pair_count is frontmatter_footnotes.unicode_capitalized_name_pair_count
