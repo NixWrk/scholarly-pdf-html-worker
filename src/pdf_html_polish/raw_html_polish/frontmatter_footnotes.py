@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import re
 
 from .html_fragments import visible_text
@@ -163,6 +164,58 @@ def normalize_front_matter_marker_numbers(text: str) -> str:
     return ",".join(re.findall(r"\d{1,2}", text))
 
 
+def valid_front_matter_marker_numbers(value: str) -> str | None:
+    numbers = normalize_front_matter_marker_numbers(value)
+    if not numbers:
+        return None
+    parsed = [int(item) for item in numbers.split(",")]
+    if any(number <= 0 or number > 30 for number in parsed):
+        return None
+    return numbers
+
+
+def repair_front_matter_page_anchor_markers(
+    body: str,
+    *,
+    looks_like_ocr_split_word_join: Callable[[str, str], bool],
+) -> str:
+    """Convert OCR-glued author markers like ``...i<a>1</a>`` out of page links."""
+    glued_pattern = re.compile(
+        r"(?P<stem>\b[A-Za-z]{3,})\s*"
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>"
+        r"\s*(?P<letter>[A-Za-z])(?P<nums>\d{1,2}(?:\s*,\s*\d{1,2})*)(?P<trail>,?)\s*</a>",
+        re.IGNORECASE,
+    )
+    bare_pattern = re.compile(
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>"
+        r"\s*(?:[A-Za-z])?(?P<nums>\d{1,2}(?:\s*,\s*\d{1,2})*)(?P<trail>,?)\s*</a>",
+        re.IGNORECASE,
+    )
+
+    def replace_glued(match: re.Match[str]) -> str:
+        stem = match.group("stem")
+        letter = match.group("letter")
+        if not looks_like_ocr_split_word_join(stem, letter):
+            return match.group(0)
+        numbers = valid_front_matter_marker_numbers(match.group("nums"))
+        if numbers is None:
+            return match.group(0)
+        if letter.lower() == "i" and stem.lower().endswith(("i", "v", "x")):
+            suffix = ""
+        else:
+            suffix = "" if stem.lower().endswith(letter.lower()) else letter
+        return f"{stem}{suffix}<sup>{numbers}</sup>{match.group('trail')}"
+
+    def replace_bare(match: re.Match[str]) -> str:
+        numbers = valid_front_matter_marker_numbers(match.group("nums"))
+        if numbers is None:
+            return match.group(0)
+        return f"<sup>{numbers}</sup>{match.group('trail')}"
+
+    body = glued_pattern.sub(replace_glued, body)
+    return bare_pattern.sub(replace_bare, body)
+
+
 def repair_author_marker_ocr_body(body: str) -> str:
     body = AUTHOR_MARKER_OCR_SYMBOL_PATTERN.sub(" ", body)
     body = body.translate(SUPERSCRIPT_DIGIT_TRANSLATION)
@@ -204,6 +257,8 @@ __all__ = [
     "normalize_front_matter_marker_numbers",
     "repair_affiliation_label_ocr_body",
     "repair_author_marker_ocr_body",
+    "repair_front_matter_page_anchor_markers",
     "unicode_capitalized_name_pair_count",
     "unicode_glued_author_marker_count",
+    "valid_front_matter_marker_numbers",
 ]

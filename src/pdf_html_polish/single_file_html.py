@@ -149,9 +149,9 @@ from .raw_html_polish.frontmatter_footnotes import (
     SUPERSCRIPT_DIGIT_TRANSLATION as _SUPERSCRIPT_DIGIT_TRANSLATION,
     looks_author_byline_front_matter as _looks_author_byline_front_matter,
     looks_author_marker_ocr_candidate as _looks_author_marker_ocr_candidate,
-    normalize_front_matter_marker_numbers as _normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body as _repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body as _repair_author_marker_ocr_body,
+    repair_front_matter_page_anchor_markers as _repair_front_matter_page_anchor_markers_impl,
     unicode_capitalized_name_pair_count as _unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count as _unicode_glued_author_marker_count,
 )
@@ -3335,50 +3335,10 @@ def _mark_front_matter_paragraphs(html: str) -> str:
 
 
 def _repair_front_matter_page_anchor_markers(body: str) -> str:
-    """Convert OCR-glued author markers like ``...i<a>1</a>`` out of page links."""
-    glued_pattern = re.compile(
-        r"(?P<stem>\b[A-Za-z]{3,})\s*"
-        r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>"
-        r"\s*(?P<letter>[A-Za-z])(?P<nums>\d{1,2}(?:\s*,\s*\d{1,2})*)(?P<trail>,?)\s*</a>",
-        re.IGNORECASE,
+    return _repair_front_matter_page_anchor_markers_impl(
+        body,
+        looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
     )
-    bare_pattern = re.compile(
-        r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>"
-        r"\s*(?:[A-Za-z])?(?P<nums>\d{1,2}(?:\s*,\s*\d{1,2})*)(?P<trail>,?)\s*</a>",
-        re.IGNORECASE,
-    )
-
-    def _valid_marker_numbers(value: str) -> str | None:
-        numbers = _normalize_front_matter_marker_numbers(value)
-        if not numbers:
-            return None
-        parsed = [int(item) for item in numbers.split(",")]
-        if any(number <= 0 or number > 30 for number in parsed):
-            return None
-        return numbers
-
-    def _replace_glued(match: re.Match[str]) -> str:
-        stem = match.group("stem")
-        letter = match.group("letter")
-        if not _looks_like_ocr_split_word_join(stem, letter):
-            return match.group(0)
-        numbers = _valid_marker_numbers(match.group("nums"))
-        if numbers is None:
-            return match.group(0)
-        if letter.lower() == "i" and stem.lower().endswith(("i", "v", "x")):
-            suffix = ""
-        else:
-            suffix = "" if stem.lower().endswith(letter.lower()) else letter
-        return f"{stem}{suffix}<sup>{numbers}</sup>{match.group('trail')}"
-
-    def _replace_bare(match: re.Match[str]) -> str:
-        numbers = _valid_marker_numbers(match.group("nums"))
-        if numbers is None:
-            return match.group(0)
-        return f"<sup>{numbers}</sup>{match.group('trail')}"
-
-    body = glued_pattern.sub(_replace_glued, body)
-    return bare_pattern.sub(_replace_bare, body)
 
 
 def _repair_front_matter_marker_ocr(html: str) -> str:

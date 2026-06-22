@@ -241,6 +241,9 @@ The cleanup policy is deliberately conservative:
   author byline/marker classifier helpers into
   `raw_html_polish/frontmatter_footnotes.py`; compatibility aliases remain in
   `single_file_html.py` and direct owner tests cover the moved logic.
+- Moved frontmatter page-anchor marker repair into
+  `raw_html_polish/frontmatter_footnotes.py` behind an explicit word-join
+  dependency callback; `single_file_html.py` keeps the old private wrapper.
 - Ran a full cached-raw no-repair parity check on
   `review_runs/refactor_parity_cleanup_20260619_02` from the latest 1009-raw
   source run. The run repolished 878 EN articles, skipped 131 non-target

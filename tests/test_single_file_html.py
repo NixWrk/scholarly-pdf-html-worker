@@ -47,6 +47,7 @@ from pdf_html_polish.single_file_html import (
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
+    _repair_front_matter_page_anchor_markers,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
     _repair_sentence_breaks_around_float_units,
@@ -146,6 +147,14 @@ def test_inline_images_from_html_file() -> None:
         assert 'data-z2m-src="img.png"' in result.html
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_single_file_front_matter_page_anchor_marker_wrapper() -> None:
+    body = 'Alic<a href="#page-1">e1,2</a>, <a href="#page-1">3</a>'
+
+    assert _repair_front_matter_page_anchor_markers(body) == (
+        "Alice<sup>1,2</sup>, <sup>3</sup>"
+    )
 
 
 def test_inline_images_only_from_html_file_does_not_apply_marker_polish() -> None:

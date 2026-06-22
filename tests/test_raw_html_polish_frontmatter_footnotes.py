@@ -4,8 +4,10 @@ from pdf_html_polish.raw_html_polish.frontmatter_footnotes import (
     normalize_front_matter_marker_numbers,
     repair_affiliation_label_ocr_body,
     repair_author_marker_ocr_body,
+    repair_front_matter_page_anchor_markers,
     unicode_capitalized_name_pair_count,
     unicode_glued_author_marker_count,
+    valid_front_matter_marker_numbers,
 )
 
 
@@ -45,6 +47,34 @@ def test_looks_author_marker_ocr_candidate_rejects_publication_dates() -> None:
 
 def test_normalize_front_matter_marker_numbers_compacts_separator_noise() -> None:
     assert normalize_front_matter_marker_numbers("1, 02; x9") == "1,02,9"
+
+
+def test_valid_front_matter_marker_numbers_rejects_out_of_range_values() -> None:
+    assert valid_front_matter_marker_numbers("1, 30") == "1,30"
+    assert valid_front_matter_marker_numbers("0, 2") is None
+    assert valid_front_matter_marker_numbers("31") is None
+
+
+def test_repair_front_matter_page_anchor_markers_uses_word_join_callback() -> None:
+    body = 'Alic<a href="#page-1">e1,2</a>, <a href="#page-1">3</a>'
+
+    repaired = repair_front_matter_page_anchor_markers(
+        body,
+        looks_like_ocr_split_word_join=lambda word, letter: word == "Alic" and letter == "e",
+    )
+
+    assert repaired == "Alice<sup>1,2</sup>, <sup>3</sup>"
+
+
+def test_repair_front_matter_page_anchor_markers_preserves_untrusted_glue() -> None:
+    body = 'Topic<a href="#page-1">x31</a>'
+
+    repaired = repair_front_matter_page_anchor_markers(
+        body,
+        looks_like_ocr_split_word_join=lambda _word, _letter: False,
+    )
+
+    assert repaired == body
 
 
 def test_repair_author_marker_ocr_body_converts_glued_author_numbers() -> None:
