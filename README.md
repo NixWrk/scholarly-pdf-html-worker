@@ -1,16 +1,10 @@
-# pdf-html-polish
+# zotero-pdf-html-worker
 
-A focused `PDF -> Marker HTML -> polished EN HTML` pipeline extracted from an
-older Zotero-oriented workflow and now kept as a standalone PDF HTML polish
-tool.
+A focused Zotero `PDF -> Marker HTML -> polished source HTML` worker. It owns the PDF-derived source HTML stage in `D:\Elvis_projects\Zotero_Automation`; Russian translation remains in the separate `zotero-html-translate-worker`.
 
-This repository keeps the PDF-to-HTML polish path and its audit/quality-loop
-helpers. It intentionally does not include the former EN-to-RU translation
-runner or publisher web-HTML polish commands.
+This repository keeps the PDF-to-HTML polish path and its audit/quality-loop helpers. It intentionally does not include EN-to-RU translation or publisher web-HTML polish commands.
 
-The public automation boundary is file-based: pass local PDF files and an
-output directory; any Zotero collection lookup, queueing, WebDAV mirroring, or
-write-back belongs to the caller.
+The public automation boundary is file-based: pass local PDF files and an output directory. Zotero collection lookup, queueing, WebDAV mirroring, and write-back belong to the main Zotero orchestrator.
 
 ## Pipeline
 
@@ -84,7 +78,7 @@ pdf-html-polish `
   --export-mode html
 ```
 
-The installed public converter is `pdf-html-polish`.
+The installed public converter remains `pdf-html-polish`; the Zotero orchestration image name is `zotero-pdf-html-worker:local`.
 
 ## Container Notes
 

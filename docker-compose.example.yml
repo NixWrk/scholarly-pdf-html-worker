@@ -1,7 +1,7 @@
-﻿services:
-  pdf-html-polish:
+services:
+  zotero-pdf-html-worker:
     build: .
-    image: pdf-html-polish:local
+    image: zotero-pdf-html-worker:local
     volumes:
       - ./output:/output
       # Mount the folder that contains source PDFs when running conversion.

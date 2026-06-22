@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pdf-html-polish"
+name = "zotero-pdf-html-worker"
 version = "0.1.0"
-description = "PDF to polished EN HTML pipeline"
+description = "Zotero PDF to polished source HTML worker"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
