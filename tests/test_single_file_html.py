@@ -8,11 +8,14 @@ from pdf_html_polish import html_images, html_links, text_cleanup
 from pdf_html_polish.raw_html_polish import html_fragments, pre_cleanup, url_anchors
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
 from pdf_html_polish.single_file_html import (
+    _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
+    _ADJACENT_SAME_HREF_ANCHOR_PATTERN,
     _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
     _AUTHOR_BYLINE_NAME_RE,
     _BACKSLASH_BEFORE_QUOTE_PATTERN,
     _ESCAPED_INLINE_TAG_PATTERN,
     _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN,
+    _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN,
     _IMAGE_CACHE_KEY_ATTR_PATTERN,
     _IMG_SRC_PATTERN,
     _INLINE_OR_DISPLAY_TEX_PATTERN,
@@ -60,9 +63,11 @@ from pdf_html_polish.single_file_html import (
     _looks_author_marker_ocr_candidate,
     _looks_footnote_block,
     _looks_front_matter_block,
+    _looks_like_split_same_href_text_label,
     _mark_affiliation_paragraphs,
     _mark_front_matter_paragraphs,
     _mark_footnote_paragraphs_and_refs,
+    _merge_adjacent_same_href_url_anchors,
     _merge_split_same_href_doi_anchors,
     _inline_images_from_html_text,
     _link_figure_refs,
@@ -71,6 +76,7 @@ from pdf_html_polish.single_file_html import (
     _late_recover_orphan_figure_anchors_and_links,
     _normalize_spaced_inline_sup_sub_tags,
     _normalize_double_escaped_url_anchor_text,
+    _normalize_same_href_text_anchor_label,
     _refresh_inlined_data_urls_by_cache,
     _refresh_inlined_data_urls_by_hint,
     _repair_figure_ref_links_misclassified_as_refs,
@@ -139,6 +145,8 @@ def _valid_tiny_png_data_url() -> str:
 
 
 def test_single_file_html_preserves_extracted_helper_aliases() -> None:
+    assert _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN is url_anchors.ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN
+    assert _ADJACENT_SAME_HREF_ANCHOR_PATTERN is url_anchors.ADJACENT_SAME_HREF_ANCHOR_PATTERN
     assert _IMG_SRC_PATTERN is html_images.IMG_SRC_PATTERN
     assert _IMAGE_CACHE_KEY_ATTR_PATTERN is html_images.IMAGE_CACHE_KEY_ATTR_PATTERN
     assert _inline_images_from_html_text is html_images.inline_images_from_html_text
@@ -165,6 +173,7 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _INLINE_OR_DISPLAY_TEX_PATTERN is pre_cleanup.INLINE_OR_DISPLAY_TEX_PATTERN
     assert _RU_BARE_FIG_LEXEME_PATTERN is pre_cleanup.RU_BARE_FIG_LEXEME_PATTERN
     assert _HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.HEADING_PROTOCOL_SENTINEL_LEAK_PATTERN
+    assert _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN is url_anchors.IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN
     assert _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN is pre_cleanup.AUX_PROTOCOL_SENTINEL_LEAK_PATTERN
     assert _fix_common_mojibake is pre_cleanup.fix_common_mojibake
     assert _cleanup_marker_escape_artifacts is pre_cleanup.cleanup_marker_escape_artifacts
@@ -185,8 +194,11 @@ def test_single_file_html_preserves_extracted_helper_aliases() -> None:
     assert _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_ANCHOR_CHUNK_PATTERN
     assert _URL_FRAGMENT_TEXT_CHUNK_PATTERN is url_anchors.URL_FRAGMENT_TEXT_CHUNK_PATTERN
     assert _consume_compact_prefix is url_anchors.consume_compact_prefix
+    assert _looks_like_split_same_href_text_label is url_anchors.looks_like_split_same_href_text_label
+    assert _merge_adjacent_same_href_url_anchors is url_anchors.merge_adjacent_same_href_url_anchors
     assert _merge_split_same_href_doi_anchors is url_anchors.merge_split_same_href_doi_anchors
     assert _normalize_double_escaped_url_anchor_text is url_anchors.normalize_double_escaped_url_anchor_text
+    assert _normalize_same_href_text_anchor_label is url_anchors.normalize_same_href_text_anchor_label
     assert _repair_prose_prefixed_url_anchor_tail is url_anchors.repair_prose_prefixed_url_anchor_tail
     assert _repair_split_doi_head_tail_anchors is url_anchors.repair_split_doi_head_tail_anchors
     assert _repair_split_doi_url_anchor_path_tails is url_anchors.repair_split_doi_url_anchor_path_tails

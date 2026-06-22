@@ -225,6 +225,9 @@ from .raw_html_polish.url_autolink import (
     autolink_text_urls as _autolink_text_urls,
 )
 from .raw_html_polish.url_anchors import (
+    ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN as _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
+    ADJACENT_SAME_HREF_ANCHOR_PATTERN as _ADJACENT_SAME_HREF_ANCHOR_PATTERN,
+    IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN as _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN,
     PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN as _PROSE_PREFIXED_URL_ANCHOR_TAIL_PATTERN,
     SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN as _SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN,
     SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN as _SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN,
@@ -240,8 +243,11 @@ from .raw_html_polish.url_anchors import (
     URL_FRAGMENT_ANCHOR_CHUNK_PATTERN as _URL_FRAGMENT_ANCHOR_CHUNK_PATTERN,
     URL_FRAGMENT_TEXT_CHUNK_PATTERN as _URL_FRAGMENT_TEXT_CHUNK_PATTERN,
     consume_compact_prefix as _consume_compact_prefix,
+    looks_like_split_same_href_text_label as _looks_like_split_same_href_text_label,
+    merge_adjacent_same_href_url_anchors as _merge_adjacent_same_href_url_anchors,
     merge_split_same_href_doi_anchors as _merge_split_same_href_doi_anchors,
     normalize_double_escaped_url_anchor_text as _normalize_double_escaped_url_anchor_text,
+    normalize_same_href_text_anchor_label as _normalize_same_href_text_anchor_label,
     repair_prose_prefixed_url_anchor_tail as _repair_prose_prefixed_url_anchor_tail,
     repair_split_doi_head_tail_anchors as _repair_split_doi_head_tail_anchors,
     repair_split_doi_url_anchor_path_tails as _repair_split_doi_url_anchor_path_tails,
@@ -2783,27 +2789,6 @@ _CITATION_PREFIX_BODY_PATTERN = re.compile(
 )
 _ESCAPED_ANCHOR_SNIPPET_PATTERN = re.compile(
     r'&lt;a\s+href=(["\'])(?P<href>https?://[^"\']+)\1&gt;(?P<label>https?://[^<]+)&lt;/a&gt;',
-    re.IGNORECASE,
-)
-_ADJACENT_SAME_HREF_ANCHOR_PATTERN = re.compile(
-    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://)[^>]*)>'
-    r'(?P<body>[\s\S]{0,260}?)</a>\s+'
-    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://)[^>]*)>'
-    r'(?P<next_body>[\s\S]{0,260}?)</a>',
-    re.IGNORECASE,
-)
-_ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
-    r'(?P<body>[\s\S]{0,260}?)</a>\s+'
-    r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*["\'](?P=href)["\'][^>]*)>'
-    r'(?P<next_body>[\s\S]{0,260}?)</a>',
-    re.IGNORECASE,
-)
-_IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])(?P<href>https?://[^"\']+)(?P=quote)[^>]*)>'
-    r'\s*(?P<body>https?:?)\s*</a>\s*//\s*'
-    r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*["\'](?P=href)["\'][^>]*)>'
-    r'(?P<next_body>[\s\S]{0,500}?)</a>',
     re.IGNORECASE,
 )
 _ADJACENT_SAME_MAILTO_ANCHOR_PATTERN = re.compile(
@@ -5635,112 +5620,6 @@ def _unescape_safe_escaped_anchor_snippets(html: str) -> str:
 
 def _escape_html_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _normalize_same_href_text_anchor_label(label: str) -> str:
-    normalized = re.sub(r"\s+", " ", label).strip()
-    return re.sub(r"\bsupple\s+mental\b", "supplemental", normalized, flags=re.IGNORECASE)
-
-
-def _looks_like_split_same_href_text_label(label: str) -> bool:
-    if len(label) < 8 or len(label) > 180:
-        return False
-    if re.search(r"https?://|doi\.org/|\b10\.\d{4,9}/", label, re.IGNORECASE):
-        return False
-    return bool(
-        re.search(
-            r"\b(?:online|supplemental|supplementary|material|table|figure|appendix|data)\b",
-            label,
-            re.IGNORECASE,
-        )
-    )
-
-
-def _merge_adjacent_same_href_url_anchors(html: str) -> str:
-    """Merge adjacent URL/DOI anchors that point to the same href."""
-
-    def replace_protocol_prefix(match: re.Match[str]) -> str:
-        href = _strip_wrapping_url_quotes(match.group("href"))
-        visible = _repair_broken_visible_url_text(f"{match.group('body')}//{_visible_text(match.group('next_body'))}")
-        visible_url, trailing = _split_url_and_trailing_punct(visible)
-        if not _url_fragment_keys_match_allowing_lost_hyphens(
-            _url_fragment_compare_key(visible_url),
-            _url_fragment_compare_key(href),
-        ):
-            return match.group(0)
-        attrs = _replace_href_attr_literal(match.group("attrs"), href)
-        return f'<a{attrs}>{_escape_html_text(href)}</a>{trailing}'
-
-    def replace(match: re.Match[str]) -> str:
-        href = _extract_href_attr(match.group("attrs"))
-        next_href = _extract_href_attr(match.group("next_attrs"))
-        if href is None or next_href is None:
-            return match.group(0)
-
-        href = _strip_wrapping_url_quotes(href)
-        next_href = _strip_wrapping_url_quotes(next_href)
-        compact_href = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(href))
-        compact_next_href = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(next_href))
-        if compact_href != compact_next_href:
-            return match.group(0)
-        if not compact_href.lower().startswith(("http://", "https://")):
-            return match.group(0)
-
-        body = _visible_text(match.group("body"))
-        next_body = _visible_text(match.group("next_body"))
-        text_label = _normalize_same_href_text_anchor_label(f"{body} {next_body}")
-        if _looks_like_split_same_href_text_label(text_label):
-            return f'<a{match.group("attrs")}>{_escape_html_text(text_label)}</a>'
-
-        prose_url_match = re.search(r"(?P<prefix>[\s\S]*?)(?P<head>https?://\S+)\s*$", body, re.IGNORECASE)
-        if prose_url_match is not None:
-            candidate = _repair_broken_visible_url_text(f"{prose_url_match.group('head')}{next_body}")
-            candidate_url, candidate_trailing = _split_url_and_trailing_punct(candidate)
-            if _url_fragment_keys_match_allowing_lost_hyphens(
-                _url_fragment_compare_key(candidate_url),
-                _url_fragment_compare_key(html_lib.unescape(href)),
-            ):
-                attrs = _replace_href_attr_literal(match.group("attrs"), html_lib.unescape(href))
-                prefix = _escape_html_text(prose_url_match.group("prefix"))
-                return f'{prefix}<a{attrs}>{_escape_html_text(html_lib.unescape(href))}</a>{candidate_trailing}'
-
-        compact_body = _strip_url_fragment_edge_quotes(_compact_visible_url_fragment(body + next_body)).strip("()[]")
-        doi_href_match = re.match(r"https?://(?:dx\.)?doi\.org/(?P<doi>10\..+)$", compact_href, re.IGNORECASE)
-        if doi_href_match is not None:
-            doi_label = re.sub(r"^(?:doi:|digitalobjectidentifier)", "", compact_body, flags=re.IGNORECASE)
-            doi_label = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi_label, flags=re.IGNORECASE)
-            if doi_label.rstrip(".,;:").lower() == doi_href_match.group("doi").rstrip(".,;:").lower():
-                if compact_body.lower().startswith(("http://", "https://")):
-                    return f'<a{match.group("attrs")}>{_escape_html_text(compact_href.rstrip(".,;:"))}</a>'
-                prefix = "doi: " if re.match(r"doi:", compact_body, re.IGNORECASE) else ""
-                return f'{prefix}<a{match.group("attrs")}>{_escape_html_text(doi_href_match.group("doi").rstrip(".,;:"))}</a>'
-        if not compact_body:
-            return match.group(0)
-        if not (
-            compact_href.startswith(compact_body)
-            or compact_body.startswith("http://")
-            or compact_body.startswith("https://")
-            or compact_body.startswith("doi.org/")
-            or compact_body.startswith("10.")
-        ):
-            return match.group(0)
-        label = compact_body
-        if compact_href.replace("-", "") == label.replace("-", ""):
-            label = compact_href
-        elif compact_href.startswith(label) and len(compact_href) >= len(label):
-            label = compact_href if len(label) >= max(12, len(compact_href) - 4) else label
-        escaped_href = _escape_html_attr(compact_href)
-        escaped_label = _escape_html_text(label)
-        return f'<a href="{escaped_href}" target="_blank" rel="noopener noreferrer">{escaped_label}</a>'
-
-    previous = None
-    current = html
-    while previous != current:
-        previous = current
-        current = _IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN.sub(replace_protocol_prefix, current)
-        current = _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN.sub(replace, current)
-        current = _ADJACENT_SAME_HREF_ANCHOR_PATTERN.sub(replace, current)
-    return current
 
 
 def _merge_post_autolink_split_url_anchors(html: str) -> str:

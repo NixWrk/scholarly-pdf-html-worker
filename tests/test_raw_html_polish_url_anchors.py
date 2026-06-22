@@ -1,7 +1,10 @@
 from pdf_html_polish.raw_html_polish.url_anchors import (
     consume_compact_prefix,
+    looks_like_split_same_href_text_label,
+    merge_adjacent_same_href_url_anchors,
     merge_split_same_href_doi_anchors,
     normalize_double_escaped_url_anchor_text,
+    normalize_same_href_text_anchor_label,
     repair_prose_prefixed_url_anchor_tail,
     repair_split_doi_head_tail_anchors,
     repair_split_doi_url_anchor_path_tails,
@@ -201,3 +204,36 @@ def test_repair_split_doi_url_anchor_path_tails_merges_ocr_path_tail() -> None:
     repaired = repair_split_doi_url_anchor_path_tails(html)
 
     assert repaired == f'<p><a href="{merged}">{merged}</a>.</p>'
+
+
+def test_normalize_same_href_text_anchor_label_repairs_supplemental_split() -> None:
+    assert normalize_same_href_text_anchor_label(" supple   mental material ") == "supplemental material"
+    assert looks_like_split_same_href_text_label("supplemental material")
+    assert not looks_like_split_same_href_text_label("https://example.org/supplemental")
+
+
+def test_merge_adjacent_same_href_url_anchors_repairs_protocol_prefix_split() -> None:
+    url = "https://example.org/path"
+    html = f'<p><a href="{url}">https:</a> // <a href="{url}">example.org/path</a>.</p>'
+
+    repaired = merge_adjacent_same_href_url_anchors(html)
+
+    assert repaired == f'<p><a href="{url}">{url}</a>.</p>'
+
+
+def test_merge_adjacent_same_href_url_anchors_merges_split_text_label() -> None:
+    url = "https://example.org/supplemental"
+    html = f'<p><a href="{url}">supple</a> <a href="{url}">mental material</a></p>'
+
+    repaired = merge_adjacent_same_href_url_anchors(html)
+
+    assert repaired == f'<p><a href="{url}">supplemental material</a></p>'
+
+
+def test_merge_adjacent_same_href_url_anchors_merges_url_fragment_label() -> None:
+    url = "https://example.org/path-tail"
+    html = f'<p><a href="{url}">https://example.org/path-</a> <a href="{url}">tail</a></p>'
+
+    repaired = merge_adjacent_same_href_url_anchors(html)
+
+    assert repaired == f'<p><a href="{url}">{url}</a></p>'
