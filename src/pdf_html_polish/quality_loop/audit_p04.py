@@ -52,6 +52,17 @@ SUP_COUNT_OR_OPTION_CONTEXT_RE = re.compile(
     r"response|responses|target|targets)\b",
     re.IGNORECASE,
 )
+SUP_TEMPORAL_OR_COUNT_UNIT_RIGHT_RE = re.compile(
+    r"^\s*(?:[,;]\s*)?"
+    r"(?P<trailing_value>(?:and|or)\s+\d{1,3}\s+)?"
+    r"(?:days?|weeks?|months?|years?|hours?|minutes?|mins?|seconds?|secs?|"
+    r"recording\s+sessions?|sessions?|trials?)\b",
+    re.IGNORECASE,
+)
+SUP_TEMPORAL_LIST_LEFT_RE = re.compile(
+    r"\b(?:at|after|before|between|by|during|for|from|in|on|over|within)\s*$",
+    re.IGNORECASE,
+)
 STAT_NUMERIC_CONTEXT_RE = re.compile(
     r"\b(?:sample\s+size|G\*Power|allocation\s+ratio|effect\s+size|"
     r"statistical\s+power|power\s+analysis)\b",
@@ -262,6 +273,17 @@ def sup_numeric_range_is_count_or_option_value(block: Block, match: re.Match[str
     )
 
 
+def sup_numeric_range_is_temporal_or_count_value(block: Block, match: re.Match[str]) -> bool:
+    left_text = strip_tags(block.raw[max(0, match.start() - 180) : match.start()])
+    right_text = strip_tags(block.raw[match.end() : match.end() + 120])
+    right_match = SUP_TEMPORAL_OR_COUNT_UNIT_RIGHT_RE.match(right_text)
+    if right_match is None:
+        return False
+    if right_match.group("trailing_value") and SUP_TEMPORAL_LIST_LEFT_RE.search(left_text) is None:
+        return False
+    return True
+
+
 def sup_numeric_range_is_low_number_table_layout_marker(block: Block, match: re.Match[str]) -> bool:
     if block.tag != "table" and not re.search(r"<t[dh]\b", block.raw, re.IGNORECASE):
         return False
@@ -322,6 +344,8 @@ def has_unlinked_sup_numeric_range(block: Block) -> bool:
             if sup_numeric_range_is_decimal_comma_value(block, match):
                 continue
             if sup_numeric_range_is_count_or_option_value(block, match):
+                continue
+            if sup_numeric_range_is_temporal_or_count_value(block, match):
                 continue
             if sup_numeric_range_is_low_number_table_layout_marker(block, match):
                 continue
@@ -398,6 +422,8 @@ def unlinked_citation_candidate_numbers(block: Block) -> list[int]:
             if sup_numeric_range_is_decimal_comma_value(block, sup_match):
                 continue
             if sup_numeric_range_is_count_or_option_value(block, sup_match):
+                continue
+            if sup_numeric_range_is_temporal_or_count_value(block, sup_match):
                 continue
             if sup_numeric_range_is_low_number_table_layout_marker(block, sup_match):
                 continue

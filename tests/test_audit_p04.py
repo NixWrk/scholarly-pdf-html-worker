@@ -159,3 +159,36 @@ def test_unlinked_sup_numeric_range_ignores_target_option_count() -> None:
     )
 
     assert has_unlinked_sup_numeric_range(block) is False
+
+
+def test_unlinked_sup_numeric_range_ignores_temporal_list_with_trailing_unit() -> None:
+    block = _block(
+        "Recordings were resumed for three monkeys at 2, 5 and 7 days after removing the prisms.",
+        raw=(
+            "<p>Recordings were resumed for three monkeys at "
+            "<sup>2, 5</sup> and 7 days after removing the prisms.</p>"
+        ),
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is False
+    assert unlinked_citation_range_kind(
+        block,
+        looks_like_float_or_caption=lambda _block: False,
+        block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+    ) == ""
+    assert unlinked_citation_candidate_numbers(block) == []
+
+
+def test_unlinked_sup_numeric_range_still_flags_body_citation_list() -> None:
+    block = _block(
+        "Prior studies 2, 5 support the method.",
+        raw="<p>Prior studies<sup>2, 5</sup> support the method.</p>",
+    )
+
+    assert has_unlinked_sup_numeric_range(block) is True
+    assert unlinked_citation_range_kind(
+        block,
+        looks_like_float_or_caption=lambda _block: False,
+        block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+    ) == "body"
+    assert unlinked_citation_candidate_numbers(block) == [2, 5]

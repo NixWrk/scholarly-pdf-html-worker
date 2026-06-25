@@ -43,6 +43,10 @@ def _iter_html_files(root: Path) -> Iterable[Path]:
                 yield base / filename
 
 
+def _stage_dir_has_html(stage_dir: Path) -> bool:
+    return any(_iter_html_files(stage_dir))
+
+
 def find_stage_dirs(roots: Iterable[Path]) -> list[Path]:
     """Return stage directories recognized under converted roots.
 
@@ -55,18 +59,19 @@ def find_stage_dirs(roots: Iterable[Path]) -> list[Path]:
     for raw_root in roots:
         root = _resolve(raw_root)
         if root.is_file():
-            if root.parent.name in HTML_STAGE_DIR_NAMES:
+            if root.parent.name in HTML_STAGE_DIR_NAMES and _stage_dir_has_html(root.parent):
                 found.add(root.parent)
             continue
         if not root.exists():
             continue
-        if root.name in HTML_STAGE_DIR_NAMES:
+        if root.name in HTML_STAGE_DIR_NAMES and _stage_dir_has_html(root):
             found.add(root)
             continue
         for dirpath, dirnames, _filenames in os.walk(root, onerror=lambda _error: None):
             for dirname in list(dirnames):
-                if dirname in HTML_STAGE_DIR_NAMES:
-                    found.add((Path(dirpath) / dirname).resolve(strict=False))
+                stage_dir = (Path(dirpath) / dirname).resolve(strict=False)
+                if dirname in HTML_STAGE_DIR_NAMES and _stage_dir_has_html(stage_dir):
+                    found.add(stage_dir)
     return sorted(found, key=str)
 
 

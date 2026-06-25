@@ -100,6 +100,60 @@ def test_publish_latest_polish_copies_audited_stage_and_prunes_extras(tmp_path: 
     assert not extra_stage.exists()
 
 
+def test_publish_latest_polish_ignores_log_only_stale_stage_dir_after_prune(tmp_path: Path) -> None:
+    converted = tmp_path / "converted"
+    article_dir = converted / "article_a"
+    stage_dir = _stage_pair(article_dir)
+    stale_stage_dir = article_dir / "_pdf_html_polish_stages"
+    stale_stage_dir.mkdir()
+    stale_raw = stale_stage_dir / RAW_STAGE_NAME
+    stale_polish = stale_stage_dir / POLISH_STAGE_NAME
+    stale_log = stale_stage_dir / "stage.log"
+    stale_raw.write_text("<html>stale raw</html>", encoding="utf-8")
+    stale_polish.write_text("<html>stale polish</html>", encoding="utf-8")
+    stale_log.write_text("debug history\n", encoding="utf-8")
+
+    source_run = tmp_path / "quality" / "_converted_raw_source"
+    article_id = "collection_key_article_a"
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article_id": article_id,
+                    "raw_stage_path": str(stage_dir / RAW_STAGE_NAME),
+                    "source_polish_path": str(stage_dir / POLISH_STAGE_NAME),
+                }
+            ]
+        },
+    )
+    quality_run = tmp_path / "quality"
+    _write_json(
+        quality_run / "manifest.json",
+        {
+            "source_run_dir": str(source_run),
+            "articles": [{"article": article_id}],
+        },
+    )
+    audited = quality_run / "audit_tree" / article_id / POLISH_STAGE_NAME
+    audited.parent.mkdir(parents=True)
+    audited.write_text("<html><body>latest audited polish</body></html>", encoding="utf-8")
+
+    report = publish_latest_polish_from_quality_run(
+        quality_run,
+        converted_roots=[converted],
+        apply=True,
+        prune_extra_html=True,
+    )
+
+    assert report["stage_contract_status"] == "pass"
+    assert report["removed_extra_html_count"] == 2
+    assert not stale_raw.exists()
+    assert not stale_polish.exists()
+    assert stale_log.exists()
+    assert verify_stage_contract([converted])["status"] == "pass"
+
+
 def test_publish_latest_polish_dry_run_does_not_mutate(tmp_path: Path) -> None:
     converted = tmp_path / "converted"
     article_dir = converted / "article_a"
