@@ -3075,52 +3075,6 @@ def _update_citation_skip_stack(tag_fragment: str, skip_stack: list[str]) -> Non
         skip_stack.append(tag_name)
 
 
-def _looks_front_matter_block(raw: str) -> bool:
-    return _looks_front_matter_block_impl(
-        raw,
-        looks_affiliation_block=_looks_affiliation_block,
-    )
-
-
-def _mark_front_matter_paragraphs(html: str) -> str:
-    return _mark_front_matter_paragraphs_impl(
-        html,
-        looks_front_matter_block=_looks_front_matter_block,
-    )
-
-
-def _repair_front_matter_page_anchor_markers(body: str) -> str:
-    return _repair_front_matter_page_anchor_markers_impl(
-        body,
-        looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
-    )
-
-
-def _repair_front_matter_marker_ocr(html: str) -> str:
-    return _repair_front_matter_marker_ocr_impl(
-        html,
-        looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
-    )
-
-
-def _looks_footnote_block(raw: str) -> bool:
-    return _looks_footnote_block_impl(
-        raw,
-        figure_caption_num_from_visible=_figure_caption_num_from_visible,
-        table_caption_key_from_visible=_table_caption_key_from_visible,
-    )
-
-
-def _mark_footnote_paragraphs_and_refs(html: str) -> str:
-    return _mark_footnote_paragraphs_and_refs_impl(
-        html,
-        figure_caption_num_from_visible=_figure_caption_num_from_visible,
-        table_caption_key_from_visible=_table_caption_key_from_visible,
-        citation_tag_is_protected=_citation_tag_is_protected,
-        numeric_superscript_context_allows_citation=_numeric_superscript_context_allows_citation,
-    )
-
-
 def _node_protects_citations(raw: str) -> bool:
     tag_match = _OPEN_TAG_PATTERN.match(raw.strip())
     if tag_match is not None and tag_match.group(1).lower() in _CITATION_SKIP_TAGS:
@@ -8067,6 +8021,36 @@ def _numeric_superscript_context_allows_citation(
     ):
         return False
     return True
+
+
+_looks_front_matter_block = functools.partial(
+    _looks_front_matter_block_impl,
+    looks_affiliation_block=_looks_affiliation_block,
+)
+_mark_front_matter_paragraphs = functools.partial(
+    _mark_front_matter_paragraphs_impl,
+    looks_front_matter_block=_looks_front_matter_block,
+)
+_repair_front_matter_page_anchor_markers = functools.partial(
+    _repair_front_matter_page_anchor_markers_impl,
+    looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
+)
+_repair_front_matter_marker_ocr = functools.partial(
+    _repair_front_matter_marker_ocr_impl,
+    looks_like_ocr_split_word_join=_looks_like_ocr_split_word_join,
+)
+_looks_footnote_block = functools.partial(
+    _looks_footnote_block_impl,
+    figure_caption_num_from_visible=_figure_caption_num_from_visible,
+    table_caption_key_from_visible=_table_caption_key_from_visible,
+)
+_mark_footnote_paragraphs_and_refs = functools.partial(
+    _mark_footnote_paragraphs_and_refs_impl,
+    figure_caption_num_from_visible=_figure_caption_num_from_visible,
+    table_caption_key_from_visible=_table_caption_key_from_visible,
+    citation_tag_is_protected=_citation_tag_is_protected,
+    numeric_superscript_context_allows_citation=_numeric_superscript_context_allows_citation,
+)
 
 
 def _numeric_superscript_context_allows_zotero_citation(text: str, start: int, end: int) -> bool:
