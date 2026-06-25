@@ -12,12 +12,15 @@ from .marker_runner import MarkerRunner
 from .models import PipelineSummary
 from .pipeline import run_pipeline
 from .pipeline_options import PipelineOptions
+from .html_stages import POLISH_STAGE_NAME, article_dir_from_html_stage
+from .language_detect import LanguageGateDecision, detect_language_from_html
 from .stage_contract import publish_latest_polish_from_quality_run
 
 
 QUALITY_LOOP_SCRIPT = "scripts/llm_quality_loop.py"
 FINAL_HTML_DIR_NAME = "final_html"
 FINAL_HTML_MANIFEST_NAME = "final_html_manifest.json"
+PIPELINE_MANIFEST_NAME = "pipeline_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,62 @@ class CleanPipelineSummary:
     observe_exit_code: int
     converted_stage_publish_report: dict[str, Any] | None
     final_html: FinalHtmlCollection
+
+
+def source_language_payload(html: str) -> dict[str, Any]:
+    detection = detect_language_from_html(html)
+    detected = (detection.detected_language or "unknown").lower()
+    skip = detected == "ru" and detection.confidence >= 0.75
+    gate = LanguageGateDecision(skip, "already_russian" if skip else f"translate_{detected}_to_ru")
+    return {
+        "detection": detection.to_dict(),
+        "gate": gate.to_dict(),
+        "source_language_code": detected,
+    }
+
+
+def write_pipeline_manifest(converted_root: Path) -> Path:
+    root = converted_root.expanduser().resolve(strict=False)
+    articles: list[dict[str, Any]] = []
+    for polish_path in sorted(root.rglob(POLISH_STAGE_NAME), key=str):
+        if not polish_path.is_file():
+            continue
+        payload = source_language_payload(polish_path.read_text(encoding="utf-8", errors="replace"))
+        article_dir = article_dir_from_html_stage(polish_path)
+        sidecar = {
+            "schema_version": 1,
+            "kind": "pdf_html_article",
+            "article": article_dir.name,
+            "en_html_path": str(polish_path.resolve(strict=False)),
+            **payload,
+        }
+        sidecar_path = polish_path.parent / PIPELINE_MANIFEST_NAME
+        sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        articles.append(
+            {
+                "article": article_dir.name,
+                "en_html_path": str(polish_path.resolve(strict=False)),
+                "manifest_path": str(sidecar_path.resolve(strict=False)),
+                **payload,
+            }
+        )
+
+    manifest_path = root / PIPELINE_MANIFEST_NAME
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "kind": "pdf_html_pipeline",
+                "converted_root": str(root),
+                "articles": articles,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
 
 
 def default_quality_output_dir(output_dir: Path) -> Path:
@@ -217,6 +276,41 @@ def collect_final_html(
     )
 
 
+def empty_final_html_collection(
+    quality_output_dir: Path,
+    *,
+    final_html_dir: Path | None = None,
+) -> FinalHtmlCollection:
+    quality_dir = quality_output_dir.expanduser().resolve(strict=False)
+    target_dir = (
+        final_html_dir.expanduser().resolve(strict=False)
+        if final_html_dir is not None
+        else quality_dir / FINAL_HTML_DIR_NAME
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "quality_output_dir": str(quality_dir),
+                "final_html_dir": str(target_dir),
+                "article_count": 0,
+                "html_files": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return FinalHtmlCollection(
+        final_html_dir=target_dir,
+        manifest_path=manifest_path,
+        artifacts=(),
+    )
+
+
 def run_clean_pipeline(
     options: CleanPipelineOptions,
     runner: MarkerRunner,
@@ -250,6 +344,25 @@ def run_clean_pipeline(
     )
     if quality_output_dir == converted_root:
         raise ValueError("quality_output_dir must be different from the conversion output_dir.")
+
+    if not conversion_summary.converted_total:
+        final_html = empty_final_html_collection(
+            quality_output_dir,
+            final_html_dir=(
+                Path(options.final_html_dir).expanduser().resolve(strict=False)
+                if options.final_html_dir
+                else None
+            ),
+        )
+        return CleanPipelineSummary(
+            conversion_summary=conversion_summary,
+            quality_output_dir=quality_output_dir,
+            run_id=options.run_id or default_run_id(quality_output_dir),
+            observe_command=(),
+            observe_exit_code=0,
+            converted_stage_publish_report=None,
+            final_html=final_html,
+        )
 
     run_id = options.run_id or default_run_id(quality_output_dir)
     observe_command = build_observe_command(
@@ -317,6 +430,7 @@ def run_clean_pipeline(
             else None
         ),
     )
+    write_pipeline_manifest(converted_root)
     if not final_html.artifacts and conversion_summary.converted_total:
         raise RuntimeError(
             "Quality observe completed, but no final 02.en.polish.html files "

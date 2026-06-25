@@ -40,7 +40,10 @@ Clean production pipeline:
 7. Publish the audited `02.en.polish.html` from the quality run back into the
    converted stage directory and enforce the two-HTML storage contract:
    `01.en.raw.html` plus the latest audited `02.en.polish.html`.
-8. Collect the audited `02.en.polish.html` files from the quality run into
+8. Write `pipeline_manifest.json` with the accepted source HTML path,
+   source-language detection, and RU-translation gate. If conversion produced no
+   new HTML, the quality observe step is skipped as a no-op.
+9. Collect the audited `02.en.polish.html` files from the quality run into
    `final_html/`.
 
 For the full production order, including direct Zotero-storage PDF inputs,

@@ -22,14 +22,14 @@ from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 
 
-def _summary(output_dir: Path, *, failed_total: int = 0) -> PipelineSummary:
+def _summary(output_dir: Path, *, failed_total: int = 0, converted_total: int | None = None) -> PipelineSummary:
     return PipelineSummary(
         collection_key="direct_pdf",
         collection_name="direct PDF files",
         attachments_total=1,
         pdfs_resolved=1,
         staged_total=1,
-        converted_total=0 if failed_total else 1,
+        converted_total=converted_total if converted_total is not None else (0 if failed_total else 1),
         skipped_existing=0,
         failed_total=failed_total,
         output_dir=output_dir,
@@ -263,6 +263,14 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
     assert (conversion_dir / "article_a" / "_z2m_stages" / "02.en.polish.html").read_text(encoding="utf-8") == (
         "<html><body>audited</body></html>"
     )
+    root_manifest = json.loads((conversion_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+    stage_manifest = json.loads(
+        (conversion_dir / "article_a" / "_z2m_stages" / "pipeline_manifest.json").read_text(encoding="utf-8")
+    )
+    assert root_manifest["articles"][0]["en_html_path"].endswith("02.en.polish.html")
+    assert stage_manifest["en_html_path"].endswith("02.en.polish.html")
+    assert "detection" in stage_manifest
+    assert "gate" in stage_manifest
     assert not (conversion_dir / "article_a" / "article_a.html").exists()
     assert "observe ok" in logs
 
@@ -289,3 +297,30 @@ def test_run_clean_pipeline_skips_observe_when_conversion_failed(tmp_path: Path)
             pipeline_runner=fake_pipeline_runner,
             observe_runner=fail_observe_runner,
         )
+
+
+def test_run_clean_pipeline_skips_observe_when_nothing_converted(tmp_path: Path) -> None:
+    def fake_pipeline_runner(*_args):
+        return _summary(tmp_path / "converted", converted_total=0)
+
+    def fail_observe_runner(*_args):
+        raise AssertionError("observe should not run when conversion did no work")
+
+    summary = run_clean_pipeline(
+        CleanPipelineOptions(
+            conversion_options=PipelineOptions(
+                source_pdf_paths=[str(tmp_path / "paper.pdf")],
+                output_dir=str(tmp_path / "converted"),
+                export_mode="html",
+            )
+        ),
+        MarkerRunner(),
+        lambda _message: None,
+        lambda: False,
+        pipeline_runner=fake_pipeline_runner,
+        observe_runner=fail_observe_runner,
+    )
+
+    assert summary.observe_command == ()
+    assert summary.observe_exit_code == 0
+    assert summary.final_html.artifacts == ()
