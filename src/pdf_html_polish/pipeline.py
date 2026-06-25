@@ -176,6 +176,196 @@ def _empty_pipeline_summary(
     )
 
 
+def run_raw_html_pipeline(
+    options: PipelineOptions,
+    runner: MarkerRunner,
+    log: Callable[[str], None],
+    is_cancelled: Callable[[], bool],
+) -> PipelineSummary:
+    """Convert direct PDFs to raw Marker HTML stages without polish or quality observe."""
+    pipeline_started_at = perf_counter()
+    output_dir = Path(options.output_dir).expanduser().resolve()
+    runtime_tmp_root = runtime_temp_root(output_dir)
+    stage = None
+
+    if not options.source_pdf_paths:
+        raise ValueError("Raw-only HTML conversion requires direct --pdf inputs.")
+
+    try:
+        started_at = perf_counter()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _log_elapsed(log, "raw_pipeline.prepare_output_dir", started_at)
+
+        started_at = perf_counter()
+        discovery = discover_source_pdfs(
+            source_pdf_paths=options.source_pdf_paths or [],
+            output_dir=options.output_dir,
+            artifact_extension=".html",
+            log=log,
+        )
+        _log_elapsed(log, "raw_pipeline.discover_source_pdfs", started_at)
+        log(f"Selected PDF input: {discovery.collection_name}")
+        log(f"PDF files in raw-only scope: {discovery.attachments_total}")
+
+        resolved = [c.resolved_attachment for c in discovery.candidates]
+        if not resolved:
+            log("No local PDF files found. Nothing to process.")
+            return _empty_pipeline_summary(
+                discovery=discovery,
+                output_dir=output_dir,
+                export_mode=options.export_mode,
+            )
+
+        skipped_existing = 0
+        started_at = perf_counter()
+        existing_in_output = detect_existing_results(
+            output_dir,
+            [r.source_pdf_path for r in resolved],
+            artifact_extension=".html",
+        )
+        _log_elapsed(log, "raw_pipeline.detect_existing_results", started_at)
+        if options.skip_existing:
+            before = len(resolved)
+            resolved = [
+                item for item in resolved
+                if normalize_source_path(item.source_pdf_path) not in existing_in_output
+            ]
+            skipped_existing = before - len(resolved)
+            if skipped_existing:
+                log(f"Already present in output folder, skipped before raw-only run: {skipped_existing}")
+
+        if not resolved:
+            return _empty_pipeline_summary(
+                discovery=discovery,
+                output_dir=output_dir,
+                export_mode=options.export_mode,
+                skipped_existing=skipped_existing,
+            )
+
+        if is_cancelled():
+            raise RuntimeError("Cancelled before raw-only staging.")
+
+        started_at = perf_counter()
+        stage = stage_resolved_pdfs(resolved, output_dir, options.max_base_len, temp_root=runtime_tmp_root)
+        _log_elapsed(log, "raw_pipeline.stage_resolved_pdfs", started_at)
+
+        started_at = perf_counter()
+        filename_map_path = write_filename_map(output_dir, stage.staged_files)
+        _log_elapsed(log, "raw_pipeline.write_filename_map", started_at)
+        log(f"Filename map: {filename_map_path}")
+
+        started_at = perf_counter()
+        env = _build_env(options)
+        _log_elapsed(log, "raw_pipeline.build_env", started_at)
+        if env.get("MODEL_CACHE_DIR"):
+            log(f"MODEL_CACHE_DIR={env['MODEL_CACHE_DIR']}")
+        if env.get("TORCH_DEVICE"):
+            log(f"TORCH_DEVICE={env['TORCH_DEVICE']}")
+        if env.get("CUDA_VISIBLE_DEVICES"):
+            log(f"CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']}")
+
+        if is_cancelled():
+            raise RuntimeError("Cancelled before raw-only conversion.")
+
+        batch_skip_existing = options.skip_existing and options.skip_existing_source_pdf_paths is None
+        artifact_before = {
+            staged_file.alias_base_name: _artifact_signature(
+                expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
+            )
+            for staged_file in stage.staged_files
+        }
+
+        started_at = perf_counter()
+        batch_result = runner.run_batch(
+            input_dir=stage.staging_dir,
+            output_dir=output_dir,
+            skip_existing=batch_skip_existing,
+            disable_multiprocessing=options.disable_batch_multiprocessing,
+            output_format="html",
+            env=env,
+            log=log,
+        )
+        _log_elapsed(log, "raw_pipeline.marker_batch", started_at)
+        log(f"marker batch exit_code={batch_result.exit_code}")
+
+        pending = []
+        converted_total = 0
+        for staged_file in stage.staged_files:
+            artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
+            exists_now, _, _ = _artifact_signature(artifact_path)
+            if exists_now:
+                before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
+                if (
+                    before_sig[0]
+                    and not batch_skip_existing
+                    and _artifact_signature(artifact_path) == before_sig
+                ):
+                    pending.append(staged_file)
+                    continue
+                converted_total += 1
+                continue
+            pending.append(staged_file)
+
+        if pending:
+            log(f"Raw-only fallback conversion for missing outputs: {len(pending)}")
+        for staged_file in pending:
+            if is_cancelled():
+                raise RuntimeError("Cancelled during raw-only fallback conversion.")
+            single_result = runner.run_single(
+                pdf_path=staged_file.alias_pdf_path,
+                output_dir=output_dir,
+                output_format="html",
+                env=env,
+                log=log,
+            )
+            artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
+            if single_result.exit_code == 0 and artifact_path.exists():
+                converted_total += 1
+
+        converted_source_paths: list[Path] = []
+        for staged_file in stage.staged_files:
+            html_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
+            if not html_path.is_file():
+                continue
+            converted_source_paths.append(staged_file.source_pdf_path)
+            raw_html = html_path.read_text(encoding="utf-8", errors="replace")
+            raw_stage = save_html_stage(
+                html_stage_dir_for_html(html_path),
+                RAW_STAGE_NAME,
+                raw_html,
+                "en.raw.marker",
+                source_path=html_path,
+                details=(
+                    "raw_only=true",
+                    f"source_pdf={staged_file.source_pdf_path.name}",
+                ),
+            )
+            log(f"Raw HTML stage saved: {raw_stage.path}")
+
+        marker_failed_total = len(stage.staged_files) - len(converted_source_paths)
+        return PipelineSummary(
+            collection_key=discovery.collection_key,
+            collection_name=discovery.collection_name,
+            attachments_total=discovery.attachments_total,
+            pdfs_resolved=len(discovery.candidates),
+            staged_total=len(stage.staged_files),
+            converted_total=converted_total,
+            skipped_existing=skipped_existing,
+            failed_total=marker_failed_total,
+            output_dir=output_dir,
+            filename_map_path=filename_map_path,
+            export_mode=options.export_mode,
+        )
+    finally:
+        if stage is not None:
+            cleanup_staging_dir(stage.staging_dir)
+            log("Staging folder cleaned up.")
+        close_katex_v8_context()
+        cleanup_runtime_temp_root(runtime_tmp_root)
+        log(f"Runtime temp cleaned: {runtime_tmp_root}")
+        _log_elapsed(log, "raw_pipeline.total", pipeline_started_at)
+
+
 def run_pipeline(
     options: PipelineOptions,
     runner: MarkerRunner,

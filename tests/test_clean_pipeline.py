@@ -16,6 +16,9 @@ from pdf_html_polish.clean_pipeline import (
 )
 from pdf_html_polish.marker_runner import MarkerRunner
 from pdf_html_polish.models import PipelineSummary
+from pdf_html_polish.marker_runner import RunResult
+from pdf_html_polish.html_stages import HTML_STAGE_DIR_NAME
+from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 
 
@@ -71,6 +74,54 @@ def test_clean_public_parser_requires_zotero_overlay_by_default() -> None:
 
     assert args.require_zotero_overlay is True
     assert relaxed.require_zotero_overlay is False
+
+
+def test_clean_public_parser_accepts_raw_only_chunk_mode() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["--pdf", "paper.pdf", "--output-dir", "out", "--raw-only"])
+
+    assert args.raw_only is True
+
+
+def test_run_raw_html_pipeline_saves_raw_stage_only(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF")
+    output_dir = tmp_path / "converted"
+    logs: list[str] = []
+
+    class FakeRunner:
+        def run_batch(self, *, input_dir, output_dir, **_kwargs):
+            for pdf_path in Path(input_dir).glob("*.pdf"):
+                article_dir = Path(output_dir) / pdf_path.stem
+                article_dir.mkdir(parents=True)
+                (article_dir / f"{pdf_path.stem}.html").write_text(
+                    "<html><body>raw marker</body></html>",
+                    encoding="utf-8",
+                )
+            return RunResult(command=["marker"], exit_code=0)
+
+        def run_single(self, **_kwargs):  # pragma: no cover - should not be needed
+            raise AssertionError("raw-only batch should have produced the artifact")
+
+    summary = run_raw_html_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            export_mode="html",
+        ),
+        FakeRunner(),  # type: ignore[arg-type]
+        logs.append,
+        lambda: False,
+    )
+
+    stage_dir = output_dir / "paper" / HTML_STAGE_DIR_NAME
+    assert summary.converted_total == 1
+    assert (stage_dir / "01.en.raw.html").read_text(encoding="utf-8") == (
+        "<html><body>raw marker</body></html>"
+    )
+    assert not (stage_dir / "02.en.polish.html").exists()
+    assert any("Raw HTML stage saved" in entry for entry in logs)
 
 
 def test_build_observe_command_uses_repair_enabled_converted_root_defaults(tmp_path: Path) -> None:

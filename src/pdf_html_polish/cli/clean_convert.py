@@ -9,7 +9,7 @@ from pdf_html_polish.clean_pipeline import (
 )
 from pdf_html_polish.export_modes import ExportMode
 from pdf_html_polish.marker_runner import MarkerRunner
-from pdf_html_polish.pipeline import PipelineOptions
+from pdf_html_polish.pipeline import PipelineOptions, run_raw_html_pipeline
 from pdf_html_polish.stage_contract import PUBLISH_REPORT_NAME
 
 
@@ -67,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Return failure when quality_gate_report.json status is fail.",
     )
+    parser.add_argument(
+        "--raw-only",
+        action="store_true",
+        help=(
+            "Internal chunk-fallback mode: run Marker and save 01.en.raw.html only; "
+            "skip citation profile, polish, quality observe, and final HTML collection."
+        ),
+    )
 
     parser.add_argument("--no-skip-existing", action="store_true")
     parser.add_argument("--no-cuda", action="store_true")
@@ -115,29 +123,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_zotero_overlay=args.require_zotero_overlay,
         export_mode=ExportMode.HTML.value,
     )
-    clean_options = CleanPipelineOptions(
-        conversion_options=conversion_options,
-        quality_output_dir=args.quality_output_dir,
-        run_id=args.run_id,
-        jobs=args.jobs,
-        repolish_jobs=args.repolish_jobs,
-        audit_jobs=args.audit_jobs,
-        p62_marker_recovery_jobs=args.p62_marker_recovery_jobs,
-        p62_recovery_jobs=args.p62_recovery_jobs,
-        polish_auto_repair_jobs=args.polish_auto_repair_jobs,
-        previous_entry=args.previous_entry,
-        gate_config=args.gate_config,
-        final_html_dir=args.final_html_dir,
-        no_append_history=not args.append_history,
-        skip_quality_tests=args.skip_quality_tests,
-        fail_on_gate=args.fail_on_gate,
-    )
     try:
-        summary = run_clean_pipeline(clean_options, runner, _log, lambda: False)
+        if args.raw_only:
+            raw_summary = run_raw_html_pipeline(conversion_options, runner, _log, lambda: False)
+        else:
+            clean_options = CleanPipelineOptions(
+                conversion_options=conversion_options,
+                quality_output_dir=args.quality_output_dir,
+                run_id=args.run_id,
+                jobs=args.jobs,
+                repolish_jobs=args.repolish_jobs,
+                audit_jobs=args.audit_jobs,
+                p62_marker_recovery_jobs=args.p62_marker_recovery_jobs,
+                p62_recovery_jobs=args.p62_recovery_jobs,
+                polish_auto_repair_jobs=args.polish_auto_repair_jobs,
+                previous_entry=args.previous_entry,
+                gate_config=args.gate_config,
+                final_html_dir=args.final_html_dir,
+                no_append_history=not args.append_history,
+                skip_quality_tests=args.skip_quality_tests,
+                fail_on_gate=args.fail_on_gate,
+            )
+            summary = run_clean_pipeline(clean_options, runner, _log, lambda: False)
     finally:
         runner.cleanup_spawned_processes(_log)
 
     print("", flush=True)
+    if args.raw_only:
+        print(f"conversion_output_dir={raw_summary.output_dir}", flush=True)
+        print("raw_only=true", flush=True)
+        print(f"converted={raw_summary.converted_total}", flush=True)
+        print(f"failed={raw_summary.failed_total}", flush=True)
+        return 0
+
     print(f"conversion_output_dir={summary.conversion_summary.output_dir}", flush=True)
     print(f"quality_output_dir={summary.quality_output_dir}", flush=True)
     print(f"run_id={summary.run_id}", flush=True)

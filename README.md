@@ -6,9 +6,12 @@ This repository keeps the PDF-to-HTML polish path and its audit/quality-loop hel
 
 The public automation boundary is file-based: pass local PDF files and an output directory. Zotero collection lookup, queueing, WebDAV mirroring, and write-back belong to the main Zotero orchestrator.
 
-The public command `pdf-html-polish` always runs the clean production pipeline:
+The default public command `pdf-html-polish` runs the clean production pipeline:
 PDF conversion followed by the repair-enabled quality loop, with final audited
-HTML collected under the quality run's `final_html/` directory.
+HTML collected under the quality run's `final_html/` directory. The only
+exception is the internal `--raw-only` mode used by Zotero chunk fallback; it
+runs Marker and saves `01.en.raw.html` without citation profiling, polish, or
+quality observe.
 
 ## Pipeline
 
@@ -163,8 +166,9 @@ pdf-html-polish `
 ```
 
 The installed public converter is `pdf-html-polish`; `pdf-html-polish-clean` is
-kept as a compatibility alias for the same clean pipeline. The Zotero
-orchestration image name is `zotero-pdf-html-worker:local`.
+kept as a compatibility alias for the same clean pipeline. `--raw-only` is for
+orchestrator chunk fallback and should not be treated as a final production HTML
+result. The Zotero orchestration image name is `zotero-pdf-html-worker:local`.
 
 ## Container Notes
 
