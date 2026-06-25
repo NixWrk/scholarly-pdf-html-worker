@@ -119,8 +119,6 @@ from .raw_html_polish.katex import (
     MATHJAX_SCRIPT as _MATHJAX_SCRIPT,
     MATHJAX_SCRIPT_TAG_PATTERN as _MATHJAX_SCRIPT_TAG_PATTERN,
     close_katex_v8_context,
-    inject_katex_css as _inject_katex_css_impl,
-    inject_mathjax as _inject_mathjax_impl,
     katex_inlined_css as _katex_inlined_css,
     katex_v8_context as _katex_v8_context,
     render_katex_html as _render_katex_html_impl,
@@ -3032,14 +3030,6 @@ _MOJIBAKE_REPLACEMENTS = _MOJIBAKE_REPLACEMENTS + (
     ("О©", "Ω"),
     ("Г—", "×"),
 )
-
-
-def _inject_mathjax(html: str) -> str:
-    return _inject_mathjax_impl(html, ensure_head=_inject_default_styles)
-
-
-def _inject_katex_css(html: str) -> str:
-    return _inject_katex_css_impl(html, ensure_head=_inject_default_styles)
 
 
 def _render_katex_html(html: str) -> str:
@@ -9413,43 +9403,6 @@ def _fix_orphaned_sup_tags(html: str) -> str:
     return re.sub(r"<sup>(?=\s*\.)", _maybe_delete_opener, html)
 
 
-# Latin abbreviations that the translator sometimes transliterates into Cyrillic
-# when they appear right after an expanded Cyrillic form, e.g.
-# "Генеративный искусственный интеллект (ГАИ)".  We restore the Latin form so
-# the document stays consistent with the rest of the body text (which, due to
-# the translation prompt, keeps "GAI" untouched).
-_LATIN_ABBREV_RESTORE_MAP: dict[str, str] = {
-    "ГАИ": "GAI",
-    "ВНА": "VNA",
-    "МПЧ": "ICP",  # Cyrillic mis-transliteration of ICP (sometimes)
-    "ИКД": "ICP",
-    "ОСШ": "SNR",
-    "АЦП": "ADC",
-    "ОУ": "AC",    # only in abbreviation contexts — handled via parens
-    "ПЧ": "RF",
-    "МЭМС": "MEMS",
-    "ПЛИС": "FPGA",
-    "МИМО": "MIMO",
-}
-
-
-def _restore_latin_abbrevs(html: str) -> str:
-    """Replace Cyrillic transliterations of Latin abbrevs in parentheses.
-
-    The translator, when it sees ``Generative artificial intelligence (GAI)``,
-    often writes ``Генеративный искусственный интеллект (ГАИ)`` — it
-    transliterates the abbreviation even though the prompt forbids it.  We
-    restore the Latin form by replacing ``(ГАИ)`` with ``(GAI)`` (and friends)
-    after translation.
-    """
-    if not any(cyr in html for cyr in _LATIN_ABBREV_RESTORE_MAP):
-        return html
-    for cyr, lat in _LATIN_ABBREV_RESTORE_MAP.items():
-        # In parentheses — highest confidence.
-        html = re.sub(rf"\(\s*{re.escape(cyr)}\s*\)", f"({lat})", html)
-    return html
-
-
 def _add_section_anchors(html: str) -> tuple[str, set[str]]:
     """Add ``id="section-{ROMAN}"`` to headings that open with a Roman numeral.
 
@@ -13985,18 +13938,6 @@ def _looks_nonprose_gap_block(block_html: str) -> bool:
             return True
 
     return False
-
-
-def _looks_inline_figure_gap(block_html: str) -> bool:
-    blocks = _SENTENCE_GAP_BLOCK_PATTERN.findall(block_html)
-    if not blocks:
-        return False
-    saw_figure_like = False
-    for block in blocks:
-        if not _looks_nonprose_gap_block(block):
-            return False
-        saw_figure_like = True
-    return saw_figure_like
 
 
 def _language_probe_text_for_continuation(text: str) -> str:
