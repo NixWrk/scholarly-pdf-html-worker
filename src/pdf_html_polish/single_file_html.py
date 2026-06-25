@@ -21055,13 +21055,18 @@ _RAW_POLISH_PHASE_RUNNERS = {
     "katex_and_final_repairs": _polish_phase_katex_and_final_repairs,
 }
 
+_RAW_HTML_POLISH_PHASES = tuple(
+    ExecutablePolishPhase(
+        name=phase.name,
+        purpose=phase.purpose,
+        run=_RAW_POLISH_PHASE_RUNNERS[phase.name],
+    )
+    for phase in DEFAULT_POLISH_PHASES
+)
+
 
 def _raw_html_polish_phases() -> tuple[ExecutablePolishPhase, ...]:
-    phases: list[ExecutablePolishPhase] = []
-    for phase in DEFAULT_POLISH_PHASES:
-        runner = _RAW_POLISH_PHASE_RUNNERS[phase.name]
-        phases.append(ExecutablePolishPhase(name=phase.name, purpose=phase.purpose, run=runner))
-    return tuple(phases)
+    return _RAW_HTML_POLISH_PHASES
 
 
 def polish_html_phase_names() -> tuple[str, ...]:
@@ -21154,7 +21159,7 @@ def polish_html_document(
     polished = run_polish_phases(
         shielded_html,
         context=context,
-        phases=_raw_html_polish_phases(),
+        phases=_RAW_HTML_POLISH_PHASES,
     ).html
     return _restore_shielded_data_image_srcs(polished, data_image_srcs)
 

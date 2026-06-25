@@ -28,6 +28,7 @@ def test_raw_html_polish_phase_metadata_has_purpose_text() -> None:
 def test_raw_html_polish_executable_phases_match_documented_order() -> None:
     executable_phases = _raw_html_polish_phases()
 
+    assert executable_phases is _raw_html_polish_phases()
     assert tuple(phase.name for phase in executable_phases) == default_polish_phase_names()
     assert all(isinstance(phase, ExecutablePolishPhase) for phase in executable_phases)
     assert all(callable(phase.run) for phase in executable_phases)
