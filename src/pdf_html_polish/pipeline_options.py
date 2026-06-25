@@ -29,6 +29,7 @@ class PipelineOptions:
     # Multiple modes sharing the same marker_output_format run with one Marker call.
     export_mode: str = ExportMode.CLASSIC.value
     zotero_overlay_dir: str | None = None
+    require_zotero_overlay: bool = False
     webdav_upload_enabled: bool = False
     webdav_config_path: str | None = None
 

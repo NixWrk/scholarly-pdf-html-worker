@@ -72,6 +72,27 @@ def test_find_zotero_pdfjs_dir_uses_local_vendor_checkout() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
+def test_find_zotero_pdfjs_dir_accepts_compat_env() -> None:
+    tmp_path = _workspace_tmp()
+    try:
+        pdfjs_dir = tmp_path / "zotero-pdfjs"
+        pdfjs_dir.mkdir()
+        old_pdfjs = os.environ.pop(zotero_overlay_probe.PDFJS_DIR_ENV, None)
+        old_compat = os.environ.get(zotero_overlay_probe.PDFJS_COMPAT_DIR_ENV)
+        os.environ[zotero_overlay_probe.PDFJS_COMPAT_DIR_ENV] = str(pdfjs_dir)
+        try:
+            assert zotero_overlay_probe.find_zotero_pdfjs_dir() == pdfjs_dir.resolve(strict=False)
+        finally:
+            if old_pdfjs is not None:
+                os.environ[zotero_overlay_probe.PDFJS_DIR_ENV] = old_pdfjs
+            if old_compat is None:
+                os.environ.pop(zotero_overlay_probe.PDFJS_COMPAT_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.PDFJS_COMPAT_DIR_ENV] = old_compat
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
 def test_generate_zotero_overlay_json_reports_missing_probe() -> None:
     tmp_path = _workspace_tmp()
     try:

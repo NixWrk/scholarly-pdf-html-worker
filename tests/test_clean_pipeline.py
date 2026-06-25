@@ -55,6 +55,24 @@ def test_clean_public_parser_does_not_offer_partial_export_mode() -> None:
     assert "--export-mode" not in parser.format_help()
 
 
+def test_clean_public_parser_requires_zotero_overlay_by_default() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["--pdf", "paper.pdf", "--output-dir", "out"])
+    relaxed = parser.parse_args(
+        [
+            "--pdf",
+            "paper.pdf",
+            "--output-dir",
+            "out",
+            "--allow-missing-zotero-overlay",
+        ]
+    )
+
+    assert args.require_zotero_overlay is True
+    assert relaxed.require_zotero_overlay is False
+
+
 def test_build_observe_command_uses_repair_enabled_converted_root_defaults(tmp_path: Path) -> None:
     command = build_observe_command(
         converted_root=tmp_path / "converted",

@@ -353,6 +353,7 @@ def run_pipeline(
             profile = build_citation_profile_from_pdf(
                 source_pdf_path,
                 zotero_overlay_path=zotero_overlay_path,
+                require_zotero_overlay=options.require_zotero_overlay,
             )
             citation_profile_by_source[source_norm] = profile
             status = getattr(profile, "zotero_overlay_status", "")

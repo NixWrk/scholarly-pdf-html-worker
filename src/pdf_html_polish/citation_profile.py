@@ -352,6 +352,19 @@ def merge_citation_profile_with_zotero_overlays(
     )
 
 
+def require_zotero_overlay_evidence(profile: CitationProfile) -> CitationProfile:
+    """Fail fast when production PDF -> HTML lacks Zotero/pdf.js overlay evidence."""
+    if profile.zotero_overlay_status in {"generated", "loaded"}:
+        return profile
+    details = profile.zotero_overlay_error or "; ".join(profile.errors)
+    suffix = f" Details: {details}" if details else ""
+    raise RuntimeError(
+        "Zotero/pdf.js overlay evidence is required for PDF -> HTML citation recovery, "
+        f"but it was not available for {profile.source_pdf_path} "
+        f"(status={profile.zotero_overlay_status or 'unknown'}).{suffix}"
+    )
+
+
 def _dest_prefix_counts(dests: list[str]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for dest in dests:
@@ -751,6 +764,7 @@ def build_citation_profile_from_pdf(
     sample_limit: int = 32,
     zotero_overlay_path: str | Path | None = None,
     auto_zotero_overlay: bool = True,
+    require_zotero_overlay: bool = False,
 ) -> CitationProfile:
     path = Path(pdf_path).expanduser().resolve(strict=False)
     if not path.is_file():
@@ -958,13 +972,17 @@ def build_citation_profile_from_pdf(
         errors=errors,
     )
     try:
+        result_profile = profile
         if overlay_path_to_merge is not None:
             merged = merge_citation_profile_with_zotero_overlays(profile, overlay_path_to_merge)
             if isinstance(merged, CitationProfile):
                 if zotero_overlay_status == "generated":
-                    return replace(merged, zotero_overlay_status="generated")
-                return merged
-        return profile
+                    result_profile = replace(merged, zotero_overlay_status="generated")
+                else:
+                    result_profile = merged
+        if require_zotero_overlay:
+            return require_zotero_overlay_evidence(result_profile)
+        return result_profile
     finally:
         if temp_overlay_dir is not None:
             temp_overlay_dir.cleanup()

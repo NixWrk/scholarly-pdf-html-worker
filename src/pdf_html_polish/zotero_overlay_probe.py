@@ -9,6 +9,7 @@ from subprocess import TimeoutExpired, run
 DEFAULT_OVERLAY_TIMEOUT_SECONDS = 180
 OVERLAY_PROBE_ENV = "PDF_HTML_POLISH_ZOTERO_OVERLAY_PROBE"
 PDFJS_DIR_ENV = "PDF_HTML_POLISH_ZOTERO_PDFJS_DIR"
+PDFJS_COMPAT_DIR_ENV = "Z2M_ZOTERO_PDFJS_DIR"
 
 
 @dataclass(frozen=True)
@@ -45,8 +46,10 @@ def find_zotero_overlay_probe_script() -> Path | None:
 
 
 def find_zotero_pdfjs_dir() -> Path | None:
-    env_pdfjs = os.environ.get(PDFJS_DIR_ENV)
-    if env_pdfjs:
+    for env_name in (PDFJS_DIR_ENV, PDFJS_COMPAT_DIR_ENV):
+        env_pdfjs = os.environ.get(env_name)
+        if not env_pdfjs:
+            continue
         candidate = Path(env_pdfjs).expanduser().resolve(strict=False)
         if candidate.is_dir():
             return candidate

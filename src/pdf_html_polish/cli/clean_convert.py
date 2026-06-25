@@ -78,6 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--zotero-overlay-dir",
         help="Optional directory with Zotero/pdf.js *.overlays.json files.",
     )
+    parser.add_argument(
+        "--require-zotero-overlay",
+        dest="require_zotero_overlay",
+        action="store_true",
+        default=True,
+        help="Require Zotero/pdf.js overlay evidence; enabled by default for production PDF -> HTML.",
+    )
+    parser.add_argument(
+        "--allow-missing-zotero-overlay",
+        dest="require_zotero_overlay",
+        action="store_false",
+        help="Allow conversion to continue without Zotero/pdf.js overlay evidence.",
+    )
     parser.add_argument("--marker-cmd", default="marker")
     parser.add_argument("--marker-single-cmd", default="marker_single")
     return parser
@@ -99,6 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_base_len=args.max_base_len,
         disable_batch_multiprocessing=args.disable_batch_multiprocessing,
         zotero_overlay_dir=args.zotero_overlay_dir,
+        require_zotero_overlay=args.require_zotero_overlay,
         export_mode=ExportMode.HTML.value,
     )
     clean_options = CleanPipelineOptions(

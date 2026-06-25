@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from pdf_html_polish.citation_profile import (
+    CitationProfile,
     PdfLinkAnnotation,
     _author_year_reference_hint_count,
     _is_reference_citation_dest,
@@ -11,6 +14,7 @@ from pdf_html_polish.citation_profile import (
     infer_citation_style_from_text,
     load_zotero_overlay_citations,
     merge_citation_profile_with_zotero_overlays,
+    require_zotero_overlay_evidence,
 )
 from pdf_html_polish.single_file_html import polish_html_document
 
@@ -18,6 +22,18 @@ from pdf_html_polish.single_file_html import polish_html_document
 def _refs(count: int) -> str:
     items = "".join(f"<li>{idx}. Reference {idx}.</li>" for idx in range(1, count + 1))
     return f"<h1>REFERENCES</h1><p block-type=\"ListGroup\"><ul>{items}</ul></p>"
+
+
+def test_require_zotero_overlay_evidence_rejects_unavailable_profile() -> None:
+    profile = CitationProfile(
+        source_pdf_path="paper.pdf",
+        status="ok",
+        zotero_overlay_status="unavailable",
+        zotero_overlay_error="probe missing",
+    )
+
+    with pytest.raises(RuntimeError, match="Zotero/pdf.js overlay evidence is required"):
+        require_zotero_overlay_evidence(profile)
 
 
 def test_infer_citation_style_detects_parenthetical_numeric_pdf_text() -> None:

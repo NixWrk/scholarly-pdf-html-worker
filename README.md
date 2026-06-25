@@ -18,8 +18,10 @@ Clean production pipeline:
 2. Stage PDFs with short deterministic aliases for Marker.
 3. Run `marker` batch conversion with `marker_single` fallback.
 4. Build a PDF-derived citation profile from the original source PDF.
-   - The profile uses PDF links/named destinations and optional
-     Zotero/pdf.js overlay JSON.
+   - The profile uses PDF links/named destinations plus required
+     Zotero/pdf.js overlay evidence, either prebuilt with
+     `--zotero-overlay-dir` or generated automatically from the bundled
+     Zotero/pdf.js build.
    - Citation/internal-link recovery in EN polish is not derived from
      `01.en.raw.html` alone.
    - During converted-stage quality runs, raw HTML citation-style inference is
@@ -51,8 +53,8 @@ pip install -e ".[math,pdf-text-detect]"
 Runtime requirements outside this package:
 
 - `marker` and `marker_single` available in `PATH`.
-- Node.js plus a Zotero/pdf.js `generic-legacy` build for Zotero overlay
-  citation recovery, unless you pass prebuilt `*.overlays.json` files.
+- Node.js plus a Zotero/pdf.js `generic-legacy` build for required Zotero
+  overlay citation recovery, unless you pass prebuilt `*.overlays.json` files.
 
 The Docker image installs `marker-pdf==1.10.2`, which provides `marker` and
 `marker_single`.
@@ -101,13 +103,15 @@ quality processing.
 Output HTML stages are saved under each article folder in
 `_pdf_html_polish_stages`. Audit and repolish helpers also recognize the legacy
 `_z2m_stages` name when reading older runs.
-`--zotero-overlay-dir` is optional; when present, matching Zotero/pdf.js
-`*.overlays.json` files are used for citation-link recovery before automatic
-overlay generation is attempted.
+`--zotero-overlay-dir` is optional configuration, not optional evidence. When
+present, matching Zotero/pdf.js `*.overlays.json` files are used for
+citation-link recovery; otherwise the converter must generate overlay evidence
+from the bundled Zotero/pdf.js build. Manual experiments can bypass this with
+`--allow-missing-zotero-overlay`, but production PDF -> HTML should not.
 
 Important: `02.en.polish.html` is not a pure function of `01.en.raw.html` for
 link quality. The production path also passes a citation profile built from the
-source PDF, optionally enriched with Zotero/pdf.js overlays. Raw-only repolish
+source PDF and enriched with Zotero/pdf.js overlays. Raw-only repolish
 helpers can be useful for text, float, math, or layout checks, but they are not
 valid for citation/internal-link regression checks.
 
@@ -165,7 +169,7 @@ orchestration image name is `zotero-pdf-html-worker:local`.
 ## Container Notes
 
 The included Dockerfile installs Marker, Node.js, the local overlay probe, and
-the optional math/PDF-text dependencies used by the HTML polish path. For Zotero
+the math/PDF-text dependencies used by the HTML polish path. For required Zotero
 overlay citation recovery, the image builds a pinned Zotero/pdf.js
 `generic-legacy` tree at `/opt/zotero-pdfjs` and sets
 `PDF_HTML_POLISH_ZOTERO_PDFJS_DIR`. For local experiments, you can still mount
