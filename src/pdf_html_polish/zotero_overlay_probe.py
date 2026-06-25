@@ -51,8 +51,13 @@ def find_zotero_pdfjs_dir() -> Path | None:
         if candidate.is_dir():
             return candidate
 
-    candidate = _repo_root() / ".tmp_local2" / "vendor" / "zotero-pdfjs"
-    return candidate if candidate.is_dir() else None
+    for candidate in (
+        _repo_root() / ".tmp_local2" / "vendor" / "zotero-pdfjs",
+        Path("/opt/zotero-pdfjs"),
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def generate_zotero_overlay_json(

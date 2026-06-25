@@ -166,8 +166,10 @@ orchestration image name is `zotero-pdf-html-worker:local`.
 
 The included Dockerfile installs Marker, Node.js, the local overlay probe, and
 the optional math/PDF-text dependencies used by the HTML polish path. For Zotero
-overlay citation recovery, mount or provide a Zotero/pdf.js `generic-legacy`
-build and set `PDF_HTML_POLISH_ZOTERO_PDFJS_DIR`, or pass prebuilt overlays with
+overlay citation recovery, the image builds a pinned Zotero/pdf.js
+`generic-legacy` tree at `/opt/zotero-pdfjs` and sets
+`PDF_HTML_POLISH_ZOTERO_PDFJS_DIR`. For local experiments, you can still mount
+or provide another build with that variable, or pass prebuilt overlays with
 `--zotero-overlay-dir`.
 
 ## Source Layout
