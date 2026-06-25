@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -29,6 +30,7 @@ class RawPolishState:
     found_figures: Any = field(default_factory=dict)
     found_tables: Any = field(default_factory=dict)
     found_boxes: Any = field(default_factory=dict)
+    phase_timings: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
     def with_html(self, html: str) -> RawPolishState:
         return replace(self, html=html)
@@ -73,7 +75,21 @@ def run_polish_phases(
 
     state = RawPolishState(html=html)
     for phase in phases:
-        state = phase.run(state, context)
-        if not isinstance(state, RawPolishState):
-            raise TypeError(f"Raw polish phase {phase.name!r} returned {type(state)!r}")
+        input_chars = len(state.html)
+        started = time.perf_counter()
+        next_state = phase.run(state, context)
+        elapsed = time.perf_counter() - started
+        if not isinstance(next_state, RawPolishState):
+            raise TypeError(f"Raw polish phase {phase.name!r} returned {type(next_state)!r}")
+        state = next_state.with_updates(
+            phase_timings=(
+                *next_state.phase_timings,
+                {
+                    "phase": phase.name,
+                    "seconds": elapsed,
+                    "input_chars": input_chars,
+                    "output_chars": len(next_state.html),
+                },
+            )
+        )
     return state

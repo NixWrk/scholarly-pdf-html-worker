@@ -56,6 +56,12 @@ def test_run_polish_phases_carries_state_in_order() -> None:
 
     assert result.html == "aS1"
     assert calls == ["en", "en"]
+    assert [timing["phase"] for timing in result.phase_timings] == ["first", "second"]
+    assert result.phase_timings[0]["input_chars"] == 0
+    assert result.phase_timings[0]["output_chars"] == 1
+    assert result.phase_timings[1]["input_chars"] == 1
+    assert result.phase_timings[1]["output_chars"] == 3
+    assert all(timing["seconds"] >= 0 for timing in result.phase_timings)
 
 
 def test_run_polish_phases_rejects_invalid_phase_return() -> None:
