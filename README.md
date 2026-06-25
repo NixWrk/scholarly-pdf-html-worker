@@ -111,6 +111,11 @@ present, matching Zotero/pdf.js `*.overlays.json` files are used for
 citation-link recovery; otherwise the converter must generate overlay evidence
 from the bundled Zotero/pdf.js build. Manual experiments can bypass this with
 `--allow-missing-zotero-overlay`, but production PDF -> HTML should not.
+Generated overlays are cached by the source PDF SHA-256 under
+`PDF_HTML_POLISH_ZOTERO_OVERLAY_CACHE_DIR` or, by default,
+`~/.cache/pdf_html_polish/zotero_overlays`. If the PDF content changes, the hash
+changes and the converter regenerates overlay evidence instead of reusing the
+old file.
 
 Important: `02.en.polish.html` is not a pure function of `01.en.raw.html` for
 link quality. The production path also passes a citation profile built from the

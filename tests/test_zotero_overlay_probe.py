@@ -33,7 +33,9 @@ def test_generate_zotero_overlay_json_invokes_probe_and_writes_output() -> None:
 
         old_probe = os.environ.get(zotero_overlay_probe.OVERLAY_PROBE_ENV)
         old_pdfjs = os.environ.pop(zotero_overlay_probe.PDFJS_DIR_ENV, None)
+        old_cache = os.environ.get(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV)
         os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = str(probe_path)
+        os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = str(tmp_path / "cache")
         try:
             with patch.object(zotero_overlay_probe, "run", fake_run):
                 result = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, output_path)
@@ -44,6 +46,10 @@ def test_generate_zotero_overlay_json_invokes_probe_and_writes_output() -> None:
                 os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = old_probe
             if old_pdfjs is not None:
                 os.environ[zotero_overlay_probe.PDFJS_DIR_ENV] = old_pdfjs
+            if old_cache is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = old_cache
 
         assert result.generated
         assert result.attempted
@@ -52,6 +58,96 @@ def test_generate_zotero_overlay_json_invokes_probe_and_writes_output() -> None:
         assert calls[0][:3] == ["node", str(probe_path.resolve()), str(pdf_path.resolve())]
         assert "--out" in calls[0]
         assert str(output_path.resolve()) in calls[0]
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_generate_zotero_overlay_json_reuses_content_cache() -> None:
+    tmp_path = _workspace_tmp()
+    try:
+        pdf_path = tmp_path / "article.pdf"
+        pdf_path.write_bytes(b"%PDF same content\n")
+        probe_path = tmp_path / "zotero_overlay_probe.mjs"
+        probe_path.write_text("// fake probe\n", encoding="utf-8")
+        first_output = tmp_path / "first.overlays.json"
+        second_output = tmp_path / "second.overlays.json"
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            Path(command[command.index("--out") + 1]).write_text(
+                '{"summary":{"citations":[{"text":"[1]"}]}}\n',
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "ok", "")
+
+        old_probe = os.environ.get(zotero_overlay_probe.OVERLAY_PROBE_ENV)
+        old_cache = os.environ.get(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV)
+        os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = str(probe_path)
+        os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = str(tmp_path / "cache")
+        try:
+            with patch.object(zotero_overlay_probe, "run", fake_run):
+                first = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, first_output)
+                second = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, second_output)
+        finally:
+            if old_probe is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_PROBE_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = old_probe
+            if old_cache is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = old_cache
+
+        assert first.generated
+        assert first.attempted
+        assert second.generated
+        assert not second.attempted
+        assert first_output.read_text(encoding="utf-8") == second_output.read_text(encoding="utf-8")
+        assert len(calls) == 1
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_generate_zotero_overlay_json_cache_misses_when_pdf_content_changes() -> None:
+    tmp_path = _workspace_tmp()
+    try:
+        pdf_path = tmp_path / "article.pdf"
+        pdf_path.write_bytes(b"%PDF first\n")
+        probe_path = tmp_path / "zotero_overlay_probe.mjs"
+        probe_path.write_text("// fake probe\n", encoding="utf-8")
+        calls: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(command)
+            Path(command[command.index("--out") + 1]).write_text(
+                f'{{"summary":{{"calls":{len(calls)}}}}}\n',
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "ok", "")
+
+        old_probe = os.environ.get(zotero_overlay_probe.OVERLAY_PROBE_ENV)
+        old_cache = os.environ.get(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV)
+        os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = str(probe_path)
+        os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = str(tmp_path / "cache")
+        try:
+            with patch.object(zotero_overlay_probe, "run", fake_run):
+                first = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, tmp_path / "first.json")
+                pdf_path.write_bytes(b"%PDF changed\n")
+                second = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, tmp_path / "second.json")
+        finally:
+            if old_probe is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_PROBE_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = old_probe
+            if old_cache is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = old_cache
+
+        assert first.generated
+        assert second.generated
+        assert len(calls) == 2
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
+import shutil
 from subprocess import TimeoutExpired, run
 
 
@@ -10,6 +12,8 @@ DEFAULT_OVERLAY_TIMEOUT_SECONDS = 180
 OVERLAY_PROBE_ENV = "PDF_HTML_POLISH_ZOTERO_OVERLAY_PROBE"
 PDFJS_DIR_ENV = "PDF_HTML_POLISH_ZOTERO_PDFJS_DIR"
 PDFJS_COMPAT_DIR_ENV = "Z2M_ZOTERO_PDFJS_DIR"
+OVERLAY_CACHE_DIR_ENV = "PDF_HTML_POLISH_ZOTERO_OVERLAY_CACHE_DIR"
+OVERLAY_CACHE_VERSION = "v1"
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,32 @@ def find_zotero_pdfjs_dir() -> Path | None:
     return None
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _overlay_cache_dir() -> Path:
+    configured = os.environ.get(OVERLAY_CACHE_DIR_ENV)
+    if configured:
+        return Path(configured).expanduser().resolve(strict=False)
+    return Path.home() / ".cache" / "pdf_html_polish" / "zotero_overlays"
+
+
+def _cached_overlay_path(pdf: Path) -> Path:
+    return _overlay_cache_dir() / OVERLAY_CACHE_VERSION / f"{_sha256_file(pdf)}.overlays.json"
+
+
+def _copy_overlay(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f"{target.name}.tmp")
+    shutil.copy2(source, tmp)
+    tmp.replace(target)
+
+
 def generate_zotero_overlay_json(
     pdf_path: str | Path,
     output_path: str | Path,
@@ -72,6 +102,18 @@ def generate_zotero_overlay_json(
     """Run the Zotero/pdf.js overlay probe and write a temporary JSON file."""
     pdf = Path(pdf_path).expanduser().resolve(strict=False)
     output = Path(output_path).expanduser().resolve(strict=False)
+    if pdf.is_file():
+        cached = _cached_overlay_path(pdf)
+        if cached.is_file():
+            _copy_overlay(cached, output)
+            return ZoteroOverlayProbeResult(
+                output_path=output,
+                attempted=False,
+                generated=True,
+                command=[],
+                stdout=f"Zotero overlay cache hit: {cached}",
+            )
+
     probe_script = find_zotero_overlay_probe_script()
     if probe_script is None:
         return ZoteroOverlayProbeResult(
@@ -126,6 +168,10 @@ def generate_zotero_overlay_json(
         )
 
     generated = completed.returncode == 0 and output.is_file()
+    if generated and pdf.is_file():
+        cached = _cached_overlay_path(pdf)
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        _copy_overlay(output, cached)
     error = "" if generated else f"Zotero overlay probe exited with code {completed.returncode}"
     return ZoteroOverlayProbeResult(
         output_path=output,
