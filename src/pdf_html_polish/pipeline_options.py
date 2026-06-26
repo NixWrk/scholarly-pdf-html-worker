@@ -32,6 +32,7 @@ class PipelineOptions:
     require_zotero_overlay: bool = False
     webdav_upload_enabled: bool = False
     webdav_config_path: str | None = None
+    postprocess_max_workers: int = 1
 
     @property
     def export_modes_list(self) -> list[ExportMode]:

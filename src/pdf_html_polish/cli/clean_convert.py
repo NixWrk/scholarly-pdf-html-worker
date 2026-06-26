@@ -83,6 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-base-len", type=int, default=120)
     parser.add_argument("--disable-batch-multiprocessing", action="store_true")
     parser.add_argument(
+        "--postprocess-jobs",
+        type=int,
+        default=1,
+        help="Worker count for post-Marker HTML polish/inlining. Default: 1.",
+    )
+    parser.add_argument(
         "--zotero-overlay-dir",
         help="Optional directory with Zotero/pdf.js *.overlays.json files.",
     )
@@ -119,6 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         model_cache_dir=args.model_cache_dir,
         max_base_len=args.max_base_len,
         disable_batch_multiprocessing=args.disable_batch_multiprocessing,
+        postprocess_max_workers=max(1, args.postprocess_jobs),
         zotero_overlay_dir=args.zotero_overlay_dir,
         require_zotero_overlay=args.require_zotero_overlay,
         export_mode=ExportMode.HTML.value,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import concurrent.futures
 import glob
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Callable
+from typing import Any, Callable
 
 from .citation_profile import build_citation_profile_from_pdf
 from .export_modes import ExportMode, get_export_mode_spec
@@ -50,10 +52,84 @@ from .zotero_pending import (
 OVERLAY_SUFFIX_RE = re.compile(r"_([0-9a-f]{8})(?:\.pdf)?$", re.IGNORECASE)
 
 
+@dataclass(frozen=True)
+class _HtmlPolishWorkItem:
+    staged_file: StagedFile
+    html_path: Path
+    stage_dir: Path
+    raw_stage_path: Path
+    citation_profile: Any
+
+
+@dataclass(frozen=True)
+class _HtmlPolishResult:
+    html_path: Path
+    stage_dir: Path
+    raw_stage_path: Path
+    polish_stage_path: Path | None
+    inlined_images: int
+    elapsed_s: float
+    error: str | None = None
+
+
 def _log_elapsed(log: Callable[[str], None] | None, stage: str, started_at: float) -> None:
     if log is None:
         return
     log(f"[timer] {stage}: {perf_counter() - started_at:.2f}s")
+
+
+def _polish_html_work_item(item: _HtmlPolishWorkItem) -> _HtmlPolishResult:
+    started_at = perf_counter()
+    try:
+        result = polish_and_inline_html_file(
+            item.html_path,
+            citation_profile=item.citation_profile,
+        )
+        item.html_path.write_text(result.html, encoding="utf-8")
+        elapsed_s = perf_counter() - started_at
+        polish_stage = save_html_stage(
+            item.stage_dir,
+            POLISH_STAGE_NAME,
+            result.html,
+            "en.polish.inline_images",
+            source_path=item.html_path,
+            details=(
+                f"inlined_images={result.inlined_images}",
+                f"elapsed_s={elapsed_s:.2f}",
+            ),
+        )
+        return _HtmlPolishResult(
+            html_path=item.html_path,
+            stage_dir=item.stage_dir,
+            raw_stage_path=item.raw_stage_path,
+            polish_stage_path=polish_stage.path,
+            inlined_images=result.inlined_images,
+            elapsed_s=elapsed_s,
+        )
+    except Exception as exc:
+        return _HtmlPolishResult(
+            html_path=item.html_path,
+            stage_dir=item.stage_dir,
+            raw_stage_path=item.raw_stage_path,
+            polish_stage_path=None,
+            inlined_images=0,
+            elapsed_s=perf_counter() - started_at,
+            error=str(exc),
+        )
+
+
+def _polish_html_work_items(
+    work_items: list[_HtmlPolishWorkItem],
+    *,
+    max_workers: int,
+) -> list[_HtmlPolishResult]:
+    if not work_items:
+        return []
+    worker_count = min(max(1, int(max_workers or 1)), len(work_items))
+    if worker_count == 1:
+        return [_polish_html_work_item(item) for item in work_items]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        return list(executor.map(_polish_html_work_item, work_items))
 
 
 def _webdav_upload_mirror_if_configured(
@@ -798,6 +874,7 @@ def run_pipeline(
                 started_at = perf_counter()
                 inlined_files = 0
                 total_inlined_images = 0
+                polish_work_items: list[_HtmlPolishWorkItem] = []
                 for staged_file in converted_staged_files:
                     html_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
                     if not html_path.is_file():
@@ -834,38 +911,51 @@ def run_pipeline(
                                 f"reasons={','.join(ocr_decision.reasons) or 'score'}, "
                                 f"pending_total={queue_result.pending_total})"
                             )
-                        inline_started_at = perf_counter()
                         citation_profile = citation_profile_for(
                             staged_file.source_pdf_path,
                             staged_file.alias_base_name,
                         )
-                        result = polish_and_inline_html_file(
-                            html_path,
-                            citation_profile=citation_profile,
+                        polish_work_items.append(
+                            _HtmlPolishWorkItem(
+                                staged_file=staged_file,
+                                html_path=html_path,
+                                stage_dir=stage_dir,
+                                raw_stage_path=raw_stage.path,
+                                citation_profile=citation_profile,
+                            )
                         )
-                        html_path.write_text(result.html, encoding="utf-8")
-                        polish_stage = save_html_stage(
-                            stage_dir,
-                            POLISH_STAGE_NAME,
-                            result.html,
-                            "en.polish.inline_images",
-                            source_path=html_path,
-                            details=(
-                                f"inlined_images={result.inlined_images}",
-                                f"elapsed_s={perf_counter() - inline_started_at:.2f}",
-                            ),
-                        )
-                        inlined_files += 1
-                        total_inlined_images += result.inlined_images
-                        log(
-                            "HTML debug stages saved: "
-                            f"{stage_dir} "
-                            f"(raw={raw_stage.path.name}, en_polish={polish_stage.path.name})"
-                        )
-                        # Upload EN HTML to WebDAV if configured.
-                        mirror_webdav_html(html_path)
                     except Exception as exc:
                         log(f"Inline images failed for {html_path.name}: {exc}")
+                postprocess_workers = min(
+                    max(1, int(getattr(options, "postprocess_max_workers", 1) or 1)),
+                    max(1, len(polish_work_items)),
+                )
+                if len(polish_work_items) > 1:
+                    log(
+                        "HTML postprocess polish workers: "
+                        f"workers={postprocess_workers}, files={len(polish_work_items)}"
+                    )
+                for polish_result in _polish_html_work_items(
+                    polish_work_items,
+                    max_workers=postprocess_workers,
+                ):
+                    if polish_result.error:
+                        log(f"Inline images failed for {polish_result.html_path.name}: {polish_result.error}")
+                        continue
+                    inlined_files += 1
+                    total_inlined_images += polish_result.inlined_images
+                    polish_stage_name = (
+                        polish_result.polish_stage_path.name
+                        if polish_result.polish_stage_path is not None
+                        else ""
+                    )
+                    log(
+                        "HTML debug stages saved: "
+                        f"{polish_result.stage_dir} "
+                        f"(raw={polish_result.raw_stage_path.name}, "
+                        f"en_polish={polish_stage_name})"
+                    )
+                    mirror_webdav_html(polish_result.html_path)
                 _log_elapsed(log, "pipeline.inline_en_images", started_at)
                 log(f"Inlined images in EN HTML: files={inlined_files}, images={total_inlined_images}")
 
