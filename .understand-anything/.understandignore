@@ -1,0 +1,68 @@
+# .understandignore — patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)
+# Lines below are suggestions — uncomment to activate.
+# Use ! prefix to force-include something excluded by defaults.
+#
+# Built-in defaults (always excluded unless negated):
+#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
+#
+
+# --- Local analysis/runtime artifacts ---
+.understand-anything/
+.uv-cache/
+.uv_cache/
+.venv/
+venv/
+__pycache__/
+
+# --- From .gitignore (uncomment to exclude) ---
+
+# *.py[cod]
+# *.pyo
+# *.pyd
+# .Python
+# .env
+# .pytest_cache/
+# .mypy_cache/
+# .ruff_cache/
+# *.egg-info/
+# output/
+# outputs/
+# bench_lmstudio_instruct/
+# manual_review*/
+# *_runtime_tmp/
+# _z2m_runtime_tmp/
+# experiments/lmstudio_instruct_translation/out/
+# experiments/lmstudio_instruct_translation/out_html/
+# webdav_servers.json
+# *.local.json
+# review_runs/
+# .tmp_local2/
+# .claude/
+# .tmp_katex_build/
+# zotero_katex_pipeline_sample.html
+
+# --- Detected directories (uncomment to exclude) ---
+
+# docs/
+# scripts/
+# tests/
+
+# --- Test file patterns (uncomment to exclude) ---
+
+# JS / TS
+# *.test.*
+# *.spec.*
+# *.snap
+# C# / .NET
+# **/*Tests.cs
+# **/*Test.cs
+# **/*Fixture.cs
+# **/*.Tests.csproj
+# Java / Kotlin
+# **/src/test/**
+# **/*Test.java
+# **/*IT.java
+# **/*Spec.kt
+# Go
+# **/*_test.go

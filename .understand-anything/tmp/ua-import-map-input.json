@@ -1,0 +1,1235 @@
+{
+    "projectRoot":  "D:\\Elvis_projects\\Zotero_Automation\\zotero-pdf-html-worker",
+    "files":  [
+                  {
+                      "path":  ".dockerignore",
+                      "language":  "unknown",
+                      "fileCategory":  "infra"
+                  },
+                  {
+                      "path":  ".gitattributes",
+                      "language":  "unknown",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "configs/llm_defect_patterns.json",
+                      "language":  "json",
+                      "fileCategory":  "config"
+                  },
+                  {
+                      "path":  "configs/llm_quality_gates.json",
+                      "language":  "json",
+                      "fileCategory":  "config"
+                  },
+                  {
+                      "path":  "docker-compose.example.yml",
+                      "language":  "yaml",
+                      "fileCategory":  "infra"
+                  },
+                  {
+                      "path":  "Dockerfile",
+                      "language":  "dockerfile",
+                      "fileCategory":  "infra"
+                  },
+                  {
+                      "path":  "docs/Р”РѕСЂР°Р±РѕС‚РєРё РїРѕСЃР»Рµ РѕС‚РїСѓСЃРєР°.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/CODEX_IMPORTED_REVIEW_CORPUS_GUIDE_2026-05-14.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/EN_POLISH_COMMIT_PLAN_2026-04-27.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/EN_POLISH_CONSOLIDATED_FIX_PLAN_2026-04-27.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/EN_POLISH_UNIVERSAL_REPAIR_PLAN_2026-04-27.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/EN_RAW_DEBUG_TEST_PLAN.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/EN_RAW_POLISH_PAIR_AUDIT_2026-04-25.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/llm_quality_loop.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MANUAL_EN_POLISH_REVIEW_2026-04-26.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MANUAL_EN_POLISH_REVIEW_ROUND2_2026-04-27.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MANUAL_EN_POLISH_REVIEW_ROUND2_5_2026-04-27.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MANUAL_EN_POLISH_REVIEW_WORKFLOW_2026-04-26.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MEINE_EN_POLISH_FIX_AND_TEST_PLAN_2026-04-30.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MEINE_EN_POLISH_ITERATIVE_INSTRUCTIONS_2026-05-02.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MEINE_EN_POLISH_MANUAL_REVIEW_2026-04-30.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/MEINE_ENGLISH_RAW_POLISH_ANALYSIS_PLAN_2026-04-29.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/P62_PDF_IMAGE_RECOVERY_STRATEGY.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/PIPELINE_SKETCH.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/POLISH_FLOAT_AND_MATH_REGRESSION_OBSERVATIONS_2026-05-15.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/PORTING_STATUS_2026-05-14.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/QUALITY_LOOP_REVIEW_QUEUE_AND_P62_PLAN_2026-06-18.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/REPOSITORY_CLEANUP_PLAN_2026-06-19.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "docs/REPOSITORY_WORKFLOW.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "pyproject.toml",
+                      "language":  "toml",
+                      "fileCategory":  "config"
+                  },
+                  {
+                      "path":  "README.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "scripts/audit_en_polish.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/audit_en_raw.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/audit_source_language.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/collect_en_polish_review.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/llm_quality_loop.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/pdf_profile_lab.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/record_en_polish_quality_history.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/refactor_article_check.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "scripts/repolish_en_from_raw.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/__init__.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/abbreviations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/assets/katex/katex.inlined.css",
+                      "language":  "css",
+                      "fileCategory":  "markup"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/assets/katex/REGENERATE.md",
+                      "language":  "markdown",
+                      "fileCategory":  "docs"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/attachments.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/citation_profile_recovery.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/citation_profile.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/clean_pipeline.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/cli/__init__.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/cli/clean_convert.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/cli/convert_file.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/cli/stage_contract.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/email_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/export_modes.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/history.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/html_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/html_links.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/html_references.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/html_stages.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/language_detect.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/llm_bundle.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/marker_runner.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/models.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/naming.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/ocr_quality.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/output_state.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/paths.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/pipeline_discovery.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/pipeline_options.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/pipeline_webdav.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/pipeline_zotero.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/pipeline.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/polish_language.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/__init__.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/analysis_prompt.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/article_check.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_blocks.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_citation_style.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_citations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_figure_caption_ux.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_float_gap.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_frontmatter.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_manual_patterns.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_manual_recent.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_math_units.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_p04.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_p35.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_p45.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_p61.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_p62.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_p71.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_pdf.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_polish_pair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_polish_report.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_raw_analysis.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_raw_blocks.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_raw_checks.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_raw_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_raw_report.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_reference_identity.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/audit_report.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/cached_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/commands.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/converted_runs.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/gates.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/observations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_context.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_duplicates.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_html.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_marker.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_matching.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_pdf_assets.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_plan.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/p62_recovery_stage.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/pattern_observations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/pdf_evidence.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/pdf_reference_recovery.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/pdf_utils.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/polish_auto_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/resolver_decisions.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/review_workflow.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/run_utils.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/quality_loop/source_pdf.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/__init__.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/author_year_links.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/doi_anchors.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/float_units.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/katex.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/math_units.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/page_furniture.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/phases.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/pre_cleanup.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/presentation.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/references_links.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/url_anchors.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/url_autolink.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/raw_html_polish/url_text_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/runtime_temp.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/semantic_labels.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/single_file_html.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/stage_contract.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/staging.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/text_cleanup.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/url_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/webdav_config.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/webdav_pending.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/webdav_uploader.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/zotero_html_attachment.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/zotero_overlay_probe.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/zotero_pending.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "src/pdf_html_polish/zotero.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/conftest.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_citation_style.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_citations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_diagnostics.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_en_polish.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_en_raw.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_figure_caption_ux.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_float_gap.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_frontmatter.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_manual_patterns.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_manual_recent.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_math_units.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_p04.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_p35.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_p45.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_p61.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_p62.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_p71.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_pdf.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_polish_pair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_polish_report.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_raw_analysis.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_raw_blocks.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_raw_checks.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_raw_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_raw_report.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_reference_identity.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_audit_source_language.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_citation_profile_recovery.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_citation_profile.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_clean_pipeline.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_collect_en_polish_review.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_email_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_html_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_html_links.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_html_stages.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_language_detect.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_llm_quality_loop.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_marker_runner.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_ocr_quality.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_output_state.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_context.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_html.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_marker.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_matching.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_pdf_assets.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_plan.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_p62_recovery_stage.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_pdf_utils.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_pipeline_boundaries.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_analysis_prompt.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_cached_images.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_commands.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_converted_runs.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_observations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_p62_duplicates.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_pattern_observations.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_pdf_evidence.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_pdf_reference_recovery.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_polish_auto_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_resolver_decisions.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_review_workflow.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_run_utils.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_quality_loop_source_pdf.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_author_year_links.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_doi_anchors.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_float_units.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_frontmatter_footnotes.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_html_fragments.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_katex.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_math_units.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_page_furniture.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_phases.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_pre_cleanup.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_presentation.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_references_links.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_url_anchors.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_url_autolink.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_raw_html_polish_url_text_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_record_en_polish_quality_history.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_refactor_article_check.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_repolish_en_from_raw.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_semantic_labels.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_single_file_html.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_stage_contract.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_staging.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_text_cleanup.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_url_repair.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tests/test_zotero_overlay_probe.py",
+                      "language":  "python",
+                      "fileCategory":  "code"
+                  },
+                  {
+                      "path":  "tools/zotero_overlay_probe.mjs",
+                      "language":  "javascript",
+                      "fileCategory":  "code"
+                  }
+              ]
+}

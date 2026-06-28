@@ -1,0 +1,508 @@
+{
+  "repo": "Zotero_Automation/zotero-pdf-html-worker",
+  "root": "D:\\Elvis_projects\\Zotero_Automation\\zotero-pdf-html-worker",
+  "files": 245,
+  "skippedFiles": [],
+  "nodes": 3333,
+  "edges": 5221,
+  "functions": 3008,
+  "classes": 80,
+  "exports": 3080,
+  "callEntries": 29920,
+  "sections": 762,
+  "definitions": 0,
+  "endpoints": 0,
+  "services": 2,
+  "resources": 0,
+  "imports": 232,
+  "categories": {
+    "infra": 3,
+    "code": 213,
+    "config": 3,
+    "docs": 25,
+    "markup": 1
+  },
+  "highRiskFiles": [
+    {
+      "id": "file:src/pdf_html_polish/citation_profile.py",
+      "filePath": "src/pdf_html_polish/citation_profile.py",
+      "score": 16,
+      "metrics": {
+        "lines": 988,
+        "nonEmptyLines": 892,
+        "functions": 29,
+        "classes": 6,
+        "exports": 35,
+        "calls": 333,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/single_file_html.py",
+      "filePath": "src/pdf_html_polish/single_file_html.py",
+      "score": 14,
+      "metrics": {
+        "lines": 21220,
+        "nonEmptyLines": 19242,
+        "functions": 341,
+        "classes": 0,
+        "exports": 341,
+        "calls": 9122,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:tests/test_single_file_html.py",
+      "filePath": "tests/test_single_file_html.py",
+      "score": 14,
+      "metrics": {
+        "lines": 14832,
+        "nonEmptyLines": 12383,
+        "functions": 658,
+        "classes": 0,
+        "exports": 658,
+        "calls": 1819,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:tests/test_audit_en_polish.py",
+      "filePath": "tests/test_audit_en_polish.py",
+      "score": 14,
+      "metrics": {
+        "lines": 5670,
+        "nonEmptyLines": 4976,
+        "functions": 172,
+        "classes": 0,
+        "exports": 172,
+        "calls": 1391,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:tests/test_llm_quality_loop.py",
+      "filePath": "tests/test_llm_quality_loop.py",
+      "score": 14,
+      "metrics": {
+        "lines": 4951,
+        "nonEmptyLines": 4435,
+        "functions": 107,
+        "classes": 0,
+        "exports": 107,
+        "calls": 1006,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:scripts/llm_quality_loop.py",
+      "filePath": "scripts/llm_quality_loop.py",
+      "score": 14,
+      "metrics": {
+        "lines": 3917,
+        "nonEmptyLines": 3691,
+        "functions": 60,
+        "classes": 0,
+        "exports": 60,
+        "calls": 1615,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py",
+      "filePath": "src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py",
+      "score": 14,
+      "metrics": {
+        "lines": 950,
+        "nonEmptyLines": 840,
+        "functions": 28,
+        "classes": 0,
+        "exports": 28,
+        "calls": 360,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/p62_pdf_assets.py",
+      "filePath": "src/pdf_html_polish/quality_loop/p62_pdf_assets.py",
+      "score": 14,
+      "metrics": {
+        "lines": 835,
+        "nonEmptyLines": 759,
+        "functions": 26,
+        "classes": 0,
+        "exports": 26,
+        "calls": 440,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/raw_html_polish/references_links.py",
+      "filePath": "src/pdf_html_polish/raw_html_polish/references_links.py",
+      "score": 14,
+      "metrics": {
+        "lines": 788,
+        "nonEmptyLines": 677,
+        "functions": 27,
+        "classes": 0,
+        "exports": 27,
+        "calls": 344,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/language_detect.py",
+      "filePath": "src/pdf_html_polish/language_detect.py",
+      "score": 13,
+      "metrics": {
+        "lines": 838,
+        "nonEmptyLines": 771,
+        "functions": 13,
+        "classes": 3,
+        "exports": 16,
+        "calls": 178,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 2
+      }
+    },
+    {
+      "id": "file:tests/test_citation_profile.py",
+      "filePath": "tests/test_citation_profile.py",
+      "score": 12,
+      "metrics": {
+        "lines": 979,
+        "nonEmptyLines": 850,
+        "functions": 34,
+        "classes": 0,
+        "exports": 34,
+        "calls": 78,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/audit_manual_recent.py",
+      "filePath": "src/pdf_html_polish/quality_loop/audit_manual_recent.py",
+      "score": 11,
+      "metrics": {
+        "lines": 2433,
+        "nonEmptyLines": 2328,
+        "functions": 13,
+        "classes": 3,
+        "exports": 16,
+        "calls": 644,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/raw_html_polish/url_anchors.py",
+      "filePath": "src/pdf_html_polish/raw_html_polish/url_anchors.py",
+      "score": 11,
+      "metrics": {
+        "lines": 858,
+        "nonEmptyLines": 744,
+        "functions": 23,
+        "classes": 0,
+        "exports": 23,
+        "calls": 485,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/p62_html.py",
+      "filePath": "src/pdf_html_polish/quality_loop/p62_html.py",
+      "score": 11,
+      "metrics": {
+        "lines": 602,
+        "nonEmptyLines": 531,
+        "functions": 27,
+        "classes": 0,
+        "exports": 27,
+        "calls": 254,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/pipeline.py",
+      "filePath": "src/pdf_html_polish/pipeline.py",
+      "score": 9,
+      "metrics": {
+        "lines": 1024,
+        "nonEmptyLines": 934,
+        "functions": 10,
+        "classes": 0,
+        "exports": 10,
+        "calls": 358,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/review_workflow.py",
+      "filePath": "src/pdf_html_polish/quality_loop/review_workflow.py",
+      "score": 8,
+      "metrics": {
+        "lines": 660,
+        "nonEmptyLines": 600,
+        "functions": 19,
+        "classes": 0,
+        "exports": 19,
+        "calls": 385,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/marker_runner.py",
+      "filePath": "src/pdf_html_polish/marker_runner.py",
+      "score": 8,
+      "metrics": {
+        "lines": 651,
+        "nonEmptyLines": 580,
+        "functions": 14,
+        "classes": 3,
+        "exports": 17,
+        "calls": 194,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/audit_figure_caption_ux.py",
+      "filePath": "src/pdf_html_polish/quality_loop/audit_figure_caption_ux.py",
+      "score": 8,
+      "metrics": {
+        "lines": 554,
+        "nonEmptyLines": 513,
+        "functions": 13,
+        "classes": 0,
+        "exports": 13,
+        "calls": 158,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/source_pdf.py",
+      "filePath": "src/pdf_html_polish/quality_loop/source_pdf.py",
+      "score": 8,
+      "metrics": {
+        "lines": 515,
+        "nonEmptyLines": 450,
+        "functions": 24,
+        "classes": 0,
+        "exports": 24,
+        "calls": 273,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/audit_citation_style.py",
+      "filePath": "src/pdf_html_polish/quality_loop/audit_citation_style.py",
+      "score": 8,
+      "metrics": {
+        "lines": 470,
+        "nonEmptyLines": 416,
+        "functions": 23,
+        "classes": 0,
+        "exports": 23,
+        "calls": 268,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:scripts/repolish_en_from_raw.py",
+      "filePath": "scripts/repolish_en_from_raw.py",
+      "score": 8,
+      "metrics": {
+        "lines": 462,
+        "nonEmptyLines": 416,
+        "functions": 11,
+        "classes": 1,
+        "exports": 12,
+        "calls": 160,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/html_images.py",
+      "filePath": "src/pdf_html_polish/html_images.py",
+      "score": 8,
+      "metrics": {
+        "lines": 457,
+        "nonEmptyLines": 390,
+        "functions": 13,
+        "classes": 1,
+        "exports": 14,
+        "calls": 184,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/audit_p04.py",
+      "filePath": "src/pdf_html_polish/quality_loop/audit_p04.py",
+      "score": 8,
+      "metrics": {
+        "lines": 449,
+        "nonEmptyLines": 401,
+        "functions": 20,
+        "classes": 0,
+        "exports": 20,
+        "calls": 204,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/clean_pipeline.py",
+      "filePath": "src/pdf_html_polish/clean_pipeline.py",
+      "score": 8,
+      "metrics": {
+        "lines": 448,
+        "nonEmptyLines": 404,
+        "functions": 11,
+        "classes": 4,
+        "exports": 15,
+        "calls": 132,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:scripts/record_en_polish_quality_history.py",
+      "filePath": "scripts/record_en_polish_quality_history.py",
+      "score": 8,
+      "metrics": {
+        "lines": 443,
+        "nonEmptyLines": 388,
+        "functions": 20,
+        "classes": 0,
+        "exports": 20,
+        "calls": 285,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/converted_runs.py",
+      "filePath": "src/pdf_html_polish/quality_loop/converted_runs.py",
+      "score": 8,
+      "metrics": {
+        "lines": 436,
+        "nonEmptyLines": 388,
+        "functions": 15,
+        "classes": 0,
+        "exports": 15,
+        "calls": 242,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/p62_recovery_stage.py",
+      "filePath": "src/pdf_html_polish/quality_loop/p62_recovery_stage.py",
+      "score": 8,
+      "metrics": {
+        "lines": 426,
+        "nonEmptyLines": 384,
+        "functions": 10,
+        "classes": 4,
+        "exports": 14,
+        "calls": 190,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/stage_contract.py",
+      "filePath": "src/pdf_html_polish/stage_contract.py",
+      "score": 8,
+      "metrics": {
+        "lines": 410,
+        "nonEmptyLines": 356,
+        "functions": 17,
+        "classes": 0,
+        "exports": 17,
+        "calls": 175,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:src/pdf_html_polish/quality_loop/cached_images.py",
+      "filePath": "src/pdf_html_polish/quality_loop/cached_images.py",
+      "score": 8,
+      "metrics": {
+        "lines": 354,
+        "nonEmptyLines": 301,
+        "functions": 16,
+        "classes": 0,
+        "exports": 16,
+        "calls": 198,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    },
+    {
+      "id": "file:tests/test_raw_html_polish_frontmatter_footnotes.py",
+      "filePath": "tests/test_raw_html_polish_frontmatter_footnotes.py",
+      "score": 7,
+      "metrics": {
+        "lines": 417,
+        "nonEmptyLines": 297,
+        "functions": 38,
+        "classes": 0,
+        "exports": 38,
+        "calls": 52,
+        "sections": 0,
+        "definitions": 0,
+        "reviewMarkers": 0
+      }
+    }
+  ],
+  "graphPath": "D:\\Elvis_projects\\Zotero_Automation\\zotero-pdf-html-worker\\.understand-anything\\knowledge-graph.json"
+}

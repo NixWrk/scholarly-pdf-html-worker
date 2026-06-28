@@ -1,0 +1,2087 @@
+{
+  "scriptCompleted": true,
+  "files": [
+    {
+      "path": ".dockerignore",
+      "language": "unknown",
+      "sizeLines": 13,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".gitattributes",
+      "language": "unknown",
+      "sizeLines": 23,
+      "fileCategory": "code"
+    },
+    {
+      "path": "configs/llm_defect_patterns.json",
+      "language": "json",
+      "sizeLines": 117,
+      "fileCategory": "config"
+    },
+    {
+      "path": "configs/llm_quality_gates.json",
+      "language": "json",
+      "sizeLines": 65,
+      "fileCategory": "config"
+    },
+    {
+      "path": "docker-compose.example.yml",
+      "language": "yaml",
+      "sizeLines": 9,
+      "fileCategory": "infra"
+    },
+    {
+      "path": "Dockerfile",
+      "language": "dockerfile",
+      "sizeLines": 73,
+      "fileCategory": "infra"
+    },
+    {
+      "path": "docs/Доработки после отпуска.md",
+      "language": "markdown",
+      "sizeLines": 60,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/CODEX_IMPORTED_REVIEW_CORPUS_GUIDE_2026-05-14.md",
+      "language": "markdown",
+      "sizeLines": 55,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/EN_POLISH_COMMIT_PLAN_2026-04-27.md",
+      "language": "markdown",
+      "sizeLines": 154,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/EN_POLISH_CONSOLIDATED_FIX_PLAN_2026-04-27.md",
+      "language": "markdown",
+      "sizeLines": 503,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/EN_POLISH_UNIVERSAL_REPAIR_PLAN_2026-04-27.md",
+      "language": "markdown",
+      "sizeLines": 566,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/EN_RAW_DEBUG_TEST_PLAN.md",
+      "language": "markdown",
+      "sizeLines": 136,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/EN_RAW_POLISH_PAIR_AUDIT_2026-04-25.md",
+      "language": "markdown",
+      "sizeLines": 94,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/llm_quality_loop.md",
+      "language": "markdown",
+      "sizeLines": 414,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MANUAL_EN_POLISH_REVIEW_2026-04-26.md",
+      "language": "markdown",
+      "sizeLines": 538,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MANUAL_EN_POLISH_REVIEW_ROUND2_2026-04-27.md",
+      "language": "markdown",
+      "sizeLines": 620,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MANUAL_EN_POLISH_REVIEW_ROUND2_5_2026-04-27.md",
+      "language": "markdown",
+      "sizeLines": 992,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MANUAL_EN_POLISH_REVIEW_WORKFLOW_2026-04-26.md",
+      "language": "markdown",
+      "sizeLines": 105,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MEINE_EN_POLISH_FIX_AND_TEST_PLAN_2026-04-30.md",
+      "language": "markdown",
+      "sizeLines": 1226,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MEINE_EN_POLISH_ITERATIVE_INSTRUCTIONS_2026-05-02.md",
+      "language": "markdown",
+      "sizeLines": 137,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MEINE_EN_POLISH_MANUAL_REVIEW_2026-04-30.md",
+      "language": "markdown",
+      "sizeLines": 4099,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/MEINE_ENGLISH_RAW_POLISH_ANALYSIS_PLAN_2026-04-29.md",
+      "language": "markdown",
+      "sizeLines": 677,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/P62_PDF_IMAGE_RECOVERY_STRATEGY.md",
+      "language": "markdown",
+      "sizeLines": 113,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/PIPELINE_SKETCH.md",
+      "language": "markdown",
+      "sizeLines": 71,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/POLISH_FLOAT_AND_MATH_REGRESSION_OBSERVATIONS_2026-05-15.md",
+      "language": "markdown",
+      "sizeLines": 260,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/PORTING_STATUS_2026-05-14.md",
+      "language": "markdown",
+      "sizeLines": 90,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/QUALITY_LOOP_REVIEW_QUEUE_AND_P62_PLAN_2026-06-18.md",
+      "language": "markdown",
+      "sizeLines": 304,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/REPOSITORY_CLEANUP_PLAN_2026-06-19.md",
+      "language": "markdown",
+      "sizeLines": 403,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/REPOSITORY_WORKFLOW.md",
+      "language": "markdown",
+      "sizeLines": 429,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "pyproject.toml",
+      "language": "toml",
+      "sizeLines": 41,
+      "fileCategory": "config"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 198,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "scripts/audit_en_polish.py",
+      "language": "python",
+      "sizeLines": 692,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/audit_en_raw.py",
+      "language": "python",
+      "sizeLines": 77,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/audit_source_language.py",
+      "language": "python",
+      "sizeLines": 282,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/collect_en_polish_review.py",
+      "language": "python",
+      "sizeLines": 222,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/llm_quality_loop.py",
+      "language": "python",
+      "sizeLines": 3917,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/pdf_profile_lab.py",
+      "language": "python",
+      "sizeLines": 287,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/record_en_polish_quality_history.py",
+      "language": "python",
+      "sizeLines": 443,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/refactor_article_check.py",
+      "language": "python",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/repolish_en_from_raw.py",
+      "language": "python",
+      "sizeLines": 462,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/__init__.py",
+      "language": "python",
+      "sizeLines": 3,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/abbreviations.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/assets/katex/katex.inlined.css",
+      "language": "css",
+      "sizeLines": 1,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "src/pdf_html_polish/assets/katex/REGENERATE.md",
+      "language": "markdown",
+      "sizeLines": 33,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "src/pdf_html_polish/attachments.py",
+      "language": "python",
+      "sizeLines": 74,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/citation_profile_recovery.py",
+      "language": "python",
+      "sizeLines": 155,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/citation_profile.py",
+      "language": "python",
+      "sizeLines": 988,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/clean_pipeline.py",
+      "language": "python",
+      "sizeLines": 448,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/cli/__init__.py",
+      "language": "python",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/cli/clean_convert.py",
+      "language": "python",
+      "sizeLines": 185,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/cli/stage_contract.py",
+      "language": "python",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/email_repair.py",
+      "language": "python",
+      "sizeLines": 27,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/export_modes.py",
+      "language": "python",
+      "sizeLines": 74,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/history.py",
+      "language": "python",
+      "sizeLines": 97,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/html_images.py",
+      "language": "python",
+      "sizeLines": 457,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/html_links.py",
+      "language": "python",
+      "sizeLines": 407,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/html_references.py",
+      "language": "python",
+      "sizeLines": 34,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/html_stages.py",
+      "language": "python",
+      "sizeLines": 89,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/language_detect.py",
+      "language": "python",
+      "sizeLines": 838,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/llm_bundle.py",
+      "language": "python",
+      "sizeLines": 115,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/marker_runner.py",
+      "language": "python",
+      "sizeLines": 651,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/models.py",
+      "language": "python",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/naming.py",
+      "language": "python",
+      "sizeLines": 41,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/ocr_quality.py",
+      "language": "python",
+      "sizeLines": 230,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/output_state.py",
+      "language": "python",
+      "sizeLines": 132,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/paths.py",
+      "language": "python",
+      "sizeLines": 202,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/pipeline_discovery.py",
+      "language": "python",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/pipeline_options.py",
+      "language": "python",
+      "sizeLines": 53,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/pipeline_webdav.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/pipeline_zotero.py",
+      "language": "python",
+      "sizeLines": 43,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/pipeline.py",
+      "language": "python",
+      "sizeLines": 1024,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/polish_language.py",
+      "language": "python",
+      "sizeLines": 169,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/__init__.py",
+      "language": "python",
+      "sizeLines": 2,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/analysis_prompt.py",
+      "language": "python",
+      "sizeLines": 283,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/article_check.py",
+      "language": "python",
+      "sizeLines": 238,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "language": "python",
+      "sizeLines": 304,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_citation_style.py",
+      "language": "python",
+      "sizeLines": 470,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_citations.py",
+      "language": "python",
+      "sizeLines": 217,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+      "language": "python",
+      "sizeLines": 158,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_figure_caption_ux.py",
+      "language": "python",
+      "sizeLines": 554,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_float_gap.py",
+      "language": "python",
+      "sizeLines": 68,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_frontmatter.py",
+      "language": "python",
+      "sizeLines": 379,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_images.py",
+      "language": "python",
+      "sizeLines": 180,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_manual_patterns.py",
+      "language": "python",
+      "sizeLines": 205,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_manual_recent.py",
+      "language": "python",
+      "sizeLines": 2433,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_math_units.py",
+      "language": "python",
+      "sizeLines": 247,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_p04.py",
+      "language": "python",
+      "sizeLines": 449,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_p35.py",
+      "language": "python",
+      "sizeLines": 38,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_p45.py",
+      "language": "python",
+      "sizeLines": 172,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_p61.py",
+      "language": "python",
+      "sizeLines": 251,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_p62.py",
+      "language": "python",
+      "sizeLines": 320,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_p71.py",
+      "language": "python",
+      "sizeLines": 171,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_pdf.py",
+      "language": "python",
+      "sizeLines": 423,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_polish_pair.py",
+      "language": "python",
+      "sizeLines": 161,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_polish_report.py",
+      "language": "python",
+      "sizeLines": 234,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_raw_analysis.py",
+      "language": "python",
+      "sizeLines": 169,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_raw_blocks.py",
+      "language": "python",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_raw_checks.py",
+      "language": "python",
+      "sizeLines": 172,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_raw_images.py",
+      "language": "python",
+      "sizeLines": 93,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_raw_report.py",
+      "language": "python",
+      "sizeLines": 95,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_reference_identity.py",
+      "language": "python",
+      "sizeLines": 331,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/audit_report.py",
+      "language": "python",
+      "sizeLines": 130,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/cached_images.py",
+      "language": "python",
+      "sizeLines": 354,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/commands.py",
+      "language": "python",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/converted_runs.py",
+      "language": "python",
+      "sizeLines": 436,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/gates.py",
+      "language": "python",
+      "sizeLines": 198,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/observations.py",
+      "language": "python",
+      "sizeLines": 267,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_context.py",
+      "language": "python",
+      "sizeLines": 128,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_duplicates.py",
+      "language": "python",
+      "sizeLines": 379,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_html.py",
+      "language": "python",
+      "sizeLines": 602,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_marker.py",
+      "language": "python",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_matching.py",
+      "language": "python",
+      "sizeLines": 239,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_pdf_assets.py",
+      "language": "python",
+      "sizeLines": 835,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_plan.py",
+      "language": "python",
+      "sizeLines": 510,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/p62_recovery_stage.py",
+      "language": "python",
+      "sizeLines": 426,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/pattern_observations.py",
+      "language": "python",
+      "sizeLines": 224,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/pdf_evidence.py",
+      "language": "python",
+      "sizeLines": 183,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/pdf_reference_recovery.py",
+      "language": "python",
+      "sizeLines": 231,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/pdf_utils.py",
+      "language": "python",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/polish_auto_repair.py",
+      "language": "python",
+      "sizeLines": 370,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/resolver_decisions.py",
+      "language": "python",
+      "sizeLines": 271,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/review_workflow.py",
+      "language": "python",
+      "sizeLines": 660,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/run_utils.py",
+      "language": "python",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/quality_loop/source_pdf.py",
+      "language": "python",
+      "sizeLines": 515,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/__init__.py",
+      "language": "python",
+      "sizeLines": 25,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/author_year_links.py",
+      "language": "python",
+      "sizeLines": 509,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/doi_anchors.py",
+      "language": "python",
+      "sizeLines": 182,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/float_units.py",
+      "language": "python",
+      "sizeLines": 483,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py",
+      "language": "python",
+      "sizeLines": 950,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "language": "python",
+      "sizeLines": 191,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/katex.py",
+      "language": "python",
+      "sizeLines": 186,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/math_units.py",
+      "language": "python",
+      "sizeLines": 284,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/page_furniture.py",
+      "language": "python",
+      "sizeLines": 383,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/phases.py",
+      "language": "python",
+      "sizeLines": 79,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/pre_cleanup.py",
+      "language": "python",
+      "sizeLines": 147,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/presentation.py",
+      "language": "python",
+      "sizeLines": 140,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/references_links.py",
+      "language": "python",
+      "sizeLines": 788,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/url_anchors.py",
+      "language": "python",
+      "sizeLines": 858,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/url_autolink.py",
+      "language": "python",
+      "sizeLines": 170,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/raw_html_polish/url_text_repair.py",
+      "language": "python",
+      "sizeLines": 126,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/runtime_temp.py",
+      "language": "python",
+      "sizeLines": 25,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/semantic_labels.py",
+      "language": "python",
+      "sizeLines": 25,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/single_file_html.py",
+      "language": "python",
+      "sizeLines": 21220,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/stage_contract.py",
+      "language": "python",
+      "sizeLines": 410,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/staging.py",
+      "language": "python",
+      "sizeLines": 246,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/text_cleanup.py",
+      "language": "python",
+      "sizeLines": 20,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/url_repair.py",
+      "language": "python",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/webdav_config.py",
+      "language": "python",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/webdav_pending.py",
+      "language": "python",
+      "sizeLines": 426,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/webdav_uploader.py",
+      "language": "python",
+      "sizeLines": 216,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/zotero_html_attachment.py",
+      "language": "python",
+      "sizeLines": 245,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/zotero_overlay_probe.py",
+      "language": "python",
+      "sizeLines": 184,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/zotero_pending.py",
+      "language": "python",
+      "sizeLines": 277,
+      "fileCategory": "code"
+    },
+    {
+      "path": "src/pdf_html_polish/zotero.py",
+      "language": "python",
+      "sizeLines": 203,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/conftest.py",
+      "language": "python",
+      "sizeLines": 7,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_citation_style.py",
+      "language": "python",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_citations.py",
+      "language": "python",
+      "sizeLines": 53,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_diagnostics.py",
+      "language": "python",
+      "sizeLines": 45,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_en_polish.py",
+      "language": "python",
+      "sizeLines": 5670,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_en_raw.py",
+      "language": "python",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_figure_caption_ux.py",
+      "language": "python",
+      "sizeLines": 180,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_float_gap.py",
+      "language": "python",
+      "sizeLines": 22,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_frontmatter.py",
+      "language": "python",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_images.py",
+      "language": "python",
+      "sizeLines": 117,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_manual_patterns.py",
+      "language": "python",
+      "sizeLines": 110,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_manual_recent.py",
+      "language": "python",
+      "sizeLines": 176,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_math_units.py",
+      "language": "python",
+      "sizeLines": 58,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_p04.py",
+      "language": "python",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_p35.py",
+      "language": "python",
+      "sizeLines": 41,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_p45.py",
+      "language": "python",
+      "sizeLines": 61,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_p61.py",
+      "language": "python",
+      "sizeLines": 226,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_p62.py",
+      "language": "python",
+      "sizeLines": 96,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_p71.py",
+      "language": "python",
+      "sizeLines": 42,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_pdf.py",
+      "language": "python",
+      "sizeLines": 94,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_polish_pair.py",
+      "language": "python",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_polish_report.py",
+      "language": "python",
+      "sizeLines": 259,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_raw_analysis.py",
+      "language": "python",
+      "sizeLines": 33,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_raw_blocks.py",
+      "language": "python",
+      "sizeLines": 61,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_raw_checks.py",
+      "language": "python",
+      "sizeLines": 58,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_raw_images.py",
+      "language": "python",
+      "sizeLines": 65,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_raw_report.py",
+      "language": "python",
+      "sizeLines": 83,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_reference_identity.py",
+      "language": "python",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_audit_source_language.py",
+      "language": "python",
+      "sizeLines": 93,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_citation_profile_recovery.py",
+      "language": "python",
+      "sizeLines": 54,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_citation_profile.py",
+      "language": "python",
+      "sizeLines": 979,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_clean_pipeline.py",
+      "language": "python",
+      "sizeLines": 326,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_collect_en_polish_review.py",
+      "language": "python",
+      "sizeLines": 78,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_email_repair.py",
+      "language": "python",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_html_images.py",
+      "language": "python",
+      "sizeLines": 92,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_html_links.py",
+      "language": "python",
+      "sizeLines": 62,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_html_stages.py",
+      "language": "python",
+      "sizeLines": 26,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_language_detect.py",
+      "language": "python",
+      "sizeLines": 205,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_llm_quality_loop.py",
+      "language": "python",
+      "sizeLines": 4951,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_marker_runner.py",
+      "language": "python",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_ocr_quality.py",
+      "language": "python",
+      "sizeLines": 244,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_output_state.py",
+      "language": "python",
+      "sizeLines": 45,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_context.py",
+      "language": "python",
+      "sizeLines": 31,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_html.py",
+      "language": "python",
+      "sizeLines": 212,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_marker.py",
+      "language": "python",
+      "sizeLines": 65,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_matching.py",
+      "language": "python",
+      "sizeLines": 79,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_pdf_assets.py",
+      "language": "python",
+      "sizeLines": 76,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_plan.py",
+      "language": "python",
+      "sizeLines": 343,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_p62_recovery_stage.py",
+      "language": "python",
+      "sizeLines": 493,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_pdf_utils.py",
+      "language": "python",
+      "sizeLines": 36,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_pipeline_boundaries.py",
+      "language": "python",
+      "sizeLines": 62,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_analysis_prompt.py",
+      "language": "python",
+      "sizeLines": 26,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_cached_images.py",
+      "language": "python",
+      "sizeLines": 80,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_commands.py",
+      "language": "python",
+      "sizeLines": 49,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_converted_runs.py",
+      "language": "python",
+      "sizeLines": 95,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_observations.py",
+      "language": "python",
+      "sizeLines": 53,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_p62_duplicates.py",
+      "language": "python",
+      "sizeLines": 236,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_pattern_observations.py",
+      "language": "python",
+      "sizeLines": 62,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_pdf_evidence.py",
+      "language": "python",
+      "sizeLines": 54,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_pdf_reference_recovery.py",
+      "language": "python",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_polish_auto_repair.py",
+      "language": "python",
+      "sizeLines": 181,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_resolver_decisions.py",
+      "language": "python",
+      "sizeLines": 49,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_review_workflow.py",
+      "language": "python",
+      "sizeLines": 393,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_run_utils.py",
+      "language": "python",
+      "sizeLines": 92,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_quality_loop_source_pdf.py",
+      "language": "python",
+      "sizeLines": 165,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_author_year_links.py",
+      "language": "python",
+      "sizeLines": 119,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_doi_anchors.py",
+      "language": "python",
+      "sizeLines": 60,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_float_units.py",
+      "language": "python",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_frontmatter_footnotes.py",
+      "language": "python",
+      "sizeLines": 417,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_html_fragments.py",
+      "language": "python",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_katex.py",
+      "language": "python",
+      "sizeLines": 60,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_math_units.py",
+      "language": "python",
+      "sizeLines": 49,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_page_furniture.py",
+      "language": "python",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_phases.py",
+      "language": "python",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_pre_cleanup.py",
+      "language": "python",
+      "sizeLines": 22,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_presentation.py",
+      "language": "python",
+      "sizeLines": 57,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_references_links.py",
+      "language": "python",
+      "sizeLines": 253,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_url_anchors.py",
+      "language": "python",
+      "sizeLines": 301,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_url_autolink.py",
+      "language": "python",
+      "sizeLines": 57,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_raw_html_polish_url_text_repair.py",
+      "language": "python",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_record_en_polish_quality_history.py",
+      "language": "python",
+      "sizeLines": 188,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_refactor_article_check.py",
+      "language": "python",
+      "sizeLines": 85,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_repolish_en_from_raw.py",
+      "language": "python",
+      "sizeLines": 329,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_semantic_labels.py",
+      "language": "python",
+      "sizeLines": 22,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_single_file_html.py",
+      "language": "python",
+      "sizeLines": 14832,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_stage_contract.py",
+      "language": "python",
+      "sizeLines": 224,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_staging.py",
+      "language": "python",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_text_cleanup.py",
+      "language": "python",
+      "sizeLines": 13,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_url_repair.py",
+      "language": "python",
+      "sizeLines": 46,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tests/test_zotero_overlay_probe.py",
+      "language": "python",
+      "sizeLines": 213,
+      "fileCategory": "code"
+    },
+    {
+      "path": "tools/zotero_overlay_probe.mjs",
+      "language": "javascript",
+      "sizeLines": 196,
+      "fileCategory": "code"
+    }
+  ],
+  "totalFiles": 245,
+  "filteredByIgnore": 18,
+  "estimatedComplexity": "large",
+  "stats": {
+    "filesScanned": 245,
+    "byCategory": {
+      "infra": 3,
+      "code": 213,
+      "config": 3,
+      "docs": 25,
+      "markup": 1
+    },
+    "byLanguage": {
+      "unknown": 2,
+      "json": 2,
+      "yaml": 1,
+      "dockerfile": 1,
+      "markdown": 25,
+      "toml": 1,
+      "python": 211,
+      "css": 1,
+      "javascript": 1
+    }
+  },
+  "name": "zotero-pdf-html-worker",
+  "description": "Zotero PDF to polished source HTML worker Note: this project has over 100 source files; consider scoping analysis to a subdirectory for faster results.",
+  "rawDescription": "Zotero PDF to polished source HTML worker Note: this project has over 100 source files; consider scoping analysis to a subdirectory for faster results.",
+  "readmeHead": "",
+  "languages": [
+    "css",
+    "dockerfile",
+    "javascript",
+    "json",
+    "markdown",
+    "python",
+    "toml",
+    "unknown",
+    "yaml"
+  ],
+  "frameworks": [
+    "Docker",
+    "pytest"
+  ],
+  "importMap": {
+    ".dockerignore": [],
+    ".gitattributes": [],
+    "configs/llm_defect_patterns.json": [],
+    "configs/llm_quality_gates.json": [],
+    "docker-compose.example.yml": [],
+    "Dockerfile": [],
+    "docs/Доработки после отпуска.md": [],
+    "docs/CODEX_IMPORTED_REVIEW_CORPUS_GUIDE_2026-05-14.md": [],
+    "docs/EN_POLISH_COMMIT_PLAN_2026-04-27.md": [],
+    "docs/EN_POLISH_CONSOLIDATED_FIX_PLAN_2026-04-27.md": [],
+    "docs/EN_POLISH_UNIVERSAL_REPAIR_PLAN_2026-04-27.md": [],
+    "docs/EN_RAW_DEBUG_TEST_PLAN.md": [],
+    "docs/EN_RAW_POLISH_PAIR_AUDIT_2026-04-25.md": [],
+    "docs/llm_quality_loop.md": [],
+    "docs/MANUAL_EN_POLISH_REVIEW_2026-04-26.md": [],
+    "docs/MANUAL_EN_POLISH_REVIEW_ROUND2_2026-04-27.md": [],
+    "docs/MANUAL_EN_POLISH_REVIEW_ROUND2_5_2026-04-27.md": [],
+    "docs/MANUAL_EN_POLISH_REVIEW_WORKFLOW_2026-04-26.md": [],
+    "docs/MEINE_EN_POLISH_FIX_AND_TEST_PLAN_2026-04-30.md": [],
+    "docs/MEINE_EN_POLISH_ITERATIVE_INSTRUCTIONS_2026-05-02.md": [],
+    "docs/MEINE_EN_POLISH_MANUAL_REVIEW_2026-04-30.md": [],
+    "docs/MEINE_ENGLISH_RAW_POLISH_ANALYSIS_PLAN_2026-04-29.md": [],
+    "docs/P62_PDF_IMAGE_RECOVERY_STRATEGY.md": [],
+    "docs/PIPELINE_SKETCH.md": [],
+    "docs/POLISH_FLOAT_AND_MATH_REGRESSION_OBSERVATIONS_2026-05-15.md": [],
+    "docs/PORTING_STATUS_2026-05-14.md": [],
+    "docs/QUALITY_LOOP_REVIEW_QUEUE_AND_P62_PLAN_2026-06-18.md": [],
+    "docs/REPOSITORY_CLEANUP_PLAN_2026-06-19.md": [],
+    "docs/REPOSITORY_WORKFLOW.md": [],
+    "pyproject.toml": [],
+    "README.md": [],
+    "scripts/audit_en_polish.py": [],
+    "scripts/audit_en_raw.py": [],
+    "scripts/audit_source_language.py": [],
+    "scripts/collect_en_polish_review.py": [],
+    "scripts/llm_quality_loop.py": [],
+    "scripts/pdf_profile_lab.py": [],
+    "scripts/record_en_polish_quality_history.py": [],
+    "scripts/refactor_article_check.py": [],
+    "scripts/repolish_en_from_raw.py": [],
+    "src/pdf_html_polish/__init__.py": [],
+    "src/pdf_html_polish/abbreviations.py": [],
+    "src/pdf_html_polish/assets/katex/katex.inlined.css": [],
+    "src/pdf_html_polish/assets/katex/REGENERATE.md": [],
+    "src/pdf_html_polish/attachments.py": [
+      "src/pdf_html_polish/models.py"
+    ],
+    "src/pdf_html_polish/citation_profile_recovery.py": [],
+    "src/pdf_html_polish/citation_profile.py": [
+      "src/pdf_html_polish/zotero_overlay_probe.py"
+    ],
+    "src/pdf_html_polish/clean_pipeline.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/language_detect.py",
+      "src/pdf_html_polish/marker_runner.py",
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/pipeline_options.py",
+      "src/pdf_html_polish/pipeline.py",
+      "src/pdf_html_polish/stage_contract.py"
+    ],
+    "src/pdf_html_polish/cli/__init__.py": [],
+    "src/pdf_html_polish/cli/clean_convert.py": [
+      "src/pdf_html_polish/clean_pipeline.py",
+      "src/pdf_html_polish/export_modes.py",
+      "src/pdf_html_polish/marker_runner.py",
+      "src/pdf_html_polish/pipeline.py",
+      "src/pdf_html_polish/stage_contract.py"
+    ],
+    "src/pdf_html_polish/cli/stage_contract.py": [
+      "src/pdf_html_polish/stage_contract.py"
+    ],
+    "src/pdf_html_polish/email_repair.py": [],
+    "src/pdf_html_polish/export_modes.py": [],
+    "src/pdf_html_polish/history.py": [
+      "src/pdf_html_polish/output_state.py"
+    ],
+    "src/pdf_html_polish/html_images.py": [
+      "src/pdf_html_polish/html_links.py"
+    ],
+    "src/pdf_html_polish/html_links.py": [],
+    "src/pdf_html_polish/html_references.py": [],
+    "src/pdf_html_polish/html_stages.py": [],
+    "src/pdf_html_polish/language_detect.py": [],
+    "src/pdf_html_polish/llm_bundle.py": [
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/naming.py"
+    ],
+    "src/pdf_html_polish/marker_runner.py": [],
+    "src/pdf_html_polish/models.py": [],
+    "src/pdf_html_polish/naming.py": [],
+    "src/pdf_html_polish/ocr_quality.py": [
+      "src/pdf_html_polish/language_detect.py"
+    ],
+    "src/pdf_html_polish/output_state.py": [
+      "src/pdf_html_polish/staging.py"
+    ],
+    "src/pdf_html_polish/paths.py": [],
+    "src/pdf_html_polish/pipeline_discovery.py": [
+      "src/pdf_html_polish/attachments.py",
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/output_state.py",
+      "src/pdf_html_polish/paths.py",
+      "src/pdf_html_polish/pipeline_options.py",
+      "src/pdf_html_polish/zotero.py"
+    ],
+    "src/pdf_html_polish/pipeline_options.py": [
+      "src/pdf_html_polish/export_modes.py",
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/staging.py"
+    ],
+    "src/pdf_html_polish/pipeline_webdav.py": [
+      "src/pdf_html_polish/webdav_config.py",
+      "src/pdf_html_polish/webdav_pending.py"
+    ],
+    "src/pdf_html_polish/pipeline_zotero.py": [
+      "src/pdf_html_polish/zotero_html_attachment.py",
+      "src/pdf_html_polish/zotero_pending.py"
+    ],
+    "src/pdf_html_polish/pipeline.py": [
+      "src/pdf_html_polish/citation_profile.py",
+      "src/pdf_html_polish/export_modes.py",
+      "src/pdf_html_polish/history.py",
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/llm_bundle.py",
+      "src/pdf_html_polish/marker_runner.py",
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/ocr_quality.py",
+      "src/pdf_html_polish/output_state.py",
+      "src/pdf_html_polish/paths.py",
+      "src/pdf_html_polish/pipeline_discovery.py",
+      "src/pdf_html_polish/pipeline_options.py",
+      "src/pdf_html_polish/pipeline_webdav.py",
+      "src/pdf_html_polish/pipeline_zotero.py",
+      "src/pdf_html_polish/runtime_temp.py",
+      "src/pdf_html_polish/single_file_html.py",
+      "src/pdf_html_polish/staging.py",
+      "src/pdf_html_polish/text_cleanup.py",
+      "src/pdf_html_polish/webdav_pending.py",
+      "src/pdf_html_polish/zotero_html_attachment.py",
+      "src/pdf_html_polish/zotero_pending.py"
+    ],
+    "src/pdf_html_polish/polish_language.py": [
+      "src/pdf_html_polish/language_detect.py"
+    ],
+    "src/pdf_html_polish/quality_loop/__init__.py": [],
+    "src/pdf_html_polish/quality_loop/analysis_prompt.py": [],
+    "src/pdf_html_polish/quality_loop/article_check.py": [],
+    "src/pdf_html_polish/quality_loop/audit_blocks.py": [],
+    "src/pdf_html_polish/quality_loop/audit_citation_style.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_citations.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_citation_style.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+      "src/pdf_html_polish/quality_loop/audit_p04.py",
+      "src/pdf_html_polish/quality_loop/audit_reference_identity.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_diagnostics.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_figure_caption_ux.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+      "src/pdf_html_polish/quality_loop/audit_reference_identity.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_float_gap.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_frontmatter.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_images.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_manual_patterns.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_manual_recent.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_citation_style.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+      "src/pdf_html_polish/quality_loop/audit_figure_caption_ux.py",
+      "src/pdf_html_polish/quality_loop/audit_manual_patterns.py",
+      "src/pdf_html_polish/quality_loop/audit_p04.py",
+      "src/pdf_html_polish/quality_loop/audit_p35.py",
+      "src/pdf_html_polish/quality_loop/audit_p45.py",
+      "src/pdf_html_polish/quality_loop/audit_p61.py",
+      "src/pdf_html_polish/quality_loop/audit_p62.py",
+      "src/pdf_html_polish/quality_loop/audit_p71.py",
+      "src/pdf_html_polish/quality_loop/audit_reference_identity.py",
+      "src/pdf_html_polish/raw_html_polish/author_year_links.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_math_units.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_p04.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_p35.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+      "src/pdf_html_polish/quality_loop/audit_manual_patterns.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_p45.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_p61.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py",
+      "src/pdf_html_polish/semantic_labels.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_p62.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/semantic_labels.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_p71.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_pdf.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_polish_pair.py": [
+      "src/pdf_html_polish/quality_loop/audit_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_polish_report.py": [],
+    "src/pdf_html_polish/quality_loop/audit_raw_analysis.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_raw_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_raw_checks.py",
+      "src/pdf_html_polish/quality_loop/audit_raw_images.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_raw_blocks.py": [
+      "src/pdf_html_polish/html_stages.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_raw_checks.py": [
+      "src/pdf_html_polish/quality_loop/audit_raw_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_raw_images.py": [
+      "src/pdf_html_polish/quality_loop/audit_raw_blocks.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_raw_report.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_raw_analysis.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_reference_identity.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_diagnostics.py"
+    ],
+    "src/pdf_html_polish/quality_loop/audit_report.py": [],
+    "src/pdf_html_polish/quality_loop/cached_images.py": [
+      "src/pdf_html_polish/html_images.py",
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/converted_runs.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/commands.py": [
+      "src/pdf_html_polish/quality_loop/gates.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/converted_runs.py": [
+      "src/pdf_html_polish/citation_profile.py",
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py",
+      "src/pdf_html_polish/raw_html_polish/references_links.py"
+    ],
+    "src/pdf_html_polish/quality_loop/gates.py": [],
+    "src/pdf_html_polish/quality_loop/observations.py": [
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_context.py": [
+      "src/pdf_html_polish/quality_loop/converted_runs.py",
+      "src/pdf_html_polish/quality_loop/observations.py",
+      "src/pdf_html_polish/quality_loop/resolver_decisions.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_duplicates.py": [
+      "src/pdf_html_polish/quality_loop/p62_html.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_html.py": [
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/quality_loop/p62_matching.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_marker.py": [
+      "src/pdf_html_polish/quality_loop/converted_runs.py",
+      "src/pdf_html_polish/quality_loop/p62_matching.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_matching.py": [],
+    "src/pdf_html_polish/quality_loop/p62_pdf_assets.py": [
+      "src/pdf_html_polish/quality_loop/p62_matching.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_plan.py": [
+      "src/pdf_html_polish/marker_runner.py",
+      "src/pdf_html_polish/quality_loop/audit_blocks.py",
+      "src/pdf_html_polish/quality_loop/audit_p61.py",
+      "src/pdf_html_polish/quality_loop/observations.py",
+      "src/pdf_html_polish/quality_loop/resolver_decisions.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py",
+      "src/pdf_html_polish/quality_loop/source_pdf.py"
+    ],
+    "src/pdf_html_polish/quality_loop/p62_recovery_stage.py": [],
+    "src/pdf_html_polish/quality_loop/pattern_observations.py": [
+      "src/pdf_html_polish/quality_loop/observations.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/pdf_evidence.py": [
+      "src/pdf_html_polish/quality_loop/observations.py",
+      "src/pdf_html_polish/quality_loop/p62_matching.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/pdf_reference_recovery.py": [
+      "src/pdf_html_polish/quality_loop/converted_runs.py"
+    ],
+    "src/pdf_html_polish/quality_loop/pdf_utils.py": [
+      "src/pdf_html_polish/html_images.py"
+    ],
+    "src/pdf_html_polish/quality_loop/polish_auto_repair.py": [
+      "src/pdf_html_polish/quality_loop/converted_runs.py",
+      "src/pdf_html_polish/raw_html_polish/author_year_links.py",
+      "src/pdf_html_polish/single_file_html.py"
+    ],
+    "src/pdf_html_polish/quality_loop/resolver_decisions.py": [
+      "src/pdf_html_polish/quality_loop/observations.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/review_workflow.py": [
+      "src/pdf_html_polish/quality_loop/p62_recovery_stage.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/quality_loop/run_utils.py": [
+      "src/pdf_html_polish/html_stages.py"
+    ],
+    "src/pdf_html_polish/quality_loop/source_pdf.py": [
+      "src/pdf_html_polish/html_stages.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/__init__.py": [
+      "src/pdf_html_polish/raw_html_polish/phases.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/author_year_links.py": [
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "src/pdf_html_polish/raw_html_polish/references_links.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/doi_anchors.py": [
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "src/pdf_html_polish/url_repair.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/float_units.py": [
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "src/pdf_html_polish/semantic_labels.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py": [
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/html_fragments.py": [],
+    "src/pdf_html_polish/raw_html_polish/katex.py": [
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/math_units.py": [
+      "src/pdf_html_polish/raw_html_polish/katex.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/page_furniture.py": [
+      "src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/phases.py": [],
+    "src/pdf_html_polish/raw_html_polish/pre_cleanup.py": [
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/presentation.py": [
+      "src/pdf_html_polish/abbreviations.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/references_links.py": [
+      "src/pdf_html_polish/html_references.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/url_anchors.py": [
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "src/pdf_html_polish/url_repair.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/url_autolink.py": [
+      "src/pdf_html_polish/url_repair.py"
+    ],
+    "src/pdf_html_polish/raw_html_polish/url_text_repair.py": [
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "src/pdf_html_polish/raw_html_polish/pre_cleanup.py",
+      "src/pdf_html_polish/url_repair.py"
+    ],
+    "src/pdf_html_polish/runtime_temp.py": [],
+    "src/pdf_html_polish/semantic_labels.py": [],
+    "src/pdf_html_polish/single_file_html.py": [
+      "src/pdf_html_polish/citation_profile_recovery.py",
+      "src/pdf_html_polish/email_repair.py",
+      "src/pdf_html_polish/html_images.py",
+      "src/pdf_html_polish/html_links.py",
+      "src/pdf_html_polish/html_references.py",
+      "src/pdf_html_polish/polish_language.py",
+      "src/pdf_html_polish/raw_html_polish/__init__.py",
+      "src/pdf_html_polish/raw_html_polish/author_year_links.py",
+      "src/pdf_html_polish/raw_html_polish/doi_anchors.py",
+      "src/pdf_html_polish/raw_html_polish/float_units.py",
+      "src/pdf_html_polish/raw_html_polish/frontmatter_footnotes.py",
+      "src/pdf_html_polish/raw_html_polish/html_fragments.py",
+      "src/pdf_html_polish/raw_html_polish/katex.py",
+      "src/pdf_html_polish/raw_html_polish/math_units.py",
+      "src/pdf_html_polish/raw_html_polish/page_furniture.py",
+      "src/pdf_html_polish/raw_html_polish/pre_cleanup.py",
+      "src/pdf_html_polish/raw_html_polish/presentation.py",
+      "src/pdf_html_polish/raw_html_polish/references_links.py",
+      "src/pdf_html_polish/raw_html_polish/url_anchors.py",
+      "src/pdf_html_polish/raw_html_polish/url_autolink.py",
+      "src/pdf_html_polish/raw_html_polish/url_text_repair.py",
+      "src/pdf_html_polish/semantic_labels.py",
+      "src/pdf_html_polish/text_cleanup.py"
+    ],
+    "src/pdf_html_polish/stage_contract.py": [
+      "src/pdf_html_polish/html_stages.py",
+      "src/pdf_html_polish/quality_loop/run_utils.py"
+    ],
+    "src/pdf_html_polish/staging.py": [
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/runtime_temp.py"
+    ],
+    "src/pdf_html_polish/text_cleanup.py": [],
+    "src/pdf_html_polish/url_repair.py": [],
+    "src/pdf_html_polish/webdav_config.py": [],
+    "src/pdf_html_polish/webdav_pending.py": [
+      "src/pdf_html_polish/webdav_config.py"
+    ],
+    "src/pdf_html_polish/webdav_uploader.py": [
+      "src/pdf_html_polish/webdav_config.py"
+    ],
+    "src/pdf_html_polish/zotero_html_attachment.py": [
+      "src/pdf_html_polish/naming.py"
+    ],
+    "src/pdf_html_polish/zotero_overlay_probe.py": [],
+    "src/pdf_html_polish/zotero_pending.py": [
+      "src/pdf_html_polish/citation_profile.py",
+      "src/pdf_html_polish/history.py",
+      "src/pdf_html_polish/paths.py",
+      "src/pdf_html_polish/single_file_html.py",
+      "src/pdf_html_polish/zotero_html_attachment.py"
+    ],
+    "src/pdf_html_polish/zotero.py": [
+      "src/pdf_html_polish/models.py",
+      "src/pdf_html_polish/runtime_temp.py"
+    ],
+    "tests/conftest.py": [],
+    "tests/test_audit_citation_style.py": [],
+    "tests/test_audit_citations.py": [],
+    "tests/test_audit_diagnostics.py": [],
+    "tests/test_audit_en_polish.py": [],
+    "tests/test_audit_en_raw.py": [],
+    "tests/test_audit_figure_caption_ux.py": [],
+    "tests/test_audit_float_gap.py": [],
+    "tests/test_audit_frontmatter.py": [],
+    "tests/test_audit_images.py": [],
+    "tests/test_audit_manual_patterns.py": [],
+    "tests/test_audit_manual_recent.py": [],
+    "tests/test_audit_math_units.py": [],
+    "tests/test_audit_p04.py": [],
+    "tests/test_audit_p35.py": [],
+    "tests/test_audit_p45.py": [],
+    "tests/test_audit_p61.py": [],
+    "tests/test_audit_p62.py": [],
+    "tests/test_audit_p71.py": [],
+    "tests/test_audit_pdf.py": [],
+    "tests/test_audit_polish_pair.py": [],
+    "tests/test_audit_polish_report.py": [],
+    "tests/test_audit_raw_analysis.py": [],
+    "tests/test_audit_raw_blocks.py": [],
+    "tests/test_audit_raw_checks.py": [],
+    "tests/test_audit_raw_images.py": [],
+    "tests/test_audit_raw_report.py": [],
+    "tests/test_audit_reference_identity.py": [],
+    "tests/test_audit_source_language.py": [],
+    "tests/test_citation_profile_recovery.py": [],
+    "tests/test_citation_profile.py": [],
+    "tests/test_clean_pipeline.py": [],
+    "tests/test_collect_en_polish_review.py": [],
+    "tests/test_email_repair.py": [],
+    "tests/test_html_images.py": [],
+    "tests/test_html_links.py": [],
+    "tests/test_html_stages.py": [],
+    "tests/test_language_detect.py": [],
+    "tests/test_llm_quality_loop.py": [
+      "scripts/llm_quality_loop.py"
+    ],
+    "tests/test_marker_runner.py": [],
+    "tests/test_ocr_quality.py": [],
+    "tests/test_output_state.py": [],
+    "tests/test_p62_context.py": [],
+    "tests/test_p62_html.py": [],
+    "tests/test_p62_marker.py": [],
+    "tests/test_p62_matching.py": [],
+    "tests/test_p62_pdf_assets.py": [],
+    "tests/test_p62_plan.py": [],
+    "tests/test_p62_recovery_stage.py": [],
+    "tests/test_pdf_utils.py": [],
+    "tests/test_pipeline_boundaries.py": [],
+    "tests/test_quality_loop_analysis_prompt.py": [],
+    "tests/test_quality_loop_cached_images.py": [],
+    "tests/test_quality_loop_commands.py": [],
+    "tests/test_quality_loop_converted_runs.py": [],
+    "tests/test_quality_loop_observations.py": [],
+    "tests/test_quality_loop_p62_duplicates.py": [],
+    "tests/test_quality_loop_pattern_observations.py": [],
+    "tests/test_quality_loop_pdf_evidence.py": [],
+    "tests/test_quality_loop_pdf_reference_recovery.py": [],
+    "tests/test_quality_loop_polish_auto_repair.py": [],
+    "tests/test_quality_loop_resolver_decisions.py": [],
+    "tests/test_quality_loop_review_workflow.py": [],
+    "tests/test_quality_loop_run_utils.py": [],
+    "tests/test_quality_loop_source_pdf.py": [],
+    "tests/test_raw_html_polish_author_year_links.py": [],
+    "tests/test_raw_html_polish_doi_anchors.py": [],
+    "tests/test_raw_html_polish_float_units.py": [],
+    "tests/test_raw_html_polish_frontmatter_footnotes.py": [],
+    "tests/test_raw_html_polish_html_fragments.py": [],
+    "tests/test_raw_html_polish_katex.py": [],
+    "tests/test_raw_html_polish_math_units.py": [],
+    "tests/test_raw_html_polish_page_furniture.py": [],
+    "tests/test_raw_html_polish_phases.py": [],
+    "tests/test_raw_html_polish_pre_cleanup.py": [],
+    "tests/test_raw_html_polish_presentation.py": [],
+    "tests/test_raw_html_polish_references_links.py": [],
+    "tests/test_raw_html_polish_url_anchors.py": [],
+    "tests/test_raw_html_polish_url_autolink.py": [],
+    "tests/test_raw_html_polish_url_text_repair.py": [],
+    "tests/test_record_en_polish_quality_history.py": [
+      "scripts/record_en_polish_quality_history.py"
+    ],
+    "tests/test_refactor_article_check.py": [],
+    "tests/test_repolish_en_from_raw.py": [],
+    "tests/test_semantic_labels.py": [],
+    "tests/test_single_file_html.py": [],
+    "tests/test_stage_contract.py": [],
+    "tests/test_staging.py": [],
+    "tests/test_text_cleanup.py": [],
+    "tests/test_url_repair.py": [],
+    "tests/test_zotero_overlay_probe.py": [],
+    "tools/zotero_overlay_probe.mjs": []
+  },
+  "importStats": {
+    "filesScanned": 245,
+    "filesWithImports": 83,
+    "totalEdges": 232
+  },
+  "regeneratedBy": "codex-deterministic-ua-refresh",
+  "regeneratedAt": "2026-06-25T20:51:00.373Z"
+}
