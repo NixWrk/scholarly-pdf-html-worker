@@ -7,6 +7,7 @@ from pdf_html_polish.marker_runner import (
     RunResult,
     _append_progress_jsonl,
     _count_page_range_pages,
+    _marker_stall_timeout_seconds,
     _marker_status,
     _output_dir_snapshot,
     build_marker_single_command,
@@ -147,3 +148,11 @@ def test_marker_status_marks_long_idle_process() -> None:
         )
         == "completed"
     )
+
+
+def test_marker_stall_timeout_env_is_opt_in(monkeypatch) -> None:
+    monkeypatch.delenv("MARKER_STALL_TIMEOUT_SECONDS", raising=False)
+
+    assert _marker_stall_timeout_seconds({}) == 0
+    assert _marker_stall_timeout_seconds({"MARKER_STALL_TIMEOUT_SECONDS": "300"}) == 300
+    assert _marker_stall_timeout_seconds({"MARKER_STALL_TIMEOUT_SECONDS": "bad"}) == 0

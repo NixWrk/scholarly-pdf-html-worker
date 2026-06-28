@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import threading
 from collections.abc import Callable
@@ -107,6 +109,33 @@ class MarkerRunner:
         if pid <= 0:
             return True
 
+        if psutil is not None:
+            try:
+                root = psutil.Process(pid)
+                processes = [*root.children(recursive=True), root]
+                for process in processes:
+                    with suppress(Exception):
+                        process.terminate()
+                gone, alive = psutil.wait_procs(processes, timeout=2)
+                for process in alive:
+                    with suppress(Exception):
+                        process.kill()
+                psutil.wait_procs(alive, timeout=2)
+                return True
+            except psutil.NoSuchProcess:
+                return True
+            except Exception:
+                pass
+
+        if os.name != "nt":
+            try:
+                os.kill(pid, signal.SIGTERM)
+                return True
+            except ProcessLookupError:
+                return True
+            except Exception:
+                return False
+
         try:
             result = subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -202,8 +231,10 @@ class MarkerRunner:
         line_count = 0
         last_marker_line = ""
         heartbeat_stop = threading.Event()
+        stall_stop_sent = threading.Event()
+        stall_timeout_seconds = _marker_stall_timeout_seconds(env)
 
-        def log_progress(kind: str, exit_code: int | None = None) -> None:
+        def log_progress(kind: str, exit_code: int | None = None) -> dict[str, object]:
             nonlocal heartbeat_index
             nonlocal last_filesystem_activity_at
             nonlocal last_output_signature
@@ -221,6 +252,8 @@ class MarkerRunner:
                 last_output_signature = output_signature
 
             output_idle_seconds = perf_counter() - last_filesystem_activity_at
+            stdout_idle_seconds = elapsed if last_output_at is None else perf_counter() - last_output_at
+            stall_idle_seconds = min(output_idle_seconds, stdout_idle_seconds)
             status = _marker_status(
                 kind=kind,
                 exit_code=exit_code,
@@ -239,6 +272,10 @@ class MarkerRunner:
                     None if since_last_output is None else round(since_last_output, 2)
                 ),
                 "output_idle_seconds": round(output_idle_seconds, 2),
+                "stall_idle_seconds": round(stall_idle_seconds, 2),
+                "stall_timeout_seconds": (
+                    None if stall_timeout_seconds <= 0 else round(stall_timeout_seconds, 2)
+                ),
                 "possibly_stalled": status == "running_idle",
                 "exit_code": exit_code,
                 "stdout_lines": line_count,
@@ -250,14 +287,41 @@ class MarkerRunner:
             }
             log(_format_progress_payload(payload))
             _append_progress_jsonl(progress, payload)
+            return payload
+
+        def stop_if_stalled(payload: dict[str, object]) -> None:
+            if stall_timeout_seconds <= 0 or stall_stop_sent.is_set():
+                return
+            if process.poll() is not None:
+                return
+            try:
+                idle_seconds = float(payload.get("stall_idle_seconds") or 0)
+            except (TypeError, ValueError):
+                return
+            if idle_seconds < stall_timeout_seconds:
+                return
+            stall_stop_sent.set()
+            log(
+                "Marker stall watchdog stopping process: "
+                f"idle={idle_seconds:.1f}s timeout={stall_timeout_seconds:.1f}s"
+            )
+            self._track_pid(process.pid)
+            self._register_child_pids(process.pid)
+            with suppress(Exception):
+                process.terminate()
+            with suppress(Exception):
+                process.wait(timeout=2)
+            if process.poll() is None:
+                self._kill_pid_tree(process.pid)
 
         def heartbeat() -> None:
             while not heartbeat_stop.wait(10):
                 self._register_child_pids(process.pid)
                 if first_output_at is None:
-                    log_progress("waiting_first_output")
+                    payload = log_progress("waiting_first_output")
                 else:
-                    log_progress("process_alive")
+                    payload = log_progress("process_alive")
+                stop_if_stalled(payload)
 
         heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
         heartbeat_thread.start()
@@ -553,6 +617,18 @@ def _marker_status(
     if output_idle_seconds >= 600:
         return "running_idle"
     return "running"
+
+
+def _marker_stall_timeout_seconds(env: dict[str, str]) -> float:
+    raw_value = env.get("MARKER_STALL_TIMEOUT_SECONDS") or os.environ.get(
+        "MARKER_STALL_TIMEOUT_SECONDS",
+        "",
+    )
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, value)
 
 
 def _utc_now_iso() -> str:
