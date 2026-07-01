@@ -50,6 +50,45 @@ def test_marker_runner_uses_300dpi_for_batch_and_single() -> None:
         assert command[command.index("--highres_image_dpi") + 1] == "300"
 
 
+def test_marker_batch_disables_multiprocessing_for_single_pdf(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "paper.pdf").write_bytes(b"%PDF")
+    runner = _CapturingMarkerRunner()
+
+    runner.run_batch(
+        input_dir=input_dir,
+        output_dir=tmp_path / "out",
+        skip_existing=False,
+        disable_multiprocessing=False,
+        output_format="html",
+        env={},
+        log=lambda _line: None,
+    )
+
+    assert "--disable_multiprocessing" in runner.commands[0]
+
+
+def test_marker_batch_keeps_multiprocessing_for_multiple_pdfs(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "a.pdf").write_bytes(b"%PDF")
+    (input_dir / "b.pdf").write_bytes(b"%PDF")
+    runner = _CapturingMarkerRunner()
+
+    runner.run_batch(
+        input_dir=input_dir,
+        output_dir=tmp_path / "out",
+        skip_existing=False,
+        disable_multiprocessing=False,
+        output_format="html",
+        env={},
+        log=lambda _line: None,
+    )
+
+    assert "--disable_multiprocessing" not in runner.commands[0]
+
+
 def test_marker_runner_supports_single_page_range() -> None:
     runner = _CapturingMarkerRunner()
 

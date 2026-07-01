@@ -400,6 +400,8 @@ class MarkerRunner:
         env: dict[str, str],
         log: callable,
     ) -> RunResult:
+        input_files = _count_input_pdfs(input_dir)
+        disable_multiprocessing = disable_multiprocessing or input_files <= 1
         cmd = [
             self._marker_cmd,
             str(input_dir),
@@ -419,7 +421,7 @@ class MarkerRunner:
         if disable_multiprocessing:
             cmd.append("--disable_multiprocessing")
         progress = ProgressContext(
-            input_files=_count_input_pdfs(input_dir),
+            input_files=input_files,
             pages_total=_count_total_pdf_pages(input_dir.glob("*.pdf")),
             output_dir=output_dir,
             artifact_extension=_artifact_extension_for_output_format(output_format),
