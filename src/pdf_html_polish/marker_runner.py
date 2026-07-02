@@ -182,18 +182,29 @@ class MarkerRunner:
             if remaining:
                 log(f"Runner cleanup remaining PIDs: {', '.join(str(pid) for pid in remaining)}")
 
+    def _stop_process_tree(
+        self,
+        process: subprocess.Popen,
+        *,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
+        self._track_pid(process.pid)
+        self._register_child_pids(process.pid)
+        with suppress(Exception):
+            process.terminate()
+        with suppress(Exception):
+            process.wait(timeout=2)
+        if process.poll() is None:
+            self._kill_pid_tree(process.pid)
+        self.cleanup_spawned_processes(log)
+
     def terminate_current(self) -> None:
         with self._lock:
             proc = self._current_process
         if proc is not None and proc.poll() is None:
-            self._track_pid(proc.pid)
-            self._register_child_pids(proc.pid)
-            with suppress(Exception):
-                proc.terminate()
-            with suppress(Exception):
-                proc.wait(timeout=2)
-            self._kill_pid_tree(proc.pid)
-        self.cleanup_spawned_processes()
+            self._stop_process_tree(proc)
+        else:
+            self.cleanup_spawned_processes()
 
     def _run(
         self,
@@ -305,14 +316,7 @@ class MarkerRunner:
                 "Marker stall watchdog stopping process: "
                 f"idle={idle_seconds:.1f}s timeout={stall_timeout_seconds:.1f}s"
             )
-            self._track_pid(process.pid)
-            self._register_child_pids(process.pid)
-            with suppress(Exception):
-                process.terminate()
-            with suppress(Exception):
-                process.wait(timeout=2)
-            if process.poll() is None:
-                self._kill_pid_tree(process.pid)
+            self._stop_process_tree(process, log=log)
 
         def heartbeat() -> None:
             while not heartbeat_stop.wait(10):

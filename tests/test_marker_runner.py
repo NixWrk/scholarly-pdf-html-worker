@@ -1,5 +1,8 @@
 from pathlib import Path
 import json
+import subprocess
+import sys
+import time
 
 from pdf_html_polish.marker_runner import (
     MarkerRunner,
@@ -195,3 +198,21 @@ def test_marker_stall_timeout_env_is_opt_in(monkeypatch) -> None:
     assert _marker_stall_timeout_seconds({}) == 0
     assert _marker_stall_timeout_seconds({"MARKER_STALL_TIMEOUT_SECONDS": "300"}) == 300
     assert _marker_stall_timeout_seconds({"MARKER_STALL_TIMEOUT_SECONDS": "bad"}) == 0
+
+
+def test_marker_cleanup_kills_tracked_child_process() -> None:
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    runner = MarkerRunner()
+    logs: list[str] = []
+    try:
+        runner._track_pid(process.pid)
+        runner.cleanup_spawned_processes(logs.append)
+        deadline = time.monotonic() + 5
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        assert process.poll() is not None
+        assert any("Runner cleanup:" in line for line in logs)
+    finally:
+        if process.poll() is None:
+            process.kill()
