@@ -275,6 +275,71 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
     assert "observe ok" in logs
 
 
+def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all(
+    tmp_path: Path,
+) -> None:
+    conversion_dir = tmp_path / "converted"
+    quality_dir = tmp_path / "quality"
+    logs: list[str] = []
+
+    def fake_pipeline_runner(*_args):
+        stage_dir = conversion_dir / "article_es" / "_z2m_stages"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "01.en.raw.html").write_text("<html><body>bruto</body></html>", encoding="utf-8")
+        (stage_dir / "02.en.polish.html").write_text("<html><body>limpio</body></html>", encoding="utf-8")
+        return _summary(conversion_dir)
+
+    def fake_observe_runner(command, cwd, log):
+        (quality_dir / "audit_tree").mkdir(parents=True)
+        (quality_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "articles": [],
+                    "skipped_articles": [
+                        {
+                            "article": "article_es",
+                            "language_skipped": True,
+                            "skip_reason": "detected_es_not_en",
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        if log is not None:
+            log("observe skipped non-en article")
+        return 0
+
+    summary = run_clean_pipeline(
+        CleanPipelineOptions(
+            conversion_options=PipelineOptions(
+                source_pdf_paths=[str(tmp_path / "paper.pdf")],
+                output_dir=str(conversion_dir),
+                export_mode="html",
+            ),
+            quality_output_dir=str(quality_dir),
+            publish_latest_to_converted=False,
+        ),
+        MarkerRunner(),
+        logs.append,
+        lambda: False,
+        pipeline_runner=fake_pipeline_runner,
+        observe_runner=fake_observe_runner,
+    )
+
+    assert len(summary.final_html.artifacts) == 1
+    assert summary.final_html.artifacts[0].source_path == (
+        conversion_dir / "article_es" / "_z2m_stages" / "02.en.polish.html"
+    ).resolve(strict=False)
+    assert (quality_dir / "final_html" / "article_es.html").read_text(encoding="utf-8") == (
+        "<html><body>limpio</body></html>"
+    )
+    manifest = json.loads(summary.final_html.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["fallback_source"] == "converted_stage"
+    assert any("converted-stage polish fallback" in entry for entry in logs)
+
+
 def test_run_clean_pipeline_skips_observe_when_conversion_failed(tmp_path: Path) -> None:
     def fake_pipeline_runner(*_args):
         return _summary(tmp_path / "converted", failed_total=1)

@@ -12,7 +12,11 @@ from .marker_runner import MarkerRunner
 from .models import PipelineSummary
 from .pipeline import run_pipeline
 from .pipeline_options import PipelineOptions
-from .html_stages import POLISH_STAGE_NAME, article_dir_from_html_stage
+from .html_stages import (
+    POLISH_STAGE_NAME,
+    article_dir_from_html_stage,
+    article_name_from_html_stage,
+)
 from .language_detect import LanguageGateDecision, detect_language_from_html
 from .stage_contract import publish_latest_polish_from_quality_run
 
@@ -276,6 +280,63 @@ def collect_final_html(
     )
 
 
+def collect_converted_stage_final_html(
+    converted_root: Path,
+    quality_output_dir: Path,
+    *,
+    final_html_dir: Path | None = None,
+) -> FinalHtmlCollection:
+    converted_dir = converted_root.expanduser().resolve(strict=False)
+    quality_dir = quality_output_dir.expanduser().resolve(strict=False)
+    target_dir = (
+        final_html_dir.expanduser().resolve(strict=False)
+        if final_html_dir is not None
+        else quality_dir / FINAL_HTML_DIR_NAME
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts: list[FinalHtmlArtifact] = []
+    for source_path in sorted(converted_dir.rglob(POLISH_STAGE_NAME), key=str):
+        if not source_path.is_file():
+            continue
+        article = article_name_from_html_stage(source_path)
+        final_path = target_dir / f"{article}.html"
+        shutil.copy2(source_path, final_path)
+        artifacts.append(
+            FinalHtmlArtifact(
+                article=article,
+                source_path=source_path.resolve(strict=False),
+                final_path=final_path.resolve(strict=False),
+            )
+        )
+
+    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
+    manifest = {
+        "schema_version": 1,
+        "quality_output_dir": str(quality_dir),
+        "final_html_dir": str(target_dir),
+        "fallback_source": "converted_stage",
+        "article_count": len(artifacts),
+        "html_files": [
+            {
+                "article": artifact.article,
+                "source_path": str(artifact.source_path),
+                "final_path": str(artifact.final_path),
+            }
+            for artifact in artifacts
+        ],
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return FinalHtmlCollection(
+        final_html_dir=target_dir,
+        manifest_path=manifest_path,
+        artifacts=tuple(artifacts),
+    )
+
+
 def empty_final_html_collection(
     quality_output_dir: Path,
     *,
@@ -432,10 +493,24 @@ def run_clean_pipeline(
     )
     write_pipeline_manifest(converted_root)
     if not final_html.artifacts and conversion_summary.converted_total:
-        raise RuntimeError(
-            "Quality observe completed, but no final 02.en.polish.html files "
-            f"were found under {quality_output_dir / 'audit_tree'}."
+        log(
+            "Quality observe produced no audited final HTML; "
+            "using converted-stage polish fallback."
         )
+        final_html = collect_converted_stage_final_html(
+            converted_root,
+            quality_output_dir,
+            final_html_dir=(
+                Path(options.final_html_dir).expanduser().resolve(strict=False)
+                if options.final_html_dir
+                else None
+            ),
+        )
+        if not final_html.artifacts:
+            raise RuntimeError(
+                "Quality observe completed, but no final 02.en.polish.html files "
+                f"were found under {quality_output_dir / 'audit_tree'} or {converted_root}."
+            )
 
     return CleanPipelineSummary(
         conversion_summary=conversion_summary,
