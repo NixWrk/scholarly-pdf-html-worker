@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass
 import hashlib
 import mimetypes
+import os
 from pathlib import Path
 import re
 import urllib.parse
@@ -41,6 +42,14 @@ IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
     r'\bdata-z2m-image-key\s*=\s*(["\'])([^"\']+)\1',
     re.IGNORECASE,
 )
+INLINE_SKIP_ATTR_PATTERN = re.compile(
+    r'\bdata-z2m-inline-skip\s*=',
+    re.IGNORECASE,
+)
+DEFAULT_INLINE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES = 20 * 1024 * 1024
+INLINE_IMAGE_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_MAX_BYTES"
+INLINE_IMAGE_TOTAL_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_TOTAL_MAX_BYTES"
 
 
 def is_inline_or_remote(value: str) -> bool:
@@ -119,6 +128,7 @@ def to_data_url(
     file_path: Path,
     *,
     detect_by_signature: bool = True,
+    max_bytes: int | None = None,
     log_func: Callable[[str], None] | None = None,
 ) -> str | None:
     """Convert image file to a data URL with signature-based MIME detection."""
@@ -131,6 +141,18 @@ def to_data_url(
             log_func(
                 f"[DIAG] MIME detect fail: path={file_path.name} "
                 f"sig={mime_by_sig} ext={mime_by_ext}"
+            )
+        return None
+
+    try:
+        file_size = file_path.stat().st_size
+    except OSError:
+        return None
+    if max_bytes is not None and file_size > max_bytes:
+        if log_func:
+            log_func(
+                f"[DIAG] Image inline skipped: path={file_path.name} "
+                f"size={file_size} max={max_bytes}"
             )
         return None
 
@@ -333,8 +355,25 @@ def refresh_inlined_data_urls_by_cache(
     return IMG_SRC_PATTERN.sub(replace, html), refreshed
 
 
-def inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlResult, dict[str, str]]:
+def inline_images_from_html_text(
+    text: str,
+    base_dir: Path,
+    *,
+    max_image_bytes: int | None = None,
+    max_total_bytes: int | None = None,
+) -> tuple[InlineHtmlResult, dict[str, str]]:
     inlined_count = 0
+    inlined_bytes = 0
+    max_image_bytes = _effective_inline_limit(
+        max_image_bytes,
+        env_name=INLINE_IMAGE_MAX_BYTES_ENV,
+        default=DEFAULT_INLINE_IMAGE_MAX_BYTES,
+    )
+    max_total_bytes = _effective_inline_limit(
+        max_total_bytes,
+        env_name=INLINE_IMAGE_TOTAL_MAX_BYTES_ENV,
+        default=DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES,
+    )
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
     sidecar_images = sorted(
         (
@@ -393,6 +432,8 @@ def inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlR
         if decoded is None:
             return prefix
         _, blob = decoded
+        if max_image_bytes is not None and len(blob) > max_image_bytes:
+            return prefix
         key_match = IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix)
         if key_match is None:
             digest = hashlib.sha256(blob).hexdigest()[:16]
@@ -403,8 +444,39 @@ def inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlR
         image_cache[image_key] = data_url
         return prefix
 
+    def skip_inline(prefix: str, reason: str, *, size: int | None = None, limit: int | None = None) -> str:
+        if INLINE_SKIP_ATTR_PATTERN.search(prefix):
+            return prefix
+        attrs = f'data-z2m-inline-skip="{escape_html_attr_literal(reason)}"'
+        if size is not None:
+            attrs += f' data-z2m-inline-size="{size}"'
+        if limit is not None:
+            attrs += f' data-z2m-inline-limit="{limit}"'
+        return re.sub(
+            r"\bsrc\s*=\s*$",
+            f"{attrs} src=",
+            prefix,
+            flags=re.IGNORECASE,
+        )
+
+    def candidate_size(candidate: Path) -> int | None:
+        try:
+            return candidate.stat().st_size
+        except OSError:
+            return None
+
+    def inline_budget_skip(candidate: Path) -> tuple[str, int, int] | None:
+        size = candidate_size(candidate)
+        if size is None:
+            return "unreadable", 0, 0
+        if max_image_bytes is not None and size > max_image_bytes:
+            return "image_too_large", size, max_image_bytes
+        if max_total_bytes is not None and inlined_bytes + size > max_total_bytes:
+            return "document_inline_budget_exceeded", size, max_total_bytes
+        return None
+
     def replace(match: re.Match[str]) -> str:
-        nonlocal inlined_count
+        nonlocal inlined_count, inlined_bytes
         match_idx = image_match_cursor[0]
         image_match_cursor[0] += 1
         prefix = match.group(1)
@@ -443,7 +515,13 @@ def inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlR
                 return match.group(0)
             prefix = add_src_hint(prefix, src_value)
 
-        data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
+        budget_skip = inline_budget_skip(candidate)
+        if budget_skip is not None:
+            reason, size, limit = budget_skip
+            prefix = skip_inline(prefix, reason, size=size, limit=limit)
+            return f"{prefix}{quote}{src_value}{suffix}"
+
+        data_url = to_data_url(candidate, detect_by_signature=True, max_bytes=max_image_bytes, log_func=None)
         if data_url is None:
             return match.group(0)
         if not validate_data_url(data_url, candidate):
@@ -451,7 +529,23 @@ def inline_images_from_html_text(text: str, base_dir: Path) -> tuple[InlineHtmlR
 
         prefix = remember_data_url(prefix, data_url, match_idx)
         inlined_count += 1
+        size = candidate_size(candidate)
+        if size is not None:
+            inlined_bytes += size
         return f"{prefix}{quote}{data_url}{suffix}"
 
     inlined_html = IMG_SRC_PATTERN.sub(replace, text)
     return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count), image_cache
+
+
+def _effective_inline_limit(value: int | None, *, env_name: str, default: int) -> int | None:
+    raw: object = value
+    if raw is None:
+        raw = os.environ.get(env_name)
+    if raw is None:
+        raw = default
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else None

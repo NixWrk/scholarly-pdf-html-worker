@@ -90,3 +90,44 @@ def test_inline_images_from_html_text_inlines_sidecar_and_records_cache(tmp_path
     assert 'data-z2m-src="plot.png"' in result.html
     assert 'data-z2m-image-key="' in result.html
     assert list(image_cache.values()) == [expected_data_url]
+
+
+def test_inline_images_from_html_text_skips_sidecar_over_image_limit(tmp_path) -> None:
+    image_path = tmp_path / "large.png"
+    image_path.write_bytes(_valid_png_blob())
+    html = '<html><body><img alt="Large" src="large.png"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        max_image_bytes=len(image_path.read_bytes()) - 1,
+        max_total_bytes=10_000,
+    )
+
+    assert result.inlined_images == 0
+    assert image_cache == {}
+    assert "data:image/png;base64" not in result.html
+    assert 'src="large.png"' in result.html
+    assert 'data-z2m-inline-skip="image_too_large"' in result.html
+
+
+def test_inline_images_from_html_text_skips_after_document_budget(tmp_path) -> None:
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    first.write_bytes(_valid_png_blob())
+    second.write_bytes(_valid_png_blob())
+    first_size = len(first.read_bytes())
+    html = '<html><body><img src="first.png"><img src="second.png"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        max_image_bytes=10_000,
+        max_total_bytes=first_size + 1,
+    )
+
+    assert result.inlined_images == 1
+    assert len(image_cache) == 1
+    assert result.html.count("data:image/png;base64") == 1
+    assert 'src="second.png"' in result.html
+    assert 'data-z2m-inline-skip="document_inline_budget_exceeded"' in result.html
