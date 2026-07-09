@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import hashlib
+from io import BytesIO
 import mimetypes
 import os
 from pathlib import Path
@@ -46,10 +47,15 @@ INLINE_SKIP_ATTR_PATTERN = re.compile(
     r'\bdata-z2m-inline-skip\s*=',
     re.IGNORECASE,
 )
-DEFAULT_INLINE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
-DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES = 20 * 1024 * 1024
+# Standalone Zotero/WebDAV HTML attachments do not carry sidecar image files.
+# By default, inline every local image; explicit env/call limits remain available
+# as an operator escape hatch for pathological inputs.
+DEFAULT_INLINE_IMAGE_MAX_BYTES = 0
+DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES = 0
 INLINE_IMAGE_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_MAX_BYTES"
 INLINE_IMAGE_TOTAL_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_TOTAL_MAX_BYTES"
+DOWNSCALE_MAX_EDGE = 2000
+DOWNSCALE_JPEG_QUALITY = 85
 
 
 def is_inline_or_remote(value: str) -> bool:
@@ -124,6 +130,39 @@ def detect_jpeg_colorspace(header: bytes) -> str | None:
     return None
 
 
+def _blob_to_data_url(
+    blob: bytes,
+    detected_mime: str,
+    *,
+    file_name: str,
+    mime_by_sig: str | None = None,
+    mime_by_ext: str | None = None,
+    log_func: Callable[[str], None] | None = None,
+) -> str | None:
+    file_hash = hashlib.sha256(blob).hexdigest()[:16]
+
+    cmyk_warning = ""
+    if detected_mime == "image/jpeg" and len(blob) >= 4:
+        colorspace = detect_jpeg_colorspace(blob)
+        if colorspace == "cmyk":
+            cmyk_warning = " [WARNING: CMYK JPEG - may not display correctly in browsers]"
+
+    try:
+        encoded = base64.b64encode(blob).decode("ascii")
+        data_url = f"data:{detected_mime};base64,{encoded}"
+
+        if log_func:
+            log_func(
+                f"[DIAG] MIME detected: path={file_name} "
+                f"sig={mime_by_sig} ext={mime_by_ext} hash={file_hash}{cmyk_warning}"
+            )
+        return data_url
+    except Exception as exc:
+        if log_func:
+            log_func(f"[DIAG] Base64 encode fail: {file_name}: {exc}")
+        return None
+
+
 def to_data_url(
     file_path: Path,
     *,
@@ -157,28 +196,91 @@ def to_data_url(
         return None
 
     blob = file_path.read_bytes()
-    file_hash = hashlib.sha256(blob).hexdigest()[:16]
+    return _blob_to_data_url(
+        blob,
+        detected_mime,
+        file_name=file_path.name,
+        mime_by_sig=mime_by_sig,
+        mime_by_ext=mime_by_ext,
+        log_func=log_func,
+    )
 
-    cmyk_warning = ""
-    if detected_mime == "image/jpeg" and len(blob) >= 4:
-        colorspace = detect_jpeg_colorspace(blob)
-        if colorspace == "cmyk":
-            cmyk_warning = " [WARNING: CMYK JPEG - may not display correctly in browsers]"
+
+def downscale_image_for_inline(
+    file_path: Path,
+    *,
+    max_bytes: int | None,
+    detect_by_signature: bool = True,
+    log_func: Callable[[str], None] | None = None,
+) -> tuple[str, int] | None:
+    """Downscale an oversized image and return ``(data_url, byte_count)`` if it fits."""
+    if max_bytes is None or max_bytes <= 0:
+        return None
+
+    mime_by_sig = detect_image_signature(file_path) if detect_by_signature else None
+    mime_by_ext, _ = mimetypes.guess_type(file_path.name)
+    detected_mime = mime_by_sig or mime_by_ext
+    if not detected_mime or not detected_mime.startswith("image/"):
+        return None
 
     try:
-        encoded = base64.b64encode(blob).decode("ascii")
-        data_url = f"data:{detected_mime};base64,{encoded}"
+        from PIL import Image, UnidentifiedImageError
+    except ImportError:
+        if log_func:
+            log_func(f"[DIAG] Pillow unavailable; cannot downscale {file_path.name}")
+        return None
 
+    try:
+        with Image.open(file_path) as image:
+            image.load()
+            width, height = image.size
+            if width <= 0 or height <= 0:
+                return None
+            longest_edge = max(width, height)
+            if longest_edge > DOWNSCALE_MAX_EDGE:
+                scale = DOWNSCALE_MAX_EDGE / longest_edge
+                resized_to = (
+                    max(1, int(width * scale)),
+                    max(1, int(height * scale)),
+                )
+                image = image.resize(resized_to, Image.Resampling.LANCZOS)
+
+            has_alpha = image.mode in {"RGBA", "LA"} or (
+                image.mode == "P" and "transparency" in image.info
+            )
+            output = BytesIO()
+            if detected_mime == "image/png" and has_alpha:
+                if image.mode not in {"RGBA", "LA"}:
+                    image = image.convert("RGBA")
+                output_mime = "image/png"
+                image.save(output, format="PNG", optimize=True)
+            else:
+                output_mime = "image/jpeg"
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
+                image.save(
+                    output,
+                    format="JPEG",
+                    quality=DOWNSCALE_JPEG_QUALITY,
+                    optimize=True,
+                )
+    except (OSError, UnidentifiedImageError, ValueError) as exc:
+        if log_func:
+            log_func(f"[DIAG] Image downscale fail: {file_path.name}: {exc}")
+        return None
+
+    blob = output.getvalue()
+    if len(blob) > max_bytes:
         if log_func:
             log_func(
-                f"[DIAG] MIME detected: path={file_path.name} "
-                f"sig={mime_by_sig} ext={mime_by_ext} hash={file_hash}{cmyk_warning}"
+                f"[DIAG] Downscaled image still too large: path={file_path.name} "
+                f"size={len(blob)} max={max_bytes}"
             )
-        return data_url
-    except Exception as exc:
-        if log_func:
-            log_func(f"[DIAG] Base64 encode fail: {file_path.name}: {exc}")
         return None
+    data_url = _blob_to_data_url(blob, output_mime, file_name=file_path.name, log_func=log_func)
+    if data_url is None or not data_image_src_looks_renderable(data_url):
+        return None
+    return data_url, len(blob)
 
 
 def validate_data_url(data_url: str, original_file: Path) -> bool:
@@ -475,6 +577,16 @@ def inline_images_from_html_text(
             return "document_inline_budget_exceeded", size, max_total_bytes
         return None
 
+    def remaining_inline_limit() -> int | None:
+        limits: list[int] = []
+        if max_image_bytes is not None:
+            limits.append(max_image_bytes)
+        if max_total_bytes is not None:
+            limits.append(max_total_bytes - inlined_bytes)
+        if not limits:
+            return None
+        return min(limits)
+
     def replace(match: re.Match[str]) -> str:
         nonlocal inlined_count, inlined_bytes
         match_idx = image_match_cursor[0]
@@ -518,6 +630,18 @@ def inline_images_from_html_text(
         budget_skip = inline_budget_skip(candidate)
         if budget_skip is not None:
             reason, size, limit = budget_skip
+            downscaled = downscale_image_for_inline(
+                candidate,
+                max_bytes=remaining_inline_limit(),
+                detect_by_signature=True,
+                log_func=None,
+            )
+            if downscaled is not None:
+                data_url, byte_count = downscaled
+                prefix = remember_data_url(prefix, data_url, match_idx)
+                inlined_count += 1
+                inlined_bytes += byte_count
+                return f"{prefix}{quote}{data_url}{suffix}"
             prefix = skip_inline(prefix, reason, size=size, limit=limit)
             return f"{prefix}{quote}{src_value}{suffix}"
 

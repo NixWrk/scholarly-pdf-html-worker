@@ -1,5 +1,7 @@
 import base64
 
+import pytest
+
 from pdf_html_polish.html_images import (
     data_image_src_looks_renderable,
     decode_data_image_payload,
@@ -92,6 +94,21 @@ def test_inline_images_from_html_text_inlines_sidecar_and_records_cache(tmp_path
     assert list(image_cache.values()) == [expected_data_url]
 
 
+def test_inline_images_from_html_text_inlines_large_sidecar_by_default(tmp_path) -> None:
+    image_path = tmp_path / "large.jpg"
+    image_path.write_bytes(b"\xff\xd8" + (b"x" * (2 * 1024 * 1024 + 1)) + b"\xff\xd9")
+    html = '<html><body><img alt="Large" src="large.jpg"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(html, tmp_path)
+
+    assert result.inlined_images == 1
+    assert len(image_cache) == 1
+    assert "data:image/jpeg;base64" in result.html
+    assert 'data-z2m-src="large.jpg"' in result.html
+    assert "data-z2m-inline-skip" not in result.html
+    assert ' src="data:image/jpeg;base64,' in result.html
+
+
 def test_inline_images_from_html_text_skips_sidecar_over_image_limit(tmp_path) -> None:
     image_path = tmp_path / "large.png"
     image_path.write_bytes(_valid_png_blob())
@@ -100,7 +117,7 @@ def test_inline_images_from_html_text_skips_sidecar_over_image_limit(tmp_path) -
     result, image_cache = inline_images_from_html_text(
         html,
         tmp_path,
-        max_image_bytes=len(image_path.read_bytes()) - 1,
+        max_image_bytes=16,
         max_total_bytes=10_000,
     )
 
@@ -109,6 +126,32 @@ def test_inline_images_from_html_text_skips_sidecar_over_image_limit(tmp_path) -
     assert "data:image/png;base64" not in result.html
     assert 'src="large.png"' in result.html
     assert 'data-z2m-inline-skip="image_too_large"' in result.html
+
+
+def test_inline_images_from_html_text_downscales_oversized_sidecar_before_skip(tmp_path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image_path = tmp_path / "large.bmp"
+    Image.new("RGB", (2200, 2200), (110, 80, 40)).save(image_path, format="BMP")
+    original_size = image_path.stat().st_size
+    html = '<html><body><img alt="Large" src="large.bmp"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        max_image_bytes=1_000_000,
+        max_total_bytes=1_000_000,
+    )
+
+    assert result.inlined_images == 1
+    assert "data-z2m-inline-skip" not in result.html
+    assert 'data-z2m-src="large.bmp"' in result.html
+    assert 'src="data:image/jpeg;base64,' in result.html
+    decoded = decode_data_image_payload(next(iter(image_cache.values())))
+    assert decoded is not None
+    assert len(decoded[1]) <= 1_000_000
+    assert len(decoded[1]) < original_size
 
 
 def test_inline_images_from_html_text_skips_after_document_budget(tmp_path) -> None:
