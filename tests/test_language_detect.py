@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pdf_html_polish.clean_pipeline import source_language_payload
 from pdf_html_polish.language_detect import (
     detect_language_from_html,
     detect_language_from_pdf,
@@ -160,6 +161,14 @@ def test_detects_popular_non_english_languages_and_skips_english_translation() -
         assert detection.detected_language == expected
         assert detection.confidence >= 0.75
         assert decision.should_skip
+
+
+def test_source_language_payload_translates_chinese_to_russian() -> None:
+    payload = source_language_payload("<html><body>" + ZH_PARAGRAPH * 80 + "</body></html>")
+
+    assert payload["source_language_code"] == "zh"
+    assert payload["gate"]["should_skip"] is False
+    assert payload["gate"]["reason"] == "translate_zh_to_ru"
 
 
 def test_visible_text_uses_document_text_before_references() -> None:
