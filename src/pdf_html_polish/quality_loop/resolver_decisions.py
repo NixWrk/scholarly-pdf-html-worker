@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .observations import compact_observation_text
-from .run_utils import load_json, now, write_json
+from .run_utils import json_object, load_json, now, write_json
 
 
 BENIGN_TELEMETRY_DEFECT_IDS = {"P04T", "P04M", "P45S", "P45M"}
@@ -106,7 +106,7 @@ def resolver_decision_for_defect(
 
 def resolver_sample_decision(defect: dict[str, Any], article: dict[str, Any]) -> dict[str, Any]:
     article_id = str(article.get("article") or "")
-    article_summary = article.get("summary") if isinstance(article.get("summary"), dict) else {}
+    article_summary = json_object(article.get("summary"))
     decision, reason, fix_layer, evidence_required = resolver_decision_for_defect(defect, article_summary)
     extra = defect_extra(defect)
     return {

@@ -7,6 +7,7 @@ from pdf_html_polish.quality_loop.run_utils import (
     article_name_from_stage,
     artifact_hint,
     converted_article_id,
+    json_object,
     load_json,
     norm_path,
     profile_value,
@@ -30,6 +31,10 @@ def test_json_helpers_round_trip_and_missing_default(tmp_path: Path) -> None:
     assert load_json(tmp_path / "missing.json", default={"ok": True}) == {"ok": True}
     with pytest.raises(FileNotFoundError):
         load_json(tmp_path / "missing.json")
+
+    assert json_object({"ok": True}) == {"ok": True}
+    assert json_object(None) == {}
+    assert json_object(["not", "an", "object"]) == {}
 
 
 def test_stage_path_helpers_handle_z2m_stage_layout(tmp_path: Path) -> None:

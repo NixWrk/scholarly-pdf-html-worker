@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from .run_utils import json_object
+
 
 DEFAULT_ALLOWED_GATE_FAILURES = {"article_review_stage", "mandatory_review_pending"}
 
@@ -28,7 +30,7 @@ def _defect_id(defect: dict[str, Any]) -> str:
 
 
 def _defect_quality_counted(defect: dict[str, Any]) -> bool:
-    extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+    extra = json_object(defect.get("extra"))
     value = defect.get("quality_counted", extra.get("quality_counted"))
     return value is not False
 
@@ -161,9 +163,9 @@ def build_refactor_article_check(
     selected_articles = [articles_by_id[article_id] for article_id in selected_ids if article_id in articles_by_id]
     missing_selected = [article_id for article_id in selected_ids if article_id not in articles_by_id]
 
-    corpus_summary = audit_report.get("corpus_summary") if isinstance(audit_report.get("corpus_summary"), dict) else {}
-    quality_totals = history_entry.get("totals") if isinstance(history_entry.get("totals"), dict) else {}
-    assessment_totals = assessment.get("totals") if isinstance(assessment.get("totals"), dict) else {}
+    corpus_summary = json_object(audit_report.get("corpus_summary"))
+    quality_totals = json_object(history_entry.get("totals"))
+    assessment_totals = json_object(assessment.get("totals"))
     selected_summary = summarize_audit_articles(selected_articles)
 
     failures: list[dict[str, Any]] = []

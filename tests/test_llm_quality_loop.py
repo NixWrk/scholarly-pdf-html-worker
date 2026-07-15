@@ -185,6 +185,26 @@ def test_quality_gate_passes_when_lower_is_better_metrics_do_not_increase() -> N
     assert report["improvement_count"] == 1
 
 
+def test_quality_gate_tolerates_null_or_malformed_optional_sections() -> None:
+    report = evaluate_quality_gate(
+        {
+            "status": "ok",
+            "totals_delta": None,
+            "comparable_totals_delta": ["invalid"],
+            "regressions": [None, "invalid"],
+            "improvements": None,
+        },
+        {
+            "max_regressions": 0,
+            "max_total_deltas": None,
+            "max_article_deltas": ["invalid"],
+        },
+    )
+
+    assert report["status"] == "pass"
+    assert report["regression_count"] == 0
+
+
 def test_quality_gate_uses_comparable_totals_when_corpus_changes() -> None:
     comparison = {
         "status": "ok",

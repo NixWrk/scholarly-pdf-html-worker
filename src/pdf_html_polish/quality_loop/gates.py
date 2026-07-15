@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .run_utils import json_object
+
 
 def load_gate_config(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -33,7 +35,9 @@ def evaluate_quality_gate(
     elif status != "ok":
         failures.append({"kind": "comparison_status", "status": status})
 
-    regressions = list(comparison.get("regressions") or [])
+    regressions = [
+        item for item in comparison.get("regressions") or [] if isinstance(item, dict)
+    ]
     max_regressions = int(gate_config.get("max_regressions", 0))
     if len(regressions) > max_regressions:
         failures.append(
@@ -45,19 +49,15 @@ def evaluate_quality_gate(
             }
         )
 
-    totals_delta = comparison.get("totals_delta") if isinstance(comparison.get("totals_delta"), dict) else {}
-    comparable_totals_delta = (
-        comparison.get("comparable_totals_delta")
-        if isinstance(comparison.get("comparable_totals_delta"), dict)
-        else {}
-    )
+    totals_delta = json_object(comparison.get("totals_delta"))
+    comparable_totals_delta = json_object(comparison.get("comparable_totals_delta"))
     gate_totals_delta = comparable_totals_delta or totals_delta
-    for metric, limit in dict(gate_config.get("max_total_deltas") or {}).items():
+    for metric, limit in json_object(gate_config.get("max_total_deltas")).items():
         observed = float(gate_totals_delta.get(metric, 0) or 0)
         if observed > float(limit):
             failures.append({"kind": "total_delta", "metric": metric, "observed": observed, "limit": limit})
 
-    article_limits = dict(gate_config.get("max_article_deltas") or {})
+    article_limits = json_object(gate_config.get("max_article_deltas"))
     for item in regressions:
         for metric, limit in article_limits.items():
             observed = float(item.get(metric, 0) or 0)
@@ -114,7 +114,9 @@ def evaluate_quality_gate(
     if gate_config.get("require_pdf_text_layer_diagnostics", False):
         audit_totals = {}
         if isinstance(audit_report, dict):
-            audit_totals = dict((audit_report.get("corpus_summary") or {}).get("totals") or {})
+            audit_totals = json_object(
+                json_object(audit_report.get("corpus_summary")).get("totals")
+            )
         audit_pdf_summary = {
             "pdf_text_chars": int(audit_totals.get("pdf_text_chars") or 0),
             "source_pdf_present": int(audit_totals.get("source_pdf_present") or 0),

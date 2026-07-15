@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from .observations import compact_observation_text
 from .p62_matching import best_pdf_text_page
-from .run_utils import now, slug, write_json
+from .run_utils import json_object, now, slug, write_json
 
 
 PdfTextPages = Callable[..., tuple[str, list[str], str | None]]
@@ -19,7 +19,7 @@ def problem_snippets_for_evidence(article: dict[str, Any]) -> list[str]:
     for defect in article.get("defects") or []:
         if isinstance(defect, dict) and defect.get("snippet"):
             snippets.append(compact_observation_text(defect.get("snippet"), max_len=800))
-    comparison = article.get("comparison") if isinstance(article.get("comparison"), dict) else {}
+    comparison = json_object(article.get("comparison"))
     if comparison.get("article") and comparison.get("score_delta"):
         snippets.append(f"comparison regression score_delta={comparison.get('score_delta')}")
     return [snippet for snippet in snippets if snippet]

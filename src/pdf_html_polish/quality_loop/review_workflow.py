@@ -8,7 +8,7 @@ from typing import Any, Callable, Iterable
 import urllib.parse
 
 from .p62_recovery_stage import has_terminal_source_visual_unavailable_evidence
-from .run_utils import load_json, now, slug, write_json
+from .run_utils import json_object, load_json, now, slug, write_json
 
 
 ComparisonByArticle = Callable[[dict[str, Any]], dict[str, dict[str, Any]]]
@@ -45,7 +45,7 @@ def severity_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
 
 
 def defect_quality_counted(defect: dict[str, Any]) -> bool:
-    extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+    extra = json_object(defect.get("extra"))
     return extra.get("quality_counted") is not False
 
 
@@ -57,7 +57,7 @@ def _as_float(value: Any) -> float:
 
 
 def _metric_value(record: dict[str, Any], metric: str) -> float:
-    metrics = record.get("metrics") if isinstance(record.get("metrics"), dict) else {}
+    metrics = json_object(record.get("metrics"))
     if metric in metrics:
         return _as_float(metrics.get(metric))
     return _as_float(record.get(metric))
@@ -66,11 +66,7 @@ def _metric_value(record: dict[str, Any], metric: str) -> float:
 def _comparison_delta(comparison_item: dict[str, Any], metric: str) -> float:
     if metric in TOP_LEVEL_DELTA_METRICS:
         return _as_float(comparison_item.get(f"{metric}_delta"))
-    metrics_delta = (
-        comparison_item.get("metrics_delta")
-        if isinstance(comparison_item.get("metrics_delta"), dict)
-        else {}
-    )
+    metrics_delta = json_object(comparison_item.get("metrics_delta"))
     if metric in metrics_delta:
         return _as_float(metrics_delta.get(metric))
     return _as_float(comparison_item.get(f"{metric}_delta"))
@@ -140,7 +136,7 @@ def _audit_source_visual_unavailable_labels_by_article(run_dir: Path) -> dict[st
         for defect in article.get("defects_found") or []:
             if not isinstance(defect, dict) or str(defect.get("id") or "") != "P62":
                 continue
-            extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+            extra = json_object(defect.get("extra"))
             if (
                 str(extra.get("p62_subtype") or "") != "source_visual_unavailable"
                 and str(extra.get("warning_origin") or "") != "source_visual_unavailable"
@@ -382,7 +378,7 @@ def write_manual_review_queue(
     assessment = load_json(run_dir / "assessment.json", default={"articles": []})
     manifest = load_json(run_dir / "manifest.json", default={})
 
-    entry_articles = entry.get("articles") if isinstance(entry.get("articles"), dict) else {}
+    entry_articles = json_object(entry.get("articles"))
     assessment_by_article = {
         str(article.get("article")): article
         for article in assessment.get("articles", [])

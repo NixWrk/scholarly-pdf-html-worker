@@ -23,6 +23,7 @@ from .run_utils import (
     converted_article_id,
     git_dirty,
     git_short_head,
+    json_object,
     now,
     profile_value,
     write_json,
@@ -214,7 +215,7 @@ def assessment_totals(articles: list[dict[str, Any]]) -> tuple[dict[str, int], d
     problematic: dict[str, list[str]] = {}
     for article in articles:
         article_id = str(article["article"])
-        href_counts = article.get("href_counts") if isinstance(article.get("href_counts"), dict) else {}
+        href_counts = json_object(article.get("href_counts"))
         for key, value in href_counts.items():
             totals[key] = totals.get(key, 0) + int(value)
             if value:

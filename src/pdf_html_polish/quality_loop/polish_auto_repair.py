@@ -17,6 +17,7 @@ from pdf_html_polish.single_file_html import (
 )
 
 from .converted_runs import visible_html_text
+from .run_utils import json_object
 
 
 REF_TARGET_BLOCK_RE = re.compile(
@@ -121,7 +122,7 @@ def assessment_articles_by_broken_internal_links(assessment: dict[str, Any]) -> 
         article_id = str(article.get("article") or "")
         if not article_id:
             continue
-        href_counts = article.get("href_counts") if isinstance(article.get("href_counts"), dict) else {}
+        href_counts = json_object(article.get("href_counts"))
         try:
             broken_count = int(href_counts.get("broken_internal_links") or 0)
         except (TypeError, ValueError):

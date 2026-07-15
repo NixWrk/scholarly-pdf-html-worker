@@ -49,6 +49,11 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def json_object(value: Any) -> dict[str, Any]:
+    """Return a JSON object or an empty object for null/malformed values."""
+    return value if isinstance(value, dict) else {}
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 

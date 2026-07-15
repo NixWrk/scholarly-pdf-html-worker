@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from .run_utils import json_object
+
 
 def find_stage_pairs(
     roots: Iterable[Path],
@@ -32,7 +34,7 @@ def find_stage_pairs(
 
 
 def defect_quality_counted(defect: dict[str, Any]) -> bool:
-    extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+    extra = json_object(defect.get("extra"))
     return extra.get("quality_counted") is not False
 
 

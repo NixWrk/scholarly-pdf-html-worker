@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .observations import add_count, append_jsonl, problem_state, read_jsonl
-from .run_utils import load_json, now, slug, write_json
+from .run_utils import json_object, load_json, now, slug, write_json
 
 
 DEFAULT_PATTERN_HISTORY_NAME = "pattern_observation_history.jsonl"
@@ -14,7 +14,7 @@ DEFAULT_PATTERN_HISTORY_NAME = "pattern_observation_history.jsonl"
 
 def pattern_key_for_defect(defect: dict[str, Any], defect_patterns: dict[str, Any]) -> str:
     defect_id = str(defect.get("id") or "unknown")
-    pattern = defect_patterns.get(defect_id) if isinstance(defect_patterns.get(defect_id), dict) else {}
+    pattern = json_object(defect_patterns.get(defect_id))
     known_pattern = str(pattern.get("pattern") or "").strip()
     if known_pattern:
         return known_pattern
