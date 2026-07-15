@@ -52,10 +52,15 @@ INLINE_SKIP_ATTR_PATTERN = re.compile(
 # as an operator escape hatch for pathological inputs.
 DEFAULT_INLINE_IMAGE_MAX_BYTES = 0
 DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES = 0
+DEFAULT_INLINE_IMAGE_DOWNSCALE_BYTES = 8 * 1024 * 1024
+DEFAULT_INLINE_IMAGE_HARD_MAX_BYTES = 64 * 1024 * 1024
 INLINE_IMAGE_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_MAX_BYTES"
 INLINE_IMAGE_TOTAL_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_TOTAL_MAX_BYTES"
+INLINE_IMAGE_DOWNSCALE_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_DOWNSCALE_BYTES"
+INLINE_IMAGE_HARD_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_HARD_MAX_BYTES"
 DOWNSCALE_MAX_EDGE = 2000
 DOWNSCALE_JPEG_QUALITY = 85
+DOWNSCALE_SOURCE_MAX_PIXELS = 50_000_000
 
 
 def is_inline_or_remote(value: str) -> bool:
@@ -232,10 +237,17 @@ def downscale_image_for_inline(
 
     try:
         with Image.open(file_path) as image:
-            image.load()
             width, height = image.size
             if width <= 0 or height <= 0:
                 return None
+            if width * height > DOWNSCALE_SOURCE_MAX_PIXELS:
+                if log_func:
+                    log_func(
+                        f"[DIAG] Image downscale source too large: path={file_path.name} "
+                        f"pixels={width * height} max={DOWNSCALE_SOURCE_MAX_PIXELS}"
+                    )
+                return None
+            image.load()
             longest_edge = max(width, height)
             if longest_edge > DOWNSCALE_MAX_EDGE:
                 scale = DOWNSCALE_MAX_EDGE / longest_edge
@@ -463,6 +475,8 @@ def inline_images_from_html_text(
     *,
     max_image_bytes: int | None = None,
     max_total_bytes: int | None = None,
+    downscale_bytes: int | None = None,
+    hard_max_image_bytes: int | None = None,
 ) -> tuple[InlineHtmlResult, dict[str, str]]:
     inlined_count = 0
     inlined_bytes = 0
@@ -476,12 +490,33 @@ def inline_images_from_html_text(
         env_name=INLINE_IMAGE_TOTAL_MAX_BYTES_ENV,
         default=DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES,
     )
+    downscale_bytes = _effective_inline_limit(
+        downscale_bytes,
+        env_name=INLINE_IMAGE_DOWNSCALE_BYTES_ENV,
+        default=DEFAULT_INLINE_IMAGE_DOWNSCALE_BYTES,
+    )
+    hard_max_image_bytes = _effective_inline_limit(
+        hard_max_image_bytes,
+        env_name=INLINE_IMAGE_HARD_MAX_BYTES_ENV,
+        default=DEFAULT_INLINE_IMAGE_HARD_MAX_BYTES,
+    )
+    base_root = base_dir.resolve(strict=False)
+
+    def safe_candidate(path: Path) -> Path | None:
+        candidate = path.resolve(strict=False)
+        try:
+            candidate.relative_to(base_root)
+        except ValueError:
+            return None
+        return candidate if candidate.is_file() else None
+
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
     sidecar_images = sorted(
         (
-            path
-            for path in base_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in image_exts
+            candidate
+            for path in base_root.iterdir()
+            if path.suffix.lower() in image_exts
+            if (candidate := safe_candidate(path)) is not None
         ),
         key=lambda path: path.name.lower(),
     )
@@ -498,10 +533,7 @@ def inline_images_from_html_text(
             return None
         clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
         decoded = urllib.parse.unquote(clean_path)
-        candidate = (base_dir / decoded).resolve(strict=False)
-        if candidate.is_file():
-            return candidate
-        return None
+        return safe_candidate(base_root / decoded)
 
     def add_src_hint(prefix: str, hint_path: str) -> str:
         if re.search(r'\bdata-z2m-src\s*=', prefix, re.IGNORECASE):
@@ -567,14 +599,13 @@ def inline_images_from_html_text(
         except OSError:
             return None
 
-    def inline_budget_skip(candidate: Path) -> tuple[str, int, int] | None:
-        size = candidate_size(candidate)
-        if size is None:
-            return "unreadable", 0, 0
+    def inline_budget_skip(size: int) -> tuple[str, int, int] | None:
         if max_image_bytes is not None and size > max_image_bytes:
             return "image_too_large", size, max_image_bytes
         if max_total_bytes is not None and inlined_bytes + size > max_total_bytes:
             return "document_inline_budget_exceeded", size, max_total_bytes
+        if hard_max_image_bytes is not None and size > hard_max_image_bytes:
+            return "image_hard_limit_exceeded", size, hard_max_image_bytes
         return None
 
     def remaining_inline_limit() -> int | None:
@@ -583,6 +614,8 @@ def inline_images_from_html_text(
             limits.append(max_image_bytes)
         if max_total_bytes is not None:
             limits.append(max_total_bytes - inlined_bytes)
+        if hard_max_image_bytes is not None:
+            limits.append(hard_max_image_bytes)
         if not limits:
             return None
         return min(limits)
@@ -627,9 +660,15 @@ def inline_images_from_html_text(
                 return match.group(0)
             prefix = add_src_hint(prefix, src_value)
 
-        budget_skip = inline_budget_skip(candidate)
-        if budget_skip is not None:
-            reason, size, limit = budget_skip
+        candidate_bytes = candidate_size(candidate)
+        if candidate_bytes is None:
+            prefix = skip_inline(prefix, "unreadable")
+            return f"{prefix}{quote}{src_value}{suffix}"
+        budget_skip = inline_budget_skip(candidate_bytes)
+        should_downscale = budget_skip is not None or (
+            downscale_bytes is not None and candidate_bytes > downscale_bytes
+        )
+        if should_downscale:
             downscaled = downscale_image_for_inline(
                 candidate,
                 max_bytes=remaining_inline_limit(),
@@ -642,28 +681,33 @@ def inline_images_from_html_text(
                 inlined_count += 1
                 inlined_bytes += byte_count
                 return f"{prefix}{quote}{data_url}{suffix}"
-            prefix = skip_inline(prefix, reason, size=size, limit=limit)
-            return f"{prefix}{quote}{src_value}{suffix}"
+            if budget_skip is not None:
+                reason, size, limit = budget_skip
+                prefix = skip_inline(prefix, reason, size=size, limit=limit)
+                return f"{prefix}{quote}{src_value}{suffix}"
 
-        data_url = to_data_url(candidate, detect_by_signature=True, max_bytes=max_image_bytes, log_func=None)
-        if data_url is None:
+        original_data_url = to_data_url(
+            candidate,
+            detect_by_signature=True,
+            max_bytes=remaining_inline_limit(),
+            log_func=None,
+        )
+        if original_data_url is None:
             return match.group(0)
-        if not validate_data_url(data_url, candidate):
+        if not validate_data_url(original_data_url, candidate):
             return match.group(0)
 
-        prefix = remember_data_url(prefix, data_url, match_idx)
+        prefix = remember_data_url(prefix, original_data_url, match_idx)
         inlined_count += 1
-        size = candidate_size(candidate)
-        if size is not None:
-            inlined_bytes += size
-        return f"{prefix}{quote}{data_url}{suffix}"
+        inlined_bytes += candidate_bytes
+        return f"{prefix}{quote}{original_data_url}{suffix}"
 
     inlined_html = IMG_SRC_PATTERN.sub(replace, text)
     return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count), image_cache
 
 
 def _effective_inline_limit(value: int | None, *, env_name: str, default: int) -> int | None:
-    raw: object = value
+    raw: int | str | None = value
     if raw is None:
         raw = os.environ.get(env_name)
     if raw is None:

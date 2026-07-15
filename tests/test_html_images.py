@@ -154,6 +154,98 @@ def test_inline_images_from_html_text_downscales_oversized_sidecar_before_skip(t
     assert len(decoded[1]) < original_size
 
 
+def test_inline_images_from_html_text_downscales_above_default_style_threshold(tmp_path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image_path = tmp_path / "atlas.bmp"
+    Image.new("RGB", (300, 300), (90, 120, 150)).save(image_path, format="BMP")
+    html = '<html><body><img alt="Atlas" src="atlas.bmp"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        downscale_bytes=8_000,
+        hard_max_image_bytes=1_000_000,
+    )
+
+    assert result.inlined_images == 1
+    assert 'src="data:image/jpeg;base64,' in result.html
+    decoded = decode_data_image_payload(next(iter(image_cache.values())))
+    assert decoded is not None
+    assert len(decoded[1]) < image_path.stat().st_size
+
+
+def test_inline_images_from_html_text_hard_skips_when_recompression_fails(tmp_path) -> None:
+    image_path = tmp_path / "broken.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff" + (b"x" * 100) + b"\xff\xd9")
+    html = '<html><body><img alt="Broken" src="broken.jpg"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        downscale_bytes=32,
+        hard_max_image_bytes=64,
+    )
+
+    assert result.inlined_images == 0
+    assert image_cache == {}
+    assert 'src="broken.jpg"' in result.html
+    assert 'data-z2m-inline-skip="image_hard_limit_exceeded"' in result.html
+
+
+def test_inline_images_from_html_text_keeps_soft_limit_fallback(tmp_path) -> None:
+    image_path = tmp_path / "unusual.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff" + (b"x" * 40) + b"\xff\xd9")
+    html = '<html><body><img alt="Unusual" src="unusual.jpg"></body></html>'
+
+    result, _ = inline_images_from_html_text(
+        html,
+        tmp_path,
+        downscale_bytes=16,
+        hard_max_image_bytes=128,
+    )
+
+    assert result.inlined_images == 1
+    assert 'src="data:image/jpeg;base64,' in result.html
+    assert "data-z2m-inline-skip" not in result.html
+
+
+def test_inline_images_from_html_text_rejects_parent_path_escape(tmp_path) -> None:
+    article_dir = tmp_path / "article"
+    article_dir.mkdir()
+    outside_image = tmp_path / "outside.png"
+    outside_image.write_bytes(_valid_png_blob())
+    html = '<html><body><img alt="Outside" src="../outside.png"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(html, article_dir)
+
+    assert result.inlined_images == 0
+    assert image_cache == {}
+    assert 'src="../outside.png"' in result.html
+
+
+def test_inline_images_from_html_text_rejects_symlink_escape(tmp_path) -> None:
+    article_dir = tmp_path / "article"
+    article_dir.mkdir()
+    outside_image = tmp_path / "outside.png"
+    outside_image.write_bytes(_valid_png_blob())
+    link = article_dir / "linked.png"
+    try:
+        link.symlink_to(outside_image)
+    except OSError:
+        pytest.skip("symlinks are unavailable")
+
+    result, image_cache = inline_images_from_html_text(
+        '<html><body><img alt="Outside" src="linked.png"></body></html>',
+        article_dir,
+    )
+
+    assert result.inlined_images == 0
+    assert image_cache == {}
+    assert 'src="linked.png"' in result.html
+
+
 def test_inline_images_from_html_text_skips_after_document_budget(tmp_path) -> None:
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"

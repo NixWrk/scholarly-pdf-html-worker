@@ -49,6 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip \
     && pip install \
         marker-pdf==1.10.2 \
+        "Pillow>=10" \
         "requests>=2.31" \
         "psutil>=5.9" \
         "pytest>=8" \
