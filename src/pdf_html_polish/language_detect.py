@@ -551,7 +551,7 @@ def extract_text_from_pdf(pdf_path: Path, *, max_pages: int = 15) -> PdfTextExtr
         errors.append(f"pypdf failed: {exc}")
 
     try:
-        from PyPDF2 import PdfReader as PyPDF2Reader  # type: ignore[import-not-found]
+        from PyPDF2 import PdfReader as PyPDF2Reader
 
         reader = PyPDF2Reader(str(pdf_path))
         pages = _sample_pdf_page_indexes(len(reader.pages), max_pages=max_pages)
