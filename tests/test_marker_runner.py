@@ -56,6 +56,37 @@ def test_marker_runner_uses_300dpi_for_batch_and_single() -> None:
     for command in runner.commands:
         assert command[command.index("--lowres_image_dpi") + 1] == "300"
         assert command[command.index("--highres_image_dpi") + 1] == "300"
+        for flag in (
+            "--layout_batch_size",
+            "--detection_batch_size",
+            "--ocr_error_batch_size",
+            "--recognition_batch_size",
+            "--equation_batch_size",
+        ):
+            assert command[command.index(flag) + 1] == "1"
+
+
+def test_marker_runner_uses_configured_conservative_batch_sizes() -> None:
+    runner = _CapturingMarkerRunner()
+    env = {
+        "MARKER_LAYOUT_BATCH_SIZE": "2",
+        "MARKER_DETECTION_BATCH_SIZE": "3",
+        "MARKER_EQUATION_BATCH_SIZE": "0",
+    }
+
+    runner.run_single(
+        pdf_path=Path("in") / "paper.pdf",
+        output_dir=Path("out"),
+        output_format="html",
+        env=env,
+        log=lambda _line: None,
+    )
+
+    command = runner.commands[0]
+    assert command[command.index("--layout_batch_size") + 1] == "2"
+    assert command[command.index("--detection_batch_size") + 1] == "3"
+    assert command[command.index("--recognition_batch_size") + 1] == "1"
+    assert "--equation_batch_size" not in command
 
 
 def test_marker_batch_disables_multiprocessing_for_single_pdf(tmp_path: Path) -> None:

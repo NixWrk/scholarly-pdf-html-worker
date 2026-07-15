@@ -8540,7 +8540,14 @@ def _link_unlinked_numeric_superscripts_to_existing_refs(html: str) -> str:
                 return raw
             linked_body = _link_existing_multi_number_sup_body(match.group(1))
             if linked_body is None:
-                return raw
+                visible = _visible_text(match.group(1)).strip()
+                if re.fullmatch(r"\d{1,3}", visible) is None:
+                    return raw
+                number = int(visible)
+                left_context = _visible_text(match.string[max(0, match.start() - 360) : match.start()])
+                if number not in ref_set or re.search(r"\bet\s+al\.?\b", left_context, re.IGNORECASE) is None:
+                    return raw
+                linked_body = f'<a href="#ref-{number}" class="z2m-ref-link">{visible}</a>'
             return f"<sup>{linked_body}</sup>"
 
         def replace_node(match: re.Match[str]) -> str:
@@ -12373,6 +12380,38 @@ def _link_table_refs(html: str, found_tables: set[str]) -> str:
 
     html = _TABLE_REF_PAIR_PAGE_LINK_PATTERN.sub(_rewrite_pair_page_link, html)
 
+    partial_labeled_link = re.compile(
+        r"(?P<label>\b(?:TABLES?|Tables?)\.?)[ \t]*"
+        r"<a(?P<attrs>[^>]*\bhref\s*=\s*['\"]#table-(?P<target>[^'\"]+)['\"][^>]*)>"
+        r"(?P<body>[\s\S]{0,80}?)</a>",
+        re.IGNORECASE,
+    )
+
+    def _expand_partial_labeled_link(match: re.Match[str]) -> str:
+        body_text = _visible_text(match.group("body"))
+        number_match = re.fullmatch(
+            rf"\s*(?P<number>{_TABLE_KEY_TOKEN})(?P<suffix>[\.,;:]*)\s*",
+            body_text,
+            re.IGNORECASE,
+        )
+        if number_match is None:
+            return match.group(0)
+        target = _normalize_table_key(match.group("target"))
+        number = _normalize_table_key(number_match.group("number"))
+        if target != number or target not in found_tables:
+            return match.group(0)
+        attrs = _replace_anchor_href_and_class(
+            match.group("attrs"),
+            f"#table-{target}",
+            "z2m-table-link",
+        )
+        return (
+            f"<a{attrs}>{match.group('label')}\xa0{number_match.group('number')}"
+            f"{number_match.group('suffix')}</a>"
+        )
+
+    html = partial_labeled_link.sub(_expand_partial_labeled_link, html)
+
     parts = _TAG_SPLIT_PATTERN.split(html)
     out: list[str] = []
     skip_stack: list[str] = []
@@ -13257,6 +13296,13 @@ def _repair_table_significance_markers(html: str) -> str:
 
 def _repair_known_replacement_char_symbols(html: str) -> str:
     """Restore high-confidence symbols that OCR emitted as U+FFFD."""
+    html = html.replace("\U0001d465\U0001d465\u0305", "\U0001d465\u0305")
+    html = re.sub(
+        r"(?<![A-Za-z\U0001d400-\U0001d7ff])\u0305(?=\s*(?:was\s+calculated|<i>\s*of\s+the\s+Rp))",
+        "x\u0305",
+        html,
+        flags=re.IGNORECASE,
+    )
     if "\ufffd" not in html:
         return html
 
@@ -13313,7 +13359,12 @@ def _repair_known_replacement_char_symbols(html: str) -> str:
     html = re.sub(r"<sup>\s*\ufffd\s*</sup>(?=\s*Model\s+1\b)", "<sup>*</sup>", html, flags=re.IGNORECASE)
     html = html.replace("Obesity\ufffd", "Obesity*")
     html = html.replace("Model 1\ufffd", "Model 1*")
-    html = re.sub(r"\ufffd(?=\s*<b>\s*(?:140|90)\s+mmHg\b)", "&ge;", html, flags=re.IGNORECASE)
+    html = re.sub(
+        r"\ufffd(?=\s*<b>\s*(?:(?:140|90)\s+mmHg\b|50\s+years(?:\s+old)?\b))",
+        "&ge;",
+        html,
+        flags=re.IGNORECASE,
+    )
     html = re.sub(r"\ufffd(?=\s*(?:27\.5\s*kg/m|50\s+years|50\s+years\s+old|140\s+mmHg|90\s+mmHg))", "&ge;", html)
     html = re.sub(r"\bf\ufffdow\b", "flow", html, flags=re.IGNORECASE)
     html = re.sub(r"\bTabl\s+2\s+1\s+e\s*\.\s*\.\s*con\s+t['\"]\s*\ufffdnue\s+d\)", "Table 2.1 (continued)", html, flags=re.IGNORECASE)
@@ -20532,9 +20583,15 @@ def _split_table_units_before_section_headings(html: str) -> str:
                 continue
             if _table_caption_key_from_visible(visible) is not None:
                 continue
-            if _NUMERIC_SECTION_HEADING_VISIBLE_PATTERN.match(visible) is None:
-                continue
             before = body[: heading.start()]
+            numbered_heading = _NUMERIC_SECTION_HEADING_VISIBLE_PATTERN.match(visible) is not None
+            plos_table_boundary = re.search(
+                r"10\.1371/journal\.pone\.[^\s<]+\.t\d+\b",
+                _visible_text(before[-2400:]),
+                re.IGNORECASE,
+            ) is not None
+            if not numbered_heading and not plos_table_boundary:
+                continue
             if not before.strip():
                 return match.group(0)
             after = body[heading.start():]

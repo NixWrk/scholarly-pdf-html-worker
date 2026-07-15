@@ -5,6 +5,12 @@ import shutil
 import sys
 from uuid import uuid4
 
+from pdf_html_polish.quality_loop.audit_blocks import Block
+from pdf_html_polish.quality_loop.audit_frontmatter import (
+    frontmatter_defects,
+    looks_like_frontmatter_metadata_notice,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_SCRIPT = ROOT / "scripts" / "audit_en_polish.py"
@@ -24,6 +30,76 @@ def _load_audit_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _frontmatter_block(
+    text: str,
+    *,
+    raw: str | None = None,
+    index: int = 0,
+    attrs: dict[str, str] | None = None,
+) -> Block:
+    return Block(
+        index=index,
+        tag="p",
+        attrs=attrs or {},
+        raw=raw or f"<p>{text}</p>",
+        text=text,
+        line=index + 1,
+    )
+
+
+def test_frontmatter_metadata_notice_accepts_available_online_sequence() -> None:
+    assert looks_like_frontmatter_metadata_notice(
+        "Received: 2022.09.14 Accepted: 2022.10.06 "
+        "Available online: 2022.11.28 Published: 2022.11.24"
+    )
+
+
+def test_frontmatter_author_year_links_do_not_look_like_affiliation_markers() -> None:
+    block = _frontmatter_block(
+        "Arthur Nyboer, 1940 and John Kubicek, 1966 described the method.",
+        raw=(
+            "<p>Arthur <a href=\"#ref-1\" class=\"z2m-ref-link\">Nyboer, 1940</a> "
+            "and John <a href=\"#ref-2\" class=\"z2m-ref-link\">Kubicek, 1966</a> "
+            "described the method.</p>"
+        ),
+    )
+
+    assert "P03" not in {defect.id for defect in frontmatter_defects([], [block])}
+
+
+def test_frontmatter_numeric_author_markers_still_report_p03() -> None:
+    block = _frontmatter_block(
+        "Alice Example 1,2 and Bob Sample 3,4",
+        raw=(
+            "<p>Alice Example <a href=\"#ref-1\" class=\"z2m-ref-link\">1,2</a> "
+            "and Bob Sample <a href=\"#ref-3\" class=\"z2m-ref-link\">3,4</a></p>"
+        ),
+    )
+
+    assert "P03" in {defect.id for defect in frontmatter_defects([], [block])}
+
+
+def test_frontmatter_late_list_group_is_not_body_misclassification() -> None:
+    prefix = [_frontmatter_block(f"ordinary block {index}", index=index) for index in range(40)]
+    text = (
+        "Publication studies and clinical model evaluation results presented at conferences "
+        "and included in the dissertation publication list."
+    )
+    late_list = _frontmatter_block(
+        text,
+        raw=(
+            '<p block-type="ListGroup" class="z2m-front-matter"><ul>'
+            f"<li>{text}</li></ul></p>"
+        ),
+        index=40,
+        attrs={"class": "z2m-front-matter", "block-type": "ListGroup"},
+    )
+
+    assert "P25" not in {
+        defect.id for defect in frontmatter_defects([], [*prefix, late_list])
+    }
 
 
 def test_fast_line_lookup_matches_count_based_lookup() -> None:

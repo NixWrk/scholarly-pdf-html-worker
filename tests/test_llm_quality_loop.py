@@ -335,6 +335,32 @@ def test_quality_gate_requires_pdf_text_and_problem_evidence_when_configured() -
     assert ready_report["pdf_problem_evidence_stage"]["ready_count"] == 1
 
 
+def test_quality_gate_accepts_scanned_pdf_when_diagnostics_ran() -> None:
+    report = evaluate_quality_gate(
+        {
+            "status": "ok",
+            "totals_delta": {"score": 0, "defects": 0},
+            "regressions": [],
+            "improvements": [],
+        },
+        {
+            "max_regressions": 0,
+            "max_total_deltas": {"score": 0, "defects": 0},
+            "require_pdf_text_layer_diagnostics": True,
+        },
+        audit_report={
+            "corpus_summary": {"totals": {"source_pdf_present": 1, "pdf_text_chars": 0}}
+        },
+        audit_command_report={
+            "pdf_diagnostics_enabled": True,
+            "pdf_map_path": "source_pdf_map.json",
+        },
+    )
+
+    assert report["status"] == "pass"
+    assert report["pdf_text_layer_diagnostics"]["source_pdf_text_layer_empty"] is True
+
+
 def test_write_article_review_stage_builds_mandatory_bundle(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     stage_dir = run_dir / "article_a" / "_z2m_stages"

@@ -8,10 +8,23 @@ from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 
 
 REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
+REF_LINK_BODY_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+['\"][^>]*>(?P<body>[\s\S]{0,180}?)</a>",
+    re.IGNORECASE,
+)
 REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
 FRONTMATTER_OCR_RE = re.compile(
     r"(?:\u00a9\s*\d|(?:\b[A-Z][A-Za-z.-]+\s+){1,3}\d+\s+\d+\b|\b\d+\.\d+\.\d+\b)"
 )
+
+
+def _numeric_marker_ref_link_count(raw: str) -> int:
+    count = 0
+    for match in REF_LINK_BODY_RE.finditer(raw):
+        visible = normalize_ws(re.sub(r"<[^>]+>", " ", match.group("body"))).replace("&nbsp;", " ")
+        if re.fullmatch(r"[\d\s,;\-\u2013\u2014]+", visible):
+            count += 1
+    return count
 
 
 def block_looks_like_frontmatter_affiliation_table(block: Block) -> bool:
@@ -120,14 +133,14 @@ def looks_like_frontmatter_metadata_notice(text: str) -> bool:
     ):
         return True
     if re.fullmatch(
-        r"(?:(?:received|accepted|published)\s*:?\s*\d{1,4}(?:[./]\d{1,2}){2}\s*){2,4}",
+        r"(?:(?:received|accepted|available\s+online|published)\s*:?\s*\d{1,4}(?:[./]\d{1,2}){2}\s*){2,5}",
         normalized,
         re.IGNORECASE,
     ):
         return True
     if re.fullmatch(
-        r"(?:received|accepted|published)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{4}\s+"
-        r"(?:received|accepted|published)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{4}",
+        r"(?:received|accepted|available\s+online|published)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{4}\s+"
+        r"(?:received|accepted|available\s+online|published)\s*:?\s*\d{1,2}\.\d{1,2}\.\d{4}",
         normalized,
         re.IGNORECASE,
     ):
@@ -317,6 +330,7 @@ def frontmatter_defects(
 
     for block in polish_blocks[:18]:
         ref_count = len(REF_LINK_RE.findall(block.raw))
+        marker_ref_count = _numeric_marker_ref_link_count(block.raw)
         name_like_count = len(re.findall(r"\b[A-Z][A-Za-z.-]+\s+[A-Z][A-Za-z.-]+\b", block.text))
         body_like = re.search(
             r"\b(?:abstract|introduction|generative artificial intelligence|clinical|methodology|"
@@ -330,7 +344,7 @@ def frontmatter_defects(
         bracket_citation_like = re.search(r"\[\s*\d{1,3}", block.text) is not None
         sentence_count = len(re.findall(r"\w\.", block.text))
         if (
-            ref_count >= 2
+            marker_ref_count >= 2
             and name_like_count >= 2
             and not body_like
             and not bracket_citation_like
@@ -348,7 +362,11 @@ def frontmatter_defects(
                     hypothesis="Author affiliation markers were treated as bibliography citations.",
                     proposed_fix_layer="EN polish front-matter detection before reference linkification",
                     regression_test="Author names with superscript affiliation lists must stay unlinked.",
-                    extra={"ref_link_count": ref_count, "name_like_count": name_like_count},
+                    extra={
+                        "ref_link_count": ref_count,
+                        "marker_ref_link_count": marker_ref_count,
+                        "name_like_count": name_like_count,
+                    },
                 )
             )
             break
@@ -357,6 +375,11 @@ def frontmatter_defects(
         if "z2m-front-matter" not in block.classes:
             continue
         if REFERENCES_HEADING_RE.match(block.text):
+            continue
+        if (
+            str(block.attrs.get("block-type") or "").lower() == "listgroup"
+            or re.search(r"<(?:ul|ol|li)\b", block.raw, re.IGNORECASE)
+        ):
             continue
         if len(block.text) < 80:
             continue

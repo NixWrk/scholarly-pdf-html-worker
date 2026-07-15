@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -23,6 +23,27 @@ _PROGRESS_FILE_NAMES = {
 _MAX_LOG_LINE_CHARS = 64 * 1024
 _PROCESS_SCAN_INTERVAL_SECONDS = 1.0
 _HEARTBEAT_INTERVAL_SECONDS = 10.0
+_MARKER_BATCH_SIZE_OPTIONS = (
+    ("--layout_batch_size", "MARKER_LAYOUT_BATCH_SIZE"),
+    ("--detection_batch_size", "MARKER_DETECTION_BATCH_SIZE"),
+    ("--ocr_error_batch_size", "MARKER_OCR_ERROR_BATCH_SIZE"),
+    ("--recognition_batch_size", "MARKER_RECOGNITION_BATCH_SIZE"),
+    ("--equation_batch_size", "MARKER_EQUATION_BATCH_SIZE"),
+)
+
+
+def _marker_batch_size_args(env: dict[str, str] | None = None) -> list[str]:
+    source = env if env is not None else os.environ
+    args: list[str] = []
+    for flag, variable in _MARKER_BATCH_SIZE_OPTIONS:
+        raw_value = source.get(variable, "1")
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            value = 1
+        if value > 0:
+            args.extend([flag, str(value)])
+    return args
 
 
 @dataclass(frozen=True)
@@ -53,6 +74,7 @@ def build_marker_single_command(
     marker_single_cmd: str = "marker_single",
     page_range: str | None = None,
     disable_multiprocessing: bool = False,
+    env: dict[str, str] | None = None,
 ) -> list[str]:
     cmd = [
         marker_single_cmd,
@@ -70,6 +92,7 @@ def build_marker_single_command(
         "--PdfProvider_pdftext_workers",
         "1",
     ]
+    cmd.extend(_marker_batch_size_args(env))
     if disable_multiprocessing:
         cmd.append("--disable_multiprocessing")
     if page_range:
@@ -474,6 +497,7 @@ class MarkerRunner:
             "--highres_image_dpi",
             "300",
         ]
+        cmd.extend(_marker_batch_size_args(env))
         if skip_existing:
             cmd.append("--skip_existing")
         if disable_multiprocessing:
@@ -503,6 +527,7 @@ class MarkerRunner:
             marker_single_cmd=self._marker_single_cmd,
             page_range=page_range,
             disable_multiprocessing=disable_multiprocessing,
+            env=env,
         )
         progress = ProgressContext(
             input_files=1,

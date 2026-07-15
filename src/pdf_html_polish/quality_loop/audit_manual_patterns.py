@@ -191,15 +191,23 @@ def looks_like_affiliation_label_roman_boundary(block: Block, split_match: re.Ma
     if split_match.group("suffix").lower() != "i":
         return False
     text = block.text
-    if AFFILIATION_LABEL_CONTEXT_RE.search(text) is None:
-        classes = set(block.attrs.get("class", "").split())
-        if "z2m-front-matter" not in classes:
-            return False
     right_text = text[split_match.end() : split_match.end() + 90]
     if AFFILIATION_LABEL_RIGHT_RE.match(right_text) is None:
         return False
-    if split_match.group("prefix").lower() in AFFILIATION_LABEL_LOCATION_PREFIXES:
+    classes = set(block.attrs.get("class", "").split())
+    has_affiliation_context = (
+        AFFILIATION_LABEL_CONTEXT_RE.search(text) is not None
+        or "z2m-front-matter" in classes
+    )
+    left_text = text[: split_match.start()]
+    location_boundary = (
+        split_match.group("prefix").lower() in AFFILIATION_LABEL_LOCATION_PREFIXES
+        and (has_affiliation_context or re.search(r"[,;]\s*$", left_text) is not None)
+    )
+    if location_boundary:
         return True
+    if not has_affiliation_context:
+        return False
     nearby_text = text[max(0, split_match.start() - 1200) : split_match.end() + 200]
     affiliation_label_count = len(re.findall(r"\b[a-z]\s+(?=[A-Z][A-Za-z])", nearby_text))
     return affiliation_label_count >= 4

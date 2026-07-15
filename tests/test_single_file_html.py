@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import re
 import shutil
 from pathlib import Path
@@ -123,6 +123,7 @@ from pdf_html_polish.single_file_html import (
     _repair_front_matter_page_anchor_markers,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
+    _repair_known_replacement_char_symbols,
     _repair_miswrapped_doi_anchor_labels,
     _repair_page_footnote_ref_links,
     _repair_prose_prefixed_url_anchor_tail,
@@ -170,6 +171,69 @@ from pdf_html_polish.single_file_html import (
     inline_images_from_html_file,
     polish_html_document,
 )
+
+
+def test_delayed_et_al_superscript_links_to_existing_reference() -> None:
+    html = (
+        "<html><body><p>Kubicek <i>et al</i> were the first to describe "
+        "a device for practical use.<sup>2</sup>According to later work.</p>"
+        '<h4>References</h4><ol><li id="ref-2">Kubicek reference.</li></ol>'
+        "</body></html>"
+    )
+
+    repaired = _link_unlinked_numeric_superscripts_to_existing_refs(html)
+
+    assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>' in repaired
+
+
+def test_partial_table_link_expands_to_the_whole_label() -> None:
+    html = (
+        "<html><body><p>Results are summarized in "
+        '<a href="#table-1" class="z2m-table-link">Table</a> '
+        '<a href="#table-1" class="z2m-table-link">1</a>.</p>'
+        '<p>Another form is Table <a href="#table-1" class="z2m-table-link">1</a>.</p>'
+        '<div id="table-1"><p>Table 1. Results.</p></div></body></html>'
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<a href="#table-1" class="z2m-table-link">Table\xa01</a>' in polished
+    assert 'Table <a href="#table-1" class="z2m-table-link">1</a>' not in polished
+
+
+def test_known_symbol_repairs_restore_xbar_and_bold_age_threshold() -> None:
+    html = (
+        "<p>For general activity, \u0305was calculated.</p>"
+        "<p>Table 3.5 </i> \u0305 <i> of the Rp values.</p>"
+        "<p>Arithmetic mean \U0001d465\U0001d465\u0305 was used.</p>"
+        "<p>Patients \ufffd <b>50 years old</b> were included.</p>"
+    )
+
+    repaired = _repair_known_replacement_char_symbols(html)
+
+    assert "x\u0305was calculated" in repaired
+    assert "x\u0305 <i> of the Rp" in repaired
+    assert "\U0001d465\U0001d465\u0305" not in repaired
+    assert "\U0001d465\u0305 was used" in repaired
+    assert "&ge; <b>50 years old</b>" in repaired
+
+
+def test_plos_table_doi_closes_unit_before_unnumbered_section_heading() -> None:
+    html = (
+        '<div id="table-1" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">Table 1. Hemodynamics.</p>'
+        "<table><tr><td>value</td></tr></table>"
+        "<p>https://doi.org/10.1371/journal.pone.0269777.t001</p>"
+        "<h2><b>Relationship of hemodynamic variables and age</b></h2>"
+        "<p>Body paragraph after the table.</p></div>"
+    )
+
+    repaired = _split_table_units_before_section_headings(html)
+
+    assert (
+        "https://doi.org/10.1371/journal.pone.0269777.t001</p></div>"
+        "<h2><b>Relationship of hemodynamic variables and age</b></h2>"
+    ) in repaired
 
 
 def _make_temp_dir() -> Path:

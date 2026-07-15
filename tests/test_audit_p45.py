@@ -1,7 +1,10 @@
 import re
 
 from pdf_html_polish.quality_loop.audit_blocks import Block
-from pdf_html_polish.quality_loop.audit_p45 import roman_word_split_defects
+from pdf_html_polish.quality_loop.audit_manual_patterns import (
+    looks_like_affiliation_label_roman_boundary,
+)
+from pdf_html_polish.quality_loop.audit_p45 import ROMAN_WORD_SPLIT_RE, roman_word_split_defects
 
 
 REFERENCES_HEADING_RE = re.compile(r"^\s*references\s*$", re.IGNORECASE)
@@ -24,6 +27,16 @@ def _defects(
         looks_like_affiliation_label_roman_boundary=lambda _block, _match: is_affiliation_label,
         stage="02.en.polish.html",
     )
+
+
+def test_country_affiliation_boundary_does_not_require_article_info_context() -> None:
+    block = _block(
+        "University Hospital, Magdeburg, Germany i Institute for Clinical Research"
+    )
+    split_match = ROMAN_WORD_SPLIT_RE.search(block.text)
+
+    assert split_match is not None
+    assert looks_like_affiliation_label_roman_boundary(block, split_match) is True
 
 
 def test_roman_word_split_defects_reports_plain_split_word() -> None:

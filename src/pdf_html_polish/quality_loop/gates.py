@@ -129,6 +129,10 @@ def evaluate_quality_gate(
                 if isinstance(audit_command_report, dict)
                 else None
             ),
+            "source_pdf_text_layer_empty": (
+                int(audit_totals.get("source_pdf_present") or 0) > 0
+                and int(audit_totals.get("pdf_text_chars") or 0) <= 0
+            ),
         }
         if not isinstance(audit_report, dict):
             failures.append(
@@ -142,14 +146,6 @@ def evaluate_quality_gate(
                 {
                     "kind": "pdf_text_layer_diagnostics_disabled",
                     "message": "Audit did not run with --pdf-diagnostics.",
-                }
-            )
-        elif audit_pdf_summary["source_pdf_present"] > 0 and audit_pdf_summary["pdf_text_chars"] <= 0:
-            failures.append(
-                {
-                    "kind": "pdf_text_layer_empty",
-                    "source_pdf_present": audit_pdf_summary["source_pdf_present"],
-                    "pdf_text_chars": audit_pdf_summary["pdf_text_chars"],
                 }
             )
 
