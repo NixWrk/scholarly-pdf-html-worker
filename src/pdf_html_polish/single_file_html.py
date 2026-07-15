@@ -4121,7 +4121,7 @@ def _repair_large_html_safe_word_glue_text(text: str) -> str:
         for pattern, replacement in _LARGE_HTML_SAFE_LITERAL_WORD_GLUE_REPAIRS:
             text = pattern.sub(replacement, text)
         for pattern, replacement in _LARGE_HTML_SAFE_WORD_GLUE_REPAIRS:
-            text = pattern.sub(lambda m, repl=replacement: _case_like(m.group(0), repl), text)
+            text = pattern.sub(lambda match: _case_like(match.group(0), replacement), text)
     return text
 
 
@@ -4171,7 +4171,7 @@ def _repair_english_ocr_text_artifacts_text(text: str) -> str:
     if len(text) > 5000:
         return text
     for pattern, replacement in _EN_OCR_WORD_REPAIRS:
-        text = pattern.sub(lambda m, repl=replacement: _case_like(m.group(0), repl), text)
+        text = pattern.sub(lambda match: _case_like(match.group(0), replacement), text)
     for pattern, replacement in _EN_OCR_PHRASE_REPAIRS:
         text = pattern.sub(replacement, text)
     return text
@@ -6231,6 +6231,7 @@ def _normalize_reference_list_items(html: str) -> str:
         )
 
         if is_continuation:
+            assert last_real_index is not None
             prev_body = replacement_bodies.get(last_real_index, matches[last_real_index].group(2) or "")
             prev_number = _reference_visible_number(prev_body)
             stripped_body = _strip_leading_reference_line_number_only(
@@ -7567,7 +7568,7 @@ def _link_pdf_annotation_reference_texts_in_safe_blocks(
             for label_key, target, pattern in patterns:
                 if remaining(label_key, target) <= 0:
                     continue
-                linked = pattern.sub(lambda m, lk=label_key, tgt=target: replace_plain(lk, tgt, m), linked)
+                linked = pattern.sub(lambda match: replace_plain(label_key, target, match), linked)
             out.append(linked)
         return "".join(out)
 
@@ -8069,6 +8070,18 @@ _ZOTERO_OVERLAY_NUMERIC_CITATION_TEXT_RE = re.compile(
 _ZOTERO_OVERLAY_NUMERIC_TOKEN_RE = re.compile(r"\d{1,3}|[,;]|\u2013|\u2014|-")
 
 
+def _strict_overlay_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if not isinstance(value, str) or re.fullmatch(r"[+-]?\d+", value.strip()) is None:
+        return None
+    return int(value)
+
+
 def _zotero_overlay_citation_refs(item: Any, ref_index: int) -> list[int]:
     raw_refs = _profile_item_value(item, "refs", None)
     if raw_refs is None:
@@ -8078,9 +8091,8 @@ def _zotero_overlay_citation_refs(item: Any, ref_index: int) -> list[int]:
         return refs
     for raw in raw_refs:
         value = raw.get("index") if isinstance(raw, dict) else raw
-        try:
-            ref = int(value)
-        except (TypeError, ValueError):
+        ref = _strict_overlay_int(value)
+        if ref is None:
             continue
         if 1 <= ref <= ref_index and ref not in refs:
             refs.append(ref)
@@ -8824,6 +8836,7 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
         html,
         allow_notes_heading=_citation_profile_has_zotero_reference_evidence(citation_profile),
     )
+    split_at: int | None
     if heading_match is not None:
         split_at = heading_match.end()
     else:
@@ -9213,9 +9226,9 @@ def _fix_equation_display(html: str) -> str:
 
         first_display = display_matches[0]
         leading_text = body_rstripped[: first_display.start()].strip()
-        cleaned_first_math, tag_num = _strip_tag_from_math(first_display.group(0))
+        cleaned_first_math, first_tag_num = _strip_tag_from_math(first_display.group(0))
         tail_after_first = body_rstripped[first_display.end() :].lstrip()
-        split_num = tag_num
+        split_num = first_tag_num
         split_tail = tail_after_first
         if split_num is None:
             tail_num_match = re.match(r"(?P<num>\(\d{1,3}\))(?P<tail>\s+\S[\s\S]*)$", tail_after_first)
@@ -10122,9 +10135,13 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
         ]
         candidates: list[str] = []
         for page_id in page_ids:
-            for fig_num in page_linked_refs.get(page_id, []):
-                if fig_num not in found_figures and fig_num not in recovered and fig_num not in candidates:
-                    candidates.append(fig_num)
+            for candidate_fig_num in page_linked_refs.get(page_id, []):
+                if (
+                    candidate_fig_num not in found_figures
+                    and candidate_fig_num not in recovered
+                    and candidate_fig_num not in candidates
+                ):
+                    candidates.append(candidate_fig_num)
         if len(candidates) == 1:
             _assign_image(index, candidates[0], caption_index)
 
@@ -10139,16 +10156,20 @@ def _recover_orphan_figure_anchors(html: str, found_figures: set[str]) -> tuple[
         next_known = _next_known_figure_num_after(index)
         if next_known is None:
             nearby_refs = _nearby_missing_refs_after(index, window=10)
-            fig_num = nearby_refs[0] if nearby_refs else None
+            selected_fig_num = nearby_refs[0] if nearby_refs else None
         else:
             try:
                 predecessor = str(int(next_known) - 1)
             except ValueError:
                 predecessor = ""
-            fig_num = predecessor if predecessor and predecessor not in found_figures and predecessor not in recovered else None
-        if fig_num is not None:
+            selected_fig_num = (
+                predecessor
+                if predecessor and predecessor not in found_figures and predecessor not in recovered
+                else None
+            )
+        if selected_fig_num is not None:
             target_index = _orphan_image_run_start(index)
-            _assign_image(target_index, fig_num, caption_index)
+            _assign_image(target_index, selected_fig_num, caption_index)
             assigned_images.update(range(target_index, index + 1))
 
     # Prose may introduce a figure immediately before the visual region.  Use
@@ -10871,9 +10892,10 @@ def _rewrite_existing_page_figure_links(
                 or re.search(supplementary_left_context, left_text, re.IGNORECASE) is not None
             )
         )
-        if extended_data_context:
+        number: str | None
+        if extended_data_direct is not None and extended_data_context:
             number = _extended_data_figure_key_from_visible_number(extended_data_direct.group("num"))
-        elif supplementary_context:
+        elif supplementary_direct is not None and supplementary_context:
             number = _supplementary_figure_key_from_visible_number(supplementary_direct.group("num"))
         else:
             direct = re.match(
@@ -11082,9 +11104,9 @@ def _unwrap_unresolved_semantic_page_links(
                 or re.search(supplementary_left_context, left_text, re.IGNORECASE) is not None
             )
         )
-        if extended_data_context:
+        if extended_data_direct is not None and extended_data_context:
             fig_number = _extended_data_figure_key_from_visible_number(extended_data_direct.group("num"))
-        elif supplementary_context:
+        elif supplementary_direct is not None and supplementary_context:
             fig_number = _supplementary_figure_key_from_visible_number(supplementary_direct.group("num"))
         else:
             fig_decimal_direct = re.match(
@@ -14594,13 +14616,13 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
         if not _looks_like_caption_body_after_standalone_label(caption_body_raw):
             continue
 
-        run_indices, image_indices = _preceding_panel_image_run_indices(index, target_id)
-        if not image_indices and _caption_body_has_rich_panel_inventory(caption_body_raw):
+        run_indices, preceding_image_indices = _preceding_panel_image_run_indices(index, target_id)
+        if not preceding_image_indices and _caption_body_has_rich_panel_inventory(caption_body_raw):
             previous_image_idx = _distant_previous_image_index_for_caption_label(index, target_id)
             if previous_image_idx is not None:
                 run_indices = [previous_image_idx]
-                image_indices = [previous_image_idx]
-        if not image_indices:
+                preceding_image_indices = [previous_image_idx]
+        if not preceding_image_indices:
             continue
 
         replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
@@ -14611,7 +14633,7 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
                 replacements[run_idx] = _image_target_replacement(
                     run_raw,
                     image_idx=run_idx,
-                    first_image_idx=image_indices[0],
+                    first_image_idx=preceding_image_indices[0],
                     target_id=target_id,
                 )
             else:
@@ -14646,10 +14668,10 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
             continue
 
         caption_indices = [index, index + 1]
-        image_indices: list[int] = []
+        following_image_indices: list[int] = []
         different_label_after_images = False
         scan_idx = index + 2
-        while scan_idx < len(nodes) and len(caption_indices) + len(image_indices) < 18:
+        while scan_idx < len(nodes) and len(caption_indices) + len(following_image_indices) < 18:
             if not _between_is_whitespace(scan_idx - 1, scan_idx):
                 break
             if scan_idx in consumed:
@@ -14657,7 +14679,7 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
             scan_raw = nodes[scan_idx].group(0)
             scan_visible = _visible_text(scan_raw)
             if _standalone_figure_label_key_from_visible(scan_visible) is not None:
-                different_label_after_images = bool(image_indices)
+                different_label_after_images = bool(following_image_indices)
                 break
             if (
                 _figure_caption_num_from_visible(scan_visible) is not None
@@ -14668,7 +14690,7 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
                 image_id = _node_open_id_value(scan_raw)
                 if image_id is not None and image_id.lower() != target_id.lower():
                     break
-                image_indices.append(scan_idx)
+                following_image_indices.append(scan_idx)
                 scan_idx += 1
                 continue
             if (
@@ -14680,7 +14702,7 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
                 continue
             break
 
-        if not image_indices or different_label_after_images:
+        if not following_image_indices or different_label_after_images:
             continue
 
         replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
@@ -14690,15 +14712,15 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
                 nodes[caption_idx].group(0),
                 "z2m-figure-caption",
             )
-        for image_idx in image_indices:
+        for image_idx in following_image_indices:
             image_raw = nodes[image_idx].group(0)
             replacements[image_idx] = _image_target_replacement(
                 image_raw,
                 image_idx=image_idx,
-                first_image_idx=image_indices[0],
+                first_image_idx=following_image_indices[0],
                 target_id=target_id,
             )
-        consumed.update({*caption_indices, *image_indices})
+        consumed.update({*caption_indices, *following_image_indices})
         existing_ids.add(target_id.lower())
         found.add(fig_num)
 
@@ -14734,7 +14756,7 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
         if image_id is not None and image_id.lower() != target_id.lower():
             continue
 
-        detail_indices: list[int] = []
+        detail_indices_after_label: list[int] = []
         detail_idx = index + 2
         if (
             detail_idx < len(nodes)
@@ -14742,22 +14764,22 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
             and _between_is_whitespace(index + 1, detail_idx)
             and _looks_like_caption_detail_after_standalone_label(nodes[detail_idx].group(0))
         ):
-            detail_indices.append(detail_idx)
+            detail_indices_after_label.append(detail_idx)
 
         replacements[index] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
         replacements[index + 1] = _replace_open(
             image_raw,
-            lambda open_tag, target_id=target_id: _add_class_attr(
+            lambda open_tag: _add_class_attr(
                 _add_id_attr(_remove_id_attr(open_tag), target_id),
                 "z2m-figure-target",
             ),
         )
-        for detail_idx in detail_indices:
+        for detail_idx in detail_indices_after_label:
             replacements[detail_idx] = _strip_node_id_and_add_class(
                 nodes[detail_idx].group(0),
                 "z2m-figure-caption",
             )
-        consumed.update({index, index + 1, *detail_indices})
+        consumed.update({index, index + 1, *detail_indices_after_label})
         existing_ids.add(target_id.lower())
         found.add(fig_num)
 
@@ -14794,7 +14816,7 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
         if image_id is not None and image_id.lower() != target_id.lower():
             continue
 
-        detail_indices: list[int] = []
+        detail_indices_after_image: list[int] = []
         detail_idx = index + 2
         if (
             detail_idx < len(nodes)
@@ -14802,22 +14824,22 @@ def _anchor_standalone_figure_labels_before_images(html: str) -> tuple[str, set[
             and _between_is_whitespace(index + 1, detail_idx)
             and _looks_like_caption_detail_after_standalone_label(nodes[detail_idx].group(0))
         ):
-            detail_indices.append(detail_idx)
+            detail_indices_after_image.append(detail_idx)
 
         replacements[index] = _replace_open(
             image_raw,
-            lambda open_tag, target_id=target_id: _add_class_attr(
+            lambda open_tag: _add_class_attr(
                 _add_id_attr(_remove_id_attr(open_tag), target_id),
                 "z2m-figure-target",
             ),
         )
         replacements[index + 1] = _strip_node_id_and_add_class(label_raw, "z2m-figure-caption")
-        for detail_idx in detail_indices:
+        for detail_idx in detail_indices_after_image:
             replacements[detail_idx] = _strip_node_id_and_add_class(
                 nodes[detail_idx].group(0),
                 "z2m-figure-caption",
             )
-        consumed.update({index, index + 1, *detail_indices})
+        consumed.update({index, index + 1, *detail_indices_after_image})
         existing_ids.add(target_id.lower())
         found.add(fig_num)
 
@@ -17343,7 +17365,11 @@ def _looks_like_figure_panel_caption_continuation(raw: str) -> bool:
     panel_hits = len(re.findall(r"(?:^|\s)[a-h]\s+(?=[A-Z(])", visible))
     if panel_hits >= 2:
         return True
-    return bool(re.match(r"^[a-h]\s+[A-Z(]", visible)) and re.search(r"\b(?:shown|shows?|micrographs?|images?|schematic|process|flow)\b", visible, re.IGNORECASE)
+    return bool(re.match(r"^[a-h]\s+[A-Z(]", visible)) and re.search(
+        r"\b(?:shown|shows?|micrographs?|images?|schematic|process|flow)\b",
+        visible,
+        re.IGNORECASE,
+    ) is not None
 
 
 def _is_same_table_caption(raw: str, table_key: str) -> bool:
@@ -17743,27 +17769,27 @@ def _wrap_float_units(html: str) -> str:
             if not _node_has_class(warning_raw, "z2m-missing-figure-warning"):
                 continue
 
-            after: list[int] = []
+            warning_after: list[int] = []
             next_idx = index + 1
             while next_idx < len(nodes) and _between_is_whitespace(next_idx - 1, next_idx):
                 next_raw = nodes[next_idx].group(0)
                 if _looks_like_figure_panel_caption_continuation(next_raw):
-                    after.append(next_idx)
+                    warning_after.append(next_idx)
                     next_idx += 1
                     continue
-                if after and _looks_like_figure_caption_fragment(next_raw):
-                    after.append(next_idx)
+                if warning_after and _looks_like_figure_caption_fragment(next_raw):
+                    warning_after.append(next_idx)
                     next_idx += 1
                     continue
                 break
 
-            group_indices = [warning_idx, index] + after
+            group_indices = [warning_idx, index] + warning_after
             if any(idx in consumed for idx in group_indices):
                 continue
             warning_html = _strip_node_id_and_add_class(warning_raw, "z2m-figure-target")
             caption_html = "".join(
                 _strip_node_id_and_add_class(nodes[idx].group(0), "z2m-figure-caption")
-                for idx in [index] + after
+                for idx in [index] + warning_after
             )
             wrapper = (
                 f'<div id="{node_id}" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
@@ -19648,29 +19674,31 @@ def _retarget_caption_only_figure_ids_to_nearby_images(html: str) -> str:
     for index, node in enumerate(nodes):
         raw = replacements.get(index, node.group(0))
         target_id = _node_id_value(raw)
-        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", target_id or "", re.IGNORECASE)
+        if target_id is None:
+            continue
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", target_id, re.IGNORECASE)
         if fig_match is None:
             continue
-        fig_num = fig_match.group(1)
+        fig_num = str(fig_match.group(1))
         if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
             continue
         if _looks_like_in_text_figure_reference_node(raw, fig_num):
             continue
         if _figure_caption_num_from_visible(_visible_text(raw)) != fig_num:
             continue
-        if id_counts[target_id or ""] > 1:
+        if id_counts[target_id] > 1:
             continue
-        image_indices = _nearby_image_indices(index, fig_num, target_id or "")
+        image_indices = _nearby_image_indices(index, fig_num, target_id)
         if not image_indices:
-            image_indices = _nearby_image_indices(index, fig_num, target_id or "", relaxed=True)
+            image_indices = _nearby_image_indices(index, fig_num, target_id, relaxed=True)
         if not image_indices:
             continue
         for image_pos, image_idx in enumerate(image_indices):
             image_raw = replacements.get(image_idx, nodes[image_idx].group(0))
             replacements[image_idx] = _replace_open(
                 image_raw,
-                lambda open_tag, image_pos=image_pos, target_id=target_id: _add_class_attr(
-                    open_tag if image_pos != 0 or _has_id_attr(open_tag) else _add_id_attr(open_tag, target_id or ""),
+                lambda open_tag: _add_class_attr(
+                    open_tag if image_pos != 0 or _has_id_attr(open_tag) else _add_id_attr(open_tag, target_id),
                     "z2m-figure-target",
                 ),
             )
@@ -19724,18 +19752,20 @@ def _wrap_remaining_caption_only_figure_targets_as_missing(
             continue
         raw = node.group(0)
         target_id = _node_open_id_value(raw)
-        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", target_id or "", re.IGNORECASE)
+        if target_id is None:
+            continue
+        fig_match = re.fullmatch(r"fig-([A-Za-z0-9-]+)", target_id, re.IGNORECASE)
         if fig_match is None:
             continue
-        if id_counts[target_id or ""] > 1:
+        if id_counts[target_id] > 1:
             continue
         if re.search(r"<img\b|<table\b", raw, re.IGNORECASE):
             continue
         if _node_has_class(raw, "z2m-missing-figure-warning") or _node_has_class(raw, "z2m-missing-figure-unit"):
             continue
-        if re.search(rf"href\s*=\s*['\"]#{re.escape(target_id or '')}['\"]", html, re.IGNORECASE) is None:
+        if re.search(rf"href\s*=\s*['\"]#{re.escape(target_id)}['\"]", html, re.IGNORECASE) is None:
             continue
-        fig_num = fig_match.group(1)
+        fig_num = str(fig_match.group(1))
         if _figure_caption_num_from_visible(_visible_text(raw)) != fig_num:
             continue
         if fig_num.startswith("supplementary-"):

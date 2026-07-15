@@ -163,6 +163,7 @@ from pdf_html_polish.single_file_html import (
     _unicode_glued_author_marker_count,
     _update_skip_stack,
     _validate_data_url,
+    _zotero_overlay_citation_refs,
     close_katex_v8_context,
     drop_repeated_phrases,
     inline_images_only_from_html_file,
@@ -180,6 +181,24 @@ def _make_temp_dir() -> Path:
 _VALID_TINY_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
+
+
+def test_zotero_overlay_citation_refs_rejects_non_integer_values() -> None:
+    item = {
+        "refs": [
+            True,
+            None,
+            0,
+            -1,
+            2.8,
+            2.0,
+            "3",
+            {"index": "4"},
+            {"index": False},
+        ]
+    }
+
+    assert _zotero_overlay_citation_refs(item, ref_index=3) == [2, 3]
 
 
 def _valid_tiny_png_bytes() -> bytes:
