@@ -67,9 +67,14 @@ def load_pending_attachments(output_dir: Path) -> list[PendingZoteroAttachment]:
         queued_at = str(row.get("queued_at_utc", "")).strip()
         if not source or not html_path or not queued_at:
             continue
+        raw_parent_item_id = row.get("parent_item_id")
+        if raw_parent_item_id is None or isinstance(raw_parent_item_id, bool):
+            continue
         try:
-            parent_item_id = int(row.get("parent_item_id"))
-        except Exception:
+            parent_item_id = int(raw_parent_item_id)
+        except (TypeError, ValueError):
+            continue
+        if parent_item_id <= 0:
             continue
         last_error = row.get("last_error")
         out.append(
@@ -274,4 +279,3 @@ def retry_pending_attachments(
         lock_blocked=lock_blocked,
         queue_path=queue_path,
     )
-

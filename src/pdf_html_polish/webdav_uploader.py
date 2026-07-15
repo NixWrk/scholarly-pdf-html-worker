@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, Iterable
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -31,9 +31,9 @@ def _auth(server: WebDavServer) -> HTTPBasicAuth | None:
 def _build_base_url(server: WebDavServer) -> str:
     """Return ``server.url`` with a trailing slash and optional remote_root."""
     base = server.url.rstrip("/")
-    root = server.remote_root.strip("/")
-    if root:
-        base = base + "/" + quote(root, safe="/")
+    root_parts = _safe_path_parts(server.remote_root, label="remote root", allow_empty=True)
+    if root_parts:
+        base = base + "/" + "/".join(quote(part, safe="") for part in root_parts)
     return base + "/"
 
 
@@ -42,16 +42,32 @@ def _build_remote_url(server: WebDavServer, remote_relative: str) -> str:
 
     Path components are percent-encoded while forward slashes are preserved.
     """
-    # Normalise separators and strip any stray leading slash.
-    rel = remote_relative.replace("\\", "/").lstrip("/")
-    return _build_base_url(server) + quote(rel, safe="/")
+    return _build_base_url(server) + "/".join(
+        quote(part, safe="") for part in _remote_parts(remote_relative)
+    )
+
+
+def _remote_parts(remote_relative: str) -> list[str]:
+    return _safe_path_parts(remote_relative, label="remote path", allow_empty=False)
+
+
+def _safe_path_parts(value: str, *, label: str, allow_empty: bool) -> list[str]:
+    normalized = value.replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    if not parts and not allow_empty:
+        raise ValueError(f"{label} is empty")
+    for part in parts:
+        decoded = part
+        for _ in range(2):
+            decoded = unquote(decoded)
+        if decoded in {".", ".."} or "/" in decoded or "\\" in decoded:
+            raise ValueError(f"{label} must stay below the configured WebDAV root")
+    return parts
 
 
 def _split_parent_parts(remote_relative: str) -> list[str]:
     """Return the directory parts of ``remote_relative`` (excluding filename)."""
-    rel = remote_relative.replace("\\", "/").lstrip("/")
-    parts = [p for p in rel.split("/") if p]
-    return parts[:-1]  # drop the filename
+    return _remote_parts(remote_relative)[:-1]
 
 
 class WebDavUploader:
@@ -67,7 +83,10 @@ class WebDavUploader:
 
         Returns ``(True, message)`` on any 2xx/207 response.
         """
-        url = _build_base_url(server)
+        try:
+            url = _build_base_url(server)
+        except ValueError as exc:
+            return False, f"Invalid remote root: {exc}"
         try:
             response = requests.request(
                 "PROPFIND",
@@ -108,7 +127,13 @@ class WebDavUploader:
         if not parts:
             return True, "No directories to create"
 
-        base = _build_base_url(server)
+        try:
+            base = _build_base_url(server)
+            for part in parts:
+                if _safe_path_parts(part, label="remote directory", allow_empty=False) != [part]:
+                    raise ValueError("remote directory must be one path component")
+        except ValueError as exc:
+            return False, f"Invalid remote path: {exc}"
         auth = _auth(server)
         cumulative = ""
         for part in parts:
@@ -148,12 +173,17 @@ class WebDavUploader:
         if not local_path.is_file():
             return False, f"Local file not found: {local_path}"
 
+        try:
+            parent_parts = _split_parent_parts(remote_relative)
+            url = _build_remote_url(server, remote_relative)
+        except ValueError as exc:
+            return False, f"Invalid remote path: {exc}"
+
         # Make sure all parent directories exist on the server.
-        dir_ok, dir_msg = self.ensure_remote_dirs(server, _split_parent_parts(remote_relative))
+        dir_ok, dir_msg = self.ensure_remote_dirs(server, parent_parts)
         if not dir_ok:
             return False, dir_msg
 
-        url = _build_remote_url(server, remote_relative)
         try:
             with local_path.open("rb") as handle:
                 response = requests.put(

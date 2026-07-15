@@ -20,7 +20,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "mypy>=1.10",
   "pytest>=8",
+  "ruff>=0.5",
+  "types-psutil",
+  "types-requests",
 ]
 pdf-text-detect = [
   "pymupdf>=1.24",
@@ -45,3 +49,9 @@ pdf_html_polish = ["assets/katex/*"]
 # Compatibility facade: these imports intentionally preserve the legacy API
 # while implementations move into focused raw_html_polish modules.
 "src/pdf_html_polish/single_file_html.py" = ["F401"]
+# Executable compatibility facades also expose imported aliases to tests and
+# downstream scripts. Some bootstrap the local src tree before importing it.
+"scripts/audit_en_polish.py" = ["E402", "F401"]
+"scripts/audit_en_raw.py" = ["F401"]
+"scripts/audit_source_language.py" = ["E402"]
+"scripts/llm_quality_loop.py" = ["F401"]

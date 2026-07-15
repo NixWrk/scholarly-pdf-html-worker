@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 from subprocess import TimeoutExpired, run
+from tempfile import NamedTemporaryFile
 
 
 DEFAULT_OVERLAY_TIMEOUT_SECONDS = 180
@@ -88,9 +91,33 @@ def _cached_overlay_path(pdf: Path) -> Path:
 
 def _copy_overlay(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f"{target.name}.tmp")
-    shutil.copy2(source, tmp)
-    tmp.replace(target)
+    with NamedTemporaryFile(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        tmp = Path(handle.name)
+    try:
+        shutil.copy2(source, tmp)
+        tmp.replace(target)
+    finally:
+        with suppress(OSError):
+            tmp.unlink()
+
+
+def _valid_overlay_json(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("summary"), dict)
+
+
+def _subprocess_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
 
 
 def generate_zotero_overlay_json(
@@ -104,7 +131,7 @@ def generate_zotero_overlay_json(
     output = Path(output_path).expanduser().resolve(strict=False)
     if pdf.is_file():
         cached = _cached_overlay_path(pdf)
-        if cached.is_file():
+        if cached.is_file() and _valid_overlay_json(cached):
             _copy_overlay(cached, output)
             return ZoteroOverlayProbeResult(
                 output_path=output,
@@ -113,6 +140,9 @@ def generate_zotero_overlay_json(
                 command=[],
                 stdout=f"Zotero overlay cache hit: {cached}",
             )
+        if cached.exists():
+            with suppress(OSError):
+                cached.unlink()
 
     probe_script = find_zotero_overlay_probe_script()
     if probe_script is None:
@@ -140,11 +170,16 @@ def generate_zotero_overlay_json(
     if pdfjs_dir is not None:
         command.extend(["--pdfjs-dir", str(pdfjs_dir)])
 
+    with suppress(OSError):
+        output.unlink()
+
     try:
         completed = run(
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             check=False,
         )
@@ -157,22 +192,33 @@ def generate_zotero_overlay_json(
             error=f"Node.js executable not found: {exc}",
         )
     except TimeoutExpired as exc:
+        with suppress(OSError):
+            output.unlink()
         return ZoteroOverlayProbeResult(
             output_path=output,
             attempted=True,
             generated=False,
             command=command,
             error=f"Zotero overlay probe timed out after {timeout_seconds}s",
-            stdout=exc.stdout or "",
-            stderr=exc.stderr or "",
+            stdout=_subprocess_text(exc.stdout),
+            stderr=_subprocess_text(exc.stderr),
         )
 
-    generated = completed.returncode == 0 and output.is_file()
+    generated = completed.returncode == 0 and _valid_overlay_json(output)
     if generated and pdf.is_file():
         cached = _cached_overlay_path(pdf)
         cached.parent.mkdir(parents=True, exist_ok=True)
         _copy_overlay(output, cached)
-    error = "" if generated else f"Zotero overlay probe exited with code {completed.returncode}"
+    if generated:
+        error = ""
+    elif completed.returncode == 0:
+        error = "Zotero overlay probe produced invalid JSON output"
+        with suppress(OSError):
+            output.unlink()
+    else:
+        error = f"Zotero overlay probe exited with code {completed.returncode}"
+        with suppress(OSError):
+            output.unlink()
     return ZoteroOverlayProbeResult(
         output_path=output,
         attempted=True,

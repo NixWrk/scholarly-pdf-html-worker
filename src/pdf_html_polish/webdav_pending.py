@@ -333,7 +333,7 @@ def retry_pending_webdav_uploads(
 
             uploader = WebDavUploader()
         except Exception as exc:
-            remaining = [
+            unavailable_remaining = [
                 PendingWebDavUpload(
                     local_path=row.local_path,
                     remote_relative=row.remote_relative,
@@ -345,15 +345,15 @@ def retry_pending_webdav_uploads(
                 )
                 for row in pending
             ]
-            save_pending_webdav_uploads(out_dir, remaining)
+            save_pending_webdav_uploads(out_dir, unavailable_remaining)
             emit(f"Pending WebDAV retry unavailable: {exc}")
             return WebDavRetrySummary(
                 attempted=0,
                 uploaded=0,
-                kept_pending=len(remaining),
+                kept_pending=len(unavailable_remaining),
                 dropped_missing_local=0,
                 server_missing=0,
-                failed=len(remaining),
+                failed=len(unavailable_remaining),
                 queue_path=queue_path,
             )
 

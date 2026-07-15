@@ -23,7 +23,6 @@ if str(SRC) not in sys.path:
 from pdf_html_polish.html_images import to_data_url as _to_data_url  # noqa: E402
 from pdf_html_polish.html_images import validate_data_url as _validate_data_url  # noqa: E402
 from pdf_html_polish.html_stages import (  # noqa: E402
-    HTML_STAGE_DIR_NAME,
     POLISH_STAGE_NAME,
     article_dir_from_html_stage,
     is_html_stage_dir_name,

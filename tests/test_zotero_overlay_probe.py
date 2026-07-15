@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 import shutil
@@ -209,5 +210,130 @@ def test_generate_zotero_overlay_json_reports_missing_probe() -> None:
         assert not result.attempted
         assert not result.generated
         assert "not found" in result.error
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_generate_zotero_overlay_json_rejects_stale_output() -> None:
+    tmp_path = _workspace_tmp()
+    try:
+        pdf_path = tmp_path / "article.pdf"
+        pdf_path.write_bytes(b"%PDF-1.7\n")
+        probe_path = tmp_path / "zotero_overlay_probe.mjs"
+        probe_path.write_text("// fake probe\n", encoding="utf-8")
+        output_path = tmp_path / "article.overlays.json"
+        output_path.write_text('{"summary":{"stale":true}}', encoding="utf-8")
+
+        old_probe = os.environ.get(zotero_overlay_probe.OVERLAY_PROBE_ENV)
+        old_cache = os.environ.get(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV)
+        os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = str(probe_path)
+        os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = str(tmp_path / "cache")
+        try:
+            with patch.object(
+                zotero_overlay_probe,
+                "run",
+                return_value=subprocess.CompletedProcess([], 0, "ok", ""),
+            ):
+                result = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, output_path)
+        finally:
+            if old_probe is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_PROBE_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = old_probe
+            if old_cache is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = old_cache
+
+        assert result.attempted
+        assert not result.generated
+        assert "invalid JSON" in result.error
+        assert not output_path.exists()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_generate_zotero_overlay_json_removes_partial_output_on_timeout() -> None:
+    tmp_path = _workspace_tmp()
+    try:
+        pdf_path = tmp_path / "article.pdf"
+        pdf_path.write_bytes(b"%PDF-1.7\n")
+        probe_path = tmp_path / "zotero_overlay_probe.mjs"
+        probe_path.write_text("// fake probe\n", encoding="utf-8")
+        output_path = tmp_path / "article.overlays.json"
+
+        def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            output_path.write_text('{"summary":', encoding="utf-8")
+            raise subprocess.TimeoutExpired(command, 3, output=b"bad:\xff", stderr=b"timed out")
+
+        old_probe = os.environ.get(zotero_overlay_probe.OVERLAY_PROBE_ENV)
+        old_cache = os.environ.get(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV)
+        os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = str(probe_path)
+        os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = str(tmp_path / "cache")
+        try:
+            with patch.object(zotero_overlay_probe, "run", fake_run):
+                result = zotero_overlay_probe.generate_zotero_overlay_json(
+                    pdf_path,
+                    output_path,
+                    timeout_seconds=3,
+                )
+        finally:
+            if old_probe is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_PROBE_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = old_probe
+            if old_cache is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = old_cache
+
+        assert result.attempted
+        assert not result.generated
+        assert "timed out" in result.error
+        assert isinstance(result.stdout, str)
+        assert "bad:" in result.stdout
+        assert result.stderr == "timed out"
+        assert not output_path.exists()
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_generate_zotero_overlay_json_ignores_corrupt_cache() -> None:
+    tmp_path = _workspace_tmp()
+    try:
+        pdf_path = tmp_path / "article.pdf"
+        pdf_path.write_bytes(b"%PDF cache key\n")
+        probe_path = tmp_path / "zotero_overlay_probe.mjs"
+        probe_path.write_text("// fake probe\n", encoding="utf-8")
+        output_path = tmp_path / "article.overlays.json"
+
+        old_probe = os.environ.get(zotero_overlay_probe.OVERLAY_PROBE_ENV)
+        old_cache = os.environ.get(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV)
+        os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = str(probe_path)
+        os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = str(tmp_path / "cache")
+        try:
+            cached = zotero_overlay_probe._cached_overlay_path(pdf_path)
+            cached.parent.mkdir(parents=True)
+            cached.write_text("not json", encoding="utf-8")
+
+            def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+                output_path.write_text('{"summary":{"fresh":true}}', encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, "ok", "")
+
+            with patch.object(zotero_overlay_probe, "run", fake_run):
+                result = zotero_overlay_probe.generate_zotero_overlay_json(pdf_path, output_path)
+        finally:
+            if old_probe is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_PROBE_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_PROBE_ENV] = old_probe
+            if old_cache is None:
+                os.environ.pop(zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV, None)
+            else:
+                os.environ[zotero_overlay_probe.OVERLAY_CACHE_DIR_ENV] = old_cache
+
+        assert result.attempted
+        assert result.generated
+        assert json.loads(output_path.read_text(encoding="utf-8"))["summary"] == {"fresh": True}
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)

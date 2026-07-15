@@ -4,10 +4,17 @@ import contextlib
 import shutil
 import sqlite3
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TypedDict
 
 from .models import AttachmentRecord, Collection
 from .runtime_temp import make_temp_dir
+
+
+class _CollectionData(TypedDict):
+    collection_id: int
+    key: str
+    name: str
+    parent_collection_id: int | None
 
 
 class ZoteroRepository:
@@ -78,7 +85,7 @@ class ZoteroRepository:
             """
         )
 
-        raw = {
+        raw: dict[int, _CollectionData] = {
             int(r["collectionID"]): {
                 "collection_id": int(r["collectionID"]),
                 "key": str(r["key"]),
