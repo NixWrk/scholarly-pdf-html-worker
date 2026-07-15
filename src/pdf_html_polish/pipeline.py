@@ -23,10 +23,9 @@ from .pipeline_discovery import discover_collection_pdfs, discover_source_pdfs
 from .pipeline_options import PdfDiscoveryResult, PipelineOptions
 from .pipeline_webdav import (
     resolve_webdav_config_path,
-    retry_pending_webdav_exports,
     upload_webdav_mirror_if_configured,
 )
-from .pipeline_zotero import retry_pending_zotero_exports, zotero_write_lock_detected as detect_zotero_write_lock
+from .pipeline_zotero import zotero_write_lock_detected as detect_zotero_write_lock
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
 from .single_file_html import (
     close_katex_v8_context,

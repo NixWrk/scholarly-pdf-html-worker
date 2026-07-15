@@ -5,8 +5,9 @@ import html as html_lib
 import re
 import urllib.parse
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping
 
 from .citation_profile_recovery import (
     MAX_PROFILE_REFERENCE_GAP_RECOVERY as _MAX_PROFILE_REFERENCE_GAP_RECOVERY,
@@ -3429,76 +3430,6 @@ def _recover_bare_citations(html: str, ref_count: int) -> str:
     parts = _TAG_SPLIT_PATTERN.split(html)
     out: list[str] = []
     skip_stack: list[str] = []
-    trailing_word_stoplist = {
-        "table",
-        "figure",
-        "fig",
-        "section",
-        "sec",
-        "box",
-        "eq",
-        "equation",
-        "chapter",
-        "range",
-        "distance",
-        "frequency",
-        "parameter",
-        "value",
-        "values",
-        "sample",
-        "data",
-        "page",
-        "pages",
-        "unit",
-        "units",
-        "vol",
-        "volume",
-        "issue",
-        "front",
-        "supplementary",
-        "doi",
-        "pmid",
-        "isbn",
-        "mhz",
-        "ghz",
-        "khz",
-        "mm",
-        "cm",
-        "kg",
-        "g",
-        "mg",
-        "nm",
-        "um",
-        "ph",
-        "monkey",
-        "week",
-        "month",
-        "animal",
-        "female",
-        "male",
-        "d",
-        "ma",
-        "ua",
-        "a",
-        "v",
-        "hz",
-        "as",
-        "at",
-        "by",
-        "for",
-        "from",
-        "had",
-        "has",
-        "have",
-        "in",
-        "of",
-        "than",
-        "to",
-        "under",
-        "with",
-        "µm",
-    }
-
     def _stoplisted(word: str) -> bool:
         return word.lower() in _BARE_CITATION_TRAILING_WORD_STOPLIST
 
@@ -11245,7 +11176,7 @@ def _unwrap_unresolved_semantic_page_links(
             if table_key is None and table_num_only is not None and re.search(table_left_context, left_text, re.IGNORECASE):
                 table_key = _normalize_table_key(table_num_only.group(1))
             elif table_key is None and table_num_only is not None and re.search(
-                rf"\b(?:TABLES?|Tables?)\b[\s\S]{{0,120}}(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
+                r"\b(?:TABLES?|Tables?)\b[\s\S]{0,120}(?:and|or|,|&|[-\u2010\u2011\u2012\u2013\u2014])\s*$",
                 left_text,
                 re.IGNORECASE,
             ):
@@ -13546,7 +13477,7 @@ def _repair_second_echelon_ocr_residue_html(html: str) -> str:
     sup_x = r"<sup\b[^>]*>\s*x\s*</sup>"
     sup_r = r"<sup\b[^>]*>\s*R\s*</sup>"
     page_anchor = r"(?:<span\b[^>]*\bid\s*=\s*['\"]page-[^'\"]+['\"][^>]*>\s*</span>\s*)?"
-    html = re.sub(rf"\bWherev\s*(<sup\b[^>]*>\s*2\s*</sup>)", r"Where v\1", html, flags=re.IGNORECASE)
+    html = re.sub(r"\bWherev\s*(<sup\b[^>]*>\s*2\s*</sup>)", r"Where v\1", html, flags=re.IGNORECASE)
     html = re.sub(rf"\bTQma\s*{sup_x}", "TQmax", html)
     html = re.sub(rf"\bPdetQma\s*{sup_x}", "PdetQmax", html)
     html = re.sub(rf"\bsys-\s*{page_anchor}tem\b", "system", html, flags=re.IGNORECASE)
@@ -17845,7 +17776,6 @@ def _wrap_float_units(html: str) -> str:
         table_match = re.fullmatch(r"table-([A-Za-z0-9-]+)", node_id, re.IGNORECASE)
         if table_match is None or not _is_same_table_caption(raw, table_match.group(1)):
             continue
-        table_key = table_match.group(1)
         table_index: int | None = None
         previous_table_index = (
             index - 1

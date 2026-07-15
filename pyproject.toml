@@ -39,3 +39,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 pdf_html_polish = ["assets/katex/*"]
+
+[tool.ruff.lint.per-file-ignores]
+# Compatibility facade: these imports intentionally preserve the legacy API
+# while implementations move into focused raw_html_polish modules.
+"src/pdf_html_polish/single_file_html.py" = ["F401"]

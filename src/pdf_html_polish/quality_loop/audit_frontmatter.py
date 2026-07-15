@@ -120,7 +120,7 @@ def looks_like_frontmatter_metadata_notice(text: str) -> bool:
     ):
         return True
     if re.fullmatch(
-        rf"(?:(?:received|accepted|published)\s*:?\s*\d{{1,4}}(?:[./]\d{{1,2}}){{2}}\s*){{2,4}}",
+        r"(?:(?:received|accepted|published)\s*:?\s*\d{1,4}(?:[./]\d{1,2}){2}\s*){2,4}",
         normalized,
         re.IGNORECASE,
     ):

@@ -708,7 +708,6 @@ def _detect_language_once(
         code: sum(1 for word in words if word in stopwords)
         for code, stopwords in EUROPEAN_STOPWORDS.items()
     }
-    german_hits = european_hits["de"]
     latin_ratio = latin_chars / alpha_chars if alpha_chars else 0.0
     cyrillic_ratio = cyrillic_chars / alpha_chars if alpha_chars else 0.0
 

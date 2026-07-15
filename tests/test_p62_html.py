@@ -10,7 +10,6 @@ from pdf_html_polish.quality_loop.p62_html import (
     html_has_stale_page_render_for_label,
     insert_recovered_figure_unit_for_visible_reference,
     move_p61_recovered_units_after_sentence_continuation,
-    replace_figure_unit_target_with_missing_warning,
     replace_missing_warning_with_image,
     replace_recovery_with_missing_warning,
 )

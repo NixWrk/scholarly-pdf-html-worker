@@ -453,13 +453,16 @@ def run_clean_pipeline(
 
     active_observe_runner = observe_runner
     if active_observe_runner is None:
-        active_observe_runner = (
-            lambda command, cwd, log_func: run_observe_command(
+        def active_observe_runner(
+            command: Sequence[str],
+            cwd: Path | None,
+            log_func: Callable[[str], None] | None,
+        ) -> int:
+            return run_observe_command(
                 command,
                 cwd=cwd,
                 log=log_func,
             )
-        )
     observe_exit_code = active_observe_runner(observe_command, repository_root(), log)
     if observe_exit_code != 0:
         raise RuntimeError(f"Quality observe failed with exit code {observe_exit_code}.")
