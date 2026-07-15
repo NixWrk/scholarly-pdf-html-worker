@@ -3105,7 +3105,10 @@ def _strip_reference_links_in_protected_blocks(html: str) -> str:
     return _SENTENCE_NODE_PATTERN.sub(_strip_if_protected, html)
 
 
-def _link_sup_citations_in_safe_blocks(html: str, link_sup) -> str:
+def _link_sup_citations_in_safe_blocks(
+    html: str,
+    link_sup: Callable[[re.Match[str]], str],
+) -> str:
     def _link_if_safe(match: re.Match[str]) -> str:
         raw = match.group(0)
         if _node_protects_citations(raw):

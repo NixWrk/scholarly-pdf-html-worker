@@ -93,7 +93,7 @@ def extract_pdf_text(pdf_path: Path) -> tuple[str, str, str | None]:
 
     errors: list[str] = []
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -106,7 +106,7 @@ def extract_pdf_text(pdf_path: Path) -> tuple[str, str, str | None]:
         errors.append(f"pymupdf failed: {exc}")
 
     try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
+        from pypdf import PdfReader
 
         reader = PdfReader(str(pdf_path))
         return "pypdf", "\n".join(page.extract_text() or "" for page in reader.pages), None
@@ -136,7 +136,7 @@ def pdf_citation_link_summary(
         summary["pdf_link_text_status"] = "missing"
         return summary
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
     except ImportError as exc:
         summary["pdf_link_text_status"] = "pymupdf_unavailable"
         summary["pdf_link_text_error"] = str(exc)

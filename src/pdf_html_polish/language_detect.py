@@ -514,7 +514,7 @@ def extract_text_from_pdf(pdf_path: Path, *, max_pages: int = 15) -> PdfTextExtr
 
     errors: list[str] = []
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -534,7 +534,7 @@ def extract_text_from_pdf(pdf_path: Path, *, max_pages: int = 15) -> PdfTextExtr
         errors.append(f"pymupdf failed: {exc}")
 
     try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
+        from pypdf import PdfReader
 
         reader = PdfReader(str(pdf_path))
         pages = _sample_pdf_page_indexes(len(reader.pages), max_pages=max_pages)

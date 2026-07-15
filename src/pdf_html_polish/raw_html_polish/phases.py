@@ -5,7 +5,10 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..polish_language import PolishLanguagePolicy
 
 
 @dataclass(frozen=True)
@@ -20,7 +23,7 @@ class RawPolishContext:
     enable_citation_linkify: bool
     citation_profile: Any | None = None
     image_cache: Mapping[str, str] | None = None
-    language_policy: Any | None = None
+    language_policy: PolishLanguagePolicy | None = None
 
 
 @dataclass(frozen=True)

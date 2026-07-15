@@ -11,7 +11,7 @@ from .run_utils import json_object
 
 
 def load_gate_config(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json_object(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _now() -> str:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 DEFAULT_CONFIG_PATH = Path("webdav_config.json")
@@ -25,12 +26,12 @@ class WebDavServer:
     remote_root: str = ""   # Optional subdirectory on server, e.g. "zotero_output"
     enabled: bool = True
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict suitable for JSON."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "WebDavServer":
+    def from_dict(cls, data: dict[str, Any]) -> "WebDavServer":
         """Create a WebDavServer from a dict, tolerating missing keys."""
         return cls(
             name=str(data.get("name", "")),

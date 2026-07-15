@@ -4,7 +4,7 @@ import contextlib
 import shutil
 import sqlite3
 from pathlib import Path
-from typing import Iterable, TypedDict
+from typing import Any, Iterable, TypedDict
 
 from .models import AttachmentRecord, Collection
 from .runtime_temp import make_temp_dir
@@ -59,7 +59,11 @@ class ZoteroRepository:
             or "database is busy" in msg
         )
 
-    def _fetchall(self, query: str, params: tuple | None = None) -> list[sqlite3.Row]:
+    def _fetchall(
+        self,
+        query: str,
+        params: tuple[Any, ...] | None = None,
+    ) -> list[sqlite3.Row]:
         params = tuple() if params is None else params
 
         try:

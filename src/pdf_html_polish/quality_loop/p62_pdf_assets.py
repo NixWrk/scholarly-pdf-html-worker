@@ -33,7 +33,7 @@ def render_fallback_page_number(
         return page_number, "primary_matched_page"
 
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -71,7 +71,7 @@ def pdf_page_false_match_hint(pdf_path: Path, page_number: int, figure_label: st
     if not label or not pdf_path.is_file() or page_number <= 0:
         return ""
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -90,7 +90,7 @@ def pdf_page_caption_label_found(pdf_path: Path, page_number: int, figure_label:
     if not label or not pdf_path.is_file() or page_number <= 0:
         return False
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -116,7 +116,7 @@ def pdf_visual_inventory(pdf_path: Path) -> dict[str, Any]:
             "error": "",
         }
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -177,7 +177,7 @@ def pypdf_image_inventory(pdf_path: Path) -> dict[str, Any]:
             "errors": [],
         }
     try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
+        from pypdf import PdfReader
 
         reader = PdfReader(str(pdf_path))
         pages_with_images: list[dict[str, Any]] = []
@@ -238,7 +238,7 @@ def recover_pdf_figure_asset(
         return {"status": "missing_pdf", "path": "", "source": "", "error": ""}
     label = str(figure_label or "").strip()
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -396,7 +396,7 @@ def recover_detached_pdf_figure_plate_asset(
     if not pdf_path.is_file():
         return {"status": "missing_pdf", "path": "", "source": "", "error": ""}
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -526,7 +526,7 @@ def page_caption_label_rects(page: Any, figure_label: str) -> list[Any]:
     )
     rects: list[Any] = []
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         blocks = (page.get_text("dict") or {}).get("blocks") or []
         for block in blocks:
@@ -690,7 +690,7 @@ def text_figure_region_for_caption(page: Any, caption_rect: Any | None) -> Any |
     if caption_rect is None:
         return None
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         blocks = (page.get_text("dict") or {}).get("blocks") or []
     except Exception:
@@ -736,7 +736,7 @@ def include_nearby_text_blocks(page: Any, region: Any, caption_rect: Any | None)
         if block.get("type") != 0 or not block.get("bbox"):
             continue
         try:
-            import fitz  # type: ignore[import-not-found]
+            import fitz
 
             rect = fitz.Rect(block.get("bbox"))
         except Exception:
@@ -754,7 +754,7 @@ def trim_region_away_from_caption(region: Any, page_rect: Any, caption_rect: Any
     if caption_rect is None:
         return region
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         x0 = float(region.x0)
         y0 = float(region.y0)
@@ -814,7 +814,7 @@ def fitz_union_rect(rects: list[Any]) -> Any:
 
 def expand_rect(rect: Any, page_rect: Any, *, margin: float) -> Any:
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         return fitz.Rect(
             max(float(page_rect.x0), float(rect.x0) - margin),

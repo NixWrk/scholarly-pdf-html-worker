@@ -664,7 +664,7 @@ def extract_reference_entries_from_pdf(pdf_path: str | Path) -> list[PdfReferenc
     if not path.is_file():
         return []
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
     except Exception:
         return []
     try:
@@ -791,7 +791,7 @@ def build_citation_profile_from_pdf(
         )
 
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
     except Exception as exc:  # pragma: no cover - depends on local optional dependency
         return CitationProfile(
             source_pdf_path=str(path),

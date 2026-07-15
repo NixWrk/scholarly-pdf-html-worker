@@ -207,7 +207,7 @@ def pdf_page_visual_summaries(
         return {}
     summaries: dict[int, dict[str, Any]] = {}
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:

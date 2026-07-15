@@ -9,7 +9,8 @@ from pdf_html_polish.clean_pipeline import (
 )
 from pdf_html_polish.export_modes import ExportMode
 from pdf_html_polish.marker_runner import MarkerRunner
-from pdf_html_polish.pipeline import PipelineOptions, run_raw_html_pipeline
+from pdf_html_polish.pipeline import run_raw_html_pipeline
+from pdf_html_polish.pipeline_options import PipelineOptions
 from pdf_html_polish.stage_contract import PUBLISH_REPORT_NAME
 
 

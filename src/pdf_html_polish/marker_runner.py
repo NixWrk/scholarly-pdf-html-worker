@@ -594,14 +594,14 @@ def _count_page_range_pages(page_range: str | None) -> int | None:
 
 def _count_pdf_pages(path: Path) -> int | None:
     try:
-        import fitz  # type: ignore[import-untyped]
+        import fitz
 
         with fitz.open(str(path)) as doc:
             return int(doc.page_count)
     except Exception:
         pass
     try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
+        from pypdf import PdfReader
 
         reader = PdfReader(str(path))
         return len(reader.pages)

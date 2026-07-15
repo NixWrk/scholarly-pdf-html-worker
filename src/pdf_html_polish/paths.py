@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 _PREF_BOOL_RE = re.compile(
@@ -40,7 +41,8 @@ def _unescape_pref_string(value: str) -> str:
     # Parse the captured JS string payload with JSON semantics.
     # This preserves non-ASCII paths and handles escaped backslashes safely.
     try:
-        return json.loads(f'"{value}"')
+        decoded: Any = json.loads(f'"{value}"')
+        return decoded if isinstance(decoded, str) else value
     except json.JSONDecodeError:
         return value.replace(r"\\", "\\").replace(r"\"", "\"")
 

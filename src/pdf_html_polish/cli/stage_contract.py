@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from pdf_html_polish.stage_contract import (
     PUBLISH_REPORT_NAME,
@@ -75,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_verify_summary(report: dict) -> None:
+def _print_verify_summary(report: dict[str, Any]) -> None:
     print(
         "Stage contract: "
         f"status={report['status']} "
@@ -87,7 +88,7 @@ def _print_verify_summary(report: dict) -> None:
     )
 
 
-def _print_publish_summary(report: dict) -> None:
+def _print_publish_summary(report: dict[str, Any]) -> None:
     print(
         "Published latest polish: "
         f"mode={report['mode']} "

@@ -26,11 +26,9 @@ from .pipeline_webdav import (
     upload_webdav_mirror_if_configured,
 )
 from .pipeline_zotero import zotero_write_lock_detected as detect_zotero_write_lock
+from .raw_html_polish.katex import close_katex_v8_context
 from .runtime_temp import cleanup_runtime_temp_root, runtime_temp_root
-from .single_file_html import (
-    close_katex_v8_context,
-    polish_and_inline_html_file,
-)
+from .single_file_html import polish_and_inline_html_file
 from .staging import (
     FILENAME_MAP_NAME,
     cleanup_staging_dir,
@@ -42,6 +40,7 @@ from .text_cleanup import drop_repeated_phrases
 from .webdav_pending import WebDavUploadSummary
 from .zotero_html_attachment import attach_single_file_html
 from .zotero_pending import (
+    PendingZoteroAttachment,
     build_pending_entry,
     enqueue_pending_attachments,
     load_pending_attachments,
@@ -826,7 +825,7 @@ def run_pipeline(
             ocr_quality_failed_total = 0
             reocr_queued_total = 0
             reocr_pending_total = len(load_reocr_queue(output_dir))
-            history_paths = list(converted_source_paths)
+            history_paths: list[Path] = list(converted_source_paths)
 
             def mirror_webdav_html(html_path: Path) -> None:
                 nonlocal webdav_uploaded_total, webdav_failed_total
@@ -967,9 +966,12 @@ def run_pipeline(
                 def html_artifact_for(item: StagedFile) -> Path:
                     return expected_output_artifact_path(output_dir, item.alias_base_name, ".html")
 
-                def queue_entries_from(staged_items: list, error_message: str) -> None:
+                def queue_entries_from(
+                    staged_items: list[StagedFile],
+                    error_message: str,
+                ) -> None:
                     nonlocal zotero_html_queued_total, zotero_pending_total, zotero_html_failed_total
-                    queue_batch = []
+                    queue_batch: list[PendingZoteroAttachment] = []
                     for item in staged_items:
                         source_norm = normalize_source_path(item.source_pdf_path)
                         resolved_item = source_to_resolved.get(source_norm)

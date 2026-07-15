@@ -15,7 +15,7 @@ def pdf_text_pages(pdf_path: Path, *, max_pages: int | None = None) -> tuple[str
 
     errors: list[str] = []
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
@@ -29,7 +29,7 @@ def pdf_text_pages(pdf_path: Path, *, max_pages: int | None = None) -> tuple[str
         errors.append(f"pymupdf failed: {exc}")
 
     try:
-        from pypdf import PdfReader  # type: ignore[import-not-found]
+        from pypdf import PdfReader
 
         reader = PdfReader(str(pdf_path))
         pages = list(reader.pages)
@@ -47,7 +47,7 @@ def render_pdf_page(pdf_path: Path, page_number: int, out_path: Path, *, zoom: f
     if not pdf_path.is_file():
         return {"status": "missing_pdf", "path": "", "error": ""}
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz
 
         doc = fitz.open(str(pdf_path))
         try:
