@@ -1,8 +1,13 @@
 from pathlib import Path
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
+from types import SimpleNamespace
+
+import pdf_html_polish.marker_runner as marker_runner_module
 
 from pdf_html_polish.marker_runner import (
     MarkerRunner,
@@ -216,3 +221,103 @@ def test_marker_cleanup_kills_tracked_child_process() -> None:
     finally:
         if process.poll() is None:
             process.kill()
+
+
+def test_marker_cleanup_does_not_kill_reused_pid(monkeypatch) -> None:
+    terminated: list[int] = []
+
+    class FakeProcess:
+        pid = 73
+
+        def create_time(self) -> float:
+            return 200.0
+
+        def children(self, recursive: bool = False) -> list[object]:
+            return []
+
+        def terminate(self) -> None:
+            terminated.append(self.pid)
+
+    fake_psutil = SimpleNamespace(
+        Process=lambda _pid: FakeProcess(),
+        NoSuchProcess=ProcessLookupError,
+        wait_procs=lambda processes, timeout: (processes, []),
+    )
+    monkeypatch.setattr(marker_runner_module, "psutil", fake_psutil)
+
+    assert MarkerRunner._kill_pid_tree(73, expected_create_time=100.0)
+    assert terminated == []
+
+
+def test_marker_runner_serializes_runs_per_instance() -> None:
+    class BlockingRunner(MarkerRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.guard = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def _run_serialized(self, command, env, log, progress=None):  # type: ignore[override]
+            with self.guard:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.05)
+            with self.guard:
+                self.active -= 1
+            return RunResult(command=command, exit_code=0)
+
+    runner = BlockingRunner()
+    barrier = threading.Barrier(3)
+
+    def run_one(label: str) -> None:
+        barrier.wait()
+        runner._run([label], {}, lambda _line: None)
+
+    threads = [threading.Thread(target=run_one, args=(label,)) for label in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert runner.max_active == 1
+
+
+def test_marker_runner_cleans_tracking_after_normal_exit() -> None:
+    class RecordingRunner(MarkerRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cleanup_calls = 0
+
+        def cleanup_spawned_processes(self, log=None):  # type: ignore[override]
+            self.cleanup_calls += 1
+            return super().cleanup_spawned_processes(log)
+
+    runner = RecordingRunner()
+    result = runner._run(
+        [sys.executable, "-c", "print('done')"],
+        dict(os.environ),
+        lambda _line: None,
+    )
+
+    assert result.exit_code == 0
+    assert runner.cleanup_calls == 1
+    assert runner._tracked_snapshot() == []
+
+
+def test_marker_runner_bounds_unterminated_stdout_lines() -> None:
+    runner = MarkerRunner()
+    logs: list[str] = []
+    size = marker_runner_module._MAX_LOG_LINE_CHARS + 17
+
+    result = runner._run(
+        [sys.executable, "-c", f"print('x' * {size}, end='')"],
+        dict(os.environ),
+        logs.append,
+    )
+
+    output_chunks = [line for line in logs if line.startswith("x")]
+    assert result.exit_code == 0
+    assert len(output_chunks) == 2
+    assert len(output_chunks[0]) <= marker_runner_module._MAX_LOG_LINE_CHARS + len(" [continued]")

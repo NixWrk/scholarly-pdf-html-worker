@@ -5,7 +5,7 @@ import os
 import signal
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,7 +13,7 @@ from pathlib import Path
 from time import perf_counter
 
 try:
-    import psutil
+    import psutil  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover - optional runtime dependency
     psutil = None
 
@@ -23,6 +23,9 @@ _PROGRESS_FILE_NAMES = {
     "marker_status.json",
     "marker_status.json.tmp",
 }
+_MAX_LOG_LINE_CHARS = 64 * 1024
+_PROCESS_SCAN_INTERVAL_SECONDS = 1.0
+_HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,12 @@ class ProgressContext:
     pages_total: int | None
     output_dir: Path | None
     artifact_extension: str
+
+
+@dataclass(frozen=True)
+class _TrackedProcess:
+    pid: int
+    create_time: float | None
 
 
 def build_marker_single_command(
@@ -79,19 +88,33 @@ class MarkerRunner:
     ) -> None:
         self._marker_cmd = marker_cmd
         self._marker_single_cmd = marker_single_cmd
-        self._current_process: subprocess.Popen | None = None
+        self._current_process: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
-        self._tracked_pids: set[int] = set()
+        self._run_lock = threading.Lock()
+        self._tracked_pids: dict[int, float | None] = {}
+
+    @staticmethod
+    def _pid_create_time(pid: int) -> float | None:
+        if psutil is None or pid <= 0:
+            return None
+        try:
+            return float(psutil.Process(pid).create_time())
+        except Exception:
+            return None
 
     def _track_pid(self, pid: int) -> None:
         if pid <= 0:
             return
+        create_time = self._pid_create_time(pid)
         with self._lock:
-            self._tracked_pids.add(pid)
+            self._tracked_pids[pid] = create_time
 
-    def _tracked_snapshot(self) -> list[int]:
+    def _tracked_snapshot(self) -> list[_TrackedProcess]:
         with self._lock:
-            return sorted(self._tracked_pids)
+            return [
+                _TrackedProcess(pid=pid, create_time=create_time)
+                for pid, create_time in sorted(self._tracked_pids.items())
+            ]
 
     def _register_child_pids(self, root_pid: int) -> None:
         if psutil is None or root_pid <= 0:
@@ -105,13 +128,17 @@ class MarkerRunner:
             self._track_pid(child.pid)
 
     @staticmethod
-    def _kill_pid_tree(pid: int) -> bool:
+    def _kill_pid_tree(pid: int, expected_create_time: float | None = None) -> bool:
         if pid <= 0:
             return True
 
         if psutil is not None:
             try:
                 root = psutil.Process(pid)
+                if expected_create_time is not None:
+                    actual_create_time = float(root.create_time())
+                    if abs(actual_create_time - expected_create_time) > 0.001:
+                        return True
                 processes = [*root.children(recursive=True), root]
                 for process in processes:
                     with suppress(Exception):
@@ -125,11 +152,16 @@ class MarkerRunner:
             except psutil.NoSuchProcess:
                 return True
             except Exception:
-                pass
+                if expected_create_time is not None:
+                    return False
 
         if os.name != "nt":
             try:
-                os.kill(pid, signal.SIGTERM)
+                kill_process_group = getattr(os, "killpg", None)
+                if callable(kill_process_group):
+                    kill_process_group(pid, signal.SIGTERM)
+                else:
+                    os.kill(pid, signal.SIGTERM)
                 return True
             except ProcessLookupError:
                 return True
@@ -164,15 +196,15 @@ class MarkerRunner:
             return
 
         killed = 0
-        remaining: list[int] = []
-        for pid in tracked:
-            if self._kill_pid_tree(pid):
+        remaining: dict[int, float | None] = {}
+        for process in tracked:
+            if self._kill_pid_tree(process.pid, process.create_time):
                 killed += 1
             else:
-                remaining.append(pid)
+                remaining[process.pid] = process.create_time
 
         with self._lock:
-            self._tracked_pids = set(remaining)
+            self._tracked_pids = remaining
 
         if log is not None:
             log(
@@ -184,7 +216,7 @@ class MarkerRunner:
 
     def _stop_process_tree(
         self,
-        process: subprocess.Popen,
+        process: subprocess.Popen[str],
         *,
         log: Callable[[str], None] | None = None,
     ) -> None:
@@ -195,7 +227,7 @@ class MarkerRunner:
         with suppress(Exception):
             process.wait(timeout=2)
         if process.poll() is None:
-            self._kill_pid_tree(process.pid)
+            self._kill_pid_tree(process.pid, self._pid_create_time(process.pid))
         self.cleanup_spawned_processes(log)
 
     def terminate_current(self) -> None:
@@ -210,7 +242,17 @@ class MarkerRunner:
         self,
         command: list[str],
         env: dict[str, str],
-        log: callable,
+        log: Callable[[str], None],
+        progress: ProgressContext | None = None,
+    ) -> RunResult:
+        with self._run_lock:
+            return self._run_serialized(command, env, log, progress)
+
+    def _run_serialized(
+        self,
+        command: list[str],
+        env: dict[str, str],
+        log: Callable[[str], None],
         progress: ProgressContext | None = None,
     ) -> RunResult:
         run_started_at = perf_counter()
@@ -225,6 +267,10 @@ class MarkerRunner:
             errors="replace",
             env=env,
             bufsize=1,
+            start_new_session=os.name != "nt",
+            creationflags=(
+                subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            ),
         )
         log(f"[timer] runner.spawn_process: {perf_counter() - spawn_started_at:.2f}s")
         log(f"Runner process started: pid={process.pid}")
@@ -305,9 +351,12 @@ class MarkerRunner:
                 return
             if process.poll() is not None:
                 return
+            raw_idle_seconds = payload.get("stall_idle_seconds")
+            if not isinstance(raw_idle_seconds, (int, float, str)):
+                return
             try:
-                idle_seconds = float(payload.get("stall_idle_seconds") or 0)
-            except (TypeError, ValueError):
+                idle_seconds = float(raw_idle_seconds)
+            except ValueError:
                 return
             if idle_seconds < stall_timeout_seconds:
                 return
@@ -319,8 +368,12 @@ class MarkerRunner:
             self._stop_process_tree(process, log=log)
 
         def heartbeat() -> None:
-            while not heartbeat_stop.wait(10):
+            next_heartbeat_at = perf_counter() + _HEARTBEAT_INTERVAL_SECONDS
+            while not heartbeat_stop.wait(_PROCESS_SCAN_INTERVAL_SECONDS):
                 self._register_child_pids(process.pid)
+                if perf_counter() < next_heartbeat_at:
+                    continue
+                next_heartbeat_at = perf_counter() + _HEARTBEAT_INTERVAL_SECONDS
                 if first_output_at is None:
                     payload = log_progress("waiting_first_output")
                 else:
@@ -334,41 +387,43 @@ class MarkerRunner:
         try:
             assert process.stdout is not None
             line_buffer: list[str] = []
+
+            def emit_line(line: str, emitted_at: float) -> None:
+                nonlocal first_output_at
+                nonlocal last_output_at
+                nonlocal max_output_gap
+                nonlocal line_count
+                nonlocal last_marker_line
+
+                if first_output_at is None:
+                    first_output_at = emitted_at
+                    log(f"[timer] runner.first_output: {first_output_at - run_started_at:.2f}s")
+                if last_output_at is not None:
+                    max_output_gap = max(max_output_gap, emitted_at - last_output_at)
+                last_output_at = emitted_at
+                line_count += 1
+                last_marker_line = line
+                log(line)
+                if _looks_like_marker_progress_line(line):
+                    log_progress("marker_stdout_progress")
+
             while True:
                 ch = process.stdout.read(1)
                 if ch == "":
                     break
 
                 now = perf_counter()
-                if first_output_at is None:
-                    first_output_at = now
-                    log(f"[timer] runner.first_output: {first_output_at - run_started_at:.2f}s")
-
                 if ch in ("\n", "\r"):
                     if line_buffer:
-                        line = "".join(line_buffer)
-                        if last_output_at is not None:
-                            max_output_gap = max(max_output_gap, now - last_output_at)
-                        last_output_at = now
-                        line_count += 1
-                        last_marker_line = line
-                        log(line)
-                        if _looks_like_marker_progress_line(line):
-                            log_progress("marker_stdout_progress")
+                        emit_line("".join(line_buffer), now)
                         line_buffer = []
                 else:
                     line_buffer.append(ch)
+                    if len(line_buffer) >= _MAX_LOG_LINE_CHARS:
+                        emit_line("".join(line_buffer) + " [continued]", now)
+                        line_buffer = []
             if line_buffer:
-                now = perf_counter()
-                line = "".join(line_buffer)
-                if last_output_at is not None:
-                    max_output_gap = max(max_output_gap, now - last_output_at)
-                last_output_at = now
-                line_count += 1
-                last_marker_line = line
-                log(line)
-                if _looks_like_marker_progress_line(line):
-                    log_progress("marker_stdout_progress")
+                emit_line("".join(line_buffer), perf_counter())
 
             wait_started_at = perf_counter()
             exit_code = process.wait()
@@ -391,8 +446,10 @@ class MarkerRunner:
             heartbeat_thread.join(timeout=0.2)
             self._register_child_pids(process.pid)
             with self._lock:
-                self._current_process = None
-                self._tracked_pids.discard(process.pid)
+                if self._current_process is process:
+                    self._current_process = None
+                self._tracked_pids.pop(process.pid, None)
+            self.cleanup_spawned_processes(log)
 
     def run_batch(
         self,
@@ -402,7 +459,7 @@ class MarkerRunner:
         disable_multiprocessing: bool,
         output_format: str,
         env: dict[str, str],
-        log: callable,
+        log: Callable[[str], None],
     ) -> RunResult:
         input_files = _count_input_pdfs(input_dir)
         disable_multiprocessing = disable_multiprocessing or input_files <= 1
@@ -438,7 +495,7 @@ class MarkerRunner:
         output_dir: Path,
         output_format: str,
         env: dict[str, str],
-        log: callable,
+        log: Callable[[str], None],
         page_range: str | None = None,
         disable_multiprocessing: bool = False,
     ) -> RunResult:
@@ -465,7 +522,7 @@ class MarkerRunner:
         output_format: str,
         page_number: int,
         env: dict[str, str],
-        log: callable,
+        log: Callable[[str], None],
     ) -> RunResult:
         """Run marker on one 1-based PDF page.
 
@@ -502,7 +559,7 @@ def _count_input_pdfs(input_dir: Path) -> int:
         return 0
 
 
-def _count_total_pdf_pages(paths: object) -> int | None:
+def _count_total_pdf_pages(paths: Iterable[Path]) -> int | None:
     total = 0
     seen = False
     for path in paths:
@@ -540,7 +597,7 @@ def _count_page_range_pages(page_range: str | None) -> int | None:
 
 def _count_pdf_pages(path: Path) -> int | None:
     try:
-        import fitz  # type: ignore[import-not-found]
+        import fitz  # type: ignore[import-untyped]
 
         with fitz.open(str(path)) as doc:
             return int(doc.page_count)
@@ -556,7 +613,7 @@ def _count_pdf_pages(path: Path) -> int | None:
 
 
 def _output_dir_snapshot(progress: ProgressContext | None) -> dict[str, object]:
-    empty = {
+    empty: dict[str, object] = {
         "output_artifacts": None,
         "output_total_files": None,
         "output_total_bytes": None,
