@@ -71,7 +71,7 @@ def _alias_is_known_for_other_source(
     alias_sources: dict[str, set[str]],
 ) -> bool:
     known_sources = alias_sources.get(alias_base.lower())
-    return bool(known_sources) and normalized_source not in known_sources
+    return known_sources is not None and normalized_source not in known_sources
 
 
 def _exact_legacy_output_alias(output_artifact_dirs: set[str], source_pdf_path: Path) -> str | None:

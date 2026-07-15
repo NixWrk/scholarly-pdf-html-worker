@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import time
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,16 +39,31 @@ def _terminate_process_tree(process: subprocess.Popen[Any], *, cwd: Path) -> Non
             errors="replace",
             check=False,
         )
+        with suppress(Exception):
+            process.wait(timeout=5)
+        if process.poll() is None:
+            with suppress(Exception):
+                process.kill()
+            with suppress(Exception):
+                process.wait(timeout=5)
         return
 
+    kill_process_group = getattr(os, "killpg", None)
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        if callable(kill_process_group):
+            kill_process_group(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
         process.wait(timeout=5)
     except Exception:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except Exception:
-            process.kill()
+        if callable(kill_process_group):
+            with suppress(Exception):
+                kill_process_group(process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+        if process.poll() is None:
+            with suppress(Exception):
+                process.kill()
+        with suppress(Exception):
+            process.wait(timeout=5)
 
 
 def execute_marker_command(

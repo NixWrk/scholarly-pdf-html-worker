@@ -12,10 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
-try:
-    import psutil  # type: ignore[import-untyped]
-except Exception:  # pragma: no cover - optional runtime dependency
-    psutil = None
+import psutil
 
 
 _PROGRESS_FILE_NAMES = {

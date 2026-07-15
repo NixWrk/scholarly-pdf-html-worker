@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import re
+from typing import Protocol
 
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
 from pdf_html_polish.quality_loop.audit_blocks import (
@@ -702,7 +703,7 @@ class MeineRecentLinkDeps:
     ref_anchor_visible_number: Callable[[str], int | None]
     roman_word_split_defects: Callable[..., list[Defect]]
     is_references_block: Callable[[Block, bool], bool]
-    looks_like_affiliation_label_roman_boundary: Callable[[str], bool]
+    looks_like_affiliation_label_roman_boundary: Callable[[Block, re.Match[str]], bool]
     block_is_float_or_table_context: Callable[[Block], bool]
     flattened_sup_match_is_joined_figure_label: Callable[[re.Match[str]], bool]
     flattened_sup_match_is_doi_or_url_fragment: Callable[[str, re.Match[str]], bool]
@@ -719,6 +720,10 @@ class MeineRecentLinkDeps:
     parse_overlapping_blocks: Callable[[str], list[Block]]
     missing_figure_warning_blocks: Callable[[str], list[Block]]
     classify_missing_figure_warning: Callable[[Block, list[Block]], dict[str, object]]
+
+
+class KnownOcrTokenDefects(Protocol):
+    def __call__(self, plain: str, pdf_text: str, *, stage: str) -> list[Defect]: ...
 
 
 @dataclass(frozen=True)
@@ -756,7 +761,7 @@ class MeineRecentTextDeps:
     pdf_line_number_residue_re: re.Pattern[str]
     non_reference_body_blocks: Callable[[list[Block]], Iterable[Block]]
     joined_word_match_is_url_slug: Callable[[str, re.Match[str]], bool]
-    known_ocr_token_defects: Callable[[str, str, str], list[Defect]]
+    known_ocr_token_defects: KnownOcrTokenDefects
     find_split_dot_email_match: Callable[[str], re.Match[str] | None]
     bibliography_numbering_residue_is_clean_reference_boundary: Callable[[str, str], bool]
 
@@ -1632,6 +1637,9 @@ def meine_recent_link_structure_defects(
             single_stat_match = None
         if comma_match is None and single_stat_match is None:
             continue
+        stat_match = comma_match if comma_match is not None else single_stat_match
+        if stat_match is None:
+            continue
         defects.append(
             make_defect(
                 defect_id="P60",
@@ -1644,7 +1652,7 @@ def meine_recent_link_structure_defects(
                 hypothesis="Comma-decimal/statistical notation was mistaken for a reference list.",
                 proposed_fix_layer="EN polish citation false-positive guards for statistical contexts",
                 regression_test="Values like effect size 1,5, allocation ratio 3,1, and sample-size values remain numeric text.",
-                extra=(comma_match or single_stat_match).groupdict(),
+                extra=stat_match.groupdict(),
             )
         )
         break
@@ -1661,7 +1669,11 @@ def meine_recent_link_structure_defects(
     warning_context_blocks = deps.parse_overlapping_blocks(polish_html)
     for warning_index, block in enumerate(deps.missing_figure_warning_blocks(polish_html)):
         classification = deps.classify_missing_figure_warning(block, warning_context_blocks)
-        extra = {"warning_index": warning_index + 1, **classification["extra"]}
+        extra: dict[str, object] = {"warning_index": warning_index + 1}
+        classification_extra = classification.get("extra")
+        if isinstance(classification_extra, dict):
+            for key, value in classification_extra.items():
+                extra[str(key)] = value
         defects.append(
             make_defect(
                 defect_id=str(classification["defect_id"]),

@@ -277,6 +277,43 @@ def test_load_zotero_overlay_citations_reads_probe_summary() -> None:
     assert merged["zotero_citations"][0]["context"] == "pretreatment UDS.3-5Recently"
 
 
+def test_load_zotero_overlay_citations_rejects_boolean_and_nonpositive_ids() -> None:
+    overlay_path = Path(".tmp_local2/test_zotero_overlay_invalid_ids.overlays.json")
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        overlay_path.write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "citations": [
+                            {
+                                "pageIndex": True,
+                                "text": "2",
+                                "references": [
+                                    {"index": True},
+                                    {"index": None},
+                                    {"index": 0},
+                                    {"index": -1},
+                                    {"index": 2.8},
+                                    {"index": "2"},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        citations = load_zotero_overlay_citations(overlay_path)
+    finally:
+        overlay_path.unlink(missing_ok=True)
+
+    assert len(citations) == 1
+    assert citations[0].page == 0
+    assert citations[0].refs == [2]
+
+
 def test_parenthetical_numeric_profile_retargers_page_anchor_citations_without_sup_false_positive() -> None:
     html = (
         "<html><body>"

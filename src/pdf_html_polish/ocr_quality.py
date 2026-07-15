@@ -185,7 +185,7 @@ def enqueue_reocr_candidate(
     alias_norm = alias_base_name.lower()
     now = datetime.now(timezone.utc).isoformat()
 
-    entry = {
+    entry: dict[str, object] = {
         "queued_at": now,
         "source_pdf_path": str(source_pdf_path),
         "source_pdf_norm": source_norm,

@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
+from pdf_html_polish.quality_loop import p62_marker
 from pdf_html_polish.quality_loop.p62_marker import execute_marker_command, validate_marker_output
 
 
@@ -9,6 +11,35 @@ def test_execute_marker_command_skips_missing_command() -> None:
     report = execute_marker_command({}, timeout_seconds=1, cwd=Path.cwd())
 
     assert report == {"status": "skipped", "reason": "marker_command_unavailable", "returncode": None}
+
+
+def test_terminate_process_tree_waits_after_windows_taskkill(monkeypatch) -> None:
+    class FakeProcess:
+        pid = 123
+
+        def __init__(self) -> None:
+            self.wait_calls = 0
+            self.running = True
+
+        def poll(self):
+            return None if self.running else 0
+
+        def wait(self, timeout):
+            self.wait_calls += 1
+            self.running = False
+            return 0
+
+        def kill(self) -> None:
+            self.running = False
+
+    process = FakeProcess()
+    monkeypatch.setattr(p62_marker, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(p62_marker.subprocess, "run", lambda *args, **kwargs: None)
+
+    p62_marker._terminate_process_tree(process, cwd=Path.cwd())
+
+    assert process.wait_calls == 1
+    assert process.poll() == 0
 
 
 def test_execute_marker_command_writes_report_for_completed_command(tmp_path: Path) -> None:

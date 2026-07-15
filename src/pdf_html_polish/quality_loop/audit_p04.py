@@ -361,7 +361,11 @@ def unlinked_citation_range_kind(
 ) -> str:
     match = CITATION_RANGE_LIST_RE.search(block.text)
     has_unlinked_plain_match = match is not None and "z2m-ref-link" not in block.raw
-    has_vector_range = has_unlinked_plain_match and looks_like_numeric_vector(block.text, match)
+    has_vector_range = (
+        match is not None
+        and "z2m-ref-link" not in block.raw
+        and looks_like_numeric_vector(block.text, match)
+    )
     has_plain_range = has_unlinked_plain_match and not has_vector_range
     has_tagged_range = has_unlinked_tagged_citation_range(block)
     has_sup_range = has_unlinked_sup_numeric_range(block)

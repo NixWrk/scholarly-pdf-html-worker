@@ -168,6 +168,25 @@ def _zotero_text_from_chars(chars: Any) -> str:
     return "".join(text)
 
 
+def _zotero_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if not isinstance(value, str) or re.fullmatch(r"[+-]?\d+", value.strip()) is None:
+        return None
+    return int(value)
+
+
+def _zotero_positive_int(value: Any) -> int | None:
+    result = _zotero_int(value)
+    if result is None:
+        return None
+    return result if result > 0 else None
+
+
 def _zotero_citation_refs(value: Any) -> list[int]:
     refs: list[int] = []
     if not isinstance(value, list):
@@ -178,11 +197,10 @@ def _zotero_citation_refs(value: Any) -> list[int]:
             raw = item.get("index")
         else:
             raw = getattr(item, "index", None)
-        try:
-            ref = int(raw)
-        except (TypeError, ValueError):
+        ref = _zotero_positive_int(raw)
+        if ref is None:
             continue
-        if ref > 0 and ref not in refs:
+        if ref not in refs:
             refs.append(ref)
     return refs
 
@@ -195,9 +213,9 @@ def _zotero_overlay_context(overlay: dict[str, Any], page: dict[str, Any]) -> st
     first = word[0]
     if not isinstance(first, dict):
         return ""
-    try:
-        offset = int(first.get("offset"))
-    except (TypeError, ValueError):
+    raw_offset = first.get("offset")
+    offset = _zotero_int(raw_offset)
+    if offset is None or offset < 0:
         return ""
     start = max(0, offset - 80)
     end = min(len(chars), offset + len(word) + 80)
@@ -219,10 +237,8 @@ def _zotero_citations_from_summary(data: dict[str, Any]) -> list[ZoteroOverlayCi
         refs = _zotero_citation_refs(item.get("references"))
         if not text or not refs:
             continue
-        try:
-            page = int(item.get("pageIndex")) + 1
-        except (TypeError, ValueError):
-            page = 0
+        page_index = _zotero_int(item.get("pageIndex"))
+        page = page_index + 1 if page_index is not None and page_index >= 0 else 0
         citations.append(
             ZoteroOverlayCitation(
                 page=page,
