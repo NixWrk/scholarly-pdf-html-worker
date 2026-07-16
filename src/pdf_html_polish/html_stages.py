@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -52,7 +52,7 @@ def write_raw_conversion_manifest(
     payload = {
         "schema_version": RAW_CONVERSION_MANIFEST_SCHEMA_VERSION,
         "status": "completed",
-        "completed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source_pdf_name": source_path.name,
         "source_pdf_bytes": int(source_stat.st_size),
         "source_pdf_sha256": _sha256_file(source_path),
