@@ -14,6 +14,7 @@ from .pipeline import run_pipeline
 from .pipeline_options import PipelineOptions
 from .html_stages import (
     POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
     article_dir_from_html_stage,
     article_name_from_html_stage,
 )
@@ -47,6 +48,7 @@ class CleanPipelineOptions:
     publish_latest_to_converted: bool = True
     prune_extra_html: bool = True
     publish_report_path: str | None = None
+    reuse_existing_conversion: bool = False
 
 
 @dataclass(frozen=True)
@@ -372,6 +374,37 @@ def empty_final_html_collection(
     )
 
 
+def existing_conversion_summary(options: PipelineOptions) -> PipelineSummary:
+    converted_root = Path(options.output_dir).expanduser().resolve(strict=False)
+    raw_stages = sorted(
+        (
+            path for path in converted_root.rglob(RAW_STAGE_NAME)
+            if path.is_file()
+        ),
+        key=str,
+    )
+    if not raw_stages:
+        raise FileNotFoundError(
+            "Repolish-only mode requires an existing 01.en.raw.html under "
+            f"{converted_root}."
+        )
+    source_pdf_count = len(options.source_pdf_paths or [])
+    article_count = len({article_dir_from_html_stage(path) for path in raw_stages})
+    return PipelineSummary(
+        collection_key="direct_pdf",
+        collection_name="existing PDF HTML conversions",
+        attachments_total=max(source_pdf_count, article_count),
+        pdfs_resolved=source_pdf_count,
+        staged_total=0,
+        converted_total=article_count,
+        skipped_existing=0,
+        failed_total=0,
+        output_dir=converted_root,
+        filename_map_path=converted_root / "_source_filename_map.csv",
+        export_mode=options.export_mode,
+    )
+
+
 def run_clean_pipeline(
     options: CleanPipelineOptions,
     runner: MarkerRunner,
@@ -385,12 +418,19 @@ def run_clean_pipeline(
     observe_runner: Callable[[Sequence[str], Path | None, Callable[[str], None] | None], int]
     | None = None,
 ) -> CleanPipelineSummary:
-    conversion_summary = pipeline_runner(
-        options.conversion_options,
-        runner,
-        log,
-        is_cancelled,
-    )
+    if options.reuse_existing_conversion:
+        conversion_summary = existing_conversion_summary(options.conversion_options)
+        log(
+            "Reusing existing PDF HTML raw stages for repolish: "
+            f"articles={conversion_summary.converted_total} output={conversion_summary.output_dir}"
+        )
+    else:
+        conversion_summary = pipeline_runner(
+            options.conversion_options,
+            runner,
+            log,
+            is_cancelled,
+        )
     if conversion_summary.failed_total:
         raise RuntimeError(
             "PDF conversion failed; quality observe was skipped "

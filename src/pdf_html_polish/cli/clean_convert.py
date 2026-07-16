@@ -69,11 +69,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Return failure when quality_gate_report.json status is fail.",
     )
     parser.add_argument(
+        "--diagnostic-allow-gate-failure",
+        dest="fail_on_gate",
+        action="store_false",
+        help="Allow diagnostic output even when the document quality gate fails.",
+    )
+    parser.add_argument(
         "--raw-only",
         action="store_true",
         help=(
             "Internal chunk-fallback mode: run Marker and save 01.en.raw.html only; "
             "skip citation profile, polish, quality observe, and final HTML collection."
+        ),
+    )
+    parser.add_argument(
+        "--repolish-existing",
+        action="store_true",
+        help=(
+            "Reuse existing 01.en.raw.html stages under --output-dir, rerun polish and "
+            "quality observe, and skip PDF conversion."
         ),
     )
 
@@ -112,7 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.raw_only and args.repolish_existing:
+        parser.error("--raw-only and --repolish-existing are mutually exclusive")
     runner = MarkerRunner(
         marker_cmd=args.marker_cmd,
         marker_single_cmd=args.marker_single_cmd,
@@ -151,6 +168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 no_append_history=not args.append_history,
                 skip_quality_tests=args.skip_quality_tests,
                 fail_on_gate=args.fail_on_gate,
+                reuse_existing_conversion=args.repolish_existing,
             )
             summary = run_clean_pipeline(clean_options, runner, _log, lambda: False)
     finally:

@@ -84,6 +84,24 @@ def test_clean_public_parser_accepts_raw_only_chunk_mode() -> None:
     assert args.raw_only is True
 
 
+def test_clean_public_parser_accepts_repolish_existing_mode() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["--pdf", "paper.pdf", "--output-dir", "out", "--repolish-existing"])
+
+    assert args.repolish_existing is True
+
+
+def test_clean_public_parser_accepts_quality_gate_diagnostic_mode() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        ["--pdf", "paper.pdf", "--output-dir", "out", "--diagnostic-allow-gate-failure"]
+    )
+
+    assert args.fail_on_gate is False
+
+
 def test_run_raw_html_pipeline_saves_raw_stage_only(tmp_path: Path) -> None:
     source_pdf = tmp_path / "paper.pdf"
     source_pdf.write_bytes(b"%PDF")
@@ -273,6 +291,69 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
     assert "gate" in stage_manifest
     assert not (conversion_dir / "article_a" / "article_a.html").exists()
     assert "observe ok" in logs
+
+
+def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path: Path) -> None:
+    conversion_dir = tmp_path / "converted"
+    quality_dir = tmp_path / "quality"
+    stage_dir = conversion_dir / "article_a" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "01.en.raw.html").write_text("<html><body>raw</body></html>", encoding="utf-8")
+    (stage_dir / "02.en.polish.html").write_text("<html><body>stale</body></html>", encoding="utf-8")
+    logs: list[str] = []
+    observe_calls: list[list[str]] = []
+
+    def fail_pipeline_runner(*_args):
+        raise AssertionError("repolish-only mode must not invoke PDF conversion")
+
+    def fake_observe_runner(command, cwd, log):
+        observe_calls.append(list(command))
+        final_stage = quality_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+        final_stage.parent.mkdir(parents=True)
+        final_stage.write_text("<html><body>repolished</body></html>", encoding="utf-8")
+        if log is not None:
+            log("repolish observe ok")
+        return 0
+
+    summary = run_clean_pipeline(
+        CleanPipelineOptions(
+            conversion_options=PipelineOptions(
+                source_pdf_paths=[str(tmp_path / "paper.pdf")],
+                output_dir=str(conversion_dir),
+                export_mode="html",
+            ),
+            quality_output_dir=str(quality_dir),
+            publish_latest_to_converted=False,
+            skip_quality_tests=True,
+            reuse_existing_conversion=True,
+        ),
+        MarkerRunner(),
+        logs.append,
+        lambda: False,
+        pipeline_runner=fail_pipeline_runner,
+        observe_runner=fake_observe_runner,
+    )
+
+    assert summary.conversion_summary.converted_total == 1
+    assert observe_calls
+    assert "--skip-tests" in observe_calls[0]
+    assert summary.final_html.artifacts[0].final_path.read_text(encoding="utf-8") == (
+        "<html><body>repolished</body></html>"
+    )
+    assert any("Reusing existing PDF HTML raw stages" in entry for entry in logs)
+
+
+def test_run_clean_pipeline_repolish_existing_requires_raw_stage(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="01.en.raw.html"):
+        run_clean_pipeline(
+            CleanPipelineOptions(
+                conversion_options=PipelineOptions(output_dir=str(tmp_path / "converted")),
+                reuse_existing_conversion=True,
+            ),
+            MarkerRunner(),
+            lambda _message: None,
+            lambda: False,
+        )
 
 
 def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all(
