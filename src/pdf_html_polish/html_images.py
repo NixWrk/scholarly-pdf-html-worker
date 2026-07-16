@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
 from dataclasses import dataclass
 import hashlib
 from html.parser import HTMLParser
@@ -371,22 +372,127 @@ def decode_data_image_payload(src_value: str) -> tuple[str, bytes] | None:
         return mime, b""
 
 
-def data_image_src_looks_renderable(src_value: str) -> bool:
-    decoded = decode_data_image_payload(src_value)
-    if decoded is None:
-        return not src_value.strip().lower().startswith("data:image/")
-    mime, blob = decoded
-    if not blob:
+_BASE64_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+_BASE64_EDGE_CHARS = 40
+
+
+def _base64_image_region(src_value: str) -> tuple[str, str, int] | None:
+    value = src_value.strip()
+    lowered = value.lower()
+    if lowered.startswith("data:image/"):
+        comma_idx = value.find(",")
+        if comma_idx < 0:
+            return None
+        meta = lowered[:comma_idx]
+        if ";base64" not in meta:
+            return None
+        mime = meta.removeprefix("data:").split(";", 1)[0]
+        return value, mime, comma_idx + 1
+
+    raw_prefix = "".join(char for char in value[:24] if not char.isspace())
+    if raw_prefix.startswith("/9j/"):
+        mime = "image/jpeg"
+    elif raw_prefix.startswith("iVBOR"):
+        mime = "image/png"
+    elif raw_prefix.startswith(("R0lGODlh", "R0lGODdh")):
+        mime = "image/gif"
+    elif raw_prefix.startswith("UklGR"):
+        mime = "image/webp"
+    else:
+        return None
+    return value, mime, 0
+
+
+def _decode_base64_edge(chars: list[str]) -> bytes | None:
+    raw = "".join(chars)
+    padded = raw + ("=" * ((4 - len(raw) % 4) % 4))
+    try:
+        return base64.b64decode(padded, validate=True)
+    except (ValueError, TypeError):
+        return None
+
+
+def _scan_base64_image_edges(value: str, start: int) -> tuple[bytes, bytes, int] | None:
+    prefix_chars: list[str] = []
+    suffix_chars: deque[str] = deque(maxlen=_BASE64_EDGE_CHARS)
+    total_chars = 0
+    padding_chars = 0
+    padding_started = False
+
+    for index in range(start, len(value)):
+        char = value[index]
+        if char.isspace():
+            continue
+        if char == "=":
+            padding_started = True
+            padding_chars += 1
+            if padding_chars > 2:
+                return None
+        elif char in _BASE64_ALPHABET:
+            if padding_started:
+                return None
+        else:
+            return None
+        if len(prefix_chars) < _BASE64_EDGE_CHARS:
+            prefix_chars.append(char)
+        suffix_chars.append(char)
+        total_chars += 1
+
+    if total_chars == 0 or total_chars % 4 == 1:
+        return None
+    if padding_chars and total_chars % 4 != 0:
+        return None
+
+    suffix_list = list(suffix_chars)
+    suffix_global_start = total_chars - len(suffix_list)
+    suffix_alignment_drop = (-suffix_global_start) % 4
+    if suffix_alignment_drop:
+        suffix_list = suffix_list[suffix_alignment_drop:]
+    prefix_blob = _decode_base64_edge(prefix_chars)
+    suffix_blob = _decode_base64_edge(suffix_list)
+    if not prefix_blob or not suffix_blob:
+        return None
+    decoded_size = ((total_chars - padding_chars) * 6) // 8
+    return prefix_blob, suffix_blob, decoded_size
+
+
+def _non_base64_svg_looks_renderable(src_value: str) -> bool:
+    value = src_value.strip()
+    lowered = value.lower()
+    comma_idx = value.find(",")
+    if comma_idx < 0:
         return False
+    meta = lowered[:comma_idx]
+    mime = meta.removeprefix("data:").split(";", 1)[0]
+    if mime != "image/svg+xml":
+        return False
+    payload_prefix = lowered[comma_idx + 1 : comma_idx + 257].lstrip()
+    return payload_prefix.startswith(("<svg", "<?xml", "%3csvg", "%3c?xml"))
+
+
+def data_image_src_looks_renderable(src_value: str) -> bool:
+    region = _base64_image_region(src_value)
+    if region is None:
+        if src_value.strip().lower().startswith("data:image/"):
+            return _non_base64_svg_looks_renderable(src_value)
+        return True
+    value, mime, start = region
+    scanned = _scan_base64_image_edges(value, start)
+    if scanned is None:
+        return False
+    prefix, suffix, decoded_size = scanned
     if mime == "image/jpeg":
-        return blob.startswith(b"\xff\xd8") and blob.endswith(b"\xff\xd9")
+        return prefix.startswith(b"\xff\xd8") and suffix.endswith(b"\xff\xd9")
     if mime == "image/png":
-        return blob.startswith(b"\x89PNG\r\n\x1a\n") and blob.endswith(b"IEND\xaeB`\x82")
+        return prefix.startswith(b"\x89PNG\r\n\x1a\n") and suffix.endswith(b"IEND\xaeB`\x82")
     if mime == "image/gif":
-        return blob.startswith((b"GIF87a", b"GIF89a")) and blob.endswith(b";")
+        return prefix.startswith((b"GIF87a", b"GIF89a")) and suffix.endswith(b";")
     if mime == "image/webp":
-        return len(blob) >= 12 and blob.startswith(b"RIFF") and blob[8:12] == b"WEBP"
-    return True
+        return decoded_size >= 12 and prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP"
+    if mime == "image/svg+xml":
+        stripped_prefix = prefix.lstrip(b"\xef\xbb\xbf \t\r\n")
+        return stripped_prefix.startswith((b"<svg", b"<?xml"))
+    return decoded_size > 0
 
 
 def html_node_image_srcs(raw: str) -> list[str]:
@@ -399,7 +505,7 @@ def html_node_has_renderable_image(raw: str) -> bool:
 
 def html_node_has_broken_data_image(raw: str) -> bool:
     return any(
-        decode_data_image_payload(src) is not None and not data_image_src_looks_renderable(src)
+        _base64_image_region(src) is not None and not data_image_src_looks_renderable(src)
         for src in html_node_image_srcs(raw)
     )
 
@@ -554,10 +660,14 @@ def refresh_inlined_data_urls_by_cache(
         if not data_image_src_looks_renderable(cached_data_url):
             return match.group(0)
         if src_value.lower().startswith("data:image/") and data_image_src_looks_renderable(src_value):
+            clean_prefix = clear_inline_skip_metadata(prefix)
+            if clean_prefix != prefix:
+                return f"{clean_prefix}{quote}{src_value}{suffix}"
             return match.group(0)
 
         refreshed += 1
-        return f"{prefix}{quote}{cached_data_url}{suffix}"
+        clean_prefix = clear_inline_skip_metadata(prefix)
+        return f"{clean_prefix}{quote}{cached_data_url}{suffix}"
 
     return IMG_SRC_PATTERN.sub(replace, html), refreshed
 
@@ -593,40 +703,11 @@ def inline_images_from_html_text(
         env_name=INLINE_IMAGE_HARD_MAX_BYTES_ENV,
         default=DEFAULT_INLINE_IMAGE_HARD_MAX_BYTES,
     )
-    base_root = base_dir.resolve(strict=False)
-
-    def safe_candidate(path: Path) -> Path | None:
-        candidate = path.resolve(strict=False)
-        try:
-            candidate.relative_to(base_root)
-        except ValueError:
-            return None
-        return candidate if candidate.is_file() else None
-
-    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
-    sidecar_images = sorted(
-        (
-            candidate
-            for path in base_root.iterdir()
-            if path.suffix.lower() in image_exts
-            if (candidate := safe_candidate(path)) is not None
-        ),
-        key=lambda path: path.name.lower(),
-    )
-    img_matches = list(IMG_SRC_PATTERN.finditer(text))
-    data_img_count = sum(1 for match in img_matches if (match.group(3) or "").strip().lower().startswith("data:"))
-    all_images_already_data = bool(img_matches) and data_img_count == len(img_matches)
-    allow_sidecar_order_refresh = all_images_already_data and len(sidecar_images) == len(img_matches)
-    sidecar_cursor = [0]
     image_match_cursor = [0]
     image_cache: dict[str, str] = {}
 
     def resolve_candidate(path_value: str) -> Path | None:
-        if not path_value:
-            return None
-        clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
-        decoded = urllib.parse.unquote(clean_path)
-        return safe_candidate(base_root / decoded)
+        return resolve_local_image_candidate(base_dir, path_value)
 
     def add_src_hint(prefix: str, hint_path: str) -> str:
         if re.search(r'\bdata-z2m-src\s*=', prefix, re.IGNORECASE):
@@ -736,16 +817,16 @@ def inline_images_from_html_text(
         if src_lower.startswith("data:"):
             if src_hint:
                 candidate = resolve_candidate(src_hint)
-            if candidate is None and allow_sidecar_order_refresh and sidecar_cursor[0] < len(sidecar_images):
-                candidate = sidecar_images[sidecar_cursor[0]]
-                sidecar_cursor[0] += 1
-                prefix = add_src_hint(prefix, candidate.name)
             if candidate is None:
+                prefix = clear_inline_skip_metadata(prefix)
                 prefix = remember_data_url(prefix, src_value, match_idx)
                 if prefix != match.group(1):
                     return f"{prefix}{quote}{src_value}{suffix}"
                 return match.group(0)
         elif is_inline_or_remote(src_value):
+            if src_lower.startswith(("http://", "https://")):
+                prefix = clear_inline_skip_metadata(prefix)
+                return f"{prefix}{quote}{src_value}{suffix}"
             return match.group(0)
         else:
             candidate = resolve_candidate(src_value)
@@ -770,6 +851,7 @@ def inline_images_from_html_text(
             )
             if downscaled is not None:
                 data_url, byte_count = downscaled
+                prefix = clear_inline_skip_metadata(prefix)
                 prefix = remember_data_url(prefix, data_url, match_idx)
                 inlined_count += 1
                 inlined_bytes += byte_count
@@ -787,9 +869,12 @@ def inline_images_from_html_text(
         )
         if original_data_url is None:
             return match.group(0)
+        if not data_image_src_looks_renderable(original_data_url):
+            return match.group(0)
         if not validate_data_url(original_data_url, candidate):
             return match.group(0)
 
+        prefix = clear_inline_skip_metadata(prefix)
         prefix = remember_data_url(prefix, original_data_url, match_idx)
         inlined_count += 1
         inlined_bytes += candidate_bytes

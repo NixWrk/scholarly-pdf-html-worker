@@ -2,6 +2,8 @@ import base64
 
 import pytest
 
+import pdf_html_polish.html_images as html_images_module
+
 from pdf_html_polish.html_images import (
     data_image_src_looks_renderable,
     decode_data_image_payload,
@@ -14,6 +16,7 @@ from pdf_html_polish.html_images import (
     refresh_inlined_data_urls_by_hint,
     resolve_local_image_candidate,
 )
+from pdf_html_polish.single_file_html import polish_and_inline_html_file
 
 
 def _data_url(mime: str, blob: bytes) -> str:
@@ -42,6 +45,11 @@ def test_data_image_src_renderability_detects_truncated_known_images() -> None:
     assert not data_image_src_looks_renderable(truncated_png)
     assert not data_image_src_looks_renderable("data:image/png,not-base64")
     assert data_image_src_looks_renderable("https://example.org/image.png")
+    assert not data_image_src_looks_renderable("data:image/png,not-a-png")
+    assert data_image_src_looks_renderable("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>")
+    assert data_image_src_looks_renderable("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'/>")
+    assert data_image_src_looks_renderable(_data_url("image/svg+xml", b"<svg></svg>"))
+    assert not data_image_src_looks_renderable(_data_url("image/svg+xml", b"not-svg"))
 
 
 def test_inline_image_integrity_counts_only_live_unresolved_images() -> None:
@@ -127,6 +135,23 @@ def test_refresh_inlined_data_urls_by_cache_restores_broken_payload() -> None:
 
     assert count == 1
     assert broken_data_url not in refreshed
+    assert f'src="{cached_data_url}"' in refreshed
+
+
+def test_refresh_image_cache_clears_stale_skip_on_valid_payload() -> None:
+    cached_data_url = _data_url("image/png", _valid_png_blob())
+    html = (
+        '<img data-z2m-image-key="img-1" data-z2m-inline-skip="old-budget" '
+        f'src="{cached_data_url}">'
+    )
+
+    refreshed, count = refresh_inlined_data_urls_by_cache(
+        html,
+        image_cache={"img-1": cached_data_url},
+    )
+
+    assert count == 0
+    assert "data-z2m-inline-skip" not in refreshed
     assert f'src="{cached_data_url}"' in refreshed
 
 
@@ -317,3 +342,119 @@ def test_inline_images_from_html_text_skips_after_document_budget(tmp_path) -> N
     assert result.html.count("data:image/png;base64") == 1
     assert 'src="second.png"' in result.html
     assert 'data-z2m-inline-skip="document_inline_budget_exceeded"' in result.html
+
+
+def test_inline_images_preserves_valid_data_urls_without_sidecar_hint(tmp_path) -> None:
+    first_blob = b"\xff\xd8first\xff\xd9"
+    second_blob = b"\xff\xd8second\xff\xd9"
+    (tmp_path / "a.jpg").write_bytes(first_blob)
+    (tmp_path / "b.jpg").write_bytes(second_blob)
+    first_url = _data_url("image/jpeg", first_blob)
+    second_url = _data_url("image/jpeg", second_blob)
+    html = f'<img src="{second_url}"><img src="{first_url}">'
+
+    result, _ = inline_images_from_html_text(html, tmp_path)
+
+    assert html_node_image_srcs(result.html) == [second_url, first_url]
+    assert "data-z2m-src" not in result.html
+
+
+def test_refresh_inlined_data_urls_by_hint_rejects_parent_escape(tmp_path) -> None:
+    article_dir = tmp_path / "article"
+    article_dir.mkdir()
+    outside_image = tmp_path / "outside.png"
+    outside_image.write_bytes(_valid_png_blob())
+    broken_data_url = "data:image/png;base64,AAAA"
+    html = f'<img data-z2m-src="../outside.png" src="{broken_data_url}">'
+
+    refreshed, count = refresh_inlined_data_urls_by_hint(html, base_dir=article_dir)
+
+    assert count == 0
+    assert broken_data_url in refreshed
+
+
+def test_inline_images_clears_stale_skip_metadata_after_success(tmp_path) -> None:
+    image_path = tmp_path / "plot.png"
+    image_path.write_bytes(_valid_png_blob())
+    html = (
+        '<img data-z2m-inline-skip="image_too_large" '
+        'data-z2m-inline-size="100" data-z2m-inline-limit="10" src="plot.png">'
+    )
+
+    result, _ = inline_images_from_html_text(html, tmp_path)
+
+    assert 'src="data:image/png;base64,' in result.html
+    assert "data-z2m-inline-skip" not in result.html
+    assert "data-z2m-inline-size" not in result.html
+    assert "data-z2m-inline-limit" not in result.html
+
+
+def test_inline_image_integrity_ignores_inert_html() -> None:
+    valid_data_url = _data_url("image/png", _valid_png_blob())
+    html = (
+        '<!-- <img src="missing.png"> -->'
+        '<script>const sample = `<img src="missing.png">`;</script>'
+        '<style>.sample::after { content: "<img src=missing.png>"; }</style>'
+        f'<img src="{valid_data_url}">'
+    )
+
+    integrity = inspect_inline_image_integrity(html)
+
+    assert integrity.image_count == 1
+    assert integrity.publishable
+
+
+def test_inline_image_integrity_reports_publication_failures() -> None:
+    html = (
+        "<img>"
+        '<img data-z2m-inline-skip="budget" src="relative.png">'
+        '<img src="data:image/png;base64,AAAA">'
+        '<img src="https://example.org/image.png">'
+    )
+
+    integrity = inspect_inline_image_integrity(html)
+
+    assert integrity.image_count == 4
+    assert integrity.missing_src_count == 1
+    assert integrity.unsupported_src_count == 1
+    assert integrity.broken_data_url_count == 1
+    assert integrity.inline_skip_count == 1
+    assert not integrity.publishable
+
+
+def test_polish_and_inline_rejects_unpublished_local_image(tmp_path) -> None:
+    html_path = tmp_path / "article.html"
+    html_path.write_text(
+        '<html><body><img alt="Missing" src="missing.png"></body></html>',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="unsupported_src=1"):
+        polish_and_inline_html_file(html_path)
+
+
+def test_large_data_image_validation_decodes_only_small_edges(monkeypatch) -> None:
+    blob = b"\xff\xd8" + (b"x" * (1024 * 1024)) + b"\xff\xd9"
+    data_url = _data_url("image/jpeg", blob)
+    real_decode = base64.b64decode
+    decoded_input_sizes: list[int] = []
+
+    def guarded_decode(value, *args, **kwargs):
+        decoded_input_sizes.append(len(value))
+        return real_decode(value, *args, **kwargs)
+
+    monkeypatch.setattr(html_images_module.base64, "b64decode", guarded_decode)
+
+    assert data_image_src_looks_renderable(data_url)
+    assert decoded_input_sizes
+    assert max(decoded_input_sizes) <= 44
+
+
+def test_large_data_image_validation_rejects_invalid_middle_character() -> None:
+    blob = b"\xff\xd8" + (b"x" * 4096) + b"\xff\xd9"
+    data_url = _data_url("image/jpeg", blob)
+    comma = data_url.index(",")
+    middle = comma + 1 + (len(data_url) - comma - 1) // 2
+    corrupted = f"{data_url[:middle]}!{data_url[middle + 1:]}"
+
+    assert not data_image_src_looks_renderable(corrupted)

@@ -620,7 +620,7 @@ def test_inline_images_only_from_html_file_does_not_apply_marker_polish() -> Non
     try:
         html_path = tmp_path / "doc.html"
         image_path = tmp_path / "img.png"
-        image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        image_path.write_bytes(_valid_tiny_png_bytes())
         html_path.write_text('<html><body><img src="img.png"></body></html>', encoding="utf-8")
 
         result = inline_images_only_from_html_file(html_path)

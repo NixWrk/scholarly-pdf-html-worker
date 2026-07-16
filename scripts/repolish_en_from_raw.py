@@ -32,8 +32,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pdf_html_polish.html_images import to_data_url as _to_data_url  # noqa: E402
-from pdf_html_polish.html_images import validate_data_url as _validate_data_url  # noqa: E402
+from pdf_html_polish.html_images import (  # noqa: E402
+    data_image_src_looks_renderable as _data_image_src_looks_renderable,
+    inspect_inline_image_integrity as _inspect_inline_image_integrity,
+    to_data_url as _to_data_url,
+    validate_data_url as _validate_data_url,
+)
 from pdf_html_polish.html_stages import (  # noqa: E402
     POLISH_STAGE_NAME,
     RAW_STAGE_NAME,
@@ -71,8 +75,10 @@ class RepolishResult:
     skip_reason: str = ""
     inlined_images: list[str] = field(default_factory=list)
     missing_images: list[dict[str, object]] = field(default_factory=list)
+    image_integrity: dict[str, int] = field(default_factory=dict)
     restored_images: int = 0
     image_cache_source: str = ""
+    publication_blocked: bool = False
 
 
 def _is_inline_or_remote_src(src: str) -> bool:
@@ -95,14 +101,20 @@ def _local_image_candidates(html_path: Path, src: str) -> list[Path]:
     decoded = urllib.parse.unquote(path_value)
     if re.match(r"^/[A-Za-z]:/", decoded):
         decoded = decoded[1:]
-    candidate = Path(decoded)
-    if candidate.is_absolute():
-        return [candidate]
-
     search_dirs = [html_path.parent]
     if is_html_stage_dir_name(html_path.parent.name):
         search_dirs.append(html_path.parent.parent)
-    return [(base / decoded).resolve(strict=False) for base in search_dirs]
+    candidates: list[Path] = []
+    for base in search_dirs:
+        base_root = base.resolve(strict=False)
+        candidate = (base_root / decoded).resolve(strict=False)
+        try:
+            candidate.relative_to(base_root)
+        except ValueError:
+            continue
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
 
 
 def _resolve_local_image(html_path: Path, src: str) -> Path | None:
@@ -156,7 +168,11 @@ def _inline_local_images(html_path: Path, html: str) -> tuple[str, list[str], li
             return match.group(0)
 
         data_url = _to_data_url(source, detect_by_signature=True, log_func=None)
-        if data_url is None or not _validate_data_url(data_url, source):
+        if (
+            data_url is None
+            or not _data_image_src_looks_renderable(data_url)
+            or not _validate_data_url(data_url, source)
+        ):
             missing_images.append(
                 {
                     "src": src,
@@ -251,12 +267,26 @@ def repolish_file(
     inlined_images: list[str] = []
     missing_images: list[dict[str, object]] = []
     restored_images = 0
+    image_integrity: dict[str, int] = {}
     if inline_images:
         polished, restored_images = _apply_data_image_cache(polished, data_image_cache)
         polished, inlined_images, missing_images = _inline_local_images(polish_path, polished)
 
-    changed = previous != polished
-    polish_path.write_text(polished, encoding="utf-8")
+    publication_blocked = False
+    if inline_images:
+        integrity = _inspect_inline_image_integrity(polished)
+        publication_blocked = not integrity.publishable
+        if publication_blocked:
+            image_integrity = {
+                "missing_src": integrity.missing_src_count,
+                "unsupported_src": integrity.unsupported_src_count,
+                "broken_data_url": integrity.broken_data_url_count,
+                "inline_skip": integrity.inline_skip_count,
+            }
+
+    changed = not publication_blocked and previous != polished
+    if not publication_blocked:
+        polish_path.write_text(polished, encoding="utf-8")
 
     return RepolishResult(
         article=article_dir.name,
@@ -273,7 +303,9 @@ def repolish_file(
         inlined_images=inlined_images,
         missing_images=missing_images,
         restored_images=restored_images,
+        image_integrity=image_integrity,
         image_cache_source="; ".join(image_cache_sources),
+        publication_blocked=publication_blocked,
     )
 
 
@@ -358,6 +390,7 @@ def repolish_roots(
         "language_counts": dict(sorted(language_counts.items())),
         "polish_language_counts": dict(sorted(polish_language_counts.items())),
         "articles": [asdict(result) for result in results],
+        "publication_blocked_count": sum(result.publication_blocked for result in processed_results),
     }
 
 
@@ -446,13 +479,17 @@ def main(argv: list[str] | None = None) -> int:
         f"jobs={report['jobs']} "
         f"restored_images={report['restored_image_count']} "
         f"inlined_images={report['inlined_image_count']} "
-        f"missing_images={report['missing_image_count']}"
+        f"missing_images={report['missing_image_count']} "
+        f"publication_blocked={report['publication_blocked_count']}"
     )
     if args.out_report is not None:
         args.out_report.parent.mkdir(parents=True, exist_ok=True)
         args.out_report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"Wrote {args.out_report}")
-    if args.fail_on_missing_images and report["missing_image_count"]:
+    if args.fail_on_missing_images and (
+        report["missing_image_count"]
+        or report["publication_blocked_count"]
+    ):
         return 1
     return 0
 

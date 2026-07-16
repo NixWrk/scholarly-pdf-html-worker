@@ -8,7 +8,12 @@ from typing import Any, Iterable
 import re
 import urllib.parse
 
-from pdf_html_polish.html_images import to_data_url, validate_data_url
+from pdf_html_polish.html_images import (
+    data_image_src_looks_renderable,
+    inspect_inline_image_integrity,
+    to_data_url,
+    validate_data_url,
+)
 from pdf_html_polish.html_stages import is_html_stage_dir_name
 
 from .converted_runs import POLISH_STAGE, RAW_STAGE
@@ -40,7 +45,7 @@ def source_hinted_data_images(html: str) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for match in IMG_SRC_RE.finditer(html):
         src = unescape(match.group("src")).strip()
-        if not src.lower().startswith("data:image/"):
+        if not src.lower().startswith("data:image/") or not data_image_src_looks_renderable(src):
             continue
         prefix = match.group(1)
         hint = DATA_Z2M_SRC_RE.search(prefix)
@@ -55,7 +60,9 @@ def figure_unit_data_image_cache(raw_html: str, previous_polish_html: str) -> di
         data_srcs = [
             src
             for src in img_srcs(unit_match.group(0))
-            if src.lower().startswith("data:image/")
+            if (
+                src.lower().startswith("data:image/") and data_image_src_looks_renderable(src)
+            )
         ]
         if data_srcs:
             previous_by_figure[unit_match.group("id").lower()] = data_srcs
@@ -90,13 +97,20 @@ def ordered_data_image_cache(raw_html: str, previous_polish_html: str) -> dict[s
     mapping = {src: hinted[src] for src in raw_local_srcs if src in hinted}
     figure_scoped = figure_unit_data_image_cache(raw_html, previous_polish_html)
     mapping.update({src: figure_scoped[src] for src in raw_local_srcs if src not in mapping and src in figure_scoped})
-    missing_srcs = [src for src in raw_local_srcs if src not in mapping]
-    if not missing_srcs:
-        return mapping
-
-    data_srcs = [src for src in img_srcs(previous_polish_html) if src.lower().startswith("data:image/")]
-    if len(data_srcs) == len(raw_local_srcs):
-        mapping.update({src: data_src for src, data_src in zip(raw_local_srcs, data_srcs) if src in missing_srcs})
+    missing_srcs = list(dict.fromkeys(src for src in raw_local_srcs if src not in mapping))
+    if len(missing_srcs) == 1:
+        claimed_data_urls = set(mapping.values())
+        unclaimed_data_urls = list(
+            dict.fromkeys(
+                src
+                for src in img_srcs(previous_polish_html)
+                if src.lower().startswith("data:image/")
+                and data_image_src_looks_renderable(src)
+                and src not in claimed_data_urls
+            )
+        )
+        if len(unclaimed_data_urls) == 1:
+            mapping[missing_srcs[0]] = unclaimed_data_urls[0]
     return mapping
 
 
@@ -126,6 +140,8 @@ def apply_data_image_cache(html: str, image_cache: dict[str, str]) -> tuple[str,
         src = unescape(match.group("src")).strip()
         data_url = image_cache.get(src)
         if data_url is None:
+            return match.group(0)
+        if not data_url.lower().startswith("data:image/") or not data_image_src_looks_renderable(data_url):
             return match.group(0)
         replacements += 1
         prefix = add_src_hint(match.group(1), src)
@@ -240,10 +256,17 @@ def local_image_candidates_from_dirs(src: str, search_dirs: Iterable[Path]) -> l
     decoded = urllib.parse.unquote(path_value)
     if re.match(r"^/[A-Za-z]:/", decoded):
         decoded = decoded[1:]
-    candidate = Path(decoded)
-    if candidate.is_absolute():
-        return [candidate]
-    return [(base / decoded).resolve(strict=False) for base in search_dirs]
+    candidates: list[Path] = []
+    for base in search_dirs:
+        base_root = base.resolve(strict=False)
+        candidate = (base_root / decoded).resolve(strict=False)
+        try:
+            candidate.relative_to(base_root)
+        except ValueError:
+            continue
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
 
 
 def cached_sidecar_image_cache(
@@ -265,7 +288,11 @@ def cached_sidecar_image_cache(
             if not candidate.is_file():
                 continue
             data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
-            if data_url is None or not validate_data_url(data_url, candidate):
+            if (
+                data_url is None
+                or not data_image_src_looks_renderable(data_url)
+                or not validate_data_url(data_url, candidate)
+            ):
                 continue
             image_cache[src] = data_url
             source_dirs.add(str(candidate.parent))
@@ -334,7 +361,11 @@ def copy_review_html_with_inline_images(source_path: Path, target_path: Path) ->
             if not candidate.is_file():
                 continue
             data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
-            if data_url is None or not validate_data_url(data_url, candidate):
+            if (
+                data_url is None
+                or not data_image_src_looks_renderable(data_url)
+                or not validate_data_url(data_url, candidate)
+            ):
                 continue
             inlined += 1
             prefix = add_src_hint(match.group(1), src)
@@ -343,6 +374,14 @@ def copy_review_html_with_inline_images(source_path: Path, target_path: Path) ->
         return match.group(0)
 
     copied = IMG_SRC_RE.sub(replace_src, html)
+    integrity = inspect_inline_image_integrity(copied)
+    if not integrity.publishable:
+        raise ValueError(
+            "Review HTML image integrity check failed: "
+            f"source={source_path} missing={integrity.missing_src_count} "
+            f"unsupported={integrity.unsupported_src_count} "
+            f"broken={integrity.broken_data_url_count} skips={integrity.inline_skip_count}"
+        )
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(copied, encoding="utf-8")
     return {

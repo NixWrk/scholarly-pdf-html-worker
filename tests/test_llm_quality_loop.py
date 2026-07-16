@@ -4088,7 +4088,7 @@ def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_pat
             encoding="utf-8",
         )
         (stage_dir / "02.en.polish.html").write_text(
-            '<html><body><p><img data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"/></p></body></html>',
+            f'<html><body><p><img data-z2m-src="fig1.png" src="{_valid_tiny_png_data_url()}"/></p></body></html>',
             encoding="utf-8",
         )
 
@@ -4920,10 +4920,11 @@ def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) ->
 
     ancestor_polish = tmp_path / "ancestor" / "doc.02.en.polish.html"
     ancestor_polish.parent.mkdir(parents=True)
+    valid_image = _valid_tiny_png_data_url()
     ancestor_polish.write_text(
         "<html><body>"
-        '<p><img src="data:image/png;base64,AAAA"/></p>'
-        '<p><img src="data:image/png;base64,BBBB"/></p>'
+        f'<p><img data-z2m-src="fig1.png" src="{valid_image}"/></p>'
+        f'<p><img data-z2m-src="fig2.png" src="{valid_image}"/></p>'
         "</body></html>",
         encoding="utf-8",
     )
@@ -4946,8 +4947,8 @@ def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) ->
     audit_polished = (tmp_path / "run" / "audit_tree" / "doc" / "02.en.polish.html").read_text(encoding="utf-8")
 
     assert manifest["restored_image_count"] == 2
-    assert 'data-z2m-src="fig1.png" src="data:image/png;base64,AAAA"' in polished
-    assert 'data-z2m-src="fig2.png" src="data:image/png;base64,BBBB"' in polished
+    assert f'data-z2m-src="fig1.png" src="{valid_image}"' in polished
+    assert f'data-z2m-src="fig2.png" src="{valid_image}"' in polished
     assert '<img src="fig1.png"' not in polished
     assert audit_polished == polished
 
