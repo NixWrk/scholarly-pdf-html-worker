@@ -9,8 +9,9 @@ from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from time import perf_counter
+from uuid import uuid4
 
 import psutil
 
@@ -45,6 +46,104 @@ def _marker_batch_size_args(env: dict[str, str] | None = None) -> list[str]:
             args.extend([flag, str(value)])
     return args
 
+_DOCKER_MARKER_ENV_PASSTHROUGH = (
+    "CUDA_VISIBLE_DEVICES",
+    "TORCH_DEVICE",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "HF_HUB_OFFLINE",
+    "TRANSFORMERS_OFFLINE",
+)
+
+
+def _docker_mount(path: Path, target: str, *, read_only: bool = False) -> str:
+    suffix = ":ro" if read_only else ""
+    return f"{path.expanduser().resolve(strict=False)}:{target}{suffix}"
+
+
+def _docker_marker_command(
+    command: list[str],
+    *,
+    input_path: Path,
+    output_dir: Path,
+    env: dict[str, str],
+    container_executable: str,
+) -> list[str]:
+    image = str(env.get("MARKER_DOCKER_IMAGE", "") or "").strip()
+    if not image:
+        return command
+
+    resolved_input = input_path.expanduser().resolve(strict=False)
+    resolved_output = output_dir.expanduser().resolve(strict=False)
+    resolved_output.mkdir(parents=True, exist_ok=True)
+    cache_value = (
+        str(env.get("MARKER_DOCKER_MODEL_CACHE_DIR", "") or "").strip()
+        or str(env.get("MODEL_CACHE_DIR", "") or "").strip()
+    )
+    cache_dir = (
+        Path(cache_value).expanduser().resolve(strict=False)
+        if cache_value
+        else (Path.home() / ".cache" / "datalab" / "models").resolve(strict=False)
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    container_name = f"zotero-marker-{os.getpid()}-{uuid4().hex[:12]}"
+    container_input_root = "/marker-input"
+    container_output_root = "/marker-output"
+    if resolved_input.is_dir():
+        input_mount = resolved_input
+        container_input = container_input_root
+    else:
+        input_mount = resolved_input.parent
+        container_input = str(PurePosixPath(container_input_root) / resolved_input.name)
+
+    rewritten = list(command)
+    rewritten[0] = container_executable
+    rewritten[1] = container_input
+    output_index = rewritten.index("--output_dir") + 1
+    rewritten[output_index] = container_output_root
+
+    docker_command = [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--name",
+        container_name,
+        "--label",
+        "zotero.marker-runner=true",
+    ]
+    docker_gpus = str(env.get("MARKER_DOCKER_GPUS", "all") or "").strip()
+    if docker_gpus:
+        docker_command.extend(["--gpus", docker_gpus])
+    for name in _DOCKER_MARKER_ENV_PASSTHROUGH:
+        value = str(env.get(name, "") or "").strip()
+        if value:
+            docker_command.extend(["-e", name])
+    docker_command.extend(
+        [
+            "-e",
+            "MODEL_CACHE_DIR=/root/.cache/datalab/models",
+            "-v",
+            _docker_mount(input_mount, container_input_root, read_only=True),
+            "-v",
+            _docker_mount(resolved_output, container_output_root),
+            "-v",
+            _docker_mount(cache_dir, "/root/.cache/datalab/models"),
+            image,
+            *rewritten,
+        ]
+    )
+    return docker_command
+
+
+def _docker_container_name(command: list[str]) -> str | None:
+    if not command or Path(command[0]).name.lower() not in {"docker", "docker.exe"}:
+        return None
+    try:
+        return command[command.index("--name") + 1]
+    except (ValueError, IndexError):
+        return None
 
 @dataclass(frozen=True)
 class RunResult:
@@ -112,6 +211,7 @@ class MarkerRunner:
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._tracked_pids: dict[int, float | None] = {}
+        self._active_container_names: set[str] = set()
 
     @staticmethod
     def _pid_create_time(pid: int) -> float | None:
@@ -135,6 +235,61 @@ class MarkerRunner:
                 _TrackedProcess(pid=pid, create_time=create_time)
                 for pid, create_time in sorted(self._tracked_pids.items())
             ]
+
+    def _track_container(self, name: str | None) -> None:
+        if not name:
+            return
+        with self._lock:
+            self._active_container_names.add(name)
+
+    def _active_containers_snapshot(self) -> list[str]:
+        with self._lock:
+            return sorted(self._active_container_names)
+
+    @staticmethod
+    def _remove_docker_container(name: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["docker", "rm", "--force", name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+        except Exception:
+            return False
+        output = (result.stdout or "").lower()
+        return result.returncode == 0 or "no such container" in output
+
+    def _cleanup_active_containers(
+        self,
+        log: Callable[[str], None] | None = None,
+    ) -> None:
+        tracked = self._active_containers_snapshot()
+        if not tracked:
+            return
+
+        removed = 0
+        remaining: set[str] = set()
+        for name in tracked:
+            if self._remove_docker_container(name):
+                removed += 1
+            else:
+                remaining.add(name)
+
+        with self._lock:
+            self._active_container_names = remaining
+
+        if log is not None:
+            log(
+                "Runner container cleanup: "
+                f"tracked={len(tracked)}, removed={removed}, remaining={len(remaining)}"
+            )
+            if remaining:
+                log(f"Runner container cleanup remaining: {', '.join(sorted(remaining))}")
 
     def _register_child_pids(self, root_pid: int) -> None:
         if psutil is None or root_pid <= 0:
@@ -211,6 +366,7 @@ class MarkerRunner:
         )
 
     def cleanup_spawned_processes(self, log: Callable[[str], None] | None = None) -> None:
+        self._cleanup_active_containers(log)
         tracked = self._tracked_snapshot()
         if not tracked:
             return
@@ -292,6 +448,7 @@ class MarkerRunner:
                 subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
             ),
         )
+        self._track_container(_docker_container_name(command))
         log(f"[timer] runner.spawn_process: {perf_counter() - spawn_started_at:.2f}s")
         log(f"Runner process started: pid={process.pid}")
         self._track_pid(process.pid)
@@ -502,6 +659,15 @@ class MarkerRunner:
             cmd.append("--skip_existing")
         if disable_multiprocessing:
             cmd.append("--disable_multiprocessing")
+        cmd = _docker_marker_command(
+            cmd,
+            input_path=input_dir,
+            output_dir=output_dir,
+            env=env,
+            container_executable=str(
+                env.get("MARKER_DOCKER_BATCH_COMMAND", "marker") or "marker"
+            ),
+        )
         progress = ProgressContext(
             input_files=input_files,
             pages_total=_count_total_pdf_pages(input_dir.glob("*.pdf")),
@@ -528,6 +694,16 @@ class MarkerRunner:
             page_range=page_range,
             disable_multiprocessing=disable_multiprocessing,
             env=env,
+        )
+        cmd = _docker_marker_command(
+            cmd,
+            input_path=pdf_path,
+            output_dir=output_dir,
+            env=env,
+            container_executable=str(
+                env.get("MARKER_DOCKER_SINGLE_COMMAND", "marker_single")
+                or "marker_single"
+            ),
         )
         progress = ProgressContext(
             input_files=1,

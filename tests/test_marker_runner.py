@@ -352,3 +352,93 @@ def test_marker_runner_bounds_unterminated_stdout_lines() -> None:
     assert result.exit_code == 0
     assert len(output_chunks) == 2
     assert len(output_chunks[0]) <= marker_runner_module._MAX_LOG_LINE_CHARS + len(" [continued]")
+
+
+
+def test_marker_runner_wraps_batch_in_gpu_container(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    (input_dir / "paper.pdf").write_bytes(b"%PDF")
+    output_dir = tmp_path / "output"
+    cache_dir = tmp_path / "cache"
+    runner = _CapturingMarkerRunner()
+    env = {
+        "MARKER_DOCKER_IMAGE": "zotero-pdf-html-worker:local",
+        "MARKER_DOCKER_GPUS": "all",
+        "MODEL_CACHE_DIR": str(cache_dir),
+        "CUDA_VISIBLE_DEVICES": "1",
+        "TORCH_DEVICE": "cuda",
+        "HF_TOKEN": "super-secret",
+    }
+
+    runner.run_batch(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        skip_existing=False,
+        disable_multiprocessing=False,
+        output_format="html",
+        env=env,
+        log=lambda _line: None,
+    )
+
+    command = runner.commands[0]
+    image_index = command.index("zotero-pdf-html-worker:local")
+    assert command[:4] == ["docker", "run", "--rm", "--init"]
+    assert command[command.index("--gpus") + 1] == "all"
+    assert "CUDA_VISIBLE_DEVICES" in command
+    assert "TORCH_DEVICE" in command
+    assert "HF_TOKEN" in command
+    assert all("super-secret" not in part for part in command)
+    assert "MODEL_CACHE_DIR=/root/.cache/datalab/models" in command
+    assert f"{input_dir.resolve()}:/marker-input:ro" in command
+    assert f"{output_dir.resolve()}:/marker-output" in command
+    assert f"{cache_dir.resolve()}:/root/.cache/datalab/models" in command
+    assert command[image_index + 1 : image_index + 3] == ["marker", "/marker-input"]
+    assert command[command.index("--output_dir") + 1] == "/marker-output"
+
+
+def test_marker_runner_wraps_single_pdf_in_gpu_container(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    pdf = input_dir / "paper.pdf"
+    pdf.write_bytes(b"%PDF")
+    output_dir = tmp_path / "output"
+    runner = _CapturingMarkerRunner()
+
+    runner.run_single(
+        pdf_path=pdf,
+        output_dir=output_dir,
+        output_format="html",
+        env={
+            "MARKER_DOCKER_IMAGE": "zotero-pdf-html-worker:local",
+            "MARKER_DOCKER_GPUS": "all",
+            "MODEL_CACHE_DIR": str(tmp_path / "cache"),
+            "CUDA_VISIBLE_DEVICES": "1",
+        },
+        log=lambda _line: None,
+        page_range="2-4",
+    )
+
+    command = runner.commands[0]
+    image_index = command.index("zotero-pdf-html-worker:local")
+    assert command[image_index + 1 : image_index + 3] == [
+        "marker_single",
+        "/marker-input/paper.pdf",
+    ]
+    assert command[command.index("--page_range") + 1] == "2-4"
+
+
+def test_marker_runner_cleanup_removes_active_container(monkeypatch) -> None:
+    removed: list[str] = []
+    runner = MarkerRunner()
+    runner._track_container("zotero-marker-test")
+    monkeypatch.setattr(
+        runner,
+        "_remove_docker_container",
+        lambda name: removed.append(name) is None,
+    )
+
+    runner.cleanup_spawned_processes()
+
+    assert removed == ["zotero-marker-test"]
+    assert runner._active_containers_snapshot() == []
