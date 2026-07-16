@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import pdf_html_polish.cli.clean_convert as clean_convert_module
 from pdf_html_polish.cli.clean_convert import build_parser
 from pdf_html_polish.clean_pipeline import (
     CleanPipelineOptions,
@@ -17,7 +18,10 @@ from pdf_html_polish.clean_pipeline import (
 from pdf_html_polish.marker_runner import MarkerRunner
 from pdf_html_polish.models import PipelineSummary
 from pdf_html_polish.marker_runner import RunResult
-from pdf_html_polish.html_stages import HTML_STAGE_DIR_NAME
+from pdf_html_polish.html_stages import (
+    HTML_STAGE_DIR_NAME,
+    RAW_CONVERSION_MANIFEST_NAME,
+)
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 
@@ -138,8 +142,78 @@ def test_run_raw_html_pipeline_saves_raw_stage_only(tmp_path: Path) -> None:
     assert (stage_dir / "01.en.raw.html").read_text(encoding="utf-8") == (
         "<html><body>raw marker</body></html>"
     )
+    manifest = json.loads(
+        (stage_dir / RAW_CONVERSION_MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "completed"
+    assert manifest["source_pdf_name"] == "paper.pdf"
+    assert manifest["raw_html_name"] == "01.en.raw.html"
+    assert len(manifest["source_pdf_sha256"]) == 64
+    assert len(manifest["raw_html_sha256"]) == 64
     assert not (stage_dir / "02.en.polish.html").exists()
     assert any("Raw HTML stage saved" in entry for entry in logs)
+
+
+def test_run_raw_html_pipeline_rejects_partial_failed_marker_output(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF")
+    output_dir = tmp_path / "converted"
+
+    class FakeRunner:
+        def run_batch(self, *, input_dir, output_dir, **_kwargs):
+            for pdf_path in Path(input_dir).glob("*.pdf"):
+                article_dir = Path(output_dir) / pdf_path.stem
+                article_dir.mkdir(parents=True)
+                (article_dir / f"{pdf_path.stem}.html").write_text(
+                    "<html><body>partial</body></html>",
+                    encoding="utf-8",
+                )
+            return RunResult(command=["marker"], exit_code=137)
+
+        def run_single(self, **_kwargs):
+            return RunResult(command=["marker_single"], exit_code=137)
+
+    summary = run_raw_html_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            export_mode="html",
+        ),
+        FakeRunner(),  # type: ignore[arg-type]
+        lambda _message: None,
+        lambda: False,
+    )
+
+    stage_dir = output_dir / "paper" / HTML_STAGE_DIR_NAME
+    assert summary.converted_total == 0
+    assert summary.failed_total == 1
+    assert not (stage_dir / "01.en.raw.html").exists()
+    assert not (stage_dir / RAW_CONVERSION_MANIFEST_NAME).exists()
+
+
+def test_raw_only_cli_returns_nonzero_when_any_document_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF")
+
+    class FakeRunner:
+        def cleanup_spawned_processes(self, _log) -> None:
+            return None
+
+    monkeypatch.setattr(clean_convert_module, "MarkerRunner", lambda **_kwargs: FakeRunner())
+    monkeypatch.setattr(
+        clean_convert_module,
+        "run_raw_html_pipeline",
+        lambda *_args, **_kwargs: _summary(tmp_path / "converted", failed_total=1),
+    )
+
+    exit_code = clean_convert_module.main(
+        ["--pdf", str(source_pdf), "--output-dir", str(tmp_path / "converted"), "--raw-only"]
+    )
+
+    assert exit_code == 1
 
 
 def test_build_observe_command_uses_repair_enabled_converted_root_defaults(tmp_path: Path) -> None:

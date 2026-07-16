@@ -180,7 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("raw_only=true", flush=True)
         print(f"converted={raw_summary.converted_total}", flush=True)
         print(f"failed={raw_summary.failed_total}", flush=True)
-        return 0
+        return 1 if raw_summary.failed_total else 0
 
     print(f"conversion_output_dir={summary.conversion_summary.output_dir}", flush=True)
     print(f"quality_output_dir={summary.quality_output_dir}", flush=True)

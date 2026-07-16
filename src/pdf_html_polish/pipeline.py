@@ -12,7 +12,13 @@ from typing import Any, Callable
 from .citation_profile import build_citation_profile_from_pdf
 from .export_modes import ExportMode, get_export_mode_spec
 from .history import append_history
-from .html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME, html_stage_dir_for_html, save_html_stage
+from .html_stages import (
+    POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
+    html_stage_dir_for_html,
+    save_html_stage,
+    write_raw_conversion_manifest,
+)
 from .llm_bundle import LlmBundleResult, create_llm_bundle
 from .marker_runner import MarkerRunner
 from .models import PipelineSummary, StagedFile
@@ -362,29 +368,31 @@ def run_raw_html_pipeline(
         _log_elapsed(log, "raw_pipeline.marker_batch", started_at)
         log(f"marker batch exit_code={batch_result.exit_code}")
 
-        pending = []
-        converted_total = 0
+        pending: list[StagedFile] = []
+        successful_aliases: set[str] = set()
         for staged_file in stage.staged_files:
             artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
-            exists_now, _, _ = _artifact_signature(artifact_path)
-            if exists_now:
-                before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
-                if (
-                    before_sig[0]
-                    and not batch_skip_existing
-                    and _artifact_signature(artifact_path) == before_sig
-                ):
-                    pending.append(staged_file)
-                    continue
-                converted_total += 1
+            before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
+            after_sig = _artifact_signature(artifact_path)
+            artifact_is_current = after_sig[0] and (
+                batch_skip_existing or not before_sig[0] or after_sig != before_sig
+            )
+            if batch_result.exit_code == 0 and artifact_is_current:
+                successful_aliases.add(staged_file.alias_base_name)
                 continue
             pending.append(staged_file)
 
         if pending:
-            log(f"Raw-only fallback conversion for missing outputs: {len(pending)}")
+            log(f"Raw-only fallback conversion for unconfirmed outputs: {len(pending)}")
         for staged_file in pending:
             if is_cancelled():
                 raise RuntimeError("Cancelled during raw-only fallback conversion.")
+            artifact_path = expected_output_artifact_path(
+                output_dir,
+                staged_file.alias_base_name,
+                ".html",
+            )
+            before_single = _artifact_signature(artifact_path)
             single_result = runner.run_single(
                 pdf_path=staged_file.alias_pdf_path,
                 output_dir=output_dir,
@@ -392,19 +400,32 @@ def run_raw_html_pipeline(
                 env=env,
                 log=log,
             )
-            artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
-            if single_result.exit_code == 0 and artifact_path.exists():
-                converted_total += 1
+            after_single = _artifact_signature(artifact_path)
+            if (
+                single_result.exit_code == 0
+                and after_single[0]
+                and (not before_single[0] or after_single != before_single)
+            ):
+                successful_aliases.add(staged_file.alias_base_name)
+            else:
+                log(
+                    "Raw-only fallback did not confirm output: "
+                    f"source={staged_file.source_pdf_path.name} "
+                    f"exit_code={single_result.exit_code}"
+                )
 
         converted_source_paths: list[Path] = []
         for staged_file in stage.staged_files:
+            if staged_file.alias_base_name not in successful_aliases:
+                continue
             html_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
             if not html_path.is_file():
                 continue
             converted_source_paths.append(staged_file.source_pdf_path)
             raw_html = html_path.read_text(encoding="utf-8", errors="replace")
+            stage_dir = html_stage_dir_for_html(html_path)
             raw_stage = save_html_stage(
-                html_stage_dir_for_html(html_path),
+                stage_dir,
                 RAW_STAGE_NAME,
                 raw_html,
                 "en.raw.marker",
@@ -414,9 +435,15 @@ def run_raw_html_pipeline(
                     f"source_pdf={staged_file.source_pdf_path.name}",
                 ),
             )
-            log(f"Raw HTML stage saved: {raw_stage.path}")
+            manifest_path = write_raw_conversion_manifest(
+                stage_dir,
+                source_pdf=staged_file.source_pdf_path,
+                raw_stage_path=raw_stage.path,
+            )
+            log(f"Raw HTML stage saved: {raw_stage.path}; manifest={manifest_path}")
 
         marker_failed_total = len(stage.staged_files) - len(converted_source_paths)
+        converted_total = len(converted_source_paths)
         return PipelineSummary(
             collection_key=discovery.collection_key,
             collection_name=discovery.collection_name,

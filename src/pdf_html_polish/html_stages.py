@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -11,6 +13,8 @@ HTML_STAGE_DIR_NAMES = frozenset({HTML_STAGE_DIR_NAME, LEGACY_HTML_STAGE_DIR_NAM
 HTML_STAGE_LOG_NAME = "stage.log"
 RAW_STAGE_NAME = "01.en.raw.html"
 POLISH_STAGE_NAME = "02.en.polish.html"
+RAW_CONVERSION_MANIFEST_NAME = "raw_conversion_manifest.json"
+RAW_CONVERSION_MANIFEST_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,51 @@ class HtmlStageSaveResult:
     chars: int
     bytes: int
     log_path: Path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_raw_conversion_manifest(
+    stage_dir: Path,
+    *,
+    source_pdf: Path,
+    raw_stage_path: Path,
+) -> Path:
+    """Atomically publish provenance for one confirmed raw Marker stage."""
+
+    stage_root = stage_dir.resolve(strict=False)
+    raw_path = raw_stage_path.resolve(strict=False)
+    if raw_path.parent != stage_root or raw_path.name != RAW_STAGE_NAME:
+        raise ValueError(f"Raw stage must be {stage_root / RAW_STAGE_NAME}: {raw_stage_path}")
+    source_path = source_pdf.resolve(strict=True)
+    raw_path = raw_stage_path.resolve(strict=True)
+    source_stat = source_path.stat()
+    raw_stat = raw_path.stat()
+    payload = {
+        "schema_version": RAW_CONVERSION_MANIFEST_SCHEMA_VERSION,
+        "status": "completed",
+        "completed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source_pdf_name": source_path.name,
+        "source_pdf_bytes": int(source_stat.st_size),
+        "source_pdf_sha256": _sha256_file(source_path),
+        "raw_html_name": RAW_STAGE_NAME,
+        "raw_html_bytes": int(raw_stat.st_size),
+        "raw_html_sha256": _sha256_file(raw_path),
+    }
+    manifest_path = stage_root / RAW_CONVERSION_MANIFEST_NAME
+    temp_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    temp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temp_path.replace(manifest_path)
+    return manifest_path
 
 
 def html_stage_dir_for_html(html_path: Path) -> Path:
