@@ -47,6 +47,10 @@ _HTML_TAG_TOKEN_RE = re.compile(
     r"(?P<body>(?:[^'\">]|\"[^\"]*\"|'[^']*')*)>",
     re.DOTALL,
 )
+_HTML_COMMENT_RE = re.compile(
+    r"<!--[\s\S]*?-->",
+    re.DOTALL,
+)
 _ID_VALUE_RE = re.compile(
     r"(?<![\w:-])id\s*=\s*(['\"])(?P<value>.*?)\1",
     re.IGNORECASE | re.DOTALL,
@@ -234,8 +238,10 @@ def unwrap_broken_local_fragment_links(html: str) -> BrokenLocalFragmentLinkRepa
     if 'href="#' not in html and "href='#" not in html:
         return BrokenLocalFragmentLinkRepair(html=html, unwrapped_link_count=0)
 
+    tags = _html_tag_tokens(html)
+    anchor_starts = {tag.start for tag in tags if tag.name == "a"}
     targets: set[str] = set()
-    for tag in _html_tag_tokens(html):
+    for tag in tags:
         for match in _ID_VALUE_RE.finditer(tag.text):
             target = unescape(match.group("value"))
             if target:
@@ -250,6 +256,8 @@ def unwrap_broken_local_fragment_links(html: str) -> BrokenLocalFragmentLinkRepa
 
     def replace(match: re.Match[str]) -> str:
         nonlocal unwrapped
+        if match.start() not in anchor_starts:
+            return match.group(0)
         target = urllib.parse.unquote(unescape(match.group("target")))
         if target in targets:
             return match.group(0)
@@ -267,7 +275,16 @@ def _html_tag_tokens(html: str) -> list[_HtmlTagToken]:
     tokens: list[_HtmlTagToken] = []
     section_stack: list[str | None] = []
     raw_text_tag: str | None = None
+    comments = iter(_HTML_COMMENT_RE.finditer(html))
+    current_comment = next(comments, None)
     for match in _HTML_TAG_TOKEN_RE.finditer(html):
+        while current_comment is not None and match.start() >= current_comment.end():
+            current_comment = next(comments, None)
+        if (
+            current_comment is not None
+            and current_comment.start() <= match.start() < current_comment.end()
+        ):
+            continue
         name = match.group("tag").lower()
         closing = bool(match.group("closing"))
         if raw_text_tag is not None:

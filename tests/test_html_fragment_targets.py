@@ -110,6 +110,29 @@ def test_broken_local_fragment_links_use_named_anchor_targets() -> None:
     assert repaired.unwrapped_link_count == 0
 
 
+def test_fragment_repairs_ignore_raw_text_and_html_comments() -> None:
+    html = (
+        '<!-- <p id="valid"><a href="#missing">comment link</a></p> -->'
+        '<script>const template = \'<p id="valid">'
+        '<a href="#missing">script link</a></p>\';</script>'
+        '<style>.sample { clip-path: url(#missing); }</style>'
+        '<p id="valid">real target</p>'
+        '<a href="#missing"><em>real missing link</em></a>'
+    )
+
+    duplicate_repair = repair_duplicate_fragment_targets(html)
+    link_repair = unwrap_broken_local_fragment_links(html)
+
+    assert duplicate_repair.html == html
+    assert duplicate_repair.duplicate_target_count == 0
+    assert '<a href="#missing">comment link</a>' in link_repair.html
+    assert '<a href="#missing">script link</a>' in link_repair.html
+    assert "url(#missing)" in link_repair.html
+    assert '<a href="#missing"><em>real missing link</em></a>' not in link_repair.html
+    assert "<em>real missing link</em>" in link_repair.html
+    assert link_repair.unwrapped_link_count == 1
+
+
 def test_post_polish_pipeline_repairs_duplicate_chunk_ids(tmp_path: Path) -> None:
     html_path = tmp_path / "chunked.html"
     html_path.write_text(
