@@ -394,6 +394,65 @@ def test_parenthetical_numeric_profile_keeps_low_number_citation_near_data_word(
     assert 'strictly avoided (<a href="#ref-5" class="z2m-ref-link">5</a>).' in polished
 
 
+def test_medium_parenthetical_numeric_profile_uses_diverse_html_corroboration() -> None:
+    html = (
+        "<html><body>"
+        "<p>Prior findings were reproduced (1). A second result followed (2, 3). "
+        "The intervention remained effective (4), including follow-up (5-6), "
+        "and the final cohort confirmed it (7).</p>"
+        f"{_refs(7)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "medium"},
+    )
+
+    for number in range(1, 8):
+        assert f'href="#ref-{number}"' in polished
+
+
+def test_medium_parenthetical_numeric_profile_rejects_repeated_panel_numbers() -> None:
+    html = (
+        "<html><body>"
+        "<p>Panels (1) and (2) show the first view. Panels (1) and (2) show "
+        "the second view. Panels (1) and (2) show the third view.</p>"
+        "<p>Smith 2018, Jones 2019, Brown 2020, White 2021, Black 2022, "
+        "and Green 2023 describe related methods.</p>"
+        f"{_refs(8)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "medium"},
+    )
+
+    assert 'href="#ref-1"' not in polished
+    assert 'href="#ref-2"' not in polished
+
+
+def test_strong_parenthetical_numeric_html_recovers_without_pdf_profile() -> None:
+    html = (
+        "<html><body>"
+        "<p>Evidence was reported (1). Replication followed (2, 3). "
+        "The first cohort confirmed this (4), as did the second (5). "
+        "Long-term follow-up agreed (6-7), and later studies (8), (9), "
+        "and (10) reached the same conclusion.</p>"
+        f"{_refs(10)}"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    for number in range(1, 11):
+        assert f'href="#ref-{number}"' in polished
+
+
+
 def test_parenthetical_numeric_profile_uses_annotation_budget_when_available() -> None:
     html = (
         "<html><body>"

@@ -8739,6 +8739,40 @@ _PLAIN_PAREN_NUMERIC_CITATION_PATTERN = re.compile(
 )
 
 
+def _citation_profile_and_html_support_paren_numeric(
+    citation_profile: Any | None,
+    body_html: str,
+    ref_index: int,
+) -> bool:
+    if _citation_profile_is_high_confidence_paren_numeric(citation_profile):
+        return True
+    profile_style = _citation_profile_style(citation_profile)
+    profile_confidence = _citation_profile_confidence(citation_profile)
+    if profile_style == "paren_numeric" and profile_confidence == "medium":
+        minimum_signal = 5
+        author_year_multiplier = 2
+    elif profile_style in {"", "unknown"} and profile_confidence in {"", "low"}:
+        minimum_signal = 8
+        author_year_multiplier = 3
+    else:
+        return False
+    if ref_index < minimum_signal:
+        return False
+
+    body_text = _visible_text(body_html)
+    matches: list[list[int]] = []
+    for match in _PLAIN_PAREN_NUMERIC_CITATION_PATTERN.finditer(body_text):
+        numbers = [int(value) for value in re.findall(r"\d{1,3}", match.group(0))]
+        if numbers and all(1 <= number <= ref_index for number in numbers):
+            matches.append(numbers)
+    distinct_numbers = {number for numbers in matches for number in numbers}
+    if len(matches) < minimum_signal or len(distinct_numbers) < minimum_signal:
+        return False
+
+    author_year_count = len(_AUTHOR_YEAR_CITATION_TEXT_PATTERN.findall(body_text))
+    return len(matches) >= max(minimum_signal, author_year_count * author_year_multiplier)
+
+
 def _link_paren_numeric_page_citations_in_safe_blocks(
     html: str,
     ref_index: int,
@@ -9010,7 +9044,11 @@ def _add_reference_ids_and_citation_links(html: str, citation_profile: Any | Non
         before_references = _link_plain_body_reference_candidate_ranges_in_safe_blocks(before_references, ref_index)
 
     profile_is_author_year = _citation_profile_is_author_year(citation_profile)
-    profile_is_paren_numeric = _citation_profile_is_high_confidence_paren_numeric(citation_profile)
+    profile_is_paren_numeric = _citation_profile_and_html_support_paren_numeric(
+        citation_profile,
+        before_references,
+        ref_index,
+    )
     profile_has_reference_annotations = bool(
         _pdf_annotation_reference_target_budgets(citation_profile, ref_index)
     )
@@ -11784,6 +11822,7 @@ def _looks_author_year_citation_document(html: str) -> bool:
     if paren_numeric_ref_count >= 5:
         return False
     return author_year_count >= 4 and bracket_count < 4
+
 
 
 def _should_suppress_numeric_ref_links_for_author_year(
