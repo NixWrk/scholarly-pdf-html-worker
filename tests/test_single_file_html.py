@@ -15,6 +15,8 @@ from pdf_html_polish.raw_html_polish import (
     url_text_repair,
 )
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
+from pdf_html_polish.polish_language import EN_POLISH_POLICY
+from pdf_html_polish.raw_html_polish.phases import RawPolishContext, RawPolishState
 from pdf_html_polish.single_file_html import (
     _ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN,
     _ADJACENT_SAME_HREF_ANCHOR_PATTERN,
@@ -123,7 +125,9 @@ from pdf_html_polish.single_file_html import (
     _repair_front_matter_page_anchor_markers,
     _repair_known_word_glue,
     _repair_latin_detached_accent_artifacts_in_visible_text,
+    _polish_phase_katex_and_final_repairs,
     _repair_known_replacement_char_symbols,
+    _retarget_caption_only_figure_ids_to_nearby_images,
     _repair_miswrapped_doi_anchor_labels,
     _repair_page_footnote_ref_links,
     _repair_prose_prefixed_url_anchor_tail,
@@ -186,6 +190,63 @@ def test_delayed_et_al_superscript_links_to_existing_reference() -> None:
     assert '<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup>' in repaired
 
 
+def test_medium_author_year_profile_yields_to_numbered_et_al_superscripts() -> None:
+    html = (
+        "<html><body><p>Kubicek <i>et al</i> were the first to describe "
+        "a device for practical use.<sup>2</sup>According to these investigators, "
+        "the method was more accurate according to Kubicek <i>et al</i> "
+        "<sup>2</sup> to be clinically useful.</p>"
+        '<h4>References</h4><ol><li id="ref-2">Kubicek reference.</li></ol>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "author_year", "confidence": "medium"},
+    )
+
+    assert polished.count('<a href="#ref-2" class="z2m-ref-link">2</a>') == 2
+
+
+def test_caption_only_figure_target_moves_to_nearby_visual() -> None:
+    html = (
+        '<p><img src="figure.png"/></p><p>Part C. Comparison of the pulse signal.</p>'
+        '<p id="fig-2">Figure 2. Comparison of parts A, B, and C.</p>'
+        '<p>See <a href="#fig-2">Fig. 2</a>.</p>'
+    )
+
+    repaired = _retarget_caption_only_figure_ids_to_nearby_images(html)
+
+    assert re.search(r'<p(?=[^>]*\bid=["\']fig-2["\'])(?=[^>]*\bz2m-figure-target\b)[^>]*><img', repaired)
+    assert re.search(r'<p(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid=)[^>]*>Figure 2\.', repaired)
+
+
+def test_final_phase_retargets_caption_id_created_after_float_grouping() -> None:
+    html = (
+        '<p><img src="figure.png"/></p>'
+        '<p>Part C. Comparison of the pulse signal.</p>'
+        '<p id="fig-2">Figure 2. Comparison of parts A, B, and C.</p>'
+        '<p>See <a href="#fig-2">Fig. 2</a>.</p>'
+    )
+    context = RawPolishContext(
+        table_caption_language="en",
+        enable_citation_linkify=False,
+        language_policy=EN_POLISH_POLICY,
+    )
+
+    repaired = _polish_phase_katex_and_final_repairs(
+        RawPolishState(html=html),
+        context,
+    ).html
+
+    assert re.search(
+        r'<p(?=[^>]*\bid=["\']fig-2["\'])(?=[^>]*\bz2m-figure-target\b)[^>]*><img',
+        repaired,
+    )
+    assert re.search(r'<p(?=[^>]*\bz2m-figure-caption\b)(?![^>]*\bid=)[^>]*>Figure 2\.', repaired)
+
+
 def test_partial_table_link_expands_to_the_whole_label() -> None:
     html = (
         "<html><body><p>Results are summarized in "
@@ -206,6 +267,8 @@ def test_known_symbol_repairs_restore_xbar_and_bold_age_threshold() -> None:
         "<p>For general activity, \u0305was calculated.</p>"
         "<p>Table 3.5 </i> \u0305 <i> of the Rp values.</p>"
         "<p>Arithmetic mean \U0001d465\U0001d465\u0305 was used.</p>"
+        "<p>Table 3.5 x\ufffd of the Rp values.</p>"
+        "<th>\U0001d465\u0305of Sresp</th>"
         "<p>Patients \ufffd <b>50 years old</b> were included.</p>"
     )
 
@@ -215,6 +278,8 @@ def test_known_symbol_repairs_restore_xbar_and_bold_age_threshold() -> None:
     assert "x\u0305 <i> of the Rp" in repaired
     assert "\U0001d465\U0001d465\u0305" not in repaired
     assert "\U0001d465\u0305 was used" in repaired
+    assert "Table 3.5 x\u0305 of the Rp values" in repaired
+    assert "<th>\U0001d465\u0305 of Sresp</th>" in repaired
     assert "&ge; <b>50 years old</b>" in repaired
 
 
@@ -7947,6 +8012,42 @@ def test_polish_html_document_trims_adjacent_article_after_references() -> None:
     assert "Ethylene-induced" not in polished
     assert "fungistasis" not in polished
     assert polished.rstrip().endswith("</body></html>")
+
+
+def test_polish_html_document_retargets_figure_after_duplicate_tail_trim() -> None:
+    html = (
+        "<html><body>"
+        "<h2>Primary article</h2>"
+        '<p><img src="figure.png"/></p>'
+        "<p>Part C. Comparison of the pulse signal.</p>"
+        '<p id="fig-2">Figure 2. Comparison of parts A, B, and C.</p>'
+        '<p>See <a href="#fig-2">Fig. 2</a>.</p>'
+        '<p block-type="ListGroup" class="z2m-front-matter"><ul>'
+        "<li>Brindley, G. S., and Lewin, W., J. Physiol., Lond., 196, 479-493 (1968). "
+        "Brindley, G. S., Handbook of Sensory Physiology, 7, 583-594 "
+        "(Springer-Verlag, New York, 1973). Dobelle, W. H., Science, 183, 440-444 (1974). "
+        "Mladejovsky, M. G., Dobelle, W. H., and Brackmann, D. E., "
+        "Trans. Am. Soc. Artif. Int. Organs, 21, 1-6 (1975).</li>"
+        "</ul></p>"
+        "<h2><b>Appended second article</b></h2>"
+        '<p id="fig-2">Figure 2. Duplicate target in the appended article.</p>'
+        "<p>This appended prose must be trimmed.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Appended second article" not in polished
+    assert "This appended prose" not in polished
+    assert re.search(
+        r'<(?:p|div)(?=[^>]*\bid=["\']fig-2["\'])'
+        r'(?=[^>]*\bz2m-(?:figure-target|figure-unit)\b)[^>]*>[\s\S]*?<img\b',
+        polished,
+    )
+    assert not re.search(
+        r'<p(?=[^>]*\bid=["\']fig-2["\'])[^>]*>\s*Figure 2\.',
+        polished,
+    )
 
 
 def test_polish_html_document_keeps_reference_list_continuation_after_heading() -> None:

@@ -8536,8 +8536,11 @@ def _link_unlinked_numeric_superscripts_to_existing_refs(html: str) -> str:
                 or "z2m-table-fn" in raw
             ):
                 return raw
-            if not _numeric_superscript_context_allows_citation(match.string, match.start(), match.end()):
-                return raw
+            context_allows_citation = _numeric_superscript_context_allows_citation(
+                match.string,
+                match.start(),
+                match.end(),
+            )
             linked_body = _link_existing_multi_number_sup_body(match.group(1))
             if linked_body is None:
                 visible = _visible_text(match.group(1)).strip()
@@ -8545,9 +8548,13 @@ def _link_unlinked_numeric_superscripts_to_existing_refs(html: str) -> str:
                     return raw
                 number = int(visible)
                 left_context = _visible_text(match.string[max(0, match.start() - 360) : match.start()])
-                if number not in ref_set or re.search(r"\bet\s+al\.?\b", left_context, re.IGNORECASE) is None:
+                left_sentence = re.split(r"(?<=[.!?])\s+", left_context)[-1]
+                follows_et_al = re.search(r"\bet\s+al\b", left_sentence, re.IGNORECASE) is not None
+                if number not in ref_set or not follows_et_al:
                     return raw
                 linked_body = f'<a href="#ref-{number}" class="z2m-ref-link">{visible}</a>'
+            elif not context_allows_citation:
+                return raw
             return f"<sup>{linked_body}</sup>"
 
         def replace_node(match: re.Match[str]) -> str:
@@ -11686,6 +11693,22 @@ def _should_suppress_numeric_ref_links_for_author_year(
     citation_profile: Any | None = None,
 ) -> bool:
     if _citation_profile_is_author_year(citation_profile):
+        references_heading = _references_heading_search(html, allow_notes_heading=True)
+        body_html = html[: references_heading.start()] if references_heading is not None else html
+        ref_targets = {
+            int(value)
+            for value in re.findall(r'\bid\s*=\s*["\']ref-(\d{1,4})["\']', html, re.IGNORECASE)
+        }
+        for match in _SUP_PATTERN.finditer(body_html):
+            visible = _visible_text(match.group(1)).strip()
+            if re.fullmatch(r"\d{1,3}", visible) is None:
+                continue
+            if int(visible) not in ref_targets:
+                continue
+            left_context = _visible_text(body_html[max(0, match.start() - 360) : match.start()])
+            left_sentence = re.split(r"(?<=[.!?])\s+", left_context)[-1]
+            if re.search(r"\bet\s+al\b", left_sentence, re.IGNORECASE) is not None:
+                return False
         return True
     if (
         _citation_profile_is_high_confidence_paren_numeric(citation_profile)
@@ -13303,6 +13326,13 @@ def _repair_known_replacement_char_symbols(html: str) -> str:
         html,
         flags=re.IGNORECASE,
     )
+    html = re.sub(
+        r"(?<![A-Za-z0-9])(?P<x>[x\U0001d465])\ufffd(?=\s+(?:of\b|was\s+calculated\b))",
+        lambda match: f"{match.group('x')}\u0305",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(r"([x\U0001d465]\u0305)(?=of\b)", r"\1 ", html, flags=re.IGNORECASE)
     if "\ufffd" not in html:
         return html
 
@@ -20909,6 +20939,7 @@ def _polish_phase_float_units(state: RawPolishState, context: RawPolishContext) 
     polished, _ = _merge_caption_only_missing_units_with_previous_image_units(polished)
     polished, _ = _merge_caption_only_missing_units_with_previous_table_surrogates(polished)
     polished = _drop_stale_in_text_figure_reference_ids(polished)
+    polished = _retarget_caption_only_figure_ids_to_nearby_images(polished)
     polished = _unwrap_duplicate_see_page_anchor_tails(polished)
     polished = _unwrap_page_reference_page_links(polished, language_policy)
     polished = _unwrap_plain_prose_page_links(polished)
@@ -21061,6 +21092,7 @@ def _polish_phase_katex_and_final_repairs(state: RawPolishState, context: RawPol
             polished = _normalize_spacing_after_z2m_links(polished)
     polished = _unwrap_broken_internal_semantic_links(polished)
     polished, _ = _trim_adjacent_article_tail_after_references(polished)
+    polished = _retarget_caption_only_figure_ids_to_nearby_images(polished)
     return state.with_html(polished)
 
 
