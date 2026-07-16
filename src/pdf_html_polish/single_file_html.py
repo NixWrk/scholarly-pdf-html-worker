@@ -47,6 +47,7 @@ from .html_images import (
 )
 from .html_fragment_targets import (
     repair_duplicate_fragment_targets as _repair_duplicate_fragment_targets,
+    unwrap_broken_local_fragment_links as _unwrap_broken_local_fragment_links,
 )
 from .html_links import (
     NESTED_FIG_LINK_PATTERN as _NESTED_FIG_LINK_PATTERN,
@@ -21257,6 +21258,7 @@ def polish_and_inline_html_file(html_path: Path, citation_profile: Any | None = 
         image_cache=image_cache,
     )
     inlined_html = _repair_duplicate_fragment_targets(inlined_html).html
+    inlined_html = _unwrap_broken_local_fragment_links(inlined_html).html
     inlined_html, refreshed_after_polish = _refresh_inlined_data_urls_by_hint(
         inlined_html,
         base_dir=base_dir,

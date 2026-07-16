@@ -20,6 +20,12 @@ class DuplicateFragmentTargetRepair:
 
 
 @dataclass(frozen=True)
+class BrokenLocalFragmentLinkRepair:
+    html: str
+    unwrapped_link_count: int
+
+
+@dataclass(frozen=True)
 class _HtmlTagToken:
     start: int
     name: str
@@ -53,6 +59,11 @@ _LOCAL_FRAGMENT_REFERENCE_RE = re.compile(
     r"(?P<prefix>(?<![\w:-])(?:href|xlink:href|usemap)\s*=\s*)"
     r"(?P<quote>['\"])(?P<value>#.*?)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
+)
+_INTERNAL_ANCHOR_RE = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>['\"])#(?P<target>[^'\"]+)(?P=quote)[^>]*)>"
+    r"(?P<body>[\s\S]*?)</a\s*>",
+    re.IGNORECASE,
 )
 _IDREF_VALUE_RE = re.compile(
     r"(?P<prefix>(?<![\w:-])(?:for|headers|list|form|itemref|"
@@ -214,6 +225,41 @@ def repair_duplicate_fragment_targets(html: str) -> DuplicateFragmentTargetRepai
         duplicate_target_count=len(duplicated),
         renamed_target_count=renamed_target_count,
         rewritten_reference_count=rewritten_reference_count,
+    )
+
+
+def unwrap_broken_local_fragment_links(html: str) -> BrokenLocalFragmentLinkRepair:
+    """Unwrap local anchors whose destination is absent from the final document."""
+
+    if 'href="#' not in html and "href='#" not in html:
+        return BrokenLocalFragmentLinkRepair(html=html, unwrapped_link_count=0)
+
+    targets: set[str] = set()
+    for tag in _html_tag_tokens(html):
+        for match in _ID_VALUE_RE.finditer(tag.text):
+            target = unescape(match.group("value"))
+            if target:
+                targets.add(target)
+        if tag.name in {"a", "map"}:
+            for match in _NAME_VALUE_RE.finditer(tag.text):
+                target = unescape(match.group("value"))
+                if target:
+                    targets.add(target)
+
+    unwrapped = 0
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal unwrapped
+        target = urllib.parse.unquote(unescape(match.group("target")))
+        if target in targets:
+            return match.group(0)
+        unwrapped += 1
+        return match.group("body")
+
+    repaired = _INTERNAL_ANCHOR_RE.sub(replace, html)
+    return BrokenLocalFragmentLinkRepair(
+        html=repaired,
+        unwrapped_link_count=unwrapped,
     )
 
 

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pdf_html_polish.html_fragment_targets import repair_duplicate_fragment_targets
+from pdf_html_polish.html_fragment_targets import (
+    repair_duplicate_fragment_targets,
+    unwrap_broken_local_fragment_links,
+)
 from pdf_html_polish.single_file_html import polish_and_inline_html_file
 
 
@@ -80,6 +83,33 @@ def test_duplicate_fragment_target_repair_leaves_unique_html_unchanged() -> None
     assert repaired.rewritten_reference_count == 0
 
 
+def test_broken_local_fragment_links_are_unwrapped_after_targets_settle() -> None:
+    html = (
+        '<p id="valid">target</p>'
+        '<p><a href="#valid"><strong>valid</strong></a> '
+        '<a class="z2m-ref-link" href="#missing%2Dref"><em>missing</em></a> '
+        '<a href="#page--1-0">page text</a></p>'
+    )
+
+    repaired = unwrap_broken_local_fragment_links(html)
+
+    assert repaired.unwrapped_link_count == 2
+    assert '<a href="#valid"><strong>valid</strong></a>' in repaired.html
+    assert '<em>missing</em>' in repaired.html
+    assert 'href="#missing%2Dref"' not in repaired.html
+    assert 'href="#page--1-0"' not in repaired.html
+    assert "page text" in repaired.html
+
+
+def test_broken_local_fragment_links_use_named_anchor_targets() -> None:
+    html = '<a name="legacy"></a><p><a href="#legacy">valid</a></p>'
+
+    repaired = unwrap_broken_local_fragment_links(html)
+
+    assert repaired.html == html
+    assert repaired.unwrapped_link_count == 0
+
+
 def test_post_polish_pipeline_repairs_duplicate_chunk_ids(tmp_path: Path) -> None:
     html_path = tmp_path / "chunked.html"
     html_path.write_text(
@@ -89,6 +119,7 @@ def test_post_polish_pipeline_repairs_duplicate_chunk_ids(tmp_path: Path) -> Non
         '</section>'
         '<section data-zotero-worker-chunk="2" data-pages="11-20">'
         '<p id="shared-target">second</p><a href="#shared-target">second link</a>'
+        '<a href="#page--1-0">unresolved Marker link</a>'
         '</section></body></html>',
         encoding="utf-8",
     )
@@ -99,3 +130,4 @@ def test_post_polish_pipeline_repairs_duplicate_chunk_ids(tmp_path: Path) -> Non
     assert 'id="shared-target--z2m-p11-20"' in result.html
     assert result.html.count('href="#shared-target"') == 1
     assert 'href="#shared-target--z2m-p11-20"' in result.html
+    assert 'href="#page--1-0"' not in result.html
