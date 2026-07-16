@@ -39,6 +39,7 @@ from .html_images import (
     html_node_has_renderable_image as _node_has_renderable_image,
     html_node_image_srcs as _node_image_srcs,
     inline_images_from_html_text as _inline_images_from_html_text,
+    inspect_inline_image_integrity as _inspect_inline_image_integrity,
     is_inline_or_remote as _is_inline_or_remote,
     refresh_inlined_data_urls_by_cache as _refresh_inlined_data_urls_by_cache,
     refresh_inlined_data_urls_by_hint as _refresh_inlined_data_urls_by_hint,
@@ -21363,6 +21364,16 @@ def polish_and_inline_html_file(html_path: Path, citation_profile: Any | None = 
         image_cache=image_cache,
     )
     inlined_count += refreshed_from_cache
+    image_integrity = _inspect_inline_image_integrity(inlined_html)
+    if not image_integrity.publishable:
+        raise RuntimeError(
+            "HTML image integrity check failed: "
+            f"images={image_integrity.image_count} "
+            f"missing_src={image_integrity.missing_src_count} "
+            f"unsupported_src={image_integrity.unsupported_src_count} "
+            f"broken_data_url={image_integrity.broken_data_url_count} "
+            f"inline_skip={image_integrity.inline_skip_count}"
+        )
     return InlineHtmlResult(html=inlined_html, inlined_images=inlined_count)
 
 

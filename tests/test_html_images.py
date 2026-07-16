@@ -8,9 +8,11 @@ from pdf_html_polish.html_images import (
     html_node_has_broken_data_image,
     html_node_has_renderable_image,
     html_node_image_srcs,
+    inspect_inline_image_integrity,
     inline_images_from_html_text,
     refresh_inlined_data_urls_by_cache,
     refresh_inlined_data_urls_by_hint,
+    resolve_local_image_candidate,
 )
 
 
@@ -38,7 +40,56 @@ def test_data_image_src_renderability_detects_truncated_known_images() -> None:
 
     assert data_image_src_looks_renderable(valid_gif)
     assert not data_image_src_looks_renderable(truncated_png)
+    assert not data_image_src_looks_renderable("data:image/png,not-base64")
     assert data_image_src_looks_renderable("https://example.org/image.png")
+
+
+def test_inline_image_integrity_counts_only_live_unresolved_images() -> None:
+    valid_png = _data_url("image/png", _valid_png_blob())
+    broken_png = "data:image/png;base64,AAAA"
+    html = (
+        f'<img src="{valid_png}">'
+        '<img data-z2m-inline-skip="legacy" src="https://example.org/image.png">'
+        '<img data-z2m-inline-skip="missing_sidecar" src="figures/missing.png">'
+        "<img alt=\"missing src\">"
+        f'<img src="{broken_png}">'
+        '<script>const sample = \'<img src="script.png">\';</script>'
+        '<!-- <img src="comment.png"> -->'
+    )
+
+    integrity = inspect_inline_image_integrity(html)
+
+    assert integrity.image_count == 5
+    assert integrity.missing_src_count == 1
+    assert integrity.unsupported_src_count == 1
+    assert integrity.broken_data_url_count == 1
+    assert integrity.inline_skip_count == 1
+    assert not integrity.publishable
+
+
+def test_inline_image_integrity_accepts_renderable_inline_and_remote_images() -> None:
+    valid_png = _data_url("image/png", _valid_png_blob())
+    integrity = inspect_inline_image_integrity(
+        f'<img data-z2m-inline-skip="legacy" src="{valid_png}">'
+        '<img data-z2m-inline-skip="legacy" src="https://example.org/image.png">'
+    )
+
+    assert integrity.image_count == 2
+    assert integrity.inline_skip_count == 0
+    assert integrity.publishable
+
+
+def test_resolve_local_image_candidate_rejects_encoded_parent_escape(tmp_path) -> None:
+    base_dir = tmp_path / "article"
+    base_dir.mkdir()
+    inside = base_dir / "inside.png"
+    outside = tmp_path / "outside.png"
+    inside.write_bytes(_valid_png_blob())
+    outside.write_bytes(_valid_png_blob())
+
+    assert resolve_local_image_candidate(base_dir, "inside.png?cache=1") == inside
+    assert resolve_local_image_candidate(base_dir, "../outside.png") is None
+    assert resolve_local_image_candidate(base_dir, "%2e%2e/outside.png") is None
 
 
 def test_html_node_image_helpers_extract_and_classify_sources() -> None:

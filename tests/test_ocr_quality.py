@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 import shutil
@@ -14,6 +15,12 @@ from pdf_html_polish.ocr_quality import (
 )
 import pdf_html_polish.pipeline as pipeline_module
 from pdf_html_polish.pipeline import PipelineOptions, _find_zotero_overlay_path, run_pipeline
+
+
+_VALID_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
+    "x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 def _make_temp_dir() -> Path:
@@ -99,6 +106,8 @@ class _FakeHtmlRunner:
         for pdf_path in sorted(Path(input_dir).glob("*.pdf")):
             article_dir = Path(output_dir) / pdf_path.stem
             article_dir.mkdir(parents=True, exist_ok=True)
+            (article_dir / "page1.png").write_bytes(_VALID_TINY_PNG)
+            (article_dir / "page2.png").write_bytes(_VALID_TINY_PNG)
             (article_dir / f"{pdf_path.stem}.html").write_text(
                 "<html><body>"
                 '<p><img src="page1.png"></p><p><img src="page2.png"></p>'
@@ -123,6 +132,29 @@ class _FakeMathHtmlRunner:
                 "<html><body>"
                 r"<p>Energy \(E=mc^2\) released.</p>"
                 '<h2>References</h2><ol><li id="ref-1">Example reference.</li></ol>'
+                "</body></html>",
+                encoding="utf-8",
+            )
+        return RunResult(command=["fake-marker"], exit_code=0)
+
+    def run_single(self, **_kwargs):
+        return RunResult(command=["fake-marker-single"], exit_code=1)
+
+
+class _FakeMissingImageRunner:
+    def run_batch(self, *, input_dir, output_dir, output_format, **_kwargs):
+        assert output_format == "html"
+        for pdf_path in sorted(Path(input_dir).glob("*.pdf")):
+            article_dir = Path(output_dir) / pdf_path.stem
+            article_dir.mkdir(parents=True, exist_ok=True)
+            (article_dir / f"{pdf_path.stem}.html").write_text(
+                "<html><body>"
+                '<img src="figures/missing.png">'
+                "<p>This coherent article contains enough ordinary text to pass "
+                "the OCR quality heuristic while exercising the independent image "
+                "publication gate. The methods and results remain readable.</p>"
+                "<p>Additional discussion keeps the document structurally normal "
+                "and prevents an unrelated re-OCR decision.</p>"
                 "</body></html>",
                 encoding="utf-8",
             )
@@ -159,6 +191,7 @@ def test_pipeline_queues_bad_ocr_html_for_reocr(monkeypatch) -> None:
         entry = queue["entries"][0]
 
         assert summary.failed_total == 0
+        assert summary.html_polish_failed_total == 0
         assert summary.ocr_quality_failed_total == 1
         assert summary.reocr_queued_total == 1
         assert summary.reocr_pending_total == 1
@@ -166,6 +199,45 @@ def test_pipeline_queues_bad_ocr_html_for_reocr(monkeypatch) -> None:
         assert entry["reocr_alias_base_name"] == f"bad_scan{REOCR_SUFFIX}"
         assert (output_dir / "_reocr_pending" / f"bad_scan{REOCR_SUFFIX}.json").is_file()
         assert any("OCR quality gate queued for re-OCR" in line for line in logs)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_pipeline_counts_image_integrity_failure_and_skips_polish_stage(monkeypatch) -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+        source_pdf = tmp_path / "missing_image.pdf"
+        source_pdf.write_bytes(b"%PDF-1.4\n")
+        output_dir = tmp_path / "out"
+        logs: list[str] = []
+
+        summary = run_pipeline(
+            PipelineOptions(
+                source_pdf_paths=[str(source_pdf)],
+                output_dir=str(output_dir),
+                export_mode=ExportMode.HTML.value,
+                skip_existing=False,
+                cleanup_staging=True,
+            ),
+            _FakeMissingImageRunner(),
+            logs.append,
+            lambda: False,
+        )
+
+        article_dir = output_dir / "missing_image"
+        raw_html = article_dir / "missing_image.html"
+        polish_stage = article_dir / "_z2m_stages" / "02.en.polish.html"
+
+        assert summary.converted_total == 1
+        assert summary.failed_total == 1
+        assert summary.html_polish_failed_total == 1
+        assert raw_html.is_file()
+        assert not polish_stage.exists()
+        assert any(
+            "HTML image integrity check failed" in line
+            for line in logs
+        )
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 

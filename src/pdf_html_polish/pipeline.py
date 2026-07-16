@@ -67,6 +67,7 @@ class _HtmlPolishWorkItem:
 
 @dataclass(frozen=True)
 class _HtmlPolishResult:
+    source_pdf_path: Path
     html_path: Path
     stage_dir: Path
     raw_stage_path: Path
@@ -103,6 +104,7 @@ def _polish_html_work_item(item: _HtmlPolishWorkItem) -> _HtmlPolishResult:
             ),
         )
         return _HtmlPolishResult(
+            source_pdf_path=item.staged_file.source_pdf_path,
             html_path=item.html_path,
             stage_dir=item.stage_dir,
             raw_stage_path=item.raw_stage_path,
@@ -112,6 +114,7 @@ def _polish_html_work_item(item: _HtmlPolishWorkItem) -> _HtmlPolishResult:
         )
     except Exception as exc:
         return _HtmlPolishResult(
+            source_pdf_path=item.staged_file.source_pdf_path,
             html_path=item.html_path,
             stage_dir=item.stage_dir,
             raw_stage_path=item.raw_stage_path,
@@ -841,6 +844,7 @@ def run_pipeline(
             _log_elapsed(log, "pipeline.collect_converted_results", started_at)
 
             llm_bundle_result: LlmBundleResult | None = None
+            html_polish_failed_total = 0
             zotero_html_attached_total = 0
             zotero_html_failed_total = 0
             zotero_html_queued_total = 0
@@ -853,6 +857,21 @@ def run_pipeline(
             reocr_queued_total = 0
             reocr_pending_total = len(load_reocr_queue(output_dir))
             history_paths: list[Path] = list(converted_source_paths)
+            html_polish_failed_paths: set[str] = set()
+
+            def mark_html_polish_failed(html_path: Path, source_pdf_path: Path) -> None:
+                nonlocal html_polish_failed_total
+                html_key = normalize_source_path(html_path)
+                if html_key in html_polish_failed_paths:
+                    return
+                html_polish_failed_paths.add(html_key)
+                html_polish_failed_total += 1
+                source_key = normalize_source_path(source_pdf_path)
+                history_paths[:] = [
+                    path
+                    for path in history_paths
+                    if normalize_source_path(path) != source_key
+                ]
 
             def mirror_webdav_html(html_path: Path) -> None:
                 nonlocal webdav_uploaded_total, webdav_failed_total
@@ -950,6 +969,7 @@ def run_pipeline(
                             )
                         )
                     except Exception as exc:
+                        mark_html_polish_failed(html_path, staged_file.source_pdf_path)
                         log(f"Inline images failed for {html_path.name}: {exc}")
                 postprocess_workers = min(
                     max(1, int(getattr(options, "postprocess_max_workers", 1) or 1)),
@@ -965,6 +985,7 @@ def run_pipeline(
                     max_workers=postprocess_workers,
                 ):
                     if polish_result.error:
+                        mark_html_polish_failed(polish_result.html_path, polish_result.source_pdf_path)
                         log(f"Inline images failed for {polish_result.html_path.name}: {polish_result.error}")
                         continue
                     inlined_files += 1
@@ -1011,6 +1032,12 @@ def run_pipeline(
                             zotero_html_failed_total += 1
                             log(f"Zotero queue skipped, HTML not found: {html_path}")
                             continue
+                        if normalize_source_path(html_path) in html_polish_failed_paths:
+                            log(
+                                "Zotero queue skipped after HTML polish failure: "
+                                f"{html_path}"
+                            )
+                            continue
                         parent_item_id = resolved_item.attachment.parent_item_id or resolved_item.attachment.item_id
                         queue_batch.append(
                             build_pending_entry(
@@ -1048,6 +1075,12 @@ def run_pipeline(
                         if not html_path.is_file():
                             zotero_html_failed_total += 1
                             log(f"Zotero attach skipped, HTML not found: {html_path}")
+                            continue
+                        if normalize_source_path(html_path) in html_polish_failed_paths:
+                            log(
+                                "Zotero attach skipped after HTML polish failure: "
+                                f"{html_path}"
+                            )
                             continue
 
                         try:
@@ -1100,6 +1133,7 @@ def run_pipeline(
             marker_failed_total = len(stage.staged_files) - len(converted_source_paths)
             failed_total = (
                 marker_failed_total
+                + html_polish_failed_total
                 + zotero_html_failed_total
             )
 
@@ -1118,6 +1152,7 @@ def run_pipeline(
                 llm_bundle_dir=None if llm_bundle_result is None else llm_bundle_result.bundle_dir,
                 llm_bundle_markdown_files=0 if llm_bundle_result is None else llm_bundle_result.markdown_files,
                 llm_bundle_image_files=0 if llm_bundle_result is None else llm_bundle_result.image_files,
+                html_polish_failed_total=html_polish_failed_total,
                 zotero_html_attached_total=zotero_html_attached_total,
                 zotero_html_failed_total=zotero_html_failed_total,
                 zotero_html_queued_total=zotero_html_queued_total,

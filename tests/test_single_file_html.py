@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from pdf_html_polish import html_images, html_links, text_cleanup
 from pdf_html_polish.raw_html_polish import (
     doi_anchors,
@@ -507,7 +508,7 @@ def test_inline_images_from_html_file() -> None:
     try:
         html_path = tmp_path / "doc.html"
         image_path = tmp_path / "img.png"
-        image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        image_path.write_bytes(_valid_tiny_png_bytes())
         html_path.write_text('<html><body><img src="img.png"></body></html>', encoding="utf-8")
 
         result = inline_images_from_html_file(html_path)
@@ -516,6 +517,41 @@ def test_inline_images_from_html_file() -> None:
         assert "data:image/png;base64," in result.html
         assert re.search(r'\s+src=(["\'])img\.png\1', result.html) is None
         assert 'data-z2m-src="img.png"' in result.html
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_inline_images_from_html_file_fails_closed_on_unresolved_local_image() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        html_path = tmp_path / "doc.html"
+        html_path.write_text(
+            '<html><body><img data-z2m-inline-skip="missing" src="missing.png"></body></html>',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"HTML image integrity check failed: .*unsupported_src=1.*inline_skip=1",
+        ):
+            inline_images_from_html_file(html_path)
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_inline_images_from_html_file_accepts_valid_data_image_with_stale_skip() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        html_path = tmp_path / "doc.html"
+        html_path.write_text(
+            '<html><body><img data-z2m-inline-skip="legacy" '
+            f'src="{_valid_tiny_png_data_url()}"></body></html>',
+            encoding="utf-8",
+        )
+
+        result = inline_images_from_html_file(html_path)
+
+        assert _valid_tiny_png_data_url() in result.html
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -601,7 +637,7 @@ def test_inline_images_refreshes_existing_data_uri_from_sidecar_hint() -> None:
     try:
         html_path = tmp_path / "doc.html"
         image_path = tmp_path / "img.png"
-        image_path.write_bytes(b"\x89PNG\r\n\x1a\nfresh")
+        image_path.write_bytes(_valid_tiny_png_bytes())
         html_path.write_text(
             '<html><body><img data-z2m-src="img.png" src="data:image/png;base64,AAAA"></body></html>',
             encoding="utf-8",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import hashlib
+from html.parser import HTMLParser
 from io import BytesIO
 import mimetypes
 import os
@@ -20,6 +21,24 @@ from .html_links import escape_html_attr_literal
 class InlineHtmlResult:
     html: str
     inlined_images: int
+
+
+@dataclass(frozen=True)
+class InlineImageIntegrity:
+    image_count: int
+    missing_src_count: int
+    unsupported_src_count: int
+    broken_data_url_count: int
+    inline_skip_count: int
+
+    @property
+    def publishable(self) -> bool:
+        return not (
+            self.missing_src_count
+            or self.unsupported_src_count
+            or self.broken_data_url_count
+            or self.inline_skip_count
+        )
 
 
 IMAGE_SIGNATURES: dict[bytes, str] = {
@@ -45,6 +64,10 @@ IMAGE_CACHE_KEY_ATTR_PATTERN = re.compile(
 )
 INLINE_SKIP_ATTR_PATTERN = re.compile(
     r'\bdata-z2m-inline-skip\s*=',
+    re.IGNORECASE,
+)
+INLINE_SKIP_METADATA_PATTERN = re.compile(
+    r'''\s+data-z2m-inline-(?:skip|size|limit)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)''',
     re.IGNORECASE,
 )
 # Standalone Zotero/WebDAV HTML attachments do not carry sidecar image files.
@@ -351,7 +374,7 @@ def decode_data_image_payload(src_value: str) -> tuple[str, bytes] | None:
 def data_image_src_looks_renderable(src_value: str) -> bool:
     decoded = decode_data_image_payload(src_value)
     if decoded is None:
-        return True
+        return not src_value.strip().lower().startswith("data:image/")
     mime, blob = decoded
     if not blob:
         return False
@@ -381,6 +404,80 @@ def html_node_has_broken_data_image(raw: str) -> bool:
     )
 
 
+def resolve_local_image_candidate(base_dir: Path, path_value: str) -> Path | None:
+    """Resolve an image sidecar while keeping traversal and symlinks inside ``base_dir``."""
+    if not path_value:
+        return None
+    base_root = base_dir.resolve(strict=False)
+    clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
+    decoded = urllib.parse.unquote(clean_path)
+    candidate = (base_root / decoded).resolve(strict=False)
+    try:
+        candidate.relative_to(base_root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def clear_inline_skip_metadata(prefix: str) -> str:
+    return INLINE_SKIP_METADATA_PATTERN.sub("", prefix)
+
+
+class _InlineImageIntegrityParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.image_count = 0
+        self.missing_src_count = 0
+        self.unsupported_src_count = 0
+        self.broken_data_url_count = 0
+        self.inline_skip_count = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "img":
+            self._inspect_image(attrs)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "img":
+            self._inspect_image(attrs)
+
+    def _inspect_image(self, attrs: list[tuple[str, str | None]]) -> None:
+        self.image_count += 1
+        attributes = {name.lower(): value for name, value in attrs}
+        has_inline_skip = "data-z2m-inline-skip" in attributes
+        src = (attributes.get("src") or "").strip()
+        if not src:
+            self.missing_src_count += 1
+            if has_inline_skip:
+                self.inline_skip_count += 1
+            return
+        lowered = src.lower()
+        if lowered.startswith("data:image/"):
+            if not data_image_src_looks_renderable(src):
+                self.broken_data_url_count += 1
+                if has_inline_skip:
+                    self.inline_skip_count += 1
+            return
+        if lowered.startswith(("http://", "https://")):
+            return
+        self.unsupported_src_count += 1
+        if has_inline_skip:
+            self.inline_skip_count += 1
+
+
+def inspect_inline_image_integrity(html: str) -> InlineImageIntegrity:
+    """Return publication integrity counts for live ``img`` elements."""
+    parser = _InlineImageIntegrityParser()
+    parser.feed(html)
+    parser.close()
+    return InlineImageIntegrity(
+        image_count=parser.image_count,
+        missing_src_count=parser.missing_src_count,
+        unsupported_src_count=parser.unsupported_src_count,
+        broken_data_url_count=parser.broken_data_url_count,
+        inline_skip_count=parser.inline_skip_count,
+    )
+
+
 def refresh_inlined_data_urls_by_hint(
     html: str,
     *,
@@ -388,16 +485,6 @@ def refresh_inlined_data_urls_by_hint(
 ) -> tuple[str, int]:
     """Refresh stale/corrupted data URLs using ``data-z2m-src`` sidecar hints."""
     refreshed = 0
-
-    def resolve_hint_path(path_value: str) -> Path | None:
-        if not path_value:
-            return None
-        clean_path = path_value.split("?", 1)[0].split("#", 1)[0]
-        decoded = urllib.parse.unquote(clean_path)
-        candidate = (base_dir / decoded).resolve(strict=False)
-        if candidate.is_file():
-            return candidate
-        return None
 
     def replace(match: re.Match[str]) -> str:
         nonlocal refreshed
@@ -416,20 +503,26 @@ def refresh_inlined_data_urls_by_hint(
         )
         if hint_match is None:
             return match.group(0)
-        candidate = resolve_hint_path(hint_match.group(2).strip())
+        candidate = resolve_local_image_candidate(base_dir, hint_match.group(2).strip())
         if candidate is None:
             return match.group(0)
         if validate_data_url(src_value, candidate):
+            clean_prefix = clear_inline_skip_metadata(prefix)
+            if clean_prefix != prefix:
+                return f"{clean_prefix}{quote}{src_value}{suffix}"
             return match.group(0)
 
         refreshed_data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
         if refreshed_data_url is None:
             return match.group(0)
+        if not data_image_src_looks_renderable(refreshed_data_url):
+            return match.group(0)
         if not validate_data_url(refreshed_data_url, candidate):
             return match.group(0)
 
         refreshed += 1
-        return f"{prefix}{quote}{refreshed_data_url}{suffix}"
+        clean_prefix = clear_inline_skip_metadata(prefix)
+        return f"{clean_prefix}{quote}{refreshed_data_url}{suffix}"
 
     return IMG_SRC_PATTERN.sub(replace, html), refreshed
 
