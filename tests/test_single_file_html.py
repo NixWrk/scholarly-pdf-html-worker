@@ -7833,6 +7833,21 @@ def test_polish_html_document_splits_embedded_reference_list_after_conclusion_it
     assert 'href="#ref-3"' in body
 
 
+def test_polish_html_document_collapses_repeated_author_breaks_only() -> None:
+    html = (
+        "<html><body>"
+        '<article class="ltx_document ltx_authors_1line">'
+        '<div class="ltx_authors">Ivanov<br><br>Petrov</div>'
+        "<p>Body<br><br>Second paragraph.</p>"
+        "</article></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert '<div class="ltx_authors">Ivanov<br>Petrov</div>' in polished
+    assert "<p>Body<br><br>Second paragraph.</p>" in polished
+
+
 def test_polish_html_document_does_not_promote_numbered_prose_outline_to_references() -> None:
     long_tail = " ".join(
         f"Detailed participant guidance and clinical context point {index}."

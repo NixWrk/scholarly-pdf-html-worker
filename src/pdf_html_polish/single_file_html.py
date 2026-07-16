@@ -254,6 +254,7 @@ from .raw_html_polish.references_links import (
     unwrap_stale_numeric_page_links as _unwrap_stale_numeric_page_links,
 )
 from .raw_html_polish.presentation import (
+    collapse_repeated_author_breaks as _collapse_repeated_author_breaks,
     cleanup_empty_html_blocks as _cleanup_empty_html_blocks,
     fix_heading_inline_abbreviation_breaks as _fix_heading_inline_abbreviation_breaks,
     inject_default_styles as _presentation_inject_default_styles,
@@ -21152,6 +21153,7 @@ def _polish_phase_presentation(state: RawPolishState, context: RawPolishContext)
     polished = _inject_utf8_charset(polished)
     polished = _inject_default_styles(polished)
     polished = _wrap_body_in_container(polished)
+    polished = _collapse_repeated_author_breaks(polished)
     polished = _cleanup_empty_html_blocks(polished)
     polished = _fix_heading_inline_abbreviation_breaks(polished)
     polished = _restore_abbreviations(polished)

@@ -1,5 +1,6 @@
 from pdf_html_polish.abbreviations import RU_ABBREV_TO_LATIN
 from pdf_html_polish.raw_html_polish.presentation import (
+    collapse_repeated_author_breaks,
     cleanup_empty_html_blocks,
     fix_heading_inline_abbreviation_breaks,
     inject_default_styles,
@@ -44,6 +45,25 @@ def test_presentation_cleans_empty_blocks_and_heading_breaks() -> None:
     assert "<i>LC</i>-датчика" in polished
     assert "<p>" not in polished
     assert polished.count("<br>") == 2
+
+
+def test_presentation_collapses_break_runs_only_in_author_containers() -> None:
+    html = (
+        '<article class="ltx_document ltx_authors_1line">'
+        "<p>Body<br><br>Second paragraph.</p>"
+        '<div class="ltx_authors">A<br>\n&nbsp;<br><span>B</span><br/>C'
+        '<script>const sample = "<br><br>";</script></div>'
+        "<!-- <div class=\"authors\">X<br><br>Y</div> -->"
+        "</article>"
+    )
+
+    collapsed = collapse_repeated_author_breaks(html)
+
+    assert "<p>Body<br><br>Second paragraph.</p>" in collapsed
+    assert '<div class="ltx_authors">A<br>\n&nbsp;<span>B</span><br/>C' in collapsed
+    assert '<script>const sample = "<br><br>";</script>' in collapsed
+    assert "<!-- <div class=\"authors\">X<br><br>Y</div> -->" in collapsed
+    assert collapse_repeated_author_breaks(collapsed) == collapsed
 
 
 def test_restore_abbreviations_skips_tags_and_attrs() -> None:
