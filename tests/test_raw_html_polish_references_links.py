@@ -40,6 +40,13 @@ def test_references_heading_helpers_find_plain_and_notes_headings() -> None:
     assert references_heading_search("<p>Body</p><h2>References</h2>") is not None
     assert references_heading_match("<h2>References</h2>") is not None
     assert references_heading_search("<h2>Notes and references</h2>", allow_notes_heading=True) is not None
+    for heading in (
+        "Bibliografie",
+        "Bibliografía",
+        "Références",
+        "Literaturverzeichnis",
+    ):
+        assert references_heading_search(f"<h2>{heading}</h2>") is not None
 
 
 def test_reference_visible_number_handles_line_number_prefixes() -> None:

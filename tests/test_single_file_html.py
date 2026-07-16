@@ -7833,6 +7833,187 @@ def test_polish_html_document_splits_embedded_reference_list_after_conclusion_it
     assert 'href="#ref-3"' in body
 
 
+def test_polish_html_document_does_not_promote_numbered_prose_outline_to_references() -> None:
+    long_tail = " ".join(
+        f"Detailed participant guidance and clinical context point {index}."
+        for index in range(24)
+    )
+    html = (
+        "<html><body><p>Body text.</p>"
+        '<p block-type="ListGroup"><ul>'
+        f"<li>1. <b>Motivation.</b> {long_tail} (Seelig, 2001).</li>"
+        f"<li>2. <b>Participant characteristics.</b> {long_tail} (Lane, 2015).</li>"
+        f"<li>3. <b>Adjustment to vision loss.</b> {long_tail} (Tabrett, 2010).</li>"
+        "</ul></p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'data-z2m-embedded-references="1"' not in polished
+    assert "<h2>References</h2>" not in polished
+    assert 'id="ref-1"' not in polished
+    assert "Motivation." in polished
+
+
+def test_polish_html_document_prefers_later_multilingual_bibliography_heading() -> None:
+    long_tail = " ".join(
+        f"Detailed machine operating description for mode {index}."
+        for index in range(24)
+    )
+    html = (
+        "<html><body><p>Prior work (1) supports the method.</p>"
+        '<p block-type="ListGroup"><ul>'
+        f"<li>1. <b>Weight measurement.</b> {long_tail} (Smith, 2001).</li>"
+        f"<li>2. <b>Rotation disc.</b> {long_tail} (Jones, 2002).</li>"
+        f"<li>3. <b>Vertical dipstick.</b> {long_tail} (Brown, 2003).</li>"
+        "</ul></p>"
+        "<h2>Bibliografie</h2>"
+        '<p block-type="ListGroup"><ul>'
+        "<li>1. Smith A. Example Journal 2020; 1:1-4.</li>"
+        "<li>2. Jones B. Example Journal 2021; 2:5-8.</li>"
+        "</ul></p></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "high"},
+    )
+
+    assert 'data-z2m-embedded-references="1"' not in polished
+    bibliography = polished[polished.index("Bibliografie") :]
+    before_bibliography = polished[: polished.index("Bibliografie")]
+    assert 'id="ref-1"' not in before_bibliography
+    assert 'id="ref-1"' in bibliography
+    assert 'id="ref-2"' in bibliography
+    assert 'href="#ref-1"' in before_bibliography
+
+
+def test_repolish_removes_false_generated_references_from_numbered_outline() -> None:
+    long_tail = " ".join(
+        f"Detailed participant guidance and clinical context point {index}."
+        for index in range(24)
+    )
+    html = (
+        "<html><body><p>Body text.</p>"
+        '<h2 data-z2m-embedded-references="1">References</h2>'
+        '<p block-type="ListGroup"><ul>'
+        f'<li id="ref-1"><span class="z2m-ref-num">1.</span> '
+        f"<b>Motivation.</b> {long_tail} (Seelig, 2001).</li>"
+        f'<li id="ref-2"><span class="z2m-ref-num">2.</span> '
+        f"<b>Participant characteristics.</b> {long_tail} (Lane, 2015).</li>"
+        f'<li id="ref-3"><span class="z2m-ref-num">3.</span> '
+        f"<b>Adjustment to vision loss.</b> {long_tail} (Tabrett, 2010).</li>"
+        "</ul></p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'data-z2m-embedded-references="1"' not in polished
+    assert "<h2>References</h2>" not in polished
+    assert 'id="ref-1"' not in polished
+    assert '<span class="z2m-ref-num">' not in polished
+    assert "1. <b>Motivation.</b>" in polished
+
+
+def test_repolish_moves_reference_identity_to_later_real_bibliography() -> None:
+    html = (
+        '<html><body><p>Prior work (<a href="#ref-4" '
+        'class="z2m-ref-link">1</a>) supports the method.</p>'
+        '<h2 data-z2m-embedded-references="1">References</h2>'
+        '<p block-type="ListGroup"><ul>'
+        '<li id="ref-1"><span class="z2m-ref-num">1.</span> Measuring urine weight.</li>'
+        '<li id="ref-2"><span class="z2m-ref-num">2.</span> Rotation disc.</li>'
+        '<li id="ref-3"><span class="z2m-ref-num">3.</span> Vertical dipstick.</li>'
+        "</ul></p>"
+        "<h2>Bibliografie</h2>"
+        '<p block-type="ListGroup"><ul>'
+        '<li id="ref-4"><span class="z2m-ref-num">1.</span> '
+        "Smith A. Example Journal 2020; 1:1-4.</li>"
+        '<li id="ref-5"><span class="z2m-ref-num">2.</span> '
+        "Jones B. Example Journal 2021; 2:5-8.</li>"
+        "</ul></p></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "paren_numeric", "confidence": "high"},
+    )
+
+    before_bibliography, bibliography = polished.split("Bibliografie", maxsplit=1)
+    assert 'data-z2m-embedded-references="1"' not in polished
+    assert 'id="ref-1"' not in before_bibliography
+    assert 'id="ref-1"' in bibliography
+    assert 'id="ref-2"' in bibliography
+    assert 'href="#ref-1"' in before_bibliography
+    assert 'href="#ref-4"' not in before_bibliography
+    assert 'id="ref-4"' not in bibliography
+
+
+def test_repolish_keeps_valid_generated_references_before_notes() -> None:
+    html = (
+        "<html><body><p>Body text.</p>"
+        '<h2 data-z2m-embedded-references="1">References</h2>'
+        '<p block-type="ListGroup"><ul>'
+        '<li id="ref-1"><span class="z2m-ref-num">1.</span> '
+        "Smith A. Example Journal 2020; 1:1-4.</li>"
+        '<li id="ref-2"><span class="z2m-ref-num">2.</span> '
+        "Jones B. Example Journal 2021; 2:5-8.</li>"
+        "</ul></p><h2>Notes</h2><p>Supplementary discussion.</p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'data-z2m-embedded-references="1"' in polished
+    assert 'id="ref-1"' in polished
+    assert 'id="ref-2"' in polished
+
+
+def test_polish_html_document_keeps_long_references_with_late_bold_titles() -> None:
+    long_tail = " ".join(
+        f"Detailed journal and methodology context sentence {index}."
+        for index in range(24)
+    )
+    html = (
+        "<html><body><p>Body text.</p>"
+        '<p block-type="ListGroup"><ul>'
+        f"<li>1. Smith A. <b>Clinical outcomes.</b> {long_tail} Journal 2020.</li>"
+        f"<li>2. Jones B. <b>Visual assessment.</b> {long_tail} Journal 2021.</li>"
+        f"<li>3. Brown C. <b>Patient follow-up.</b> {long_tail} Journal 2022.</li>"
+        "</ul></p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'data-z2m-embedded-references="1"' in polished
+    assert 'id="ref-1"' in polished
+    assert 'id="ref-2"' in polished
+    assert 'id="ref-3"' in polished
+
+
+def test_polish_html_document_keeps_long_title_first_bibliographic_entries() -> None:
+    long_tail = " ".join(
+        f"Additional publication and methodology context sentence {index}."
+        for index in range(24)
+    )
+    html = (
+        "<html><body><p>Prior work (1) supports the method.</p>"
+        '<p block-type="ListGroup"><ul>'
+        f"<li>1. <b>Clinical outcomes.</b> Smith A. Example Journal 2020; 1:1-4. {long_tail}</li>"
+        f"<li>2. <b>Visual assessment.</b> Jones B. Example Journal 2021; 2:5-8. {long_tail}</li>"
+        f"<li>3. <b>Patient follow-up.</b> Brown C. Example Journal 2022; 3:9-12. {long_tail}</li>"
+        "</ul></p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert 'data-z2m-embedded-references="1"' in polished
+    assert 'id="ref-1"' in polished
+    assert 'id="ref-2"' in polished
+    assert 'id="ref-3"' in polished
+
+
 def test_polish_html_document_keeps_unnumbered_reference_entry_from_previous_ref() -> None:
     html = (
         "<html><body>"
