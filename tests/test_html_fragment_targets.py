@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from pdf_html_polish.html_fragment_targets import repair_duplicate_fragment_targets
+from pdf_html_polish.single_file_html import polish_and_inline_html_file
+
+
+def test_duplicate_fragment_targets_retarget_links_to_their_own_chunks() -> None:
+    html = (
+        '<section data-zotero-worker-chunk="1" data-pages="1-10">'
+        '<figure id="fig-1">first</figure>'
+        '<a href="#fig-1" aria-describedby="fig-1">first link</a>'
+        '</section>'
+        '<section data-zotero-worker-chunk="2" data-pages="11-20">'
+        '<a href="#fig-1" aria-describedby="fig-1">second link</a>'
+        '<figure id="fig-1">second</figure>'
+        '</section>'
+    )
+
+    repaired = repair_duplicate_fragment_targets(html)
+
+    assert repaired.duplicate_target_count == 1
+    assert repaired.renamed_target_count == 1
+    assert repaired.rewritten_reference_count == 2
+    assert repaired.html.count('id="fig-1"') == 1
+    assert 'id="fig-1--z2m-p11-20"' in repaired.html
+    assert repaired.html.count('href="#fig-1"') == 1
+    assert 'href="#fig-1--z2m-p11-20"' in repaired.html
+    assert 'aria-describedby="fig-1--z2m-p11-20"' in repaired.html
+
+
+def test_duplicate_fragment_targets_choose_nearest_target_within_one_chunk() -> None:
+    html = (
+        '<section data-zotero-worker-chunk="1" data-pages="1-10">'
+        '<div id="note"><a href="#note">first</a></div>'
+        '<p>separator</p>'
+        '<div id="note"><a href="#note">second</a></div>'
+        '</section>'
+    )
+
+    repaired = repair_duplicate_fragment_targets(html)
+
+    assert repaired.html.count('id="note"') == 1
+    assert 'id="note--z2m-p1-10"' in repaired.html
+    assert repaired.html.count('href="#note"') == 1
+    assert repaired.html.count('href="#note--z2m-p1-10"') == 1
+
+
+def test_duplicate_fragment_targets_rewrite_idrefs_and_css_urls() -> None:
+    html = (
+        '<section data-zotero-worker-chunk="1" data-pages="1-10">'
+        '<div id="panel">first</div></section>'
+        '<section data-zotero-worker-chunk="2" data-pages="11-20">'
+        '<label for="panel" aria-controls="panel unique" '
+        'style="clip-path:url(#panel)">second</label>'
+        '<div id="panel">second</div><div id="unique">unique</div>'
+        '</section>'
+    )
+
+    repaired = repair_duplicate_fragment_targets(html)
+
+    assert 'id="panel--z2m-p11-20"' in repaired.html
+    assert 'for="panel--z2m-p11-20"' in repaired.html
+    assert 'aria-controls="panel--z2m-p11-20 unique"' in repaired.html
+    assert 'url(#panel--z2m-p11-20)' in repaired.html
+
+
+def test_duplicate_fragment_target_repair_leaves_unique_html_unchanged() -> None:
+    html = (
+        '<script>const sample = \'<p id="fake">x</p>\';</script>'
+        '<p id="real"><a href="#real">real</a></p>'
+    )
+
+    repaired = repair_duplicate_fragment_targets(html)
+
+    assert repaired.html == html
+    assert repaired.duplicate_target_count == 0
+    assert repaired.renamed_target_count == 0
+    assert repaired.rewritten_reference_count == 0
+
+
+def test_post_polish_pipeline_repairs_duplicate_chunk_ids(tmp_path: Path) -> None:
+    html_path = tmp_path / "chunked.html"
+    html_path.write_text(
+        '<html data-zotero-worker-chunked="true"><body>'
+        '<section data-zotero-worker-chunk="1" data-pages="1-10">'
+        '<p id="shared-target">first</p><a href="#shared-target">first link</a>'
+        '</section>'
+        '<section data-zotero-worker-chunk="2" data-pages="11-20">'
+        '<p id="shared-target">second</p><a href="#shared-target">second link</a>'
+        '</section></body></html>',
+        encoding="utf-8",
+    )
+
+    result = polish_and_inline_html_file(html_path)
+
+    assert result.html.count('id="shared-target"') == 1
+    assert 'id="shared-target--z2m-p11-20"' in result.html
+    assert result.html.count('href="#shared-target"') == 1
+    assert 'href="#shared-target--z2m-p11-20"' in result.html
