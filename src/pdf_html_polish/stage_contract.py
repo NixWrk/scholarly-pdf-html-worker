@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .atomic_io import copy_file_atomic as _copy_file_atomic
-from .html_stages import HTML_STAGE_DIR_NAMES, POLISH_STAGE_NAME, RAW_STAGE_NAME
+from .html_stages import (
+    HTML_STAGE_DIR_NAMES,
+    POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
+    RawConversionValidation,
+    RawConversionValidator,
+    require_validated_raw_conversion_ownership,
+)
 from .quality_loop.run_utils import git_dirty, git_short_head, load_json, now, write_json
 
 
@@ -75,7 +82,11 @@ def find_stage_dirs(roots: Iterable[Path]) -> list[Path]:
     return sorted(found, key=str)
 
 
-def _article_dir_record(article_dir: Path, stage_dirs: list[Path]) -> dict[str, Any]:
+def _article_dir_record(
+    article_dir: Path,
+    stage_dirs: list[Path],
+    raw_validator: RawConversionValidator,
+) -> tuple[dict[str, Any], RawConversionValidation]:
     preferred = sorted(
         stage_dirs,
         key=lambda path: (0 if path.name == "_pdf_html_polish_stages" else 1, str(path)),
@@ -102,8 +113,17 @@ def _article_dir_record(article_dir: Path, stage_dirs: list[Path]) -> dict[str, 
         issues.append({"kind": "missing_canonical_html", "paths": [str(path) for path in missing]})
     if extras:
         issues.append({"kind": "extra_html", "paths": [str(path) for path in extras]})
+    raw_validation = raw_validator.validate(preferred / RAW_STAGE)
+    if not raw_validation.valid:
+        issues.append(
+            {
+                "kind": "invalid_raw_conversion",
+                "reason": raw_validation.reason,
+                "manifest_path": str(raw_validation.manifest_path),
+            }
+        )
 
-    return {
+    record = {
         "article_dir": str(article_dir),
         "stage_dir": str(preferred),
         "html_count": len(html_files),
@@ -114,9 +134,12 @@ def _article_dir_record(article_dir: Path, stage_dirs: list[Path]) -> dict[str, 
         "extra_html_paths": [str(path) for path in extras],
         "missing_canonical_count": len(missing),
         "missing_canonical_paths": [str(path) for path in missing],
+        "raw_conversion_valid": raw_validation.valid,
+        "raw_conversion_reason": raw_validation.reason,
         "status": "pass" if not issues else "fail",
         "issues": issues,
     }
+    return record, raw_validation
 
 
 def verify_stage_contract(
@@ -132,14 +155,23 @@ def verify_stage_contract(
     for stage_dir in stage_dirs:
         grouped.setdefault(stage_dir.parent.resolve(strict=False), []).append(stage_dir)
 
-    articles = [
-        _article_dir_record(article_dir, sorted(article_stage_dirs, key=str))
+    raw_validator = RawConversionValidator()
+    article_results = [
+        _article_dir_record(article_dir, sorted(article_stage_dirs, key=str), raw_validator)
         for article_dir, article_stage_dirs in sorted(grouped.items(), key=lambda item: str(item[0]))
     ]
+    articles = [record for record, _validation in article_results]
+    raw_validations = [validation for _record, validation in article_results]
+    raw_validation_error = ""
+    if raw_validations and all(validation.valid for validation in raw_validations):
+        try:
+            require_validated_raw_conversion_ownership(raw_validations)
+        except RuntimeError as exc:
+            raw_validation_error = str(exc)
     failing_articles = [article for article in articles if article["status"] != "pass"]
     report = {
         "generated_at": now(),
-        "schema_version": 1,
+        "schema_version": 2,
         "source_roots": [str(root) for root in roots],
         "code_commit": git_short_head(),
         "working_tree_dirty": git_dirty(),
@@ -149,7 +181,11 @@ def verify_stage_contract(
         "failing_article_count": len(failing_articles),
         "extra_html_count": sum(int(article["extra_html_count"]) for article in articles),
         "missing_canonical_count": sum(int(article["missing_canonical_count"]) for article in articles),
-        "status": "pass" if not failing_articles else "fail",
+        "invalid_raw_conversion_count": sum(
+            1 for article in articles if not article["raw_conversion_valid"]
+        ),
+        "raw_validation_error": raw_validation_error,
+        "status": "pass" if not failing_articles and not raw_validation_error else "fail",
         "articles": articles,
     }
     if out_report is not None:
@@ -269,7 +305,10 @@ def publish_latest_polish_from_quality_run(
     removed = 0
     missing = 0
     out_of_scope = 0
+    invalid_raw = 0
     pending: list[tuple[dict[str, Any], Path, Path, list[Path]]] = []
+    raw_validator = RawConversionValidator()
+    valid_raw_conversions: list[RawConversionValidation] = []
 
     for article_id in article_ids:
         source_article = source_by_id.get(article_id)
@@ -338,6 +377,15 @@ def publish_latest_polish_from_quality_run(
             record["status"] = "missing_raw_stage"
             records.append(record)
             continue
+        raw_validation = raw_validator.validate(raw_path)
+        record["raw_conversion_valid"] = raw_validation.valid
+        record["raw_conversion_reason"] = raw_validation.reason
+        if not raw_validation.valid:
+            invalid_raw += 1
+            record["status"] = "invalid_raw_conversion"
+            records.append(record)
+            continue
+        valid_raw_conversions.append(raw_validation)
         article_root = stage_dir.parent.resolve(strict=False)
         unsafe_extra_html = [
             path
@@ -365,7 +413,13 @@ def publish_latest_polish_from_quality_run(
         pending.append((record, audited_polish, target_polish, extra_html))
         records.append(record)
 
-    preflight_complete = missing == 0 and out_of_scope == 0
+    raw_validation_error = ""
+    if valid_raw_conversions and invalid_raw == 0:
+        try:
+            require_validated_raw_conversion_ownership(valid_raw_conversions)
+        except RuntimeError as exc:
+            raw_validation_error = str(exc)
+    preflight_complete = missing == 0 and out_of_scope == 0 and invalid_raw == 0 and not raw_validation_error
     if apply and preflight_complete:
         for record, audited_polish, target_polish, extra_html in pending:
             if resolved_backup_dir is not None:
@@ -389,7 +443,7 @@ def publish_latest_polish_from_quality_run(
                         removed += 1
                         record["removed_extra_html_count"] += 1
             record["status"] = "published"
-    elif apply:
+    elif apply or not preflight_complete:
         for record, _audited_polish, _target_polish, _extra_html in pending:
             record["status"] = "blocked_by_preflight"
     else:
@@ -411,7 +465,7 @@ def publish_latest_polish_from_quality_run(
     stage_contract_status = "pass" if preflight_complete and contract_verification_status == "pass" else "fail"
     report = {
         "generated_at": now(),
-        "schema_version": 1,
+        "schema_version": 2,
         "mode": "apply" if apply else "dry_run",
         "quality_run_dir": str(quality_run_dir),
         "quality_code_commit": quality_manifest.get("code_commit"),
@@ -426,6 +480,8 @@ def publish_latest_polish_from_quality_run(
         "dry_run_count": skipped,
         "missing_count": missing,
         "outside_scope_count": out_of_scope,
+        "invalid_raw_conversion_count": invalid_raw,
+        "raw_validation_error": raw_validation_error,
         "extra_html_count": sum(int(record.get("extra_html_count") or 0) for record in records),
         "removed_extra_html_count": removed,
         "stage_contract_status": stage_contract_status,

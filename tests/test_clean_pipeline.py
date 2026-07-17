@@ -21,7 +21,10 @@ from pdf_html_polish.marker_runner import MarkerRunner, RunResult
 from pdf_html_polish.models import PipelineSummary
 from pdf_html_polish.html_stages import (
     HTML_STAGE_DIR_NAME,
+    POLISH_STAGE_NAME,
     RAW_CONVERSION_MANIFEST_NAME,
+    RAW_STAGE_NAME,
+    write_raw_conversion_manifest,
 )
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
@@ -31,7 +34,13 @@ from pdf_html_polish.result_state import (
 )
 
 
-def _summary(output_dir: Path, *, failed_total: int = 0, converted_total: int | None = None) -> PipelineSummary:
+def _summary(
+    output_dir: Path,
+    *,
+    failed_total: int = 0,
+    converted_total: int | None = None,
+    skipped_existing: int = 0,
+) -> PipelineSummary:
     return PipelineSummary(
         collection_key="direct_pdf",
         collection_name="direct PDF files",
@@ -39,11 +48,32 @@ def _summary(output_dir: Path, *, failed_total: int = 0, converted_total: int | 
         pdfs_resolved=1,
         staged_total=1,
         converted_total=converted_total if converted_total is not None else (0 if failed_total else 1),
-        skipped_existing=0,
+        skipped_existing=skipped_existing,
         failed_total=failed_total,
         output_dir=output_dir,
         filename_map_path=output_dir / "_source_filename_map.csv",
         export_mode="html",
+    )
+
+
+def _write_current_stage_pair(
+    stage_dir: Path,
+    source_pdf: Path,
+    *,
+    raw_html: str = "<html><body>raw</body></html>",
+    polish_html: str = "<html><body>stale</body></html>",
+) -> None:
+    source_pdf.parent.mkdir(parents=True, exist_ok=True)
+    if not source_pdf.exists():
+        source_pdf.write_bytes(b"%PDF-1.4\n")
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = stage_dir / RAW_STAGE_NAME
+    raw_path.write_text(raw_html, encoding="utf-8")
+    (stage_dir / POLISH_STAGE_NAME).write_text(polish_html, encoding="utf-8")
+    write_raw_conversion_manifest(
+        stage_dir,
+        source_pdf=source_pdf,
+        raw_stage_path=raw_path,
     )
 
 
@@ -269,8 +299,12 @@ def test_raw_force_retry_invalidates_previous_completion_before_marker(
     )
     result_path = output_dir / "paper" / "paper.html"
     manifest_path = result_path.parent / RESULT_MANIFEST_NAME
+    raw_manifest_path = (
+        result_path.parent / HTML_STAGE_DIR_NAME / RAW_CONVERSION_MANIFEST_NAME
+    )
     assert first.failed_total == 0
     assert completed_result_is_current(source_pdf, result_path)
+    assert raw_manifest_path.is_file()
 
     class FailedForceRunner:
         def run_batch(self, *, input_dir, output_dir, **_kwargs):
@@ -300,6 +334,7 @@ def test_raw_force_retry_invalidates_previous_completion_before_marker(
     assert failed_retry.converted_total == 0
     assert failed_retry.failed_total == 1
     assert not manifest_path.exists()
+    assert not raw_manifest_path.exists()
     assert not completed_result_is_current(source_pdf, result_path)
 
 
@@ -466,9 +501,10 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
 
     def fake_pipeline_runner(*_args):
         stage_dir = conversion_dir / "article_a" / "_z2m_stages"
-        stage_dir.mkdir(parents=True)
-        (stage_dir / "01.en.raw.html").write_text("<html><body>raw</body></html>", encoding="utf-8")
-        (stage_dir / "02.en.polish.html").write_text("<html><body>stale</body></html>", encoding="utf-8")
+        _write_current_stage_pair(
+            stage_dir,
+            tmp_path / "paper.pdf",
+        )
         (conversion_dir / "article_a" / "article_a.html").write_text(
             "<html><body>extra</body></html>",
             encoding="utf-8",
@@ -561,13 +597,66 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
     assert "observe ok" in logs
 
 
+def test_run_clean_pipeline_validates_new_and_skipped_raw_stages_together(
+    tmp_path: Path,
+) -> None:
+    conversion_dir = tmp_path / "converted"
+    quality_dir = tmp_path / "quality"
+    first_source = tmp_path / "first.pdf"
+    second_source = tmp_path / "second.pdf"
+
+    def fake_pipeline_runner(*_args):
+        _write_current_stage_pair(
+            conversion_dir / "first" / "_z2m_stages",
+            first_source,
+        )
+        _write_current_stage_pair(
+            conversion_dir / "second" / "_z2m_stages",
+            second_source,
+        )
+        return _summary(
+            conversion_dir,
+            converted_total=1,
+            skipped_existing=1,
+        )
+
+    def fake_observe_runner(_command, _cwd, _log):
+        final_stage = quality_dir / "audit_tree" / "first" / POLISH_STAGE_NAME
+        final_stage.parent.mkdir(parents=True)
+        final_stage.write_text("<html><body>audited</body></html>", encoding="utf-8")
+        return 0
+
+    summary = run_clean_pipeline(
+        CleanPipelineOptions(
+            conversion_options=PipelineOptions(
+                source_pdf_paths=[str(first_source), str(second_source)],
+                output_dir=str(conversion_dir),
+                export_mode="html",
+            ),
+            quality_output_dir=str(quality_dir),
+            publish_latest_to_converted=False,
+        ),
+        MarkerRunner(),
+        lambda _message: None,
+        lambda: False,
+        pipeline_runner=fake_pipeline_runner,
+        observe_runner=fake_observe_runner,
+    )
+
+    assert summary.conversion_summary.converted_total == 1
+    assert summary.conversion_summary.skipped_existing == 1
+    assert len(summary.final_html.artifacts) == 1
+
+
 def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path: Path) -> None:
     conversion_dir = tmp_path / "converted"
     quality_dir = tmp_path / "quality"
     stage_dir = conversion_dir / "article_a" / "_z2m_stages"
-    stage_dir.mkdir(parents=True)
-    (stage_dir / "01.en.raw.html").write_text("<html><body>raw</body></html>", encoding="utf-8")
-    (stage_dir / "02.en.polish.html").write_text("<html><body>stale</body></html>", encoding="utf-8")
+    source_pdf = tmp_path / "paper.pdf"
+    _write_current_stage_pair(
+        stage_dir,
+        source_pdf,
+    )
     logs: list[str] = []
     observe_calls: list[list[str]] = []
 
@@ -586,7 +675,7 @@ def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path:
     summary = run_clean_pipeline(
         CleanPipelineOptions(
             conversion_options=PipelineOptions(
-                source_pdf_paths=[str(tmp_path / "paper.pdf")],
+                source_pdf_paths=[str(source_pdf)],
                 output_dir=str(conversion_dir),
                 export_mode="html",
             ),
@@ -611,6 +700,44 @@ def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path:
     assert any("Reusing existing PDF HTML raw stages" in entry for entry in logs)
 
 
+def test_run_clean_pipeline_repolish_rejects_tampered_raw_before_observe(
+    tmp_path: Path,
+) -> None:
+    conversion_dir = tmp_path / "converted"
+    source_pdf = tmp_path / "paper.pdf"
+    stage_dir = conversion_dir / "article_a" / "_z2m_stages"
+    _write_current_stage_pair(stage_dir, source_pdf)
+    (stage_dir / RAW_STAGE_NAME).write_text(
+        "<html><body>tampered raw</body></html>",
+        encoding="utf-8",
+    )
+
+    def fail_pipeline_runner(*_args):
+        raise AssertionError("repolish-only mode must not invoke conversion")
+
+    def fail_observe_runner(*_args):
+        raise AssertionError("invalid raw stage must not reach observe")
+
+    with pytest.raises(RuntimeError, match="raw_fingerprint_mismatch"):
+        run_clean_pipeline(
+            CleanPipelineOptions(
+                conversion_options=PipelineOptions(
+                    source_pdf_paths=[str(source_pdf)],
+                    output_dir=str(conversion_dir),
+                    export_mode="html",
+                ),
+                quality_output_dir=str(tmp_path / "quality"),
+                publish_latest_to_converted=False,
+                reuse_existing_conversion=True,
+            ),
+            MarkerRunner(),
+            lambda _message: None,
+            lambda: False,
+            pipeline_runner=fail_pipeline_runner,
+            observe_runner=fail_observe_runner,
+        )
+
+
 def test_run_clean_pipeline_repolish_existing_requires_raw_stage(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="01.en.raw.html"):
         run_clean_pipeline(
@@ -633,9 +760,12 @@ def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all
 
     def fake_pipeline_runner(*_args):
         stage_dir = conversion_dir / "article_es" / "_z2m_stages"
-        stage_dir.mkdir(parents=True)
-        (stage_dir / "01.en.raw.html").write_text("<html><body>bruto</body></html>", encoding="utf-8")
-        (stage_dir / "02.en.polish.html").write_text("<html><body>limpio</body></html>", encoding="utf-8")
+        _write_current_stage_pair(
+            stage_dir,
+            tmp_path / "paper.pdf",
+            raw_html="<html><body>bruto</body></html>",
+            polish_html="<html><body>limpio</body></html>",
+        )
         return _summary(conversion_dir)
 
     def fake_observe_runner(command, cwd, log):

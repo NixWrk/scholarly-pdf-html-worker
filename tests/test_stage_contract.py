@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 import pdf_html_polish.atomic_io as atomic_io_module
-from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
+from pdf_html_polish.html_stages import (
+    POLISH_STAGE_NAME,
+    RAW_CONVERSION_MANIFEST_NAME,
+    RAW_STAGE_NAME,
+    write_raw_conversion_manifest,
+)
 from pdf_html_polish.stage_contract import (
     publish_latest_polish_from_quality_run,
     verify_stage_contract,
@@ -18,11 +23,21 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _stage_pair(article_dir: Path) -> Path:
+def _stage_pair(article_dir: Path, *, source_pdf: Path | None = None) -> Path:
     stage_dir = article_dir / "_z2m_stages"
     stage_dir.mkdir(parents=True)
-    (stage_dir / RAW_STAGE_NAME).write_text("<html><body>raw</body></html>", encoding="utf-8")
+    raw_path = stage_dir / RAW_STAGE_NAME
+    raw_path.write_text("<html><body>raw</body></html>", encoding="utf-8")
     (stage_dir / POLISH_STAGE_NAME).write_text("<html><body>old polish</body></html>", encoding="utf-8")
+    resolved_source = source_pdf or article_dir.parent / f"{article_dir.name}.pdf"
+    resolved_source.parent.mkdir(parents=True, exist_ok=True)
+    if not resolved_source.exists():
+        resolved_source.write_bytes(b"%PDF-1.4\n")
+    write_raw_conversion_manifest(
+        stage_dir,
+        source_pdf=resolved_source,
+        raw_stage_path=raw_path,
+    )
     return stage_dir
 
 
@@ -34,6 +49,79 @@ def test_verify_stage_contract_passes_for_only_raw_and_polish(tmp_path: Path) ->
     assert report["status"] == "pass"
     assert report["article_count"] == 1
     assert report["extra_html_count"] == 0
+
+
+def test_verify_stage_contract_rejects_raw_without_manifest(tmp_path: Path) -> None:
+    stage_dir = _stage_pair(tmp_path / "converted" / "article_a")
+    (stage_dir / RAW_CONVERSION_MANIFEST_NAME).unlink()
+
+    report = verify_stage_contract([tmp_path / "converted"])
+
+    assert report["status"] == "fail"
+    assert report["invalid_raw_conversion_count"] == 1
+    assert report["articles"][0]["raw_conversion_reason"] == "manifest_missing"
+
+
+def test_publish_latest_polish_rejects_tampered_raw_before_mutation(tmp_path: Path) -> None:
+    converted = tmp_path / "converted"
+    stage_dir = _stage_pair(converted / "article_a")
+    target_polish = stage_dir / POLISH_STAGE_NAME
+    old_polish = target_polish.read_text(encoding="utf-8")
+    (stage_dir / RAW_STAGE_NAME).write_text(
+        "<html><body>tampered raw</body></html>",
+        encoding="utf-8",
+    )
+
+    source_run = tmp_path / "quality" / "_converted_raw_source"
+    article_id = "article_a"
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article_id": article_id,
+                    "raw_stage_path": str(stage_dir / RAW_STAGE_NAME),
+                    "source_polish_path": str(target_polish),
+                }
+            ]
+        },
+    )
+    quality_run = tmp_path / "quality"
+    _write_json(
+        quality_run / "manifest.json",
+        {
+            "source_run_dir": str(source_run),
+            "articles": [{"article": article_id}],
+        },
+    )
+    audited = quality_run / "audit_tree" / article_id / POLISH_STAGE_NAME
+    audited.parent.mkdir(parents=True)
+    audited.write_text("<html><body>new audited polish</body></html>", encoding="utf-8")
+
+    report = publish_latest_polish_from_quality_run(
+        quality_run,
+        converted_roots=[converted],
+        apply=True,
+    )
+
+    assert report["published_count"] == 0
+    assert report["invalid_raw_conversion_count"] == 1
+    assert report["stage_contract_status"] == "fail"
+    assert report["records"][0]["status"] == "invalid_raw_conversion"
+    assert target_polish.read_text(encoding="utf-8") == old_polish
+
+
+def test_verify_stage_contract_rejects_duplicate_source_ownership(tmp_path: Path) -> None:
+    converted = tmp_path / "converted"
+    shared_source = tmp_path / "sources" / "shared.pdf"
+    _stage_pair(converted / "first", source_pdf=shared_source)
+    _stage_pair(converted / "second", source_pdf=shared_source)
+
+    report = verify_stage_contract([converted])
+
+    assert report["status"] == "fail"
+    assert report["invalid_raw_conversion_count"] == 0
+    assert "ownership is ambiguous" in report["raw_validation_error"]
 
 
 def test_verify_stage_contract_flags_article_and_stage_extra_html(tmp_path: Path) -> None:

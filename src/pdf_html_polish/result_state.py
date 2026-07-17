@@ -2,108 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
-import re
 import stat
 
+from .artifact_integrity import (
+    artifact_is_structurally_valid,
+    fingerprint_file,
+    metadata_still_matches,
+)
 from .atomic_io import write_json_atomic
 
 
 RESULT_MANIFEST_NAME = "_conversion_result_manifest.json"
 RESULT_MANIFEST_SCHEMA_VERSION = 1
 _MAX_MANIFEST_BYTES = 64 * 1024
-_ARTIFACT_EDGE_BYTES = 4 * 1024 * 1024
-_HTML_OPEN_RE = re.compile(rb"<html(?:\s|>)", re.IGNORECASE)
-_BODY_OPEN_RE = re.compile(rb"<body(?:\s|>)", re.IGNORECASE)
-_BODY_CLOSE_RE = re.compile(rb"</body\s*>", re.IGNORECASE)
-_HTML_CLOSE_RE = re.compile(rb"</html\s*>", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class _Fingerprint:
-    size: int
-    mtime_ns: int
-    sha256: str
-    head: bytes = b""
-    tail: bytes = b""
-
-
 def result_manifest_path(artifact_path: Path) -> Path:
     return Path(artifact_path).parent / RESULT_MANIFEST_NAME
-
-
-def _fingerprint(
-    path: Path,
-    *,
-    reject_symlink: bool,
-    capture_edges: bool = False,
-) -> _Fingerprint | None:
-    candidate = Path(path)
-    try:
-        if reject_symlink and candidate.is_symlink():
-            return None
-        before = candidate.stat()
-        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
-            return None
-        digest = hashlib.sha256()
-        head = bytearray()
-        tail = bytearray()
-        with candidate.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-                if capture_edges:
-                    if len(head) < _ARTIFACT_EDGE_BYTES:
-                        remaining = _ARTIFACT_EDGE_BYTES - len(head)
-                        head.extend(chunk[:remaining])
-                    tail.extend(chunk)
-                    if len(tail) > _ARTIFACT_EDGE_BYTES:
-                        del tail[: len(tail) - _ARTIFACT_EDGE_BYTES]
-        after = candidate.stat()
-    except OSError:
-        return None
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        return None
-    return _Fingerprint(
-        size=int(after.st_size),
-        mtime_ns=int(after.st_mtime_ns),
-        sha256=digest.hexdigest(),
-        head=bytes(head),
-        tail=bytes(tail),
-    )
-
-
-def _metadata_still_matches(path: Path, fingerprint: _Fingerprint) -> bool:
-    try:
-        current = Path(path).stat()
-    except OSError:
-        return False
-    return (int(current.st_size), int(current.st_mtime_ns)) == (
-        fingerprint.size,
-        fingerprint.mtime_ns,
-    )
-
-
-def _artifact_is_structurally_valid(path: Path, fingerprint: _Fingerprint) -> bool:
-    if Path(path).suffix.lower() != ".html":
-        return fingerprint.size > 0
-    sample = fingerprint.head
-    if fingerprint.size > len(fingerprint.head):
-        sample += b"\n" + fingerprint.tail
-    html_open = _HTML_OPEN_RE.search(sample)
-    body_open = _BODY_OPEN_RE.search(sample)
-    body_close = _BODY_CLOSE_RE.search(sample)
-    html_close = _HTML_CLOSE_RE.search(sample)
-    if None in (html_open, body_open, body_close, html_close):
-        return False
-    assert html_open is not None
-    assert body_open is not None
-    assert body_close is not None
-    assert html_close is not None
-    return html_open.start() < body_open.start() < body_close.start() < html_close.start()
 
 
 def _validate_artifact_location(artifact_path: Path) -> None:
@@ -143,15 +59,15 @@ def publish_completed_result(
     artifact = Path(artifact_path)
     invalidate_completed_result(artifact)
     _validate_artifact_location(artifact)
-    source_fingerprint = _fingerprint(source_pdf, reject_symlink=False)
-    artifact_fingerprint = _fingerprint(
+    source_fingerprint = fingerprint_file(source_pdf, reject_symlink=False)
+    artifact_fingerprint = fingerprint_file(
         artifact,
         reject_symlink=True,
         capture_edges=True,
     )
     if source_fingerprint is None:
         raise ValueError(f"Source PDF is not a stable non-empty file: {source_pdf}")
-    if artifact_fingerprint is None or not _artifact_is_structurally_valid(
+    if artifact_fingerprint is None or not artifact_is_structurally_valid(
         artifact,
         artifact_fingerprint,
     ):
@@ -176,7 +92,7 @@ def publish_completed_result(
     }
     manifest_path = result_manifest_path(artifact)
     write_json_atomic(manifest_path, payload)
-    if not _metadata_still_matches(source_pdf, source_fingerprint) or not _metadata_still_matches(
+    if not metadata_still_matches(source_pdf, source_fingerprint) or not metadata_still_matches(
         artifact,
         artifact_fingerprint,
     ):
@@ -226,15 +142,15 @@ def completed_result_is_current(source_pdf_path: Path, artifact_path: Path) -> b
     if payload.get("artifact_extension") != artifact.suffix.lower():
         return False
 
-    source_fingerprint = _fingerprint(source_pdf, reject_symlink=False)
-    artifact_fingerprint = _fingerprint(
+    source_fingerprint = fingerprint_file(source_pdf, reject_symlink=False)
+    artifact_fingerprint = fingerprint_file(
         artifact,
         reject_symlink=True,
         capture_edges=True,
     )
     if source_fingerprint is None or artifact_fingerprint is None:
         return False
-    if not _artifact_is_structurally_valid(artifact, artifact_fingerprint):
+    if not artifact_is_structurally_valid(artifact, artifact_fingerprint):
         return False
     fingerprints_match = (
         _manifest_int(payload, "source_pdf_bytes") == source_fingerprint.size
@@ -244,6 +160,6 @@ def completed_result_is_current(source_pdf_path: Path, artifact_path: Path) -> b
     )
     return (
         fingerprints_match
-        and _metadata_still_matches(source_pdf, source_fingerprint)
-        and _metadata_still_matches(artifact, artifact_fingerprint)
+        and metadata_still_matches(source_pdf, source_fingerprint)
+        and metadata_still_matches(artifact, artifact_fingerprint)
     )

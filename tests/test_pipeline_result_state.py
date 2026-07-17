@@ -5,6 +5,11 @@ from pathlib import Path
 import pytest
 
 from pdf_html_polish.export_modes import ExportMode
+from pdf_html_polish.html_stages import (
+    HTML_STAGE_DIR_NAME,
+    RAW_STAGE_NAME,
+    RawConversionValidator,
+)
 from pdf_html_polish.marker_runner import RunResult
 from pdf_html_polish.models import AttachmentRecord, ResolvedAttachment
 import pdf_html_polish.pipeline as pipeline_module
@@ -195,6 +200,8 @@ def test_html_result_commit_failure_blocks_zotero_publication(
     )
 
     article_dir = output_dir / "paper"
+    raw_stage = article_dir / HTML_STAGE_DIR_NAME / RAW_STAGE_NAME
+    raw_validation = RawConversionValidator([source_pdf]).validate(raw_stage)
     assert summary.converted_total == 1
     assert summary.failed_total == 1
     assert summary.result_commit_failed_total == 1
@@ -202,4 +209,5 @@ def test_html_result_commit_failure_blocks_zotero_publication(
     assert summary.zotero_html_failed_total == 0
     assert attach_calls == []
     assert not (article_dir / RESULT_MANIFEST_NAME).exists()
+    assert raw_validation.valid
     assert any("Zotero attach skipped after HTML output failure" in line for line in logs)

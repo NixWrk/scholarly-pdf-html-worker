@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from pdf_html_polish.html_stages import (
+    HTML_STAGE_DIR_NAME,
+    RAW_CONVERSION_MANIFEST_NAME,
+    RAW_STAGE_NAME,
+    write_raw_conversion_manifest,
+    require_current_raw_conversions,
+)
 from pdf_html_polish.output_state import detect_existing_results, normalize_source_path
 from pdf_html_polish.result_state import (
     RESULT_MANIFEST_NAME,
@@ -24,6 +32,18 @@ def _write_filename_map(output_dir: Path, *, source_pdf: Path, alias_base: str) 
             ]
         ),
         encoding="utf-8",
+    )
+
+
+def _write_raw_completion(article_dir: Path, source_pdf: Path) -> None:
+    stage_dir = article_dir / HTML_STAGE_DIR_NAME
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / RAW_STAGE_NAME
+    raw_path.write_text("<html><body>raw source</body></html>", encoding="utf-8")
+    write_raw_conversion_manifest(
+        stage_dir,
+        source_pdf=source_pdf,
+        raw_stage_path=raw_path,
     )
 
 
@@ -55,11 +75,75 @@ def test_detect_existing_results_does_not_reuse_hash_alias_owned_by_other_source
         artifact_path=artifact_path,
         result_kind="polished_html",
     )
+    _write_raw_completion(article_dir, source_a)
 
     existing = detect_existing_results(output_dir, [source_a, source_b], artifact_extension=".html")
 
     assert normalize_source_path(source_a) in existing
     assert normalize_source_path(source_b) not in existing
+
+
+def test_detect_existing_html_reprocesses_canonical_result_without_raw_commit(
+    tmp_path: Path,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\nsource\n")
+    output_dir = tmp_path / "out"
+    article_dir = output_dir / "paper"
+    article_dir.mkdir(parents=True)
+    artifact_path = article_dir / "paper.html"
+    artifact_path.write_text(
+        "<html><body>canonical only</body></html>",
+        encoding="utf-8",
+    )
+    publish_completed_result(
+        source_pdf_path=source_pdf,
+        artifact_path=artifact_path,
+        result_kind="polished_html",
+    )
+
+    assert completed_result_is_current(source_pdf, artifact_path)
+    assert detect_existing_results(
+        output_dir,
+        [source_pdf],
+        artifact_extension=".html",
+    ) == set()
+
+
+
+def test_detect_existing_html_reprocesses_legacy_raw_manifest(
+    tmp_path: Path,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\nsource\n")
+    output_dir = tmp_path / "out"
+    article_dir = output_dir / "paper"
+    article_dir.mkdir(parents=True)
+    artifact_path = article_dir / "paper.html"
+    artifact_path.write_text("<html><body>canonical</body></html>", encoding="utf-8")
+    publish_completed_result(
+        source_pdf_path=source_pdf,
+        artifact_path=artifact_path,
+        result_kind="polished_html",
+    )
+    _write_raw_completion(article_dir, source_pdf)
+    raw_path = article_dir / HTML_STAGE_DIR_NAME / RAW_STAGE_NAME
+    raw_manifest_path = raw_path.parent / RAW_CONVERSION_MANIFEST_NAME
+    raw_manifest = json.loads(raw_manifest_path.read_text(encoding="utf-8"))
+    raw_manifest["schema_version"] = 1
+    raw_manifest.pop("source_pdf_path")
+    raw_manifest.pop("article_name")
+    raw_manifest_path.write_text(json.dumps(raw_manifest), encoding="utf-8")
+
+    assert require_current_raw_conversions(
+        [raw_path],
+        source_pdf_paths=[source_pdf],
+    )[0].valid
+    assert detect_existing_results(
+        output_dir,
+        [source_pdf],
+        artifact_extension=".html",
+    ) == set()
 
 
 def test_detect_existing_results_rejects_artifact_without_completion_manifest(

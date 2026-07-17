@@ -14,9 +14,11 @@ from .citation_profile import build_citation_profile_from_pdf
 from .export_modes import ExportMode, get_export_mode_spec
 from .history import append_history
 from .html_stages import (
+    HTML_STAGE_DIR_NAMES,
     POLISH_STAGE_NAME,
     RAW_STAGE_NAME,
     html_stage_dir_for_html,
+    invalidate_raw_conversion_manifest,
     save_html_stage,
     write_raw_conversion_manifest,
 )
@@ -202,6 +204,11 @@ def _invalidate_staged_completed_results(
             artifact_extension,
         )
         invalidate_completed_result(artifact_path)
+        if artifact_extension.lower() == ".html":
+            for stage_dir_name in HTML_STAGE_DIR_NAMES:
+                invalidate_raw_conversion_manifest(
+                    artifact_path.parent / stage_dir_name / RAW_STAGE_NAME
+                )
 
 
 def _alias_suffix(value: str) -> str:
@@ -1050,6 +1057,14 @@ def run_pipeline(
                             source_path=html_path,
                             details=(f"source_pdf={staged_file.source_pdf_path.name}",),
                         )
+                        raw_manifest_path = write_raw_conversion_manifest(
+                            stage_dir,
+                            source_pdf=staged_file.source_pdf_path,
+                            raw_stage_path=raw_stage.path,
+                        )
+                        log(
+                            f"Raw HTML completion manifest saved: {raw_manifest_path}"
+                        )
                         ocr_decision = assess_ocr_quality_from_html(raw_html)
                         if ocr_decision.needs_reocr:
                             queue_result = enqueue_reocr_candidate(
@@ -1086,7 +1101,10 @@ def run_pipeline(
                         )
                     except Exception as exc:
                         mark_html_polish_failed(html_path, staged_file.source_pdf_path)
-                        log(f"Inline images failed for {html_path.name}: {exc}")
+                        log(
+                            "HTML raw-stage preparation failed for "
+                            f"{html_path.name}: {exc}"
+                        )
                 postprocess_workers = min(
                     max(1, int(getattr(options, "postprocess_max_workers", 1) or 1)),
                     max(1, len(polish_work_items)),

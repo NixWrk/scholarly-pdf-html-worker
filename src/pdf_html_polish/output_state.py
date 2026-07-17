@@ -5,6 +5,12 @@ import hashlib
 import os
 from pathlib import Path
 
+from .html_stages import (
+    HTML_STAGE_DIR_NAMES,
+    RAW_STAGE_NAME,
+    RAW_CONVERSION_MANIFEST_SCHEMA_VERSION,
+    require_current_raw_conversions,
+)
 from .result_state import completed_result_is_current
 from .staging import FILENAME_MAP_NAME
 
@@ -112,6 +118,27 @@ def _candidate_output_aliases(
     return sorted(aliases)
 
 
+def _raw_html_result_is_current(article_dir: Path, source_pdf_path: Path) -> bool:
+    raw_stages = [
+        article_dir / stage_dir_name / RAW_STAGE_NAME
+        for stage_dir_name in HTML_STAGE_DIR_NAMES
+        if (article_dir / stage_dir_name / RAW_STAGE_NAME).is_file()
+    ]
+    if not raw_stages:
+        return False
+    try:
+        validations = require_current_raw_conversions(
+            raw_stages,
+            source_pdf_paths=[source_pdf_path],
+        )
+    except RuntimeError:
+        return False
+    return all(
+        validation.schema_version == RAW_CONVERSION_MANIFEST_SCHEMA_VERSION
+        for validation in validations
+    )
+
+
 def detect_existing_results(
     output_dir: Path,
     source_pdf_paths: list[Path],
@@ -142,6 +169,8 @@ def detect_existing_results(
                 continue
             artifact_path = output_dir / actual_alias / f"{actual_alias}{extension}"
             if completed_result_is_current(source_pdf_path, artifact_path):
+                if extension == ".html" and not _raw_html_result_is_current(artifact_path.parent, source_pdf_path):
+                    continue
                 existing.add(normalized)
                 break
 

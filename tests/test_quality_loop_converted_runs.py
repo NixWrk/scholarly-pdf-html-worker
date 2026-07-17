@@ -4,6 +4,7 @@ from pdf_html_polish.quality_loop.converted_runs import (
     POLISH_STAGE,
     RAW_STAGE,
     assess_polish_html,
+    find_converted_raw_stages,
     find_converted_stage_pairs,
 )
 
@@ -22,6 +23,16 @@ def test_find_converted_stage_pairs_accepts_roots_and_stage_files(tmp_path: Path
     assert find_converted_stage_pairs([polish_path]) == [
         (raw_path.resolve(strict=False), polish_path.resolve(strict=False))
     ]
+
+
+def test_find_converted_raw_stages_does_not_require_previous_polish(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "article" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / RAW_STAGE
+    raw_path.write_text("<html>raw</html>", encoding="utf-8")
+
+    assert find_converted_raw_stages([tmp_path]) == [raw_path.resolve(strict=False)]
+    assert find_converted_stage_pairs([tmp_path]) == []
 
 
 def test_assess_polish_html_counts_navigation_and_citation_style_signals() -> None:

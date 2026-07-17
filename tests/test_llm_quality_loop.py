@@ -9,6 +9,12 @@ import zlib
 
 import pytest
 
+from pdf_html_polish.html_stages import (
+    POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
+    write_raw_conversion_manifest,
+)
+
 import scripts.llm_quality_loop as llm_quality_loop
 from scripts.llm_quality_loop import (
     assess_polish_html,
@@ -48,6 +54,36 @@ def _valid_tiny_png_bytes() -> bytes:
 
 def _valid_tiny_png_data_url() -> str:
     return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
+
+
+def _commit_current_converted_raw(
+    stage_dir: Path,
+    *,
+    source_pdf: Path | None = None,
+) -> None:
+    resolved_source = source_pdf or stage_dir.parent / f"{stage_dir.parent.name}.pdf"
+    resolved_source.parent.mkdir(parents=True, exist_ok=True)
+    if not resolved_source.exists():
+        resolved_source.write_bytes(b"%PDF-1.4\n")
+    write_raw_conversion_manifest(
+        stage_dir,
+        source_pdf=resolved_source,
+        raw_stage_path=stage_dir / RAW_STAGE_NAME,
+    )
+
+
+def _write_current_converted_pair(
+    stage_dir: Path,
+    *,
+    raw_html: str,
+    polish_html: str,
+    source_pdf: Path | None = None,
+) -> None:
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = stage_dir / RAW_STAGE_NAME
+    raw_path.write_text(raw_html, encoding="utf-8")
+    (stage_dir / POLISH_STAGE_NAME).write_text(polish_html, encoding="utf-8")
+    _commit_current_converted_raw(stage_dir, source_pdf=source_pdf)
 
 
 def _rgba_png_bytes(width: int, height: int, red: int, green: int, blue: int, alpha: int = 255) -> bytes:
@@ -4054,15 +4090,132 @@ def test_assessment_counts_inline_bracket_link_as_mixed_style() -> None:
     assert assessment["mixed_citation_style"] is True
 
 
+def test_prepare_converted_run_rejects_uncommitted_raw_stage(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / RAW_STAGE_NAME).write_text(
+        "<html><body><p>Raw</p></body></html>",
+        encoding="utf-8",
+    )
+    (stage_dir / POLISH_STAGE_NAME).write_text(
+        "<html><body><p>Polish</p></body></html>",
+        encoding="utf-8",
+    )
+
+    run_dir = tmp_path / "run"
+    with pytest.raises(RuntimeError, match="manifest_missing"):
+        prepare_converted_run([root], run_dir)
+    assert not run_dir.exists()
+    cache_dir = tmp_path / "cache"
+    with pytest.raises(RuntimeError, match="manifest_missing"):
+        prepare_converted_raw_cache([root], cache_dir)
+    assert not cache_dir.exists()
+
+
+def test_converted_raw_cache_regenerates_missing_polish_but_audit_only_rejects_it(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / RAW_STAGE_NAME
+    raw_path.write_text(
+        "<html><body><p>Raw without previous polish.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_current_converted_raw(stage_dir)
+
+    manifest = prepare_converted_raw_cache([root], tmp_path / "source")
+
+    assert manifest["raw_count"] == 1
+    assert manifest["articles"][0]["source_polish_present"] is False
+    assert Path(manifest["articles"][0]["raw_cache_path"]).is_file()
+    with pytest.raises(RuntimeError, match="missing polish artifacts"):
+        prepare_converted_run([root], tmp_path / "audit_only")
+
+
+def test_prepare_converted_raw_cache_rejects_copy_that_changed_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    _write_current_converted_pair(
+        stage_dir,
+        raw_html="<html><body><p>Validated raw.</p></body></html>",
+        polish_html="<html><body><p>Polish.</p></body></html>",
+    )
+    out_dir = tmp_path / "source"
+
+    def copy_changed(_source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            "<html><body><p>Different raw bytes.</p></body></html>",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "pdf_html_polish.quality_loop.converted_runs.copy_file_atomic",
+        copy_changed,
+    )
+    with pytest.raises(RuntimeError, match="does not match its validated conversion manifest"):
+        prepare_converted_raw_cache([root], out_dir)
+
+    assert not any((out_dir / "raw_cache").glob("*.html"))
+    assert not (out_dir / "manifest.json").exists()
+
+
+def test_prepare_converted_raw_cache_profiles_the_validated_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    original_raw = (
+        "<html><body><p>"
+        "Glasauer et al. (2002), Metcalfe and Gresty (1992), "
+        "Seemungal et al. (2007), Loomis et al. (2001), "
+        "Klem et al. (1999), Hilgetag et al. (2001), "
+        "Oliveri et al. (2000), Bestmann et al. (2002), "
+        "and Brandt et al. (2002).</p></body></html>"
+    )
+    _write_current_converted_pair(
+        stage_dir,
+        raw_html=original_raw,
+        polish_html="<html><body><p>Polish.</p></body></html>",
+    )
+    raw_path = stage_dir / RAW_STAGE_NAME
+    out_dir = tmp_path / "source_snapshot"
+
+    def copy_then_mutate(source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+        source.write_text("<html><body><p>No citations.</p></body></html>", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "pdf_html_polish.quality_loop.converted_runs.copy_file_atomic",
+        copy_then_mutate,
+    )
+    manifest = prepare_converted_raw_cache([root], out_dir)
+
+    article = manifest["articles"][0]
+    assert article["citation_style"] == "author_year"
+    assert Path(article["raw_cache_path"]).read_text(encoding="utf-8") == original_raw
+    assert raw_path.read_text(encoding="utf-8") != original_raw
+
+
 def test_prepare_converted_run_preserves_duplicate_articles_as_unique_ids(tmp_path: Path) -> None:
     root = tmp_path / "converted"
     for mtime in ("111", "222"):
         stage_dir = root / "lib" / "KEY" / mtime / "Doc" / "_z2m_stages"
-        stage_dir.mkdir(parents=True)
-        (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
-        (stage_dir / "02.en.polish.html").write_text(
-            '<html><body><p>Polish <a href="#ref-1">[1]</a></p><ol><li id="ref-1">Ref.</li></ol></body></html>',
-            encoding="utf-8",
+        _write_current_converted_pair(
+            stage_dir,
+            raw_html="<html><body><p>Raw</p></body></html>",
+            polish_html=(
+                '<html><body><p>Polish <a href="#ref-1">[1]</a></p>'
+                '<ol><li id="ref-1">Ref.</li></ol></body></html>'
+            ),
         )
 
     manifest = prepare_converted_run([root], tmp_path / "run")
@@ -4082,14 +4235,16 @@ def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_pat
     root = tmp_path / "converted"
     for mtime in ("111", "222"):
         stage_dir = root / "lib" / "KEY" / mtime / "Doc" / "_z2m_stages"
-        stage_dir.mkdir(parents=True)
-        (stage_dir / "01.en.raw.html").write_text(
-            f"<html><body><p>Raw {mtime}</p><p><img src=\"fig1.png\"/></p></body></html>",
-            encoding="utf-8",
-        )
-        (stage_dir / "02.en.polish.html").write_text(
-            f'<html><body><p><img data-z2m-src="fig1.png" src="{_valid_tiny_png_data_url()}"/></p></body></html>',
-            encoding="utf-8",
+        _write_current_converted_pair(
+            stage_dir,
+            raw_html=(
+                f"<html><body><p>Raw {mtime}</p>"
+                '<p><img src="fig1.png"/></p></body></html>'
+            ),
+            polish_html=(
+                f'<html><body><p><img data-z2m-src="fig1.png" '
+                f'src="{_valid_tiny_png_data_url()}"/></p></body></html>'
+            ),
         )
 
     manifest = prepare_converted_raw_cache([root], tmp_path / "source")
@@ -4105,19 +4260,22 @@ def test_prepare_converted_raw_cache_preserves_source_paths_for_repolish(tmp_pat
     assert all(Path(article["raw_stage_path"]).name == "01.en.raw.html" for article in manifest["articles"])
 
 
-def test_prepare_converted_raw_cache_carries_source_pdf_from_filename_map(tmp_path: Path) -> None:
+def test_prepare_converted_raw_cache_uses_manifest_source_over_filename_map(tmp_path: Path) -> None:
     root = tmp_path / "converted_run"
     article_dir = root / "AliasDoc"
     stage_dir = article_dir / "_pdf_html_polish_stages"
-    stage_dir.mkdir(parents=True)
     source_pdf = tmp_path / "zotero" / "paper.pdf"
     source_pdf.parent.mkdir(parents=True)
     source_pdf.write_bytes(b"%PDF-1.4\n")
     alias_pdf = root / "_z2m_runtime_tmp" / "zotero_pdf_stage_abc" / "AliasDoc.pdf"
     alias_pdf.parent.mkdir(parents=True)
     alias_pdf.write_bytes(b"%PDF-1.4\n")
-    (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
-    (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    _write_current_converted_pair(
+        stage_dir,
+        raw_html="<html><body><p>Raw</p></body></html>",
+        polish_html="<html><body><p>Polish</p></body></html>",
+        source_pdf=source_pdf,
+    )
     (root / "_source_filename_map.csv").write_text(
         "source_pdf_path,alias_pdf_path,source_base_len,alias_base_len,was_shortened,materialization\n"
         f"{source_pdf},{alias_pdf},9,8,no,copy\n",
@@ -4128,8 +4286,8 @@ def test_prepare_converted_raw_cache_carries_source_pdf_from_filename_map(tmp_pa
 
     article = manifest["articles"][0]
     assert article["source_pdf_path"] == str(source_pdf)
-    assert article["source_pdf_origin"] == "filename_map"
-    assert article["source_pdf_map_path"] == str(root / "_source_filename_map.csv")
+    assert article["source_pdf_origin"] == "raw_conversion_manifest"
+    assert article["raw_conversion_manifest_schema_version"] == 2
     report = write_source_pdf_map_for_run(tmp_path / "source", manifest)
     assert report["mapped_count"] == 1
     assert report["records"][0]["pdf_path"] == str(source_pdf)
@@ -4144,6 +4302,7 @@ def test_prepare_converted_raw_cache_infers_citation_style_from_raw_html(tmp_pat
         encoding="utf-8",
     )
     (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    _commit_current_converted_raw(stage_dir)
 
     manifest = prepare_converted_raw_cache([root], tmp_path / "source")
 
@@ -4175,6 +4334,7 @@ def test_prepare_converted_raw_cache_uses_medium_author_year_inference(tmp_path:
         encoding="utf-8",
     )
     (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    _commit_current_converted_raw(stage_dir)
 
     manifest = prepare_converted_raw_cache([root], tmp_path / "source")
 
@@ -4208,6 +4368,7 @@ def test_prepare_converted_raw_cache_ignores_bibliography_for_author_year_infere
         encoding="utf-8",
     )
     (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    _commit_current_converted_raw(stage_dir)
 
     manifest = prepare_converted_raw_cache([root], tmp_path / "source")
 
@@ -4225,6 +4386,7 @@ def test_prepare_converted_raw_cache_ids_do_not_shift_when_new_sources_appear(tm
     stage_dir.mkdir(parents=True)
     (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
     (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    _commit_current_converted_raw(stage_dir)
     first = prepare_converted_raw_cache([root], tmp_path / "source1")
     original_id = first["articles"][0]["article_id"]
 
@@ -4232,6 +4394,7 @@ def test_prepare_converted_raw_cache_ids_do_not_shift_when_new_sources_appear(tm
     earlier_stage_dir.mkdir(parents=True)
     (earlier_stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
     (earlier_stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+    _commit_current_converted_raw(earlier_stage_dir)
 
     second = prepare_converted_raw_cache([root], tmp_path / "source2")
     ids_by_article = {article["article"]: article["article_id"] for article in second["articles"]}
@@ -4247,6 +4410,7 @@ def test_normalize_converted_audit_article_ids_uses_manifest_paths(tmp_path: Pat
         stage_dir.mkdir(parents=True)
         (stage_dir / "01.en.raw.html").write_text("<html><body><p>Raw</p></body></html>", encoding="utf-8")
         (stage_dir / "02.en.polish.html").write_text("<html><body><p>Polish</p></body></html>", encoding="utf-8")
+        _commit_current_converted_raw(stage_dir)
 
     run_dir = tmp_path / "run"
     manifest = prepare_converted_run([root], run_dir)

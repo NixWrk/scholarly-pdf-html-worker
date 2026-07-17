@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 from collections import Counter
-import csv
 from html import unescape
 import re
 import urllib.parse
 from pathlib import Path
 from typing import Any, Iterable
+from pdf_html_polish.artifact_integrity import fingerprint_file
 
 from pdf_html_polish.atomic_io import copy_file_atomic
 from pdf_html_polish.citation_profile import infer_citation_style_from_text
 from pdf_html_polish.html_links import count_same_document_absolute_fragment_links
-from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
+from pdf_html_polish.html_stages import (
+    POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
+    RawConversionValidation,
+    require_current_raw_conversions,
+)
 from pdf_html_polish.raw_html_polish.references_links import references_heading_search
 
 from .run_utils import (
@@ -32,7 +37,6 @@ from .run_utils import (
 
 RAW_STAGE = RAW_STAGE_NAME
 POLISH_STAGE = POLISH_STAGE_NAME
-SOURCE_FILENAME_MAP_NAMES = ("_source_filename_map.csv", "full_source_filename_map.csv")
 
 HREF_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*([\"'])(?P<href>.*?)\1", re.IGNORECASE | re.DOTALL)
 ID_RE = re.compile(r"\bid\s*=\s*([\"'])(?P<id>.*?)\1", re.IGNORECASE | re.DOTALL)
@@ -227,70 +231,75 @@ def assessment_totals(articles: list[dict[str, Any]]) -> tuple[dict[str, int], d
     return dict(sorted(totals.items())), {key: sorted(value) for key, value in sorted(problematic.items())}
 
 
+def find_converted_raw_stages(roots: Iterable[Path]) -> list[Path]:
+    """Find production raw stages without requiring a previous polish artifact."""
+
+    raw_stages: set[Path] = set()
+    for root in roots:
+        if root.is_file():
+            if root.name == RAW_STAGE:
+                raw_stages.add(root.resolve(strict=False))
+            elif root.name == POLISH_STAGE and (root.parent / RAW_STAGE).is_file():
+                raw_stages.add((root.parent / RAW_STAGE).resolve(strict=False))
+        elif root.exists():
+            raw_stages.update(
+                raw_path.resolve(strict=False)
+                for raw_path in root.rglob(RAW_STAGE)
+                if raw_path.is_file()
+            )
+    return sorted(raw_stages, key=str)
+
+
 def find_converted_stage_pairs(roots: Iterable[Path]) -> list[tuple[Path, Path]]:
     """Find existing production ``01.en.raw.html`` -> ``02.en.polish.html`` pairs."""
 
-    pairs: set[tuple[Path, Path]] = set()
-    for root in roots:
-        if root.is_file():
-            if root.name == RAW_STAGE and (root.parent / POLISH_STAGE).is_file():
-                pairs.add((root.resolve(strict=False), (root.parent / POLISH_STAGE).resolve(strict=False)))
-            elif root.name == POLISH_STAGE and (root.parent / RAW_STAGE).is_file():
-                pairs.add(((root.parent / RAW_STAGE).resolve(strict=False), root.resolve(strict=False)))
-        elif root.exists():
-            for polish_path in root.rglob(POLISH_STAGE):
-                raw_path = polish_path.parent / RAW_STAGE
-                if raw_path.is_file():
-                    pairs.add((raw_path.resolve(strict=False), polish_path.resolve(strict=False)))
-    return sorted(pairs, key=lambda pair: str(pair[1]))
+    return [
+        (raw_path, (raw_path.parent / POLISH_STAGE).resolve(strict=False))
+        for raw_path in find_converted_raw_stages(roots)
+        if (raw_path.parent / POLISH_STAGE).is_file()
+    ]
 
 
-def _filename_map_paths_for_roots(roots: Iterable[Path]) -> list[Path]:
-    paths: list[Path] = []
-    seen: set[str] = set()
-    for root in roots:
-        start = root if root.is_dir() else root.parent
-        for base in (start, *start.parents):
-            for name in SOURCE_FILENAME_MAP_NAMES:
-                path = (base / name).resolve(strict=False)
-                key = str(path)
-                if key in seen or not path.is_file():
-                    continue
-                seen.add(key)
-                paths.append(path)
-    return paths
+def _validated_raw_sources(
+    raw_stage_paths: Iterable[Path],
+) -> dict[Path, RawConversionValidation]:
+    validations = require_current_raw_conversions(raw_stage_paths)
+    return {
+        validation.raw_stage_path.resolve(strict=False): validation
+        for validation in validations
+    }
 
 
-def _source_pdf_records_by_alias(roots: Iterable[Path]) -> dict[str, dict[str, str]]:
-    records: dict[str, dict[str, str]] = {}
-    for map_path in _filename_map_paths_for_roots(roots):
-        with map_path.open("r", encoding="utf-8-sig", newline="") as fh:
-            for row in csv.DictReader(fh):
-                source_pdf_path = (row.get("source_pdf_path") or "").strip()
-                alias_pdf_path = (row.get("alias_pdf_path") or "").strip()
-                if not source_pdf_path or not alias_pdf_path:
-                    continue
-                alias_base = Path(alias_pdf_path).stem
-                if not alias_base:
-                    continue
-                records.setdefault(
-                    alias_base.lower(),
-                    {
-                        "source_pdf_path": source_pdf_path,
-                        "source_pdf_origin": "filename_map",
-                        "source_pdf_map_path": str(map_path),
-                        "source_pdf_alias_path": alias_pdf_path,
-                    },
-                )
-    return records
+def _validated_source_record(validation: RawConversionValidation) -> dict[str, Any]:
+    assert validation.source_pdf_path is not None
+    return {
+        "source_pdf_path": str(validation.source_pdf_path),
+        "source_pdf_origin": "raw_conversion_manifest",
+        "raw_conversion_manifest_path": str(validation.manifest_path),
+        "raw_conversion_manifest_schema_version": validation.schema_version,
+    }
 
 
-def _source_pdf_record_for_stage(
-    raw_path: Path,
-    source_pdf_by_alias: dict[str, dict[str, str]],
-) -> dict[str, str]:
-    article_dir = article_dir_from_stage(raw_path)
-    return dict(source_pdf_by_alias.get(article_dir.name.lower()) or {})
+def _copy_validated_raw(
+    validation: RawConversionValidation,
+    destination: Path,
+) -> None:
+    copy_file_atomic(validation.raw_stage_path, destination)
+    copied = fingerprint_file(destination, reject_symlink=True)
+    if (
+        copied is not None
+        and copied.size == validation.raw_html_bytes
+        and copied.sha256 == validation.raw_html_sha256
+    ):
+        return
+    try:
+        destination.unlink(missing_ok=True)
+    except OSError:
+        pass
+    raise RuntimeError(
+        "Copied raw stage does not match its validated conversion manifest: "
+        f"{validation.raw_stage_path}"
+    )
 
 
 def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
@@ -303,10 +312,19 @@ def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
     """
 
     out_dir = out_dir.resolve(strict=False)
-    out_dir.mkdir(parents=True, exist_ok=True)
     roots = [root.resolve(strict=False) for root in roots]
-    pairs = find_converted_stage_pairs(roots)
-    source_pdf_by_alias = _source_pdf_records_by_alias(roots)
+    raw_stages = find_converted_raw_stages(roots)
+    validations_by_raw = _validated_raw_sources(raw_stages)
+    missing_polish = [
+        raw_path.parent / POLISH_STAGE
+        for raw_path in raw_stages
+        if not (raw_path.parent / POLISH_STAGE).is_file()
+    ]
+    if missing_polish:
+        details = "; ".join(str(path) for path in missing_polish[:20])
+        raise RuntimeError(f"Converted raw stages are missing polish artifacts: {details}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pairs = [(raw_path, raw_path.parent / POLISH_STAGE) for raw_path in raw_stages]
     articles: list[dict[str, Any]] = []
     assessments: list[dict[str, Any]] = []
     profile = {"status": "not_applicable_converted_stage", "style": "unknown", "confidence": "low"}
@@ -323,7 +341,7 @@ def prepare_converted_run(roots: list[Path], out_dir: Path) -> dict[str, Any]:
             "polish_stage_path": str(polish_path),
             "artifact_hint": artifact_hint(raw_path),
         }
-        article_record.update(_source_pdf_record_for_stage(raw_path, source_pdf_by_alias))
+        article_record.update(_validated_source_record(validations_by_raw[raw_path]))
         articles.append(article_record)
         assessment = assess_polish_html(article_id, polish_html, profile)
         assessment["source_article"] = article
@@ -379,22 +397,23 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
     out_dir = out_dir.resolve(strict=False)
     raw_cache = out_dir / "raw_cache"
     profiles = out_dir / "profiles"
-    for path in (raw_cache, profiles):
-        path.mkdir(parents=True, exist_ok=True)
 
     roots = [root.resolve(strict=False) for root in roots]
-    pairs = find_converted_stage_pairs(roots)
-    source_pdf_by_alias = _source_pdf_records_by_alias(roots)
+    raw_stages = find_converted_raw_stages(roots)
+    validations_by_raw = _validated_raw_sources(raw_stages)
+    for path in (raw_cache, profiles):
+        path.mkdir(parents=True, exist_ok=True)
     articles: list[dict[str, Any]] = []
     profile_status_counts: Counter[str] = Counter()
     profile_style_counts: Counter[str] = Counter()
-    for index, (raw_path, polish_path) in enumerate(pairs, start=1):
+    for index, raw_path in enumerate(raw_stages, start=1):
+        polish_path = raw_path.parent / POLISH_STAGE
         article = article_name_from_stage(raw_path)
         article_id = converted_article_id(raw_path, index)
         out_raw = raw_cache / f"{article_id}.{RAW_STAGE}"
         out_profile = profiles / f"{article_id}.citation_profile.json"
-        copy_file_atomic(raw_path, out_raw)
-        raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
+        _copy_validated_raw(validations_by_raw[raw_path], out_raw)
+        raw_html = out_raw.read_text(encoding="utf-8", errors="replace")
         profile = _converted_raw_citation_profile(raw_html, raw_path)
         write_json(out_profile, profile)
         profile_status_counts[profile["status"]] += 1
@@ -406,6 +425,7 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
                 "article": article,
                 "article_dir": str(article_dir_from_stage(raw_path)),
                 "raw_stage_path": str(raw_path),
+                "source_polish_present": polish_path.is_file(),
                 "source_polish_path": str(polish_path),
                 "polish_stage_path": str(polish_path),
                 "raw_cache_path": str(out_raw),
@@ -414,7 +434,7 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
                 "profile_status": profile["status"],
                 "citation_style": profile["style"],
                 "citation_confidence": profile["confidence"],
-                **_source_pdf_record_for_stage(raw_path, source_pdf_by_alias),
+                **_validated_source_record(validations_by_raw[raw_path]),
             }
         )
 

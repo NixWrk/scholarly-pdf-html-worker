@@ -18,6 +18,7 @@ from .html_stages import (
     RAW_STAGE_NAME,
     article_dir_from_html_stage,
     article_name_from_html_stage,
+    require_current_raw_conversions,
 )
 from .language_detect import LanguageGateDecision, detect_language_from_html
 from .stage_contract import publish_latest_polish_from_quality_run
@@ -376,8 +377,14 @@ def existing_conversion_summary(options: PipelineOptions) -> PipelineSummary:
             "Repolish-only mode requires an existing 01.en.raw.html under "
             f"{converted_root}."
         )
-    source_pdf_count = len(options.source_pdf_paths or [])
+    source_pdf_paths = [Path(path) for path in options.source_pdf_paths or []]
+    validations = require_current_raw_conversions(
+        raw_stages,
+        source_pdf_paths=source_pdf_paths,
+    )
+    source_pdf_count = len(source_pdf_paths)
     article_count = len({article_dir_from_html_stage(path) for path in raw_stages})
+    assert article_count == len(validations)
     return PipelineSummary(
         collection_key="direct_pdf",
         collection_name="existing PDF HTML conversions",
@@ -424,6 +431,17 @@ def run_clean_pipeline(
             "PDF conversion failed; quality observe was skipped "
             f"(failed={conversion_summary.failed_total})."
         )
+    if not options.reuse_existing_conversion and (
+        conversion_summary.converted_total or conversion_summary.skipped_existing
+    ):
+        validated_summary = existing_conversion_summary(options.conversion_options)
+        expected_current = conversion_summary.converted_total + conversion_summary.skipped_existing
+        if validated_summary.converted_total != expected_current:
+            raise RuntimeError(
+                "Converted raw-stage count does not match the completed conversion summary "
+                f"(validated={validated_summary.converted_total}, "
+                f"expected_current={expected_current})."
+            )
 
     converted_root = Path(options.conversion_options.output_dir).expanduser().resolve(strict=False)
     quality_output_dir = (
