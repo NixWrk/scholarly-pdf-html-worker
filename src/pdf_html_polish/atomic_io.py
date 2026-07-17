@@ -82,3 +82,17 @@ def copy_file_atomic(source: Path, target: Path) -> None:
         _replace(temporary, target_path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def publish_directory_atomic(source: Path, target: Path) -> None:
+    source_path = Path(source)
+    target_path = Path(target)
+    if source_path.parent.resolve(strict=False) != target_path.parent.resolve(strict=False):
+        raise ValueError("Atomic directory publication requires a shared parent directory.")
+    if source_path.is_symlink() or not source_path.is_dir():
+        raise ValueError(f"Atomic directory source must be a regular directory: {source_path}")
+    if target_path.exists() or target_path.is_symlink():
+        raise FileExistsError(f"Atomic directory target already exists: {target_path}")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(source_path, target_path)
+    _sync_parent(target_path)

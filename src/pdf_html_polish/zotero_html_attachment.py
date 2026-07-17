@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
+from .atomic_io import publish_directory_atomic, write_json_atomic, write_text_atomic
 from .naming import make_unique_filename
 
 
 _KEY_ALPHABET = "23456789ABCDEFGHIJKLMNPQRSTUVWXYZ"
+_PENDING_MARKER_NAME = ".z2m-html-attachment-pending.json"
+_PENDING_DIR_PREFIX = ".z2m-html-attachment-"
+_PENDING_DIR_SUFFIX = ".pending"
 
 
 @dataclass(frozen=True)
@@ -129,6 +135,111 @@ def _try_set_attachment_title(conn: sqlite3.Connection, item_id: int, title: str
     _insert_row(conn, "itemData", {"itemID": item_id, "fieldID": field_id, "valueID": value_id})
 
 
+def _pending_attachment_paths(marker_path: Path) -> tuple[Path, Path] | None:
+    storage_dir = marker_path.parent
+    if storage_dir.is_symlink() or marker_path.is_symlink() or not marker_path.is_file():
+        return None
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    schema_version = payload.get("schema_version")
+    item_key = str(payload.get("item_key") or "")
+    html_filename = str(payload.get("html_filename") or "")
+    if (
+        schema_version != 1
+        or item_key != storage_dir.name
+        or len(item_key) != 8
+        or any(character not in _KEY_ALPHABET for character in item_key)
+        or not html_filename
+        or Path(html_filename).name != html_filename
+    ):
+        return None
+    return storage_dir, storage_dir / html_filename
+
+
+def _cleanup_pending_attachment(marker_path: Path, html_path: Path) -> None:
+    storage_dir = marker_path.parent
+    for path in (html_path, marker_path):
+        if path.is_dir() and not path.is_symlink():
+            raise RuntimeError(f"Refusing to remove unexpected pending attachment directory: {path}")
+        path.unlink(missing_ok=True)
+    try:
+        storage_dir.rmdir()
+    except OSError:
+        # Preserve unknown files if anything else appeared in this Zotero directory.
+        pass
+
+
+def _private_pending_dir_owned(path: Path) -> bool:
+    name = path.name
+    if not name.startswith(_PENDING_DIR_PREFIX) or not name.endswith(_PENDING_DIR_SUFFIX):
+        return False
+    identity = name[len(_PENDING_DIR_PREFIX) : -len(_PENDING_DIR_SUFFIX)]
+    item_key, separator, nonce = identity.partition("-")
+    return (
+        bool(separator)
+        and len(item_key) == 8
+        and all(character in _KEY_ALPHABET for character in item_key)
+        and len(nonce) == 32
+        and all(character in "0123456789abcdef" for character in nonce)
+    )
+
+
+def _cleanup_private_pending_dir(path: Path) -> None:
+    if path.is_symlink() or not path.is_dir() or not _private_pending_dir_owned(path):
+        raise RuntimeError(f"Refusing to remove untrusted pending attachment directory: {path}")
+    children = list(path.iterdir())
+    unexpected = [child for child in children if child.is_symlink() or not child.is_file()]
+    if unexpected:
+        raise RuntimeError(f"Refusing to remove pending attachment directory with unexpected entries: {unexpected}")
+    for child in children:
+        child.unlink()
+    path.rmdir()
+
+
+def _recover_pending_html_attachments(conn: sqlite3.Connection, zotero_data_dir: Path) -> None:
+    storage_root = zotero_data_dir / "storage"
+    if storage_root.is_symlink():
+        raise RuntimeError(f"Refusing symlinked Zotero storage root: {storage_root}")
+    if not storage_root.is_dir():
+        return
+    for pending_dir in storage_root.glob(f"{_PENDING_DIR_PREFIX}*{_PENDING_DIR_SUFFIX}"):
+        if _private_pending_dir_owned(pending_dir):
+            _cleanup_private_pending_dir(pending_dir)
+    for marker_path in storage_root.glob(f"*/{_PENDING_MARKER_NAME}"):
+        pending = _pending_attachment_paths(marker_path)
+        if pending is None:
+            continue
+        storage_dir, html_path = pending
+        if storage_dir.parent != storage_root:
+            continue
+        item_key = storage_dir.name
+        committed = conn.execute("SELECT 1 FROM items WHERE key = ? LIMIT 1", (item_key,)).fetchone()
+        if committed is not None:
+            if html_path.is_symlink() or not html_path.is_file():
+                raise RuntimeError(
+                    "Committed Zotero HTML attachment is missing its regular storage file: "
+                    f"key={item_key} path={html_path}"
+                )
+            marker_path.unlink(missing_ok=True)
+            continue
+        _cleanup_pending_attachment(marker_path, html_path)
+
+
+def _write_pending_marker(marker_path: Path, item_key: str, html_filename: str) -> None:
+    write_json_atomic(
+        marker_path,
+        {
+            "schema_version": 1,
+            "item_key": item_key,
+            "html_filename": html_filename,
+        },
+    )
+
+
 def attach_single_file_html(
     zotero_data_dir: Path,
     parent_item_id: int,
@@ -141,17 +252,33 @@ def attach_single_file_html(
 
     conn = sqlite3.connect(db_path, timeout=2.0)
     conn.row_factory = sqlite3.Row
+    pending_marker_path: Path | None = None
+    pending_html_path: Path | None = None
+    private_pending_dir: Path | None = None
+    transaction_committed = False
 
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
+        _recover_pending_html_attachments(conn, zotero_data_dir)
 
         parent_exists = conn.execute("SELECT 1 FROM items WHERE itemID = ? LIMIT 1", (parent_item_id,)).fetchone()
         if parent_exists is None:
             raise RuntimeError(f"Parent item not found in Zotero DB: itemID={parent_item_id}")
 
         item_id = _next_id(conn, "items", "itemID")
-        item_key = _generate_unique_item_key(conn)
+        storage_root = zotero_data_dir / "storage"
+        if storage_root.is_symlink():
+            raise RuntimeError(f"Refusing symlinked Zotero storage root: {storage_root}")
+        storage_root.mkdir(parents=True, exist_ok=True)
+        for _attempt in range(128):
+            item_key = _generate_unique_item_key(conn)
+            storage_dir = storage_root / item_key
+            if not storage_dir.exists() and not storage_dir.is_symlink():
+                break
+        else:
+            raise RuntimeError("Unable to allocate a Zotero attachment key unused by DB and storage.")
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         library_id = _library_id_for_parent(conn, parent_item_id)
@@ -170,12 +297,20 @@ def attach_single_file_html(
             },
         )
 
-        storage_dir = zotero_data_dir / "storage" / item_key
-        storage_dir.mkdir(parents=True, exist_ok=True)
-
+        private_pending_dir = storage_root / (
+            f"{_PENDING_DIR_PREFIX}{item_key}-{uuid4().hex}{_PENDING_DIR_SUFFIX}"
+        )
+        private_pending_dir.mkdir(exist_ok=False)
         html_filename = make_unique_filename(f"{source_pdf_path.stem}_marker", ".html", set(), max_stem_len=120)
-        html_path = storage_dir / html_filename
-        html_path.write_text(html_content, encoding="utf-8")
+        pending_marker_path = private_pending_dir / _PENDING_MARKER_NAME
+        pending_html_path = private_pending_dir / html_filename
+        _write_pending_marker(pending_marker_path, item_key, html_filename)
+        write_text_atomic(pending_html_path, html_content)
+        publish_directory_atomic(private_pending_dir, storage_dir)
+        private_pending_dir = None
+        pending_marker_path = storage_dir / _PENDING_MARKER_NAME
+        pending_html_path = storage_dir / html_filename
+        html_path = pending_html_path
         mod_time_ms = int(html_path.stat().st_mtime * 1000)
 
         _insert_row(
@@ -200,6 +335,12 @@ def attach_single_file_html(
             pass
 
         conn.commit()
+        transaction_committed = True
+        try:
+            pending_marker_path.unlink(missing_ok=True)
+        except OSError:
+            # A later attachment call reconciles a marker left after a committed DB row.
+            pass
         return AttachedHtmlResult(
             item_id=item_id,
             item_key=item_key,
@@ -223,6 +364,10 @@ def attach_single_file_html(
             pass
         raise
     finally:
+        if not transaction_committed and private_pending_dir is not None and private_pending_dir.exists():
+            _cleanup_private_pending_dir(private_pending_dir)
+        elif not transaction_committed and pending_marker_path is not None and pending_html_path is not None:
+            _cleanup_pending_attachment(pending_marker_path, pending_html_path)
         conn.close()
 
 

@@ -5,6 +5,7 @@ import pytest
 import pdf_html_polish.atomic_io as atomic_io
 from pdf_html_polish.atomic_io import (
     copy_file_atomic,
+    publish_directory_atomic,
     write_json_atomic,
     write_text_atomic,
 )
@@ -66,3 +67,25 @@ def test_atomic_copy_failure_preserves_previous_file(
 
     assert target.read_text(encoding="utf-8") == "previous"
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_publish_directory_atomic_moves_complete_directory_and_rejects_collision(tmp_path: Path) -> None:
+    source = tmp_path / ".pending"
+    source.mkdir()
+    (source / "article.html").write_text("complete", encoding="utf-8")
+    target = tmp_path / "ATTACH22"
+
+    publish_directory_atomic(source, target)
+
+    assert not source.exists()
+    assert (target / "article.html").read_text(encoding="utf-8") == "complete"
+
+    collision_source = tmp_path / ".collision"
+    collision_source.mkdir()
+    (collision_source / "article.html").write_text("new", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="target already exists"):
+        publish_directory_atomic(collision_source, target)
+
+    assert (collision_source / "article.html").read_text(encoding="utf-8") == "new"
+    assert (target / "article.html").read_text(encoding="utf-8") == "complete"
