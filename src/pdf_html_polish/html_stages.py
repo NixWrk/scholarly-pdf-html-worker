@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .atomic_io import write_json_atomic, write_text_atomic
 
 
 HTML_STAGE_DIR_NAME = "_pdf_html_polish_stages"
@@ -61,12 +62,7 @@ def write_raw_conversion_manifest(
         "raw_html_sha256": _sha256_file(raw_path),
     }
     manifest_path = stage_root / RAW_CONVERSION_MANIFEST_NAME
-    temp_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
-    temp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temp_path.replace(manifest_path)
+    write_json_atomic(manifest_path, payload)
     return manifest_path
 
 
@@ -118,7 +114,7 @@ def save_html_stage(
 
     stage_dir.mkdir(parents=True, exist_ok=True)
     path = stage_dir / filename
-    path.write_text(html, encoding="utf-8")
+    write_text_atomic(path, html)
 
     encoded_len = len(html.encode("utf-8"))
     source_text = f" source={source_path.name}" if source_path is not None else ""
@@ -128,7 +124,7 @@ def save_html_stage(
         f"bytes={encoded_len}{source_text}{detail_text}"
     )
     log_path = append_html_stage_log(stage_dir, line)
-    path.with_suffix(".log").write_text(line + "\n", encoding="utf-8")
+    write_text_atomic(path.with_suffix(".log"), line + "\n")
 
     return HtmlStageSaveResult(
         path=path,

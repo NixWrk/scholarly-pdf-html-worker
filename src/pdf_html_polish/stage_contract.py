@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 from typing import Any, Iterable
-from uuid import uuid4
 
+from .atomic_io import copy_file_atomic as _copy_file_atomic
 from .html_stages import HTML_STAGE_DIR_NAMES, POLISH_STAGE_NAME, RAW_STAGE_NAME
 from .quality_loop.run_utils import git_dirty, git_short_head, load_json, now, write_json
 
@@ -204,16 +203,6 @@ def _backup_path_for(backup_dir: Path, path: Path) -> Path:
     drive = path.drive.replace(":", "")
     parts = [part for part in path.parts if part not in (path.anchor, path.drive, "\\")]
     return backup_dir / drive / Path(*parts)
-
-
-def _copy_file_atomic(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
-    try:
-        shutil.copy2(source, temporary)
-        temporary.replace(target)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _backup_file(path: Path, backup_dir: Path) -> Path | None:

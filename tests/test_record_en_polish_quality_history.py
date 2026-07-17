@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from scripts.record_en_polish_quality_history import build_entry, compare_entries
+from scripts.record_en_polish_quality_history import (
+    _read_last_history_entry,
+    build_entry,
+    compare_entries,
+)
 
 
 def test_quality_history_records_all_numeric_audit_and_assessment_metrics() -> None:
@@ -186,3 +190,20 @@ def test_quality_history_compares_deltas_for_every_metric() -> None:
     assert delta["metrics_delta"]["polish_replacement_chars"] == 2
     assert delta["polish_replacement_chars_delta"] == 2
     assert delta["broken_internal_links_delta"] == -2
+
+
+def test_quality_history_recovers_last_valid_entry_before_truncated_tail(
+    tmp_path: Path,
+) -> None:
+    history_path = tmp_path / "quality_history.jsonl"
+    history_path.write_text(
+        '{"run_id":"run_a","totals":{"score":1}}\n'
+        '{"run_id":"run_b","totals":{"score":2}}\n'
+        '{"run_id":"truncated"',
+        encoding="utf-8",
+    )
+
+    entry = _read_last_history_entry(history_path)
+
+    assert entry is not None
+    assert entry["run_id"] == "run_b"

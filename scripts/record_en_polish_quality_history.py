@@ -6,8 +6,17 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import sys
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from pdf_html_polish.atomic_io import write_json_atomic  # noqa: E402
 
 
 SEVERITY_WEIGHT = {
@@ -233,11 +242,24 @@ def build_entry(
 def _read_last_history_entry(history_path: Path) -> dict[str, Any] | None:
     if not history_path.is_file():
         return None
-    last_line = ""
-    for line in history_path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            last_line = line
-    return json.loads(last_line) if last_line else None
+    for line in reversed(history_path.read_text(encoding="utf-8").splitlines()):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            return entry
+    return None
+
+
+def _append_history_entry(history_path: Path, entry: dict[str, Any]) -> None:
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with history_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _record_metrics(record: dict[str, Any]) -> dict[str, int | float]:
@@ -404,16 +426,11 @@ def main() -> int:
     )
     comparison = compare_entries(previous, entry)
 
-    out_entry.parent.mkdir(parents=True, exist_ok=True)
-    out_entry.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    out_compare.parent.mkdir(parents=True, exist_ok=True)
-    out_compare.write_text(json.dumps(comparison, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    out_ranking.parent.mkdir(parents=True, exist_ok=True)
-    out_ranking.write_text(json.dumps(entry["ranking"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(out_entry, entry)
+    write_json_atomic(out_compare, comparison)
+    write_json_atomic(out_ranking, entry["ranking"])
     if not args.no_append:
-        history_path.parent.mkdir(parents=True, exist_ok=True)
-        with history_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        _append_history_entry(history_path, entry)
 
     totals = entry["totals"]
     print(

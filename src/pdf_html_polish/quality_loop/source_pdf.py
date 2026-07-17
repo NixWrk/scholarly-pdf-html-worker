@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pdf_html_polish.atomic_io import write_json_atomic
 from pdf_html_polish.html_stages import article_dir_from_html_stage, is_html_stage_dir_name
 
 
@@ -25,8 +26,7 @@ def _load_json(path: Path, default: Any | None = None) -> Any:
 
 
 def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, data)
 
 
 def _now() -> str:

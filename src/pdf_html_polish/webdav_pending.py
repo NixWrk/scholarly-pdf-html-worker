@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from .atomic_io import write_json_atomic
 from .webdav_config import DEFAULT_CONFIG_PATH, WebDavConfig, WebDavServer
 
 
@@ -139,7 +140,7 @@ def save_pending_webdav_uploads(
         }
         for e in entries
     ]
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
     return path
 
 

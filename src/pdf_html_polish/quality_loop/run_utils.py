@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pdf_html_polish.atomic_io import write_json_atomic
 from pdf_html_polish.html_stages import article_dir_from_html_stage
 
 
@@ -45,8 +46,7 @@ def load_json(path: Path, default: Any | None = None) -> Any:
 
 
 def write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, data)
 
 
 def json_object(value: Any) -> dict[str, Any]:

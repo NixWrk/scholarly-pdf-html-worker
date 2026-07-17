@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from .atomic_io import write_json_atomic
 from .history import append_history
 from .paths import resolve_zotero_data_dir
 from .citation_profile import build_citation_profile_from_pdf
@@ -107,7 +108,7 @@ def save_pending_attachments(output_dir: Path, entries: list[PendingZoteroAttach
         }
         for e in entries
     ]
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
     return path
 
 

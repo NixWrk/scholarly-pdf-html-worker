@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import json
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 from unicodedata import normalize
-from uuid import uuid4
 
+from .atomic_io import copy_file_atomic as _copy_file_atomic
+from .atomic_io import write_json_atomic as _write_json_atomic
 from .marker_runner import MarkerRunner
 from .models import PipelineSummary
 from .pipeline import run_pipeline
@@ -106,7 +105,7 @@ def write_pipeline_manifest(converted_root: Path) -> Path:
             **payload,
         }
         sidecar_path = polish_path.parent / PIPELINE_MANIFEST_NAME
-        sidecar_path.write_text(json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_json_atomic(sidecar_path, sidecar)
         articles.append(
             {
                 "article": article_dir.name,
@@ -117,19 +116,14 @@ def write_pipeline_manifest(converted_root: Path) -> Path:
         )
 
     manifest_path = root / PIPELINE_MANIFEST_NAME
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "kind": "pdf_html_pipeline",
-                "converted_root": str(root),
-                "articles": articles,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_json_atomic(
+        manifest_path,
+        {
+            "schema_version": 1,
+            "kind": "pdf_html_pipeline",
+            "converted_root": str(root),
+            "articles": articles,
+        },
     )
     return manifest_path
 
@@ -227,29 +221,6 @@ def run_observe_command(
         if log is not None:
             log(line.rstrip("\r\n"))
     return int(process.wait())
-
-
-def _copy_file_atomic(source: Path, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
-    try:
-        shutil.copy2(source, temporary)
-        temporary.replace(target)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _publish_final_html(

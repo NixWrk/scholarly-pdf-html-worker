@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .atomic_io import write_json_atomic
+
 
 DEFAULT_CONFIG_PATH = Path("webdav_config.json")
 
@@ -60,10 +62,7 @@ class WebDavConfig:
         """
         path = Path(path)
         payload = {"servers": [s.to_dict() for s in self.servers]}
-        path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        write_json_atomic(path, payload)
 
     @classmethod
     def load(cls, path: Path = DEFAULT_CONFIG_PATH) -> "WebDavConfig":

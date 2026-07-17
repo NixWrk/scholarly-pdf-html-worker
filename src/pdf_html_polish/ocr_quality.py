@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 
+from .atomic_io import write_json_atomic
 from .language_detect import visible_text_from_html
 
 
@@ -163,10 +164,7 @@ def _write_reocr_queue(output_dir: Path, entries: list[dict[str, object]]) -> Pa
         "pending_total": len(entries),
         "entries": entries,
     }
-    queue_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(queue_path, payload)
     return queue_path
 
 
@@ -216,10 +214,7 @@ def enqueue_reocr_candidate(
     marker_dir = output_dir / REOCR_MARKER_DIR_NAME
     marker_dir.mkdir(parents=True, exist_ok=True)
     marker_path = marker_dir / f"{reocr_alias}.json"
-    marker_path.write_text(
-        json.dumps(entry, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(marker_path, entry)
 
     return ReocrQueueResult(
         queue_path=queue_path,

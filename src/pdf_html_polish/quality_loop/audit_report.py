@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from pdf_html_polish.atomic_io import write_json_atomic
 from .run_utils import json_object
 
 
@@ -126,7 +126,4 @@ def assemble_report(
 
 
 def write_json_report(path: Path, report: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
+    write_json_atomic(path, report)

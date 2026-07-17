@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import pdf_html_polish.stage_contract as stage_contract_module
+import pdf_html_polish.atomic_io as atomic_io_module
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
 from pdf_html_polish.stage_contract import (
     publish_latest_polish_from_quality_run,
@@ -264,7 +264,7 @@ def test_publish_latest_polish_failed_copy_preserves_previous_artifact(
         Path(temporary).write_text("partial", encoding="utf-8")
         raise OSError("simulated interrupted publish")
 
-    monkeypatch.setattr(stage_contract_module.shutil, "copy2", fail_copy)
+    monkeypatch.setattr(atomic_io_module.shutil, "copyfile", fail_copy)
 
     with pytest.raises(OSError, match="simulated interrupted publish"):
         publish_latest_polish_from_quality_run(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
@@ -12,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pdf_html_polish.atomic_io import write_json_atomic
 from pdf_html_polish.quality_loop.converted_runs import visible_html_text
 from pdf_html_polish.quality_loop.p62_matching import figure_label_present_in_text
 
@@ -21,8 +21,7 @@ def _now() -> str:
 
 
 def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, data)
 
 
 def _terminate_process_tree(process: subprocess.Popen[Any], *, cwd: Path) -> None:

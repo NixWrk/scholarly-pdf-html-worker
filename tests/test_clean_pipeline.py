@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import pdf_html_polish.atomic_io as atomic_io_module
 import pdf_html_polish.clean_pipeline as clean_pipeline_module
 import pdf_html_polish.cli.clean_convert as clean_convert_module
 from pdf_html_polish.cli.clean_convert import build_parser
@@ -322,7 +323,7 @@ def test_collect_final_html_failed_copy_preserves_previous_file(
         Path(temporary).write_text("partial", encoding="utf-8")
         raise OSError("simulated interrupted copy")
 
-    monkeypatch.setattr(clean_pipeline_module.shutil, "copy2", fail_copy)
+    monkeypatch.setattr(atomic_io_module.shutil, "copyfile", fail_copy)
 
     with pytest.raises(OSError, match="simulated interrupted copy"):
         collect_final_html(quality_dir)
