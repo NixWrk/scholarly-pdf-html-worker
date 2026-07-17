@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-import shutil
 import sys
 from typing import Iterable
 
@@ -31,6 +30,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import copy_file_atomic, write_text_atomic  # noqa: E402
 from pdf_html_polish.citation_profile import (  # noqa: E402
     CitationProfile,
     build_citation_profile_from_pdf,
@@ -99,17 +99,17 @@ def _load_or_build_profile(
         profile_data = json.loads(profile_path.read_text(encoding="utf-8"))
         if zotero_overlay_path is not None and not profile_data.get("zotero_citations"):
             profile_data = merge_citation_profile_with_zotero_overlays(profile_data, zotero_overlay_path)
-            profile_path.write_text(json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            write_text_atomic(profile_path, json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n")
         elif not profile_data.get("zotero_overlay_status"):
             profile = build_citation_profile_from_pdf(pdf_path)
             profile_data = profile.to_json_dict() if isinstance(profile, CitationProfile) else profile
-            profile_path.write_text(json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            write_text_atomic(profile_path, json.dumps(profile_data, ensure_ascii=False, indent=2) + "\n")
         return profile_data
     profile = build_citation_profile_from_pdf(pdf_path, zotero_overlay_path=zotero_overlay_path)
     profile_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_path.write_text(
+    write_text_atomic(
+        profile_path,
         json.dumps(profile.to_json_dict(), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
     )
     return profile
 
@@ -175,7 +175,7 @@ def run_lab(
 
         raw_cache_path = raw_cache_dir / f"{suffix}.{RAW_STAGE}"
         if refresh_raw_cache or not raw_cache_path.is_file():
-            shutil.copy2(raw_stage, raw_cache_path)
+            copy_file_atomic(raw_stage, raw_cache_path)
 
         source_pdf_path = pdf_by_suffix.get(suffix, "")
         profile_path = profile_dir / f"{suffix}.citation_profile.json"
@@ -195,7 +195,7 @@ def run_lab(
                 "style": "unknown",
                 "confidence": "low",
             }
-            profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            write_text_atomic(profile_path, json.dumps(profile, ensure_ascii=False, indent=2) + "\n")
 
         raw_html = raw_cache_path.read_text(encoding="utf-8", errors="replace")
         polish_html = polish_html_document(
@@ -207,7 +207,7 @@ def run_lab(
         polish_path = polish_dir / f"{suffix}.02.en.polish.html"
         previous = polish_path.read_text(encoding="utf-8", errors="replace") if polish_path.is_file() else None
         changed = previous != polish_html
-        polish_path.write_text(polish_html, encoding="utf-8")
+        write_text_atomic(polish_path, polish_html)
 
         articles.append(
             LabArticle(
@@ -234,9 +234,9 @@ def run_lab(
         "changed_count": sum(1 for article in articles if article.changed),
         "articles": [asdict(article) for article in articles],
     }
-    (out_dir / "manifest.json").write_text(
+    write_text_atomic(
+        out_dir / "manifest.json",
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
     )
     return report
 

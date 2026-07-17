@@ -9,6 +9,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
+from .atomic_io import write_text_atomic
 from .citation_profile import build_citation_profile_from_pdf
 from .export_modes import ExportMode, get_export_mode_spec
 from .history import append_history
@@ -90,7 +91,7 @@ def _polish_html_work_item(item: _HtmlPolishWorkItem) -> _HtmlPolishResult:
             item.html_path,
             citation_profile=item.citation_profile,
         )
-        item.html_path.write_text(result.html, encoding="utf-8")
+        write_text_atomic(item.html_path, result.html)
         elapsed_s = perf_counter() - started_at
         polish_stage = save_html_stage(
             item.stage_dir,
@@ -175,7 +176,7 @@ def _clean_md_repeated_phrases(md_path: Path, log: Callable[[str], None]) -> Non
         original = md_path.read_text(encoding="utf-8", errors="replace")
         cleaned = drop_repeated_phrases(original)
         if cleaned != original:
-            md_path.write_text(cleaned, encoding="utf-8")
+            write_text_atomic(md_path, cleaned)
             log(f"Repetitions removed: {md_path.name} (-{len(original) - len(cleaned)} chars)")
     except Exception as exc:
         log(f"Warning: repetition cleanup failed for {md_path.name}: {exc}")

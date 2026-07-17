@@ -15,6 +15,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import write_text_atomic  # noqa: E402
 from pdf_html_polish.html_stages import RAW_STAGE_NAME  # noqa: E402
 from pdf_html_polish.quality_loop.audit_raw_analysis import analyze_raw_file as _analyze_raw_file  # noqa: E402
 from pdf_html_polish.quality_loop.audit_raw_report import (  # noqa: E402
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     _print_summary(report)
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_text_atomic(args.out, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(f"Wrote {args.out}")
     if args.fail_on_error:
         for article in report["articles"]:

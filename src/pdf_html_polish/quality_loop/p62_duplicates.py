@@ -6,6 +6,8 @@ from pathlib import Path
 import struct
 from typing import Any, Callable
 
+from pdf_html_polish.atomic_io import write_text_atomic
+
 from .p62_html import (
     P62_LOW_FIDELITY_RECOVERY_SOURCES,
     data_url_image_hash,
@@ -369,7 +371,7 @@ def apply_duplicate_figure_image_repairs(
             )
             patched_repairs = [repair for repair in repairs if repair.get("status") == "patched"]
             if patched_repairs and patched != html:
-                target_path.write_text(patched, encoding="utf-8")
+                write_text_atomic(target_path, patched)
                 report["patched_paths"].append(str(target_path))
                 report["repair_count"] += sum(int(repair.get("replacement_count") or 0) for repair in patched_repairs)
             for repair in repairs:

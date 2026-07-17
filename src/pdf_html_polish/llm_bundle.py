@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
+from .atomic_io import copy_file_atomic, write_text_atomic
 from .models import StagedFile
 from .naming import make_unique_filename, sanitize_filename_component, shorten_filename_component
 
@@ -101,14 +101,14 @@ def create_llm_bundle(
             if existing_name is None:
                 stem = f"{Path(md_filename).stem}__{source_asset.stem}"
                 existing_name = make_unique_filename(stem, source_asset.suffix.lower(), used_names)
-                shutil.copy2(source_asset, bundle_dir / existing_name)
+                copy_file_atomic(source_asset, bundle_dir / existing_name)
                 copied_asset_names[source_key] = existing_name
                 image_count += 1
 
             return f"![{alt}]({existing_name})"
 
         updated = _MARKDOWN_IMAGE_PATTERN.sub(replace_image, text)
-        md_target.write_text(updated, encoding="utf-8")
+        write_text_atomic(md_target, updated)
         md_count += 1
 
     return LlmBundleResult(bundle_dir=bundle_dir, markdown_files=md_count, image_files=image_count)

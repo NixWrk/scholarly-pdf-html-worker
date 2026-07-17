@@ -15,7 +15,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -29,6 +28,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import copy_file_atomic, write_text_atomic  # noqa: E402
 from pdf_html_polish.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
@@ -1248,7 +1248,7 @@ def write_polish_auto_repair_stage(
                 if patched == html:
                     continue
                 try:
-                    target_path.write_text(patched, encoding="utf-8")
+                    write_text_atomic(target_path, patched)
                 except OSError as exc:
                     article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                     continue
@@ -1275,7 +1275,7 @@ def write_polish_auto_repair_stage(
                 if patched == html:
                     continue
                 try:
-                    target_path.write_text(patched, encoding="utf-8")
+                    write_text_atomic(target_path, patched)
                 except OSError as exc:
                     article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                     continue
@@ -1302,7 +1302,7 @@ def write_polish_auto_repair_stage(
                 if patched == html:
                     continue
                 try:
-                    target_path.write_text(patched, encoding="utf-8")
+                    write_text_atomic(target_path, patched)
                 except OSError as exc:
                     article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                     continue
@@ -1329,7 +1329,7 @@ def write_polish_auto_repair_stage(
                 if patched == html:
                     continue
                 try:
-                    target_path.write_text(patched, encoding="utf-8")
+                    write_text_atomic(target_path, patched)
                 except OSError as exc:
                     article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                     continue
@@ -1369,7 +1369,7 @@ def write_polish_auto_repair_stage(
                         p98_repairs = numeric_repairs
                 if patched != html:
                     try:
-                        target_path.write_text(patched, encoding="utf-8")
+                        write_text_atomic(target_path, patched)
                     except OSError as exc:
                         article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                         continue
@@ -1407,7 +1407,7 @@ def write_polish_auto_repair_stage(
                 if patched == html:
                     continue
                 try:
-                    target_path.write_text(patched, encoding="utf-8")
+                    write_text_atomic(target_path, patched)
                 except OSError as exc:
                     article_report["errors"].append({"path": str(target_path), "error": str(exc)})
                     continue
@@ -2481,9 +2481,9 @@ def repolish_cached_run(
             out_raw = raw_out / raw_path.name
             out_profile = profile_out / f"{article}.citation_profile.json"
             out_polish = polish_out / f"{article}.{POLISH_STAGE}"
-            shutil.copy2(raw_path, out_raw)
+            copy_file_atomic(raw_path, out_raw)
             if profile_path.is_file():
-                shutil.copy2(profile_path, out_profile)
+                copy_file_atomic(profile_path, out_profile)
             else:
                 _write_json(out_profile, profile)
 
@@ -2553,12 +2553,12 @@ def repolish_cached_run(
                 else None
             )
             changed = previous_text != polished
-            out_polish.write_text(polished, encoding="utf-8")
+            write_text_atomic(out_polish, polished)
 
             pair_dir = audit_tree / article
             pair_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(out_raw, pair_dir / RAW_STAGE)
-            (pair_dir / POLISH_STAGE).write_text(polished, encoding="utf-8")
+            copy_file_atomic(out_raw, pair_dir / RAW_STAGE)
+            write_text_atomic(pair_dir / POLISH_STAGE, polished)
 
             status = _profile_value(profile, "status")
             style_key = f"{_profile_value(profile, 'style')}:{_profile_value(profile, 'confidence')}"
@@ -3227,7 +3227,7 @@ def write_analysis_pack(
     out_prompt = out_prompt or (run_dir / "llm_analysis_prompt.md")
     _write_json(out_json, pack)
     out_prompt.parent.mkdir(parents=True, exist_ok=True)
-    out_prompt.write_text(render_llm_prompt(pack), encoding="utf-8")
+    write_text_atomic(out_prompt, render_llm_prompt(pack))
     return pack
 
 
@@ -3558,9 +3558,9 @@ def run_llm_command(prompt_path: Path, out_path: Path, command: list[str]) -> in
     prompt = prompt_path.read_text(encoding="utf-8")
     result = subprocess.run(command, input=prompt, text=True, capture_output=True, cwd=ROOT)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(result.stdout, encoding="utf-8")
+    write_text_atomic(out_path, result.stdout)
     if result.stderr:
-        (out_path.with_suffix(out_path.suffix + ".stderr.txt")).write_text(result.stderr, encoding="utf-8")
+        write_text_atomic(out_path.with_suffix(out_path.suffix + ".stderr.txt"), result.stderr)
     return result.returncode
 
 

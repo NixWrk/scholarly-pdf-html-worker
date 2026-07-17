@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import write_text_atomic  # noqa: E402
 from pdf_html_polish.quality_loop.article_check import build_refactor_article_check  # noqa: E402
 
 
@@ -105,9 +106,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.rerun_audit_out is not None:
             args.rerun_audit_out.parent.mkdir(parents=True, exist_ok=True)
-            args.rerun_audit_out.write_text(
+            write_text_atomic(
+                args.rerun_audit_out,
                 json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
             )
             rerun_summary["path"] = str(args.rerun_audit_out)
         report["rerun_audit"] = rerun_summary
@@ -129,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(payload, encoding="utf-8")
+        write_text_atomic(args.out, payload)
     print(
         "Refactor article check: "
         f"status={report['status']} selected={report['selected_article_count']} "

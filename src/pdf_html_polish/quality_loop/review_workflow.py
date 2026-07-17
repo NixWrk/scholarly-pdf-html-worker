@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 import urllib.parse
 
+from pdf_html_polish.atomic_io import write_text_atomic
+
 from .p62_recovery_stage import has_terminal_source_visual_unavailable_evidence
 from .run_utils import json_object, load_json, now, slug, write_json
 
@@ -626,7 +628,7 @@ def write_article_review_stage(
         )
     index_lines.extend(["</tbody></table>", "</body></html>"])
     index_path = review_dir / "index.html"
-    index_path.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+    write_text_atomic(index_path, "\n".join(index_lines) + "\n")
 
     status = "ready"
     if not mandatory_items:

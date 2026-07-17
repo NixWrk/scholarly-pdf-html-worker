@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from pdf_html_polish.atomic_io import write_text_atomic
+
 from .observations import compact_observation_text
 from .p62_matching import best_pdf_text_page
 from .run_utils import json_object, now, slug, write_json
@@ -122,7 +124,7 @@ def write_pdf_problem_evidence_stage(
         if page_number > 0 and pages:
             text_excerpt_path = str(article_dir / f"page_{page_number:04d}.txt")
             Path(text_excerpt_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(text_excerpt_path).write_text(pages[page_number - 1], encoding="utf-8", errors="replace")
+            write_text_atomic(Path(text_excerpt_path), pages[page_number - 1], errors="replace")
         render = (
             render_pdf_evidence_page(
                 pdf_path,

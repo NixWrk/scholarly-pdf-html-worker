@@ -20,6 +20,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import write_text_atomic  # noqa: E402
 from pdf_html_polish.html_images import to_data_url as _to_data_url  # noqa: E402
 from pdf_html_polish.html_images import validate_data_url as _validate_data_url  # noqa: E402
 from pdf_html_polish.html_stages import (  # noqa: E402
@@ -149,7 +150,7 @@ def _inline_image_assets(polish_path: Path, target_dir: Path) -> ReviewCopy:
     target_dir.mkdir(parents=True, exist_ok=True)
     rewritten_html = IMG_SRC_RE.sub(replace_src, html)
     review_html_path = target_dir / POLISH_STAGE
-    review_html_path.write_text(rewritten_html, encoding="utf-8")
+    write_text_atomic(review_html_path, rewritten_html)
     return ReviewCopy(
         article=article,
         source_html=str(polish_path),
@@ -187,7 +188,7 @@ def collect_review_set(roots: list[Path], out_dir: Path) -> dict[str, object]:
         "missing_image_count": sum(len(copy.missing_images) for copy in copies),
         "articles": [asdict(copy) for copy in copies],
     }
-    (out_dir / "index.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_text_atomic(out_dir / "index.json", json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     return report
 
 

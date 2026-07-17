@@ -8,6 +8,7 @@ from typing import Any, Iterable
 import re
 import urllib.parse
 
+from pdf_html_polish.atomic_io import write_text_atomic
 from pdf_html_polish.html_images import (
     data_image_src_looks_renderable,
     inspect_inline_image_integrity,
@@ -383,7 +384,7 @@ def copy_review_html_with_inline_images(source_path: Path, target_path: Path) ->
             f"broken={integrity.broken_data_url_count} skips={integrity.inline_skip_count}"
         )
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(copied, encoding="utf-8")
+    write_text_atomic(target_path, copied)
     return {
         "review_html": str(target_path),
         "source_html": str(source_path),

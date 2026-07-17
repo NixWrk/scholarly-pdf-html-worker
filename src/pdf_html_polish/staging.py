@@ -2,11 +2,13 @@
 
 import csv
 import hashlib
+import io
 import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from .atomic_io import write_text_atomic
 from .models import ResolvedAttachment, StagedFile
 from .runtime_temp import make_temp_dir, runtime_temp_root
 
@@ -224,10 +226,11 @@ def write_filename_map(output_dir: Path, staged_files: list[StagedFile]) -> Path
 
     ordered_rows = sorted(merged_rows.values(), key=lambda row: str(row["source_pdf_path"]).lower())
 
-    with map_path.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(ordered_rows)
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(ordered_rows)
+    write_text_atomic(map_path, buffer.getvalue())
 
     return map_path
 

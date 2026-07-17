@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pdf_html_polish.atomic_io import write_text_atomic
+
 
 @dataclass(frozen=True)
 class P62ImageRecoveryStageConfig:
@@ -180,7 +182,7 @@ def apply_html_patch_to_targets(
             html = target_path.read_text(encoding="utf-8", errors="replace")
             patched, replacements = patch_html(html)
             if replacements:
-                target_path.write_text(patched, encoding="utf-8")
+                write_text_atomic(target_path, patched)
                 patched_path_list.append(str(target_path))
                 total_replacements += replacements
         except OSError as exc:

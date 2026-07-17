@@ -6,11 +6,11 @@ from collections import Counter
 import csv
 from html import unescape
 import re
-import shutil
 import urllib.parse
 from pathlib import Path
 from typing import Any, Iterable
 
+from pdf_html_polish.atomic_io import copy_file_atomic
 from pdf_html_polish.citation_profile import infer_citation_style_from_text
 from pdf_html_polish.html_links import count_same_document_absolute_fragment_links
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
@@ -393,7 +393,7 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
         article_id = converted_article_id(raw_path, index)
         out_raw = raw_cache / f"{article_id}.{RAW_STAGE}"
         out_profile = profiles / f"{article_id}.citation_profile.json"
-        shutil.copy2(raw_path, out_raw)
+        copy_file_atomic(raw_path, out_raw)
         raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
         profile = _converted_raw_citation_profile(raw_html, raw_path)
         write_json(out_profile, profile)

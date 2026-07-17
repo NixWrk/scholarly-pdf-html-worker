@@ -32,6 +32,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import write_text_atomic  # noqa: E402
 from pdf_html_polish.html_images import (  # noqa: E402
     data_image_src_looks_renderable as _data_image_src_looks_renderable,
     inspect_inline_image_integrity as _inspect_inline_image_integrity,
@@ -286,7 +287,7 @@ def repolish_file(
 
     changed = not publication_blocked and previous != polished
     if not publication_blocked:
-        polish_path.write_text(polished, encoding="utf-8")
+        write_text_atomic(polish_path, polished)
 
     return RepolishResult(
         article=article_dir.name,
@@ -484,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.out_report is not None:
         args.out_report.parent.mkdir(parents=True, exist_ok=True)
-        args.out_report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_text_atomic(args.out_report, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(f"Wrote {args.out_report}")
     if args.fail_on_missing_images and (
         report["missing_image_count"]

@@ -9,6 +9,7 @@ import re
 import threading
 from typing import Any
 
+from pdf_html_polish.atomic_io import write_text_atomic
 from pdf_html_polish.marker_runner import build_marker_single_command
 from pdf_html_polish.quality_loop.audit_blocks import Block, parse_blocks
 from pdf_html_polish.quality_loop.audit_p61 import (
@@ -261,7 +262,7 @@ def write_marker_recovery_plan(
         if polish_context:
             context_path = str(article_dir / "polish_context.txt")
             Path(context_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(context_path).write_text(polish_context + "\n", encoding="utf-8")
+            write_text_atomic(Path(context_path), polish_context + "\n")
 
         record: dict[str, Any] = {
             "article": article_id,
@@ -396,7 +397,7 @@ def write_marker_recovery_plan(
         excerpt_path = article_dir / f"source_pdf_page_{page_number:04d}.txt"
         with excerpt_write_lock:
             excerpt_path.parent.mkdir(parents=True, exist_ok=True)
-            excerpt_path.write_text(pages[page_number - 1], encoding="utf-8", errors="replace")
+            write_text_atomic(excerpt_path, pages[page_number - 1], errors="replace")
         marker_page_index = page_number - 1
         marker_output_dir = article_dir / f"marker_page_{page_number:04d}"
         marker_page_range = str(marker_page_index)

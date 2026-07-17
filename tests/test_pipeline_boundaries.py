@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from pdf_html_polish import atomic_io
 from pdf_html_polish import pipeline as pipeline_module
 from pdf_html_polish import pipeline_zotero
 from pdf_html_polish.cli.clean_convert import build_parser
@@ -87,6 +88,49 @@ def test_polish_html_work_items_preserve_input_order(monkeypatch: pytest.MonkeyP
     assert [result.inlined_images for result in results] == [1, 1]
     assert (tmp_path / "a.html").read_text(encoding="utf-8") == "<html>a:profile-a</html>"
     assert results[0].polish_stage_path is not None
+
+
+def test_polish_html_work_item_preserves_existing_html_when_publication_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    html_path = tmp_path / "article.html"
+    previous = "<html><body>previous complete artifact</body></html>"
+    html_path.write_text(previous, encoding="utf-8")
+    staged = StagedFile(
+        source_pdf_path=tmp_path / "article.pdf",
+        alias_pdf_path=tmp_path / "article.pdf",
+        alias_base_name="article",
+        source_base_len=7,
+        alias_base_len=7,
+        was_shortened=False,
+        materialization="copy",
+    )
+    item = pipeline_module._HtmlPolishWorkItem(
+        staged_file=staged,
+        html_path=html_path,
+        stage_dir=tmp_path / "article" / "_z2m_stages",
+        raw_stage_path=tmp_path / "article" / "_z2m_stages" / "01.en.raw.html",
+        citation_profile=None,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "polish_and_inline_html_file",
+        lambda *_args, **_kwargs: InlineHtmlResult(
+            html="<html><body>new artifact</body></html>",
+            inlined_images=0,
+        ),
+    )
+
+    def fail_replace(_temporary: Path, _target: Path) -> None:
+        raise OSError("simulated publication failure")
+
+    monkeypatch.setattr(atomic_io.os, "replace", fail_replace)
+    result = pipeline_module._polish_html_work_item(item)
+
+    assert result.error == "simulated publication failure"
+    assert html_path.read_text(encoding="utf-8") == previous
+    assert not list(tmp_path.glob(".article.html.*.tmp"))
 
 
 def test_clean_convert_parser_accepts_postprocess_jobs() -> None:

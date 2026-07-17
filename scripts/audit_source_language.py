@@ -7,6 +7,7 @@ import argparse
 import csv
 from collections import Counter
 from datetime import datetime, timezone
+import io
 import json
 from pathlib import Path
 import sys
@@ -18,6 +19,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.atomic_io import write_text_atomic
 from pdf_html_polish.html_stages import RAW_STAGE_NAME, article_name_from_html_stage
 from pdf_html_polish.language_detect import detect_language_from_html, language_gate_decision
 
@@ -157,7 +159,7 @@ def build_report(
 
 def write_csv(path: Path, report: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
+    with io.StringIO(newline="") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=[
@@ -197,6 +199,7 @@ def write_csv(path: Path, report: dict[str, Any]) -> None:
                     "raw_stage_path": article["raw_stage_path"],
                 }
             )
+        write_text_atomic(path, handle.getvalue())
 
 
 def _print_summary(report: dict[str, Any]) -> None:
@@ -268,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     csv_path = args.csv_out or _csv_path_for_json(out_path)
     if out_path is not None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_text_atomic(out_path, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
         print(f"Wrote {out_path}")
     if csv_path is not None:
         write_csv(csv_path, report)
