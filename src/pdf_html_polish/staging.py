@@ -235,9 +235,15 @@ def write_filename_map(output_dir: Path, staged_files: list[StagedFile]) -> Path
     return map_path
 
 
-def cleanup_staging_dir(staging_dir: Path) -> None:
-    if staging_dir.exists():
-        shutil.rmtree(staging_dir, ignore_errors=True)
+def cleanup_staging_dir(staging_dir: Path) -> bool:
+    try:
+        if staging_dir.is_symlink():
+            staging_dir.unlink()
+        elif staging_dir.exists():
+            shutil.rmtree(staging_dir)
+    except OSError:
+        return False
+    return not staging_dir.exists() and not staging_dir.is_symlink()
 
 
 def expected_output_artifact_path(output_dir: Path, alias_base_name: str, artifact_extension: str) -> Path:

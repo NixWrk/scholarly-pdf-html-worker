@@ -269,11 +269,11 @@ def run_raw_html_pipeline(
     """Convert direct PDFs to raw Marker HTML stages without polish or quality observe."""
     pipeline_started_at = perf_counter()
     output_dir = Path(options.output_dir).expanduser().resolve()
-    runtime_tmp_root = runtime_temp_root(output_dir)
     stage = None
 
     if not options.source_pdf_paths:
         raise ValueError("Raw-only HTML conversion requires direct --pdf inputs.")
+    runtime_tmp_root = runtime_temp_root(output_dir)
 
     try:
         started_at = perf_counter()
@@ -463,11 +463,15 @@ def run_raw_html_pipeline(
         )
     finally:
         if stage is not None:
-            cleanup_staging_dir(stage.staging_dir)
-            log("Staging folder cleaned up.")
+            if cleanup_staging_dir(stage.staging_dir):
+                log("Staging folder cleaned up.")
+            else:
+                log(f"Warning: staging cleanup incomplete: {stage.staging_dir}")
         close_katex_v8_context()
-        cleanup_runtime_temp_root(runtime_tmp_root)
-        log(f"Runtime temp cleaned: {runtime_tmp_root}")
+        if cleanup_runtime_temp_root(runtime_tmp_root):
+            log(f"Runtime temp cleaned: {runtime_tmp_root}")
+        else:
+            log(f"Warning: runtime temp cleanup incomplete: {runtime_tmp_root}")
         _log_elapsed(log, "raw_pipeline.total", pipeline_started_at)
 
 
@@ -479,7 +483,6 @@ def run_pipeline(
 ) -> PipelineSummary:
     pipeline_started_at = perf_counter()
     output_dir = Path(options.output_dir).expanduser().resolve()
-    runtime_tmp_root = runtime_temp_root(output_dir)
     zotero_overlay_dir = (
         Path(options.zotero_overlay_dir).expanduser().resolve(strict=False)
         if options.zotero_overlay_dir
@@ -503,6 +506,7 @@ def run_pipeline(
             "Either source_pdf_paths or both zotero_data_dir and collection_key must be provided."
         )
 
+    runtime_tmp_root = runtime_temp_root(output_dir)
     zotero_dir_for_mode: Path | None = None
     zotero_write_lock_detected = False
 
@@ -1168,11 +1172,15 @@ def run_pipeline(
             )
         finally:
             cleanup_started_at = perf_counter()
-            cleanup_staging_dir(stage.staging_dir)
-            log("Staging folder cleaned up.")
+            if cleanup_staging_dir(stage.staging_dir):
+                log("Staging folder cleaned up.")
+            else:
+                log(f"Warning: staging cleanup incomplete: {stage.staging_dir}")
             _log_elapsed(log, "pipeline.cleanup_staging", cleanup_started_at)
     finally:
         close_katex_v8_context()
-        cleanup_runtime_temp_root(runtime_tmp_root)
-        log(f"Runtime temp cleaned: {runtime_tmp_root}")
+        if cleanup_runtime_temp_root(runtime_tmp_root):
+            log(f"Runtime temp cleaned: {runtime_tmp_root}")
+        else:
+            log(f"Warning: runtime temp cleanup incomplete: {runtime_tmp_root}")
         _log_elapsed(log, "pipeline.total", pipeline_started_at)
