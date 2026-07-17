@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+import pdf_html_polish.stage_contract as stage_contract_module
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
 from pdf_html_polish.stage_contract import (
     publish_latest_polish_from_quality_run,
@@ -222,3 +225,193 @@ def test_publish_latest_polish_reports_missing_source_stage_paths(tmp_path: Path
     assert report["missing_count"] == 1
     assert report["stage_contract_status"] == "fail"
     assert report["records"][0]["status"] == "missing_source_stage_paths"
+
+
+def test_publish_latest_polish_failed_copy_preserves_previous_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    converted = tmp_path / "converted"
+    article_dir = converted / "article_a"
+    stage_dir = _stage_pair(article_dir)
+    target = stage_dir / POLISH_STAGE_NAME
+    extra = article_dir / "article_a.html"
+    extra.write_text("<html>extra</html>", encoding="utf-8")
+    source_run = tmp_path / "quality" / "_converted_raw_source"
+    article_id = "article_a"
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article_id": article_id,
+                    "raw_stage_path": str(stage_dir / RAW_STAGE_NAME),
+                    "source_polish_path": str(target),
+                }
+            ]
+        },
+    )
+    quality_run = tmp_path / "quality"
+    _write_json(
+        quality_run / "manifest.json",
+        {"source_run_dir": str(source_run), "articles": [{"article": article_id}]},
+    )
+    audited = quality_run / "audit_tree" / article_id / POLISH_STAGE_NAME
+    audited.parent.mkdir(parents=True)
+    audited.write_text("<html>new</html>", encoding="utf-8")
+
+    def fail_copy(_source: Path, temporary: Path) -> None:
+        Path(temporary).write_text("partial", encoding="utf-8")
+        raise OSError("simulated interrupted publish")
+
+    monkeypatch.setattr(stage_contract_module.shutil, "copy2", fail_copy)
+
+    with pytest.raises(OSError, match="simulated interrupted publish"):
+        publish_latest_polish_from_quality_run(
+            quality_run,
+            converted_roots=[converted],
+            apply=True,
+        )
+
+    assert target.read_text(encoding="utf-8") == "<html><body>old polish</body></html>"
+    assert extra.exists()
+    assert list(stage_dir.glob("*.tmp")) == []
+
+
+def test_publish_latest_polish_preflight_blocks_all_mutation(tmp_path: Path) -> None:
+    converted = tmp_path / "converted"
+    first_stage = _stage_pair(converted / "first")
+    second_stage = _stage_pair(converted / "second")
+    first_extra = converted / "first" / "first.html"
+    first_extra.write_text("<html>extra</html>", encoding="utf-8")
+    source_run = tmp_path / "quality" / "_converted_raw_source"
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article_id": "first",
+                    "raw_stage_path": str(first_stage / RAW_STAGE_NAME),
+                    "source_polish_path": str(first_stage / POLISH_STAGE_NAME),
+                },
+                {
+                    "article_id": "second",
+                    "raw_stage_path": str(second_stage / RAW_STAGE_NAME),
+                    "source_polish_path": str(second_stage / POLISH_STAGE_NAME),
+                },
+            ]
+        },
+    )
+    quality_run = tmp_path / "quality"
+    _write_json(
+        quality_run / "manifest.json",
+        {
+            "source_run_dir": str(source_run),
+            "articles": [{"article": "first"}, {"article": "second"}],
+        },
+    )
+    audited = quality_run / "audit_tree" / "first" / POLISH_STAGE_NAME
+    audited.parent.mkdir(parents=True)
+    audited.write_text("<html>new first</html>", encoding="utf-8")
+
+    report = publish_latest_polish_from_quality_run(
+        quality_run,
+        converted_roots=[converted],
+        apply=True,
+    )
+
+    assert report["published_count"] == 0
+    assert report["missing_count"] == 1
+    assert report["stage_contract_status"] == "fail"
+    assert report["records"][0]["status"] == "blocked_by_preflight"
+    assert (first_stage / POLISH_STAGE_NAME).read_text(encoding="utf-8") == (
+        "<html><body>old polish</body></html>"
+    )
+    assert first_extra.exists()
+
+
+def test_publish_latest_polish_rejects_audit_tree_traversal(tmp_path: Path) -> None:
+    converted = tmp_path / "converted"
+    stage_dir = _stage_pair(converted / "article_a")
+    target = stage_dir / POLISH_STAGE_NAME
+    source_run = tmp_path / "quality" / "_converted_raw_source"
+    article_id = "../outside"
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article_id": article_id,
+                    "raw_stage_path": str(stage_dir / RAW_STAGE_NAME),
+                    "source_polish_path": str(target),
+                }
+            ]
+        },
+    )
+    quality_run = tmp_path / "quality"
+    _write_json(
+        quality_run / "manifest.json",
+        {"source_run_dir": str(source_run), "articles": [{"article": article_id}]},
+    )
+    outside = quality_run / "outside" / POLISH_STAGE_NAME
+    outside.parent.mkdir(parents=True)
+    outside.write_text("<html>outside</html>", encoding="utf-8")
+
+    report = publish_latest_polish_from_quality_run(
+        quality_run,
+        converted_roots=[converted],
+        apply=True,
+    )
+
+    assert report["published_count"] == 0
+    assert report["outside_scope_count"] == 1
+    assert report["records"][0]["status"] == "outside_quality_audit_tree"
+    assert target.read_text(encoding="utf-8") == "<html><body>old polish</body></html>"
+
+
+def test_publish_latest_polish_rejects_symlink_extra(tmp_path: Path) -> None:
+    converted = tmp_path / "converted"
+    article_dir = converted / "article_a"
+    stage_dir = _stage_pair(article_dir)
+    target = stage_dir / POLISH_STAGE_NAME
+    outside = tmp_path / "outside.html"
+    outside.write_text("<html>outside</html>", encoding="utf-8")
+    extra = article_dir / "linked.html"
+    try:
+        extra.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is not permitted")
+    source_run = tmp_path / "quality" / "_converted_raw_source"
+    article_id = "article_a"
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article_id": article_id,
+                    "raw_stage_path": str(stage_dir / RAW_STAGE_NAME),
+                    "source_polish_path": str(target),
+                }
+            ]
+        },
+    )
+    quality_run = tmp_path / "quality"
+    _write_json(
+        quality_run / "manifest.json",
+        {"source_run_dir": str(source_run), "articles": [{"article": article_id}]},
+    )
+    audited = quality_run / "audit_tree" / article_id / POLISH_STAGE_NAME
+    audited.parent.mkdir(parents=True)
+    audited.write_text("<html>new</html>", encoding="utf-8")
+
+    report = publish_latest_polish_from_quality_run(
+        quality_run,
+        converted_roots=[converted],
+        apply=True,
+    )
+
+    assert report["published_count"] == 0
+    assert report["outside_scope_count"] == 1
+    assert report["records"][0]["status"] == "unsafe_extra_html_path"
+    assert outside.read_text(encoding="utf-8") == "<html>outside</html>"
+    assert extra.is_symlink()

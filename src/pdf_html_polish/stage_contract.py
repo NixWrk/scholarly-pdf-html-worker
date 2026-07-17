@@ -5,6 +5,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from .html_stages import HTML_STAGE_DIR_NAMES, POLISH_STAGE_NAME, RAW_STAGE_NAME
 from .quality_loop.run_utils import git_dirty, git_short_head, load_json, now, write_json
@@ -176,6 +177,10 @@ def _source_article_by_id(source_manifest: dict[str, Any]) -> dict[str, dict[str
             continue
         article_id = str(article.get("article_id") or article.get("article") or "")
         if article_id:
+            if article_id in by_id:
+                raise ValueError(
+                    f"Source manifest contains duplicate article id: {article_id!r}."
+                )
             by_id[article_id] = article
     return by_id
 
@@ -187,6 +192,10 @@ def _quality_article_ids(quality_manifest: dict[str, Any]) -> list[str]:
             continue
         article_id = str(article.get("article") or article.get("article_id") or "")
         if article_id:
+            if article_id in article_ids:
+                raise ValueError(
+                    f"Quality manifest contains duplicate article id: {article_id!r}."
+                )
             article_ids.append(article_id)
     return article_ids
 
@@ -197,12 +206,21 @@ def _backup_path_for(backup_dir: Path, path: Path) -> Path:
     return backup_dir / drive / Path(*parts)
 
 
+def _copy_file_atomic(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        shutil.copy2(source, temporary)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _backup_file(path: Path, backup_dir: Path) -> Path | None:
     if not path.is_file():
         return None
     target = _backup_path_for(backup_dir, path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, target)
+    _copy_file_atomic(path, target)
     return target
 
 
@@ -217,14 +235,14 @@ def _manifest_path_value(article: dict[str, Any], *keys: str) -> str:
 def _stage_extra_html_paths(stage_dir: Path) -> list[Path]:
     article_dir = stage_dir.parent
     allowed = {
-        (stage_dir / RAW_STAGE).resolve(strict=False),
-        (stage_dir / POLISH_STAGE).resolve(strict=False),
+        (stage_dir / RAW_STAGE).absolute(),
+        (stage_dir / POLISH_STAGE).absolute(),
     }
     return sorted(
         (
-            path.resolve(strict=False)
+            path.absolute()
             for path in _iter_html_files(article_dir)
-            if path.resolve(strict=False) not in allowed
+            if path.absolute() not in allowed
         ),
         key=str,
     )
@@ -249,6 +267,7 @@ def publish_latest_polish_from_quality_run(
     """
 
     quality_run_dir = _resolve(quality_run_dir)
+    quality_audit_root = _resolve(quality_run_dir / "audit_tree")
     converted_roots = [_resolve(root) for root in converted_roots]
     resolved_backup_dir = _resolve(backup_dir) if backup_dir is not None else None
     quality_manifest, source_manifest = _quality_source_manifest(quality_run_dir)
@@ -261,10 +280,11 @@ def publish_latest_polish_from_quality_run(
     removed = 0
     missing = 0
     out_of_scope = 0
+    pending: list[tuple[dict[str, Any], Path, Path, list[Path]]] = []
 
     for article_id in article_ids:
         source_article = source_by_id.get(article_id)
-        audited_polish = quality_run_dir / "audit_tree" / article_id / POLISH_STAGE
+        audited_polish = _resolve(quality_audit_root / article_id / POLISH_STAGE)
         if source_article is None:
             missing += 1
             records.append(
@@ -319,9 +339,27 @@ def publish_latest_polish_from_quality_run(
             "backup_paths": [],
         }
 
+        if not _is_relative_to(audited_polish, quality_audit_root):
+            out_of_scope += 1
+            record["status"] = "outside_quality_audit_tree"
+            records.append(record)
+            continue
         if not raw_path.is_file():
             missing += 1
             record["status"] = "missing_raw_stage"
+            records.append(record)
+            continue
+        article_root = stage_dir.parent.resolve(strict=False)
+        unsafe_extra_html = [
+            path
+            for path in extra_html
+            if path.is_symlink()
+            or not _is_relative_to(path.resolve(strict=False), article_root)
+        ]
+        if unsafe_extra_html:
+            out_of_scope += 1
+            record["status"] = "unsafe_extra_html_path"
+            record["unsafe_extra_html_paths"] = [str(path) for path in unsafe_extra_html]
             records.append(record)
             continue
         if not audited_polish.is_file():
@@ -335,12 +373,17 @@ def publish_latest_polish_from_quality_run(
             records.append(record)
             continue
 
-        if apply:
+        pending.append((record, audited_polish, target_polish, extra_html))
+        records.append(record)
+
+    preflight_complete = missing == 0 and out_of_scope == 0
+    if apply and preflight_complete:
+        for record, audited_polish, target_polish, extra_html in pending:
             if resolved_backup_dir is not None:
                 backup_path = _backup_file(target_polish, resolved_backup_dir)
                 if backup_path is not None:
                     record["backup_paths"].append(str(backup_path))
-            shutil.copy2(audited_polish, target_polish)
+            _copy_file_atomic(audited_polish, target_polish)
             copied += 1
             record["copied"] = True
             if prune_extra_html:
@@ -356,11 +399,14 @@ def publish_latest_polish_from_quality_run(
                     else:
                         removed += 1
                         record["removed_extra_html_count"] += 1
-        else:
-            skipped += 1
-
-        record["status"] = "published" if apply else "dry_run"
-        records.append(record)
+            record["status"] = "published"
+    elif apply:
+        for record, _audited_polish, _target_polish, _extra_html in pending:
+            record["status"] = "blocked_by_preflight"
+    else:
+        skipped = len(pending)
+        for record, _audited_polish, _target_polish, _extra_html in pending:
+            record["status"] = "dry_run"
 
     affected_roots = [
         Path(record["raw_stage_path"]).parent.parent
@@ -373,8 +419,7 @@ def publish_latest_polish_from_quality_run(
         "failing_article_count": 0,
     }
     contract_verification_status = contract_report.get("status")
-    publish_complete = missing == 0 and out_of_scope == 0
-    stage_contract_status = "pass" if publish_complete and contract_verification_status == "pass" else "fail"
+    stage_contract_status = "pass" if preflight_complete and contract_verification_status == "pass" else "fail"
     report = {
         "generated_at": now(),
         "schema_version": 1,
