@@ -7,6 +7,8 @@ import re
 import shutil
 from typing import Any, Callable
 
+from pdf_html_polish.atomic_io import write_generated_file_atomic
+
 from pdf_html_polish.quality_loop.p62_matching import false_page_match_hint
 
 
@@ -282,7 +284,11 @@ def recover_pdf_figure_asset(
                         out_path = artifact_dir / f"fig_{slug(label or 'unknown', max_len=20)}_pdf_text_region_page_{page_number:04d}.png"
                         out_path.parent.mkdir(parents=True, exist_ok=True)
                         pixmap = page.get_pixmap(matrix=fitz.Matrix(float(zoom), float(zoom)), clip=text_region, alpha=False)
-                        pixmap.save(str(out_path))
+                        write_generated_file_atomic(
+                            out_path,
+                            lambda temporary: pixmap.save(str(temporary), output="png"),
+                            validator=lambda temporary: data_url_from_image_file(temporary) is not None,
+                        )
                         if data_url_from_image_file(out_path) is not None:
                             return {
                                 "status": "text_region_rendered",
@@ -319,7 +325,11 @@ def recover_pdf_figure_asset(
                 if data:
                     out_path = artifact_dir / f"fig_{slug(label or 'unknown', max_len=20)}_pdf_native_page_{page_number:04d}.{ext}"
                     out_path.parent.mkdir(parents=True, exist_ok=True)
-                    out_path.write_bytes(data)
+                    write_generated_file_atomic(
+                        out_path,
+                        lambda temporary: temporary.write_bytes(data),
+                        validator=lambda temporary: data_url_from_image_file(temporary) is not None,
+                    )
                     if data_url_from_image_file(out_path) is not None:
                         return {
                             "status": "native_image_extracted",
@@ -350,7 +360,11 @@ def recover_pdf_figure_asset(
             out_path = artifact_dir / f"fig_{slug(label or 'unknown', max_len=20)}_pdf_region_page_{page_number:04d}.png"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             pixmap = page.get_pixmap(matrix=fitz.Matrix(float(zoom), float(zoom)), clip=region, alpha=False)
-            pixmap.save(str(out_path))
+            write_generated_file_atomic(
+                out_path,
+                lambda temporary: pixmap.save(str(temporary), output="png"),
+                validator=lambda temporary: data_url_from_image_file(temporary) is not None,
+            )
             if data_url_from_image_file(out_path) is None:
                 return {
                     "status": "region_render_invalid",
@@ -456,7 +470,11 @@ def recover_detached_pdf_figure_plate_asset(
             out_path = artifact_dir / f"fig_{slug(figure_label or 'unknown', max_len=20)}_pdf_plate_page_{page_number:04d}.png"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             pixmap = page.get_pixmap(matrix=fitz.Matrix(float(zoom), float(zoom)), clip=rect, alpha=False)
-            pixmap.save(str(out_path))
+            write_generated_file_atomic(
+                out_path,
+                lambda temporary: pixmap.save(str(temporary), output="png"),
+                validator=lambda temporary: data_url_from_image_file(temporary) is not None,
+            )
             if data_url_from_image_file(out_path) is None:
                 return {
                     "status": "detached_plate_render_invalid",

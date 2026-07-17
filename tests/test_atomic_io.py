@@ -6,6 +6,7 @@ import pdf_html_polish.atomic_io as atomic_io
 from pdf_html_polish.atomic_io import (
     copy_file_atomic,
     publish_directory_atomic,
+    write_generated_file_atomic,
     write_json_atomic,
     write_text_atomic,
 )
@@ -89,3 +90,48 @@ def test_publish_directory_atomic_moves_complete_directory_and_rejects_collision
 
     assert (collision_source / "article.html").read_text(encoding="utf-8") == "new"
     assert (target / "article.html").read_text(encoding="utf-8") == "complete"
+
+
+def test_generated_file_failure_preserves_previous_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "preview.png"
+    target.write_bytes(b"previous-image")
+
+    def fail_writer(temporary: Path) -> None:
+        temporary.write_bytes(b"partial-image")
+        raise OSError("simulated renderer failure")
+
+    with pytest.raises(OSError, match="simulated renderer failure"):
+        write_generated_file_atomic(target, fail_writer)
+
+    assert target.read_bytes() == b"previous-image"
+    assert not list(tmp_path.glob(".preview.png.*.tmp"))
+
+    write_generated_file_atomic(target, lambda temporary: temporary.write_bytes(b"complete-image"))
+    assert target.read_bytes() == b"complete-image"
+
+
+def test_generated_file_writer_must_create_artifact(tmp_path: Path) -> None:
+    target = tmp_path / "preview.png"
+
+    with pytest.raises(RuntimeError, match="did not create a file"):
+        write_generated_file_atomic(target, lambda _temporary: None)
+
+    assert not target.exists()
+
+
+def test_generated_file_validation_failure_preserves_previous_file(tmp_path: Path) -> None:
+    target = tmp_path / "preview.png"
+    target.write_bytes(b"previous-valid-image")
+
+    with pytest.raises(ValueError, match="validation failed"):
+        write_generated_file_atomic(
+            target,
+            lambda temporary: temporary.write_bytes(b"invalid-image"),
+            validator=lambda _temporary: False,
+        )
+
+    assert target.read_bytes() == b"previous-valid-image"
+    assert not list(tmp_path.glob(".preview.png.*.tmp"))

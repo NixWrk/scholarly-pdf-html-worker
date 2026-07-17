@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from pdf_html_polish.atomic_io import write_generated_file_atomic
 from pdf_html_polish.html_images import to_data_url as _to_data_url
 from pdf_html_polish.html_images import validate_data_url as _validate_data_url
 
@@ -61,7 +62,11 @@ def render_pdf_page(pdf_path: Path, page_number: int, out_path: Path, *, zoom: f
             matrix = fitz.Matrix(float(zoom), float(zoom))
             pixmap = page.get_pixmap(matrix=matrix, alpha=False)
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            pixmap.save(str(out_path))
+            write_generated_file_atomic(
+                out_path,
+                lambda temporary: pixmap.save(str(temporary), output="png"),
+                validator=lambda temporary: data_url_from_image_file(temporary) is not None,
+            )
             return {"status": "rendered", "path": str(out_path), "error": ""}
         finally:
             doc.close()

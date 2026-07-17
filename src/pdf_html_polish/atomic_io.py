@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import os
 import shutil
@@ -80,6 +81,31 @@ def copy_file_atomic(source: Path, target: Path) -> None:
             os.fsync(handle.fileno())
         shutil.copystat(source_path, temporary)
         _replace(temporary, target_path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_generated_file_atomic(
+    path: Path,
+    writer: Callable[[Path], object],
+    *,
+    validator: Callable[[Path], bool] | None = None,
+) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = _temporary_path(target)
+    try:
+        writer(temporary)
+        if not temporary.is_file():
+            raise RuntimeError(f"Generated artifact writer did not create a file: {temporary}")
+        if validator is not None and not validator(temporary):
+            raise ValueError(f"Generated artifact validation failed: {target}")
+        with temporary.open("rb+") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.is_file():
+            shutil.copymode(target, temporary)
+        _replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
 
