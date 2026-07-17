@@ -100,6 +100,31 @@ PUBLISHER_CHROME_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"[\s\S]{0,160000}?<p\b[^>]*>\s*Download\s+date\s*:[\s\S]{0,500}?</p>\s*",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"<h(?P<level>[1-6])\b"
+        r"(?=[^>]*\bclass\s*=\s*[\"'][^\"']*\bz2m-front-matter\b[^\"']*[\"'])[^>]*>"
+        r"\s*[A-Z][A-Za-z. ]{1,80}\s+Downloaded\s+from\s+"
+        r"<a\b(?=[^>]*\bhref\s*=\s*[\"']https?://(?:www\.)?worldscientific\.com"
+        r"(?:/[^\"']*)?[\"'])[^>]*>[\s\S]{0,160}?worldscientific\.com[\s\S]{0,80}?</a>"
+        r"[\s\S]{0,500}?\bRe-use\s+and\s+distribution\s+is\s+strictly\s+not\s+permitted\b"
+        r"[\s\S]{0,300}?</h(?P=level)>\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<h(?P<available_level>[1-6])\b[^>]*>\s*Available\s+online\s+at\s+"
+        r"<a\b(?=[^>]*\bhref\s*=\s*[\"']https?://(?:www\.)?sciencedirect\.com"
+        r"(?:/[^\"']*)?[\"'])[^>]*>[\s\S]{0,160}?sciencedirect\.com\s*</a>\s*"
+        r"</h(?P=available_level)>\s*"
+        r"<h(?P<brand_level>[1-6])\b[^>]*>\s*(?:<b\b[^>]*>\s*)?ScienceDirect"
+        r"\s*(?:</b>\s*)?</h(?P=brand_level)>\s*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"<h(?P<copyright_level>[1-6])\b[^>]*>\s*(?:<b\b[^>]*>\s*)?"
+        r"(?:©|&copy;)\s*(?:19|20)\d{2}\s+[^<]{1,220}?\bAll\s+rights\s+reserved\.?"
+        r"\s*(?:</b>\s*)?</h(?P=copyright_level)>\s*",
+        re.IGNORECASE,
+    ),
 )
 
 PMC_CHROME_DIV_OPEN_PATTERNS: tuple[re.Pattern[str], ...] = (

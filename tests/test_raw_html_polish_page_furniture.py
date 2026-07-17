@@ -46,6 +46,41 @@ def test_drop_publisher_chrome_pages_removes_repository_cover_with_leading_image
     assert repaired == "<p>Article body starts.</p>"
 
 
+def test_drop_publisher_chrome_pages_removes_only_signed_heading_furniture() -> None:
+    html = (
+        "<article><h1>Article title</h1>"
+        '<p class="z2m-front-matter">Author affiliation.</p>'
+        '<p><img src="world-logo.png"/></p>'
+        '<h1 class="z2m-front-matter">Int. J. Neur. Syst. Downloaded from '
+        '<a href="https://www.worldscientific.com">www.worldscientific.com</a> on 05/19/20. '
+        "Re-use and distribution is strictly not permitted, except for UNIVERSITY</h1>"
+        '<p><img src="science-logo.png"/></p>'
+        '<h4>Available online at <a href="https://www.sciencedirect.com">'
+        "www.sciencedirect.com</a></h4><h2><b>ScienceDirect</b></h2>"
+        "<p>We searched ScienceDirect for relevant studies.</p>"
+        "<p>Licensing terms may state that all rights reserved can apply.</p>"
+        "<h1>© 2013 J. Paul Getty Trust. All rights reserved.</h1>"
+        "<h2><b>Tactile Graphics</b></h2>"
+        "<h2>Adapted from Materials by <b>Lucia Hasty</b></h2>"
+        "<p>For more resources, visit www.Perkins.org.</p></article>"
+    )
+
+    repaired = drop_publisher_chrome_pages(html)
+
+    assert "world-logo.png" not in repaired
+    assert "Downloaded from" not in repaired
+    assert "science-logo.png" not in repaired
+    assert "Available online at" not in repaired
+    assert "<h2><b>ScienceDirect</b></h2>" not in repaired
+    assert "© 2013 J. Paul Getty Trust" not in repaired
+    assert '<p class="z2m-front-matter">Author affiliation.</p>' in repaired
+    assert "We searched ScienceDirect for relevant studies." in repaired
+    assert "all rights reserved can apply" in repaired
+    assert "Adapted from Materials by <b>Lucia Hasty</b>" in repaired
+    assert "www.Perkins.org" in repaired
+    assert drop_publisher_chrome_pages(repaired) == repaired
+
+
 def test_drop_pmc_page_chrome_removes_balanced_sidebar_dialog_and_disclaimer() -> None:
     html = (
         "<main><h1>Article</h1><p>Body.</p></main>"

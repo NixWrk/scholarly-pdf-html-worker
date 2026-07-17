@@ -13180,6 +13180,30 @@ def test_polish_html_document_drops_repository_and_publisher_chrome_pages() -> N
     assert "rug-real-page.png" in polished
 
 
+def test_polish_html_document_drops_signed_publisher_heading_chrome() -> None:
+    html = (
+        "<html><body><h1>Article title</h1>"
+        '<p><img src="publisher-logo.png"/></p>'
+        '<h1 class="z2m-front-matter">Int. J. Neur. Syst. Downloaded from '
+        '<a href="https://www.worldscientific.com">www.worldscientific.com</a> on 05/19/20. '
+        "Re-use and distribution is strictly not permitted, except for UNIVERSITY</h1>"
+        '<h4>Available online at <a href="https://www.sciencedirect.com">'
+        "www.sciencedirect.com</a></h4><h2><b>ScienceDirect</b></h2>"
+        "<h1>© 2013 J. Paul Getty Trust. All rights reserved.</h1>"
+        "<p>Scholarly body survives.</p></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "publisher-logo.png" not in polished
+    assert "worldscientific.com" not in polished
+    assert "Available online at" not in polished
+    assert ">ScienceDirect<" not in polished
+    assert "All rights reserved" not in polished
+    assert "Article title" in polished
+    assert "Scholarly body survives." in polished
+
+
 def test_polish_html_document_drops_pmc_chrome_and_internal_raw_title() -> None:
     html = (
         "<html><head><title>Clinical paper raw HTML</title></head><body>"
