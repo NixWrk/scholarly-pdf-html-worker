@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import pdf_html_polish.clean_pipeline as clean_pipeline_module
 import pdf_html_polish.cli.clean_convert as clean_convert_module
 from pdf_html_polish.cli.clean_convert import build_parser
 from pdf_html_polish.clean_pipeline import (
@@ -249,6 +250,10 @@ def test_collect_final_html_copies_audited_polish_outputs(tmp_path: Path) -> Non
     quality_dir = tmp_path / "quality"
     article_dir = quality_dir / "audit_tree" / "article_a"
     article_dir.mkdir(parents=True)
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir()
+    stale_path = final_dir / "removed_article.html"
+    stale_path.write_text("<html><body>stale</body></html>", encoding="utf-8")
     source = article_dir / "02.en.polish.html"
     source.write_text("<html><body>clean</body></html>", encoding="utf-8")
 
@@ -261,6 +266,84 @@ def test_collect_final_html_copies_audited_polish_outputs(tmp_path: Path) -> Non
     manifest = json.loads(collection.manifest_path.read_text(encoding="utf-8"))
     assert manifest["article_count"] == 1
     assert manifest["html_files"][0]["article"] == "article_a"
+    assert not stale_path.exists()
+
+
+def test_collect_final_html_rejects_duplicate_article_names_before_writing(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    for branch, body in (("first", "one"), ("second", "two")):
+        source = quality_dir / "audit_tree" / branch / "duplicate" / "02.en.polish.html"
+        source.parent.mkdir(parents=True)
+        source.write_text(f"<html><body>{body}</body></html>", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Duplicate final HTML article name 'duplicate'"):
+        collect_final_html(quality_dir)
+
+    assert not (quality_dir / "final_html" / "duplicate.html").exists()
+    assert not (quality_dir / "final_html" / "final_html_manifest.json").exists()
+
+
+def test_collect_final_html_rejects_portable_case_collisions(tmp_path: Path) -> None:
+    quality_dir = tmp_path / "quality"
+    first_source = tmp_path / "first.html"
+    second_source = tmp_path / "second.html"
+    first_source.write_text("<html><body>first</body></html>", encoding="utf-8")
+    second_source.write_text("<html><body>second</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+
+    with pytest.raises(RuntimeError, match="Duplicate final HTML article name"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=(("Article", first_source), ("article", second_source)),
+        )
+
+    assert not (final_dir / "Article.html").exists()
+    assert not (final_dir / "article.html").exists()
+    assert not (final_dir / "final_html_manifest.json").exists()
+
+
+def test_collect_final_html_failed_copy_preserves_previous_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir()
+    final_path = final_dir / "article_a.html"
+    final_path.write_text("<html><body>previous</body></html>", encoding="utf-8")
+
+    def fail_copy(_source: Path, temporary: Path) -> None:
+        Path(temporary).write_text("partial", encoding="utf-8")
+        raise OSError("simulated interrupted copy")
+
+    monkeypatch.setattr(clean_pipeline_module.shutil, "copy2", fail_copy)
+
+    with pytest.raises(OSError, match="simulated interrupted copy"):
+        collect_final_html(quality_dir)
+
+    assert final_path.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
+    assert list(final_dir.glob("*.tmp")) == []
+
+
+def test_collect_final_html_rejects_target_containing_source(tmp_path: Path) -> None:
+    quality_dir = tmp_path / "quality"
+    article_dir = quality_dir / "audit_tree" / "article_a"
+    article_dir.mkdir(parents=True)
+    source = article_dir / "02.en.polish.html"
+    source.write_text("<html><body>source</body></html>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="final_html_dir contains source HTML"):
+        collect_final_html(quality_dir, final_html_dir=article_dir)
+
+    assert source.read_text(encoding="utf-8") == "<html><body>source</body></html>"
+    assert not (article_dir / "article_a.html").exists()
+    assert not (article_dir / "final_html_manifest.json").exists()
 
 
 def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_path: Path) -> None:
@@ -526,6 +609,10 @@ def test_run_clean_pipeline_skips_observe_when_nothing_converted(tmp_path: Path)
     def fail_observe_runner(*_args):
         raise AssertionError("observe should not run when conversion did no work")
 
+    final_dir = tmp_path / "converted_quality" / "final_html"
+    final_dir.mkdir(parents=True)
+    stale_path = final_dir / "stale.html"
+    stale_path.write_text("<html><body>stale</body></html>", encoding="utf-8")
     summary = run_clean_pipeline(
         CleanPipelineOptions(
             conversion_options=PipelineOptions(
@@ -544,3 +631,4 @@ def test_run_clean_pipeline_skips_observe_when_nothing_converted(tmp_path: Path)
     assert summary.observe_command == ()
     assert summary.observe_exit_code == 0
     assert summary.final_html.artifacts == ()
+    assert not stale_path.exists()

@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
+from unicodedata import normalize
+from uuid import uuid4
 
 from .marker_runner import MarkerRunner
 from .models import PipelineSummary
@@ -227,37 +229,76 @@ def run_observe_command(
     return int(process.wait())
 
 
-def collect_final_html(
-    quality_output_dir: Path,
-    *,
-    final_html_dir: Path | None = None,
-) -> FinalHtmlCollection:
-    quality_dir = quality_output_dir.expanduser().resolve(strict=False)
-    target_dir = (
-        final_html_dir.expanduser().resolve(strict=False)
-        if final_html_dir is not None
-        else quality_dir / FINAL_HTML_DIR_NAME
-    )
-    audit_tree = quality_dir / "audit_tree"
-    target_dir.mkdir(parents=True, exist_ok=True)
+def _copy_file_atomic(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+    try:
+        shutil.copy2(source, temporary)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _publish_final_html(
+    *,
+    quality_dir: Path,
+    target_dir: Path,
+    sources: Sequence[tuple[str, Path]],
+    fallback_source: str | None = None,
+) -> FinalHtmlCollection:
+    target_dir = target_dir.resolve(strict=False)
+    resolved_sources = [
+        (article, source_path.resolve(strict=False))
+        for article, source_path in sources
+    ]
+    overlapping = [
+        source_path for _article, source_path in resolved_sources
+        if source_path.is_relative_to(target_dir)
+    ]
+    if overlapping:
+        raise ValueError(f"final_html_dir contains source HTML: {overlapping[0]}")
+    seen_articles: dict[str, Path] = {}
     artifacts: list[FinalHtmlArtifact] = []
-    for source_path in sorted(audit_tree.rglob("02.en.polish.html"), key=str):
-        if not source_path.is_file():
-            continue
-        article = source_path.parent.name
-        final_path = target_dir / f"{article}.html"
-        shutil.copy2(source_path, final_path)
+    for article, source_path in resolved_sources:
+        article_key = normalize("NFC", article).casefold()
+        previous = seen_articles.get(article_key)
+        if previous is not None:
+            raise RuntimeError(
+                "Duplicate final HTML article name "
+                f"{article!r}: {previous} and {source_path}."
+            )
+        seen_articles[article_key] = source_path
         artifacts.append(
             FinalHtmlArtifact(
                 article=article,
                 source_path=source_path.resolve(strict=False),
-                final_path=final_path.resolve(strict=False),
+                final_path=(target_dir / f"{article}.html").resolve(strict=False),
             )
         )
 
-    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
-    manifest = {
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for artifact in artifacts:
+        _copy_file_atomic(artifact.source_path, artifact.final_path)
+
+    expected_paths = {artifact.final_path for artifact in artifacts}
+    for stale_path in target_dir.glob("*.html"):
+        if stale_path.resolve(strict=False) not in expected_paths:
+            stale_path.unlink()
+
+    manifest: dict[str, Any] = {
         "schema_version": 1,
         "quality_output_dir": str(quality_dir),
         "final_html_dir": str(target_dir),
@@ -271,14 +312,38 @@ def collect_final_html(
             for artifact in artifacts
         ],
     }
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    if fallback_source is not None:
+        manifest["fallback_source"] = fallback_source
+    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
+    _write_json_atomic(manifest_path, manifest)
     return FinalHtmlCollection(
         final_html_dir=target_dir,
         manifest_path=manifest_path,
         artifacts=tuple(artifacts),
+    )
+
+
+def collect_final_html(
+    quality_output_dir: Path,
+    *,
+    final_html_dir: Path | None = None,
+) -> FinalHtmlCollection:
+    quality_dir = quality_output_dir.expanduser().resolve(strict=False)
+    target_dir = (
+        final_html_dir.expanduser().resolve(strict=False)
+        if final_html_dir is not None
+        else quality_dir / FINAL_HTML_DIR_NAME
+    )
+    audit_tree = quality_dir / "audit_tree"
+    sources = [
+        (source_path.parent.name, source_path)
+        for source_path in sorted(audit_tree.rglob(POLISH_STAGE_NAME), key=str)
+        if source_path.is_file()
+    ]
+    return _publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=target_dir,
+        sources=sources,
     )
 
 
@@ -295,47 +360,16 @@ def collect_converted_stage_final_html(
         if final_html_dir is not None
         else quality_dir / FINAL_HTML_DIR_NAME
     )
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    artifacts: list[FinalHtmlArtifact] = []
-    for source_path in sorted(converted_dir.rglob(POLISH_STAGE_NAME), key=str):
-        if not source_path.is_file():
-            continue
-        article = article_name_from_html_stage(source_path)
-        final_path = target_dir / f"{article}.html"
-        shutil.copy2(source_path, final_path)
-        artifacts.append(
-            FinalHtmlArtifact(
-                article=article,
-                source_path=source_path.resolve(strict=False),
-                final_path=final_path.resolve(strict=False),
-            )
-        )
-
-    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
-    manifest = {
-        "schema_version": 1,
-        "quality_output_dir": str(quality_dir),
-        "final_html_dir": str(target_dir),
-        "fallback_source": "converted_stage",
-        "article_count": len(artifacts),
-        "html_files": [
-            {
-                "article": artifact.article,
-                "source_path": str(artifact.source_path),
-                "final_path": str(artifact.final_path),
-            }
-            for artifact in artifacts
-        ],
-    }
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return FinalHtmlCollection(
-        final_html_dir=target_dir,
-        manifest_path=manifest_path,
-        artifacts=tuple(artifacts),
+    sources = [
+        (article_name_from_html_stage(source_path), source_path)
+        for source_path in sorted(converted_dir.rglob(POLISH_STAGE_NAME), key=str)
+        if source_path.is_file()
+    ]
+    return _publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=target_dir,
+        sources=sources,
+        fallback_source="converted_stage",
     )
 
 
@@ -350,27 +384,10 @@ def empty_final_html_collection(
         if final_html_dir is not None
         else quality_dir / FINAL_HTML_DIR_NAME
     )
-    target_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "quality_output_dir": str(quality_dir),
-                "final_html_dir": str(target_dir),
-                "article_count": 0,
-                "html_files": [],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    return FinalHtmlCollection(
-        final_html_dir=target_dir,
-        manifest_path=manifest_path,
-        artifacts=(),
+    return _publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=target_dir,
+        sources=(),
     )
 
 
