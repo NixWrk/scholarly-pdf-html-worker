@@ -5,6 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 
+from .result_state import completed_result_is_current
 from .staging import FILENAME_MAP_NAME
 
 
@@ -21,8 +22,8 @@ def _source_hash_suffix(source_pdf_path: Path) -> str:
     return f"_{digest}".lower()
 
 
-def _build_output_artifact_index(output_dir: Path, artifact_extension: str) -> set[str]:
-    names: set[str] = set()
+def _build_output_artifact_index(output_dir: Path, artifact_extension: str) -> dict[str, str]:
+    names: dict[str, str] = {}
     if not output_dir.is_dir():
         return names
 
@@ -30,23 +31,24 @@ def _build_output_artifact_index(output_dir: Path, artifact_extension: str) -> s
     normalized_ext = normalized_ext.lower()
 
     for child in output_dir.iterdir():
-        if not child.is_dir():
+        if child.is_symlink() or not child.is_dir():
             continue
         artifact_path = child / f"{child.name}{normalized_ext}"
-        if artifact_path.is_file():
-            names.add(child.name.lower())
+        if artifact_path.is_symlink() or not artifact_path.is_file():
+            continue
+        key = child.name.lower()
+        if key in names and names[key] != child.name:
+            names[key] = ""
+            continue
+        names[key] = child.name
     return names
 
 
-def _load_existing_from_filename_map(
-    output_dir: Path,
-    output_artifact_dirs: set[str],
-) -> tuple[set[str], dict[str, set[str]]]:
+def _load_alias_sources_from_filename_map(output_dir: Path) -> dict[str, set[str]]:
     map_path = output_dir / FILENAME_MAP_NAME
-    if not map_path.is_file():
-        return set(), {}
+    if map_path.is_symlink() or not map_path.is_file():
+        return {}
 
-    existing: set[str] = set()
     alias_sources: dict[str, set[str]] = {}
     with map_path.open("r", encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
@@ -59,10 +61,8 @@ def _load_existing_from_filename_map(
             alias_base = Path(alias_pdf_path).stem.lower()
             normalized_source = _normalize_path_str(source_path)
             alias_sources.setdefault(alias_base, set()).add(normalized_source)
-            if alias_base in output_artifact_dirs:
-                existing.add(normalized_source)
 
-    return existing, alias_sources
+    return alias_sources
 
 
 def _alias_is_known_for_other_source(
@@ -74,14 +74,42 @@ def _alias_is_known_for_other_source(
     return known_sources is not None and normalized_source not in known_sources
 
 
-def _exact_legacy_output_alias(output_artifact_dirs: set[str], source_pdf_path: Path) -> str | None:
+def _exact_legacy_output_alias(output_artifact_dirs: dict[str, str], source_pdf_path: Path) -> str | None:
     alias_base = source_pdf_path.stem.lower()
     return alias_base if alias_base in output_artifact_dirs else None
 
 
-def _hash_alias_output_aliases(output_artifact_dirs: set[str], source_pdf_path: Path) -> list[str]:
+def _hash_alias_output_aliases(output_artifact_dirs: dict[str, str], source_pdf_path: Path) -> list[str]:
     suffix = _source_hash_suffix(source_pdf_path)
     return [dirname for dirname in output_artifact_dirs if dirname.endswith(suffix)]
+
+
+def _candidate_output_aliases(
+    output_artifact_dirs: dict[str, str],
+    source_pdf_path: Path,
+    normalized_source: str,
+    alias_sources: dict[str, set[str]],
+) -> list[str]:
+    aliases = {
+        alias
+        for alias, sources in alias_sources.items()
+        if normalized_source in sources and alias in output_artifact_dirs
+    }
+    exact_alias = _exact_legacy_output_alias(output_artifact_dirs, source_pdf_path)
+    if exact_alias is not None and not _alias_is_known_for_other_source(
+        exact_alias,
+        normalized_source,
+        alias_sources,
+    ):
+        aliases.add(exact_alias)
+    for hash_alias in _hash_alias_output_aliases(output_artifact_dirs, source_pdf_path):
+        if not _alias_is_known_for_other_source(
+            hash_alias,
+            normalized_source,
+            alias_sources,
+        ):
+            aliases.add(hash_alias)
+    return sorted(aliases)
 
 
 def detect_existing_results(
@@ -91,27 +119,31 @@ def detect_existing_results(
 ) -> set[str]:
     output_artifact_dirs = _build_output_artifact_index(output_dir, artifact_extension)
 
-    existing, alias_sources = _load_existing_from_filename_map(output_dir, output_artifact_dirs)
+    alias_sources = _load_alias_sources_from_filename_map(output_dir)
+    extension = (
+        artifact_extension
+        if artifact_extension.startswith(".")
+        else f".{artifact_extension}"
+    )
+    extension = extension.lower()
 
+    existing: set[str] = set()
     for source_pdf_path in source_pdf_paths:
         normalized = _normalize_path(source_pdf_path)
-        if normalized in existing:
-            continue
-
-        exact_alias = _exact_legacy_output_alias(output_artifact_dirs, source_pdf_path)
-        if exact_alias is not None and not _alias_is_known_for_other_source(
-            exact_alias,
+        candidate_aliases = _candidate_output_aliases(
+            output_artifact_dirs,
+            source_pdf_path,
             normalized,
             alias_sources,
-        ):
-            existing.add(normalized)
-            continue
-
-        for hash_alias in _hash_alias_output_aliases(output_artifact_dirs, source_pdf_path):
-            if _alias_is_known_for_other_source(hash_alias, normalized, alias_sources):
+        )
+        for alias in candidate_aliases:
+            actual_alias = output_artifact_dirs.get(alias)
+            if not actual_alias:
                 continue
-            existing.add(normalized)
-            break
+            artifact_path = output_dir / actual_alias / f"{actual_alias}{extension}"
+            if completed_result_is_current(source_pdf_path, artifact_path):
+                existing.add(normalized)
+                break
 
     return existing
 

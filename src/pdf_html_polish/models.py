@@ -57,6 +57,7 @@ class PipelineSummary:
     llm_bundle_markdown_files: int = 0
     llm_bundle_image_files: int = 0
     html_polish_failed_total: int = 0
+    result_commit_failed_total: int = 0
     zotero_html_attached_total: int = 0
     zotero_html_failed_total: int = 0
     zotero_html_queued_total: int = 0

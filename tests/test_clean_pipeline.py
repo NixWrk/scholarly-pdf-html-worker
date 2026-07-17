@@ -17,15 +17,18 @@ from pdf_html_polish.clean_pipeline import (
     default_quality_output_dir,
     run_clean_pipeline,
 )
-from pdf_html_polish.marker_runner import MarkerRunner
+from pdf_html_polish.marker_runner import MarkerRunner, RunResult
 from pdf_html_polish.models import PipelineSummary
-from pdf_html_polish.marker_runner import RunResult
 from pdf_html_polish.html_stages import (
     HTML_STAGE_DIR_NAME,
     RAW_CONVERSION_MANIFEST_NAME,
 )
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
+from pdf_html_polish.result_state import (
+    RESULT_MANIFEST_NAME,
+    completed_result_is_current,
+)
 
 
 def _summary(output_dir: Path, *, failed_total: int = 0, converted_total: int | None = None) -> PipelineSummary:
@@ -153,6 +156,10 @@ def test_run_raw_html_pipeline_saves_raw_stage_only(tmp_path: Path) -> None:
     assert len(manifest["source_pdf_sha256"]) == 64
     assert len(manifest["raw_html_sha256"]) == 64
     assert not (stage_dir / "02.en.polish.html").exists()
+    result_path = output_dir / "paper" / "paper.html"
+    assert (result_path.parent / RESULT_MANIFEST_NAME).is_file()
+    assert completed_result_is_current(source_pdf, result_path)
+    assert summary.result_commit_failed_total == 0
     assert any("Raw HTML stage saved" in entry for entry in logs)
 
 
@@ -191,6 +198,109 @@ def test_run_raw_html_pipeline_rejects_partial_failed_marker_output(tmp_path: Pa
     assert summary.failed_total == 1
     assert not (stage_dir / "01.en.raw.html").exists()
     assert not (stage_dir / RAW_CONVERSION_MANIFEST_NAME).exists()
+    result_path = output_dir / "paper" / "paper.html"
+    assert not (result_path.parent / RESULT_MANIFEST_NAME).exists()
+
+    batch_skip_values: list[bool] = []
+
+    class RecoveryRunner:
+        def run_batch(self, *, input_dir, output_dir, skip_existing, **_kwargs):
+            batch_skip_values.append(bool(skip_existing))
+            for pdf_path in Path(input_dir).glob("*.pdf"):
+                article_dir = Path(output_dir) / pdf_path.stem
+                article_dir.mkdir(parents=True, exist_ok=True)
+                (article_dir / f"{pdf_path.stem}.html").write_text(
+                    "<html><body>complete retry</body></html>",
+                    encoding="utf-8",
+                )
+            return RunResult(command=["marker"], exit_code=0)
+
+        def run_single(self, **_kwargs):  # pragma: no cover - batch must succeed
+            raise AssertionError("recovery batch should have produced the artifact")
+
+    recovered = run_raw_html_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            export_mode="html",
+        ),
+        RecoveryRunner(),  # type: ignore[arg-type]
+        lambda _message: None,
+        lambda: False,
+    )
+
+    assert batch_skip_values == [False]
+    assert recovered.skipped_existing == 0
+    assert recovered.converted_total == 1
+    assert recovered.failed_total == 0
+    assert completed_result_is_current(source_pdf, result_path)
+
+
+def test_raw_force_retry_invalidates_previous_completion_before_marker(
+    tmp_path: Path,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF")
+    output_dir = tmp_path / "converted"
+
+    class SuccessRunner:
+        def run_batch(self, *, input_dir, output_dir, **_kwargs):
+            for pdf_path in Path(input_dir).glob("*.pdf"):
+                article_dir = Path(output_dir) / pdf_path.stem
+                article_dir.mkdir(parents=True, exist_ok=True)
+                (article_dir / f"{pdf_path.stem}.html").write_text(
+                    "<html><body>first complete result</body></html>",
+                    encoding="utf-8",
+                )
+            return RunResult(command=["marker"], exit_code=0)
+
+        def run_single(self, **_kwargs):  # pragma: no cover - batch must succeed
+            raise AssertionError("successful batch should not need fallback")
+
+    first = run_raw_html_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            export_mode="html",
+        ),
+        SuccessRunner(),  # type: ignore[arg-type]
+        lambda _message: None,
+        lambda: False,
+    )
+    result_path = output_dir / "paper" / "paper.html"
+    manifest_path = result_path.parent / RESULT_MANIFEST_NAME
+    assert first.failed_total == 0
+    assert completed_result_is_current(source_pdf, result_path)
+
+    class FailedForceRunner:
+        def run_batch(self, *, input_dir, output_dir, **_kwargs):
+            for pdf_path in Path(input_dir).glob("*.pdf"):
+                article_dir = Path(output_dir) / pdf_path.stem
+                (article_dir / f"{pdf_path.stem}.html").write_text(
+                    "<html><body>partial forced retry</body></html>",
+                    encoding="utf-8",
+                )
+            return RunResult(command=["marker"], exit_code=137)
+
+        def run_single(self, **_kwargs):
+            return RunResult(command=["marker-single"], exit_code=137)
+
+    failed_retry = run_raw_html_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            export_mode="html",
+            skip_existing=False,
+        ),
+        FailedForceRunner(),  # type: ignore[arg-type]
+        lambda _message: None,
+        lambda: False,
+    )
+
+    assert failed_retry.converted_total == 0
+    assert failed_retry.failed_total == 1
+    assert not manifest_path.exists()
+    assert not completed_result_is_current(source_pdf, result_path)
 
 
 def test_raw_only_cli_returns_nonzero_when_any_document_failed(

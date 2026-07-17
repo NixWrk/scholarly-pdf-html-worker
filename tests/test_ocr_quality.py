@@ -15,6 +15,10 @@ from pdf_html_polish.ocr_quality import (
 )
 import pdf_html_polish.pipeline as pipeline_module
 from pdf_html_polish.pipeline import PipelineOptions, _find_zotero_overlay_path, run_pipeline
+from pdf_html_polish.result_state import (
+    RESULT_MANIFEST_NAME,
+    completed_result_is_current,
+)
 
 
 _VALID_TINY_PNG = base64.b64decode(
@@ -199,6 +203,9 @@ def test_pipeline_queues_bad_ocr_html_for_reocr(monkeypatch) -> None:
         assert entry["reocr_alias_base_name"] == f"bad_scan{REOCR_SUFFIX}"
         assert (output_dir / "_reocr_pending" / f"bad_scan{REOCR_SUFFIX}.json").is_file()
         assert any("OCR quality gate queued for re-OCR" in line for line in logs)
+        html_path = output_dir / "bad_scan" / "bad_scan.html"
+        assert completed_result_is_current(source_pdf, html_path)
+        assert summary.result_commit_failed_total == 0
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -234,10 +241,55 @@ def test_pipeline_counts_image_integrity_failure_and_skips_polish_stage(monkeypa
         assert summary.html_polish_failed_total == 1
         assert raw_html.is_file()
         assert not polish_stage.exists()
+        assert not (article_dir / RESULT_MANIFEST_NAME).exists()
         assert any(
             "HTML image integrity check failed" in line
             for line in logs
         )
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_pipeline_rejects_closed_partial_output_from_failed_marker_batch() -> None:
+    tmp_path = _make_temp_dir()
+    try:
+        source_pdf = tmp_path / "partial.pdf"
+        source_pdf.write_bytes(b"%PDF-1.4\n")
+        output_dir = tmp_path / "out"
+
+        class FailedRunner:
+            def run_batch(self, *, input_dir, output_dir, output_format, **_kwargs):
+                assert output_format == "html"
+                for pdf_path in Path(input_dir).glob("*.pdf"):
+                    article_dir = Path(output_dir) / pdf_path.stem
+                    article_dir.mkdir(parents=True, exist_ok=True)
+                    (article_dir / f"{pdf_path.stem}.html").write_text(
+                        "<html><body>closed but partial</body></html>",
+                        encoding="utf-8",
+                    )
+                return RunResult(command=["fake-marker"], exit_code=137)
+
+            def run_single(self, **_kwargs):
+                return RunResult(command=["fake-marker-single"], exit_code=137)
+
+        summary = run_pipeline(
+            PipelineOptions(
+                source_pdf_paths=[str(source_pdf)],
+                output_dir=str(output_dir),
+                export_mode=ExportMode.HTML.value,
+                skip_existing=False,
+            ),
+            FailedRunner(),  # type: ignore[arg-type]
+            lambda _message: None,
+            lambda: False,
+        )
+
+        article_dir = output_dir / "partial"
+        assert summary.converted_total == 0
+        assert summary.failed_total == 1
+        assert summary.result_commit_failed_total == 0
+        assert (article_dir / "partial.html").is_file()
+        assert not (article_dir / RESULT_MANIFEST_NAME).exists()
     finally:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -311,6 +363,8 @@ def test_pipeline_html_polish_uses_static_katex_and_closes_context(monkeypatch) 
         assert r'data-z2m-tex="\(E=mc^2\)"' in html
         assert profile_overlay_paths == [overlay_path.resolve(strict=False)]
         assert close_calls == [True]
+        assert completed_result_is_current(source_pdf, html_path)
+        assert summary.result_commit_failed_total == 0
     finally:
         pipeline_module.close_katex_v8_context()
         shutil.rmtree(tmp_path, ignore_errors=True)

@@ -26,6 +26,7 @@ from .models import PipelineSummary, StagedFile
 from .ocr_quality import assess_ocr_quality_from_html, enqueue_reocr_candidate, load_reocr_queue
 from .output_state import detect_existing_results, normalize_source_path
 from .paths import resolve_zotero_data_dir
+from .result_state import invalidate_completed_result, publish_completed_result
 from .pipeline_discovery import discover_collection_pdfs, discover_source_pdfs
 from .pipeline_options import PdfDiscoveryResult, PipelineOptions
 from .pipeline_webdav import (
@@ -189,6 +190,19 @@ def _artifact_signature(path: Path) -> tuple[bool, int, int]:
         return False, 0, 0
     return True, int(stat.st_size), int(stat.st_mtime_ns)
 
+def _invalidate_staged_completed_results(
+    output_dir: Path,
+    staged_files: list[StagedFile],
+    artifact_extension: str,
+) -> None:
+    for staged_file in staged_files:
+        artifact_path = expected_output_artifact_path(
+            output_dir,
+            staged_file.alias_base_name,
+            artifact_extension,
+        )
+        invalidate_completed_result(artifact_path)
+
 
 def _alias_suffix(value: str) -> str:
     match = OVERLAY_SUFFIX_RE.search(value)
@@ -339,6 +353,11 @@ def run_raw_html_pipeline(
         log(f"Filename map: {filename_map_path}")
 
         started_at = perf_counter()
+        _invalidate_staged_completed_results(
+            output_dir,
+            stage.staged_files,
+            ".html",
+        )
         env = _build_env(options)
         _log_elapsed(log, "raw_pipeline.build_env", started_at)
         if env.get("MODEL_CACHE_DIR"):
@@ -351,7 +370,7 @@ def run_raw_html_pipeline(
         if is_cancelled():
             raise RuntimeError("Cancelled before raw-only conversion.")
 
-        batch_skip_existing = options.skip_existing and options.skip_existing_source_pdf_paths is None
+        batch_skip_existing = False
         artifact_before = {
             staged_file.alias_base_name: _artifact_signature(
                 expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
@@ -425,28 +444,45 @@ def run_raw_html_pipeline(
             html_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, ".html")
             if not html_path.is_file():
                 continue
+            try:
+                raw_html = html_path.read_text(encoding="utf-8", errors="replace")
+                stage_dir = html_stage_dir_for_html(html_path)
+                raw_stage = save_html_stage(
+                    stage_dir,
+                    RAW_STAGE_NAME,
+                    raw_html,
+                    "en.raw.marker",
+                    source_path=html_path,
+                    details=(
+                        "raw_only=true",
+                        f"source_pdf={staged_file.source_pdf_path.name}",
+                    ),
+                )
+                raw_manifest_path = write_raw_conversion_manifest(
+                    stage_dir,
+                    source_pdf=staged_file.source_pdf_path,
+                    raw_stage_path=raw_stage.path,
+                )
+                result_manifest_path = publish_completed_result(
+                    source_pdf_path=staged_file.source_pdf_path,
+                    artifact_path=html_path,
+                    result_kind="raw_html",
+                )
+            except Exception as exc:
+                log(
+                    "Raw HTML completion publication failed: "
+                    f"source={staged_file.source_pdf_path.name} error={exc}"
+                )
+                continue
             converted_source_paths.append(staged_file.source_pdf_path)
-            raw_html = html_path.read_text(encoding="utf-8", errors="replace")
-            stage_dir = html_stage_dir_for_html(html_path)
-            raw_stage = save_html_stage(
-                stage_dir,
-                RAW_STAGE_NAME,
-                raw_html,
-                "en.raw.marker",
-                source_path=html_path,
-                details=(
-                    "raw_only=true",
-                    f"source_pdf={staged_file.source_pdf_path.name}",
-                ),
+            log(
+                "Raw HTML stage saved: "
+                f"{raw_stage.path}; raw_manifest={raw_manifest_path}; "
+                f"result_manifest={result_manifest_path}"
             )
-            manifest_path = write_raw_conversion_manifest(
-                stage_dir,
-                source_pdf=staged_file.source_pdf_path,
-                raw_stage_path=raw_stage.path,
-            )
-            log(f"Raw HTML stage saved: {raw_stage.path}; manifest={manifest_path}")
 
-        marker_failed_total = len(stage.staged_files) - len(converted_source_paths)
+        marker_failed_total = len(stage.staged_files) - len(successful_aliases)
+        result_commit_failed_total = len(successful_aliases) - len(converted_source_paths)
         converted_total = len(converted_source_paths)
         return PipelineSummary(
             collection_key=discovery.collection_key,
@@ -456,7 +492,8 @@ def run_raw_html_pipeline(
             staged_total=len(stage.staged_files),
             converted_total=converted_total,
             skipped_existing=skipped_existing,
-            failed_total=marker_failed_total,
+            failed_total=marker_failed_total + result_commit_failed_total,
+            result_commit_failed_total=result_commit_failed_total,
             output_dir=output_dir,
             filename_map_path=filename_map_path,
             export_mode=options.export_mode,
@@ -695,6 +732,11 @@ def run_pipeline(
             f"effective_max={stage.effective_max_base_len}, "
             f"files={len(stage.staged_files)}"
         )
+        _invalidate_staged_completed_results(
+            output_dir,
+            stage.staged_files,
+            artifact_extension,
+        )
 
         started_at = perf_counter()
         filename_map_path = write_filename_map(output_dir, stage.staged_files)
@@ -736,15 +778,13 @@ def run_pipeline(
             f"hardlinks={hardlinks}, copies={copies}, shortened_aliases={shortened}"
         )
 
-        converted_total = 0
-
         try:
             if is_cancelled():
                 raise RuntimeError("Cancelled before conversion.")
 
-            # If skip logic was already resolved per-file in GUI, don't pass --skip_existing
-            # to marker, or it will skip files that user explicitly chose to reprocess.
-            batch_skip_existing = options.skip_existing and options.skip_existing_source_pdf_paths is None
+            # Committed-result discovery is the sole skip authority. Every staged
+            # input must be rewritten so Marker cannot accept an uncommitted file.
+            batch_skip_existing = False
             log(
                 "Marker run config: "
                 f"files={len(stage.staged_files)}, "
@@ -775,40 +815,51 @@ def run_pipeline(
             log(f"marker batch exit_code={batch_result.exit_code}")
 
             started_at = perf_counter()
-            pending = []
+            pending: list[StagedFile] = []
+            successful_aliases: set[str] = set()
             unchanged_existing = 0
             for staged_file in stage.staged_files:
-                artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, artifact_extension)
-                exists_now, _, _ = _artifact_signature(artifact_path)
-                if exists_now:
-                    before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
-                    if (
-                        before_sig[0]
-                        and not batch_skip_existing
-                        and _artifact_signature(artifact_path) == before_sig
-                    ):
-                        unchanged_existing += 1
-                        pending.append(staged_file)
-                        continue
-                    converted_total += 1
+                artifact_path = expected_output_artifact_path(
+                    output_dir,
+                    staged_file.alias_base_name,
+                    artifact_extension,
+                )
+                before_sig = artifact_before.get(
+                    staged_file.alias_base_name,
+                    (False, 0, 0),
+                )
+                after_sig = _artifact_signature(artifact_path)
+                artifact_is_current = after_sig[0] and (
+                    not before_sig[0] or after_sig != before_sig
+                )
+                if batch_result.exit_code == 0 and artifact_is_current:
+                    successful_aliases.add(staged_file.alias_base_name)
                     continue
+                if before_sig[0] and after_sig == before_sig:
+                    unchanged_existing += 1
                 pending.append(staged_file)
-            _log_elapsed(log, "pipeline.detect_missing_after_batch", started_at)
+            _log_elapsed(log, "pipeline.detect_unconfirmed_after_batch", started_at)
             log(
                 "Batch output check: "
-                f"converted_after_batch={converted_total}, "
-                f"missing_after_batch={len(pending)}, "
+                f"converted_after_batch={len(successful_aliases)}, "
+                f"unconfirmed_after_batch={len(pending)}, "
                 f"unchanged_existing_after_batch={unchanged_existing}"
             )
 
             if pending:
-                log(f"Fallback conversion for missing outputs: {len(pending)}")
+                log(f"Fallback conversion for unconfirmed outputs: {len(pending)}")
 
             fallback_started_at = perf_counter()
             for staged_file in pending:
                 if is_cancelled():
                     raise RuntimeError("Cancelled during fallback conversion.")
 
+                artifact_path = expected_output_artifact_path(
+                    output_dir,
+                    staged_file.alias_base_name,
+                    artifact_extension,
+                )
+                before_single = _artifact_signature(artifact_path)
                 single_started_at = perf_counter()
                 single_result = runner.run_single(
                     pdf_path=staged_file.alias_pdf_path,
@@ -817,39 +868,52 @@ def run_pipeline(
                     env=env,
                     log=log,
                 )
-                _log_elapsed(log, f"pipeline.marker_single.{staged_file.alias_pdf_path.name}", single_started_at)
-                artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, artifact_extension)
-                if single_result.exit_code == 0 and artifact_path.exists():
-                    converted_total += 1
+                _log_elapsed(
+                    log,
+                    f"pipeline.marker_single.{staged_file.alias_pdf_path.name}",
+                    single_started_at,
+                )
+                after_single = _artifact_signature(artifact_path)
+                if (
+                    single_result.exit_code == 0
+                    and after_single[0]
+                    and (not before_single[0] or after_single != before_single)
+                ):
+                    successful_aliases.add(staged_file.alias_base_name)
+                else:
+                    log(
+                        "Fallback did not confirm output: "
+                        f"source={staged_file.source_pdf_path.name} "
+                        f"exit_code={single_result.exit_code}"
+                    )
             if pending:
                 _log_elapsed(log, "pipeline.fallback_total", fallback_started_at)
             _log_elapsed(log, "pipeline.conversion_total", conversion_started_at)
 
             started_at = perf_counter()
-            converted_staged_files = []
+            converted_staged_files: list[StagedFile] = []
             converted_source_paths: list[Path] = []
             for staged_file in stage.staged_files:
-                artifact_path = expected_output_artifact_path(output_dir, staged_file.alias_base_name, artifact_extension)
-                if not artifact_path.exists():
+                if staged_file.alias_base_name not in successful_aliases:
                     continue
-                before_sig = artifact_before.get(staged_file.alias_base_name, (False, 0, 0))
-                if (
-                    before_sig[0]
-                    and not batch_skip_existing
-                    and _artifact_signature(artifact_path) == before_sig
-                ):
+                artifact_path = expected_output_artifact_path(
+                    output_dir,
+                    staged_file.alias_base_name,
+                    artifact_extension,
+                )
+                if not artifact_path.is_file():
                     log(
-                        "Artifact unchanged after conversion attempts, treated as failed: "
-                        f"{artifact_path.name}"
+                        "Confirmed artifact disappeared before postprocess: "
+                        f"{artifact_path}"
                     )
                     continue
-                if artifact_path.exists():
-                    converted_staged_files.append(staged_file)
-                    converted_source_paths.append(staged_file.source_pdf_path)
+                converted_staged_files.append(staged_file)
+                converted_source_paths.append(staged_file.source_pdf_path)
             _log_elapsed(log, "pipeline.collect_converted_results", started_at)
 
             llm_bundle_result: LlmBundleResult | None = None
             html_polish_failed_total = 0
+            result_commit_failed_total = 0
             zotero_html_attached_total = 0
             zotero_html_failed_total = 0
             zotero_html_queued_total = 0
@@ -863,6 +927,7 @@ def run_pipeline(
             reocr_pending_total = len(load_reocr_queue(output_dir))
             history_paths: list[Path] = list(converted_source_paths)
             html_polish_failed_paths: set[str] = set()
+            result_commit_failed_paths: set[str] = set()
 
             def mark_html_polish_failed(html_path: Path, source_pdf_path: Path) -> None:
                 nonlocal html_polish_failed_total
@@ -877,6 +942,30 @@ def run_pipeline(
                     for path in history_paths
                     if normalize_source_path(path) != source_key
                 ]
+
+            def mark_result_commit_failed(
+                artifact_path: Path,
+                source_pdf_path: Path,
+            ) -> None:
+                nonlocal result_commit_failed_total
+                artifact_key = normalize_source_path(artifact_path)
+                if artifact_key in result_commit_failed_paths:
+                    return
+                result_commit_failed_paths.add(artifact_key)
+                result_commit_failed_total += 1
+                source_key = normalize_source_path(source_pdf_path)
+                history_paths[:] = [
+                    path
+                    for path in history_paths
+                    if normalize_source_path(path) != source_key
+                ]
+
+            def html_output_failed(html_path: Path) -> bool:
+                html_key = normalize_source_path(html_path)
+                return (
+                    html_key in html_polish_failed_paths
+                    or html_key in result_commit_failed_paths
+                )
 
             def mirror_webdav_html(html_path: Path) -> None:
                 nonlocal webdav_uploaded_total, webdav_failed_total
@@ -917,6 +1006,28 @@ def run_pipeline(
                     f"{llm_bundle_result.bundle_dir} "
                     f"(md={llm_bundle_result.markdown_files}, images={llm_bundle_result.image_files})"
                 )
+
+            if marker_output_format == "markdown":
+                for staged_file in converted_staged_files:
+                    md_path = expected_output_artifact_path(
+                        output_dir,
+                        staged_file.alias_base_name,
+                        ".md",
+                    )
+                    try:
+                        result_manifest_path = publish_completed_result(
+                            source_pdf_path=staged_file.source_pdf_path,
+                            artifact_path=md_path,
+                            result_kind="marker_markdown",
+                        )
+                    except Exception as exc:
+                        mark_result_commit_failed(md_path, staged_file.source_pdf_path)
+                        log(
+                            "Markdown completion publication failed: "
+                            f"source={staged_file.source_pdf_path.name} error={exc}"
+                        )
+                        continue
+                    log(f"Markdown completion manifest saved: {result_manifest_path}")
 
             # Level 4: polish and inline images into EN HTML files.
             if converted_source_paths and marker_output_format == "html":
@@ -993,8 +1104,6 @@ def run_pipeline(
                         mark_html_polish_failed(polish_result.html_path, polish_result.source_pdf_path)
                         log(f"Inline images failed for {polish_result.html_path.name}: {polish_result.error}")
                         continue
-                    inlined_files += 1
-                    total_inlined_images += polish_result.inlined_images
                     polish_stage_name = (
                         polish_result.polish_stage_path.name
                         if polish_result.polish_stage_path is not None
@@ -1007,6 +1116,25 @@ def run_pipeline(
                         f"en_polish={polish_stage_name})"
                     )
                     mirror_webdav_html(polish_result.html_path)
+                    try:
+                        result_manifest_path = publish_completed_result(
+                            source_pdf_path=polish_result.source_pdf_path,
+                            artifact_path=polish_result.html_path,
+                            result_kind="polished_html",
+                        )
+                    except Exception as exc:
+                        mark_result_commit_failed(
+                            polish_result.html_path,
+                            polish_result.source_pdf_path,
+                        )
+                        log(
+                            "HTML completion publication failed: "
+                            f"source={polish_result.source_pdf_path.name} error={exc}"
+                        )
+                        continue
+                    inlined_files += 1
+                    total_inlined_images += polish_result.inlined_images
+                    log(f"HTML completion manifest saved: {result_manifest_path}")
                 _log_elapsed(log, "pipeline.inline_en_images", started_at)
                 log(f"Inlined images in EN HTML: files={inlined_files}, images={total_inlined_images}")
 
@@ -1037,9 +1165,9 @@ def run_pipeline(
                             zotero_html_failed_total += 1
                             log(f"Zotero queue skipped, HTML not found: {html_path}")
                             continue
-                        if normalize_source_path(html_path) in html_polish_failed_paths:
+                        if html_output_failed(html_path):
                             log(
-                                "Zotero queue skipped after HTML polish failure: "
+                                "Zotero queue skipped after HTML output failure: "
                                 f"{html_path}"
                             )
                             continue
@@ -1081,9 +1209,9 @@ def run_pipeline(
                             zotero_html_failed_total += 1
                             log(f"Zotero attach skipped, HTML not found: {html_path}")
                             continue
-                        if normalize_source_path(html_path) in html_polish_failed_paths:
+                        if html_output_failed(html_path):
                             log(
-                                "Zotero attach skipped after HTML polish failure: "
+                                "Zotero attach skipped after HTML output failure: "
                                 f"{html_path}"
                             )
                             continue
@@ -1139,6 +1267,7 @@ def run_pipeline(
             failed_total = (
                 marker_failed_total
                 + html_polish_failed_total
+                + result_commit_failed_total
                 + zotero_html_failed_total
             )
 
@@ -1158,6 +1287,7 @@ def run_pipeline(
                 llm_bundle_markdown_files=0 if llm_bundle_result is None else llm_bundle_result.markdown_files,
                 llm_bundle_image_files=0 if llm_bundle_result is None else llm_bundle_result.image_files,
                 html_polish_failed_total=html_polish_failed_total,
+                result_commit_failed_total=result_commit_failed_total,
                 zotero_html_attached_total=zotero_html_attached_total,
                 zotero_html_failed_total=zotero_html_failed_total,
                 zotero_html_queued_total=zotero_html_queued_total,
