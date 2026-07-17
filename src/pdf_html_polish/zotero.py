@@ -4,6 +4,7 @@ import contextlib
 import shutil
 import sqlite3
 from pathlib import Path
+import time
 from typing import Any, Iterable, TypedDict
 
 from .models import AttachmentRecord, Collection
@@ -17,6 +18,10 @@ class _CollectionData(TypedDict):
     parent_collection_id: int | None
 
 
+def _read_only_sqlite_uri(path: Path) -> str:
+    return f"{path.resolve().as_uri()}?mode=ro"
+
+
 class ZoteroRepository:
     def __init__(self, zotero_data_dir: Path, snapshot_temp_root: Path | None = None) -> None:
         self.zotero_data_dir = zotero_data_dir
@@ -26,7 +31,7 @@ class ZoteroRepository:
             raise FileNotFoundError(f"zotero.sqlite not found: {self.db_path}")
 
     def _connect_primary(self) -> sqlite3.Connection:
-        uri = f"file:{self.db_path.as_posix()}?mode=ro"
+        uri = _read_only_sqlite_uri(self.db_path)
         conn = sqlite3.connect(uri, uri=True, timeout=1.5)
         conn.row_factory = sqlite3.Row
         return conn
@@ -37,18 +42,57 @@ class ZoteroRepository:
         else:
             snapshot_dir = make_temp_dir(self.snapshot_temp_root, prefix="zotero_sqlite_snapshot_")
         snapshot_db_path = snapshot_dir / "zotero.sqlite"
+        source_conn: sqlite3.Connection | None = None
+        destination_conn: sqlite3.Connection | None = None
+        snapshot_conn: sqlite3.Connection | None = None
+        try:
+            source_conn = self._connect_primary()
+            destination_conn = sqlite3.connect(snapshot_db_path, timeout=5.0)
+            destination_conn.execute("PRAGMA synchronous = FULL")
+            deadline = time.monotonic() + 120.0
 
-        shutil.copy2(self.db_path, snapshot_db_path)
-        for suffix in ("-wal", "-shm"):
-            sidecar = Path(str(self.db_path) + suffix)
-            if sidecar.exists():
-                with contextlib.suppress(Exception):
-                    shutil.copy2(sidecar, snapshot_dir / f"zotero.sqlite{suffix}")
+            def check_deadline(_status: int, _remaining: int, _total: int) -> None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Timed out while creating a consistent Zotero SQLite snapshot.")
 
-        uri = f"file:{snapshot_db_path.as_posix()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=1.5)
-        conn.row_factory = sqlite3.Row
-        return conn, snapshot_dir
+            source_conn.backup(
+                destination_conn,
+                pages=1024,
+                progress=check_deadline,
+                sleep=0.05,
+            )
+            destination_conn.commit()
+            journal_mode = destination_conn.execute("PRAGMA journal_mode = DELETE").fetchone()
+            if journal_mode is None or str(journal_mode[0]).lower() != "delete":
+                raise RuntimeError(f"Zotero SQLite snapshot is not self-contained: journal_mode={journal_mode}")
+            destination_conn.commit()
+            destination_conn.close()
+            destination_conn = None
+            source_conn.close()
+            source_conn = None
+
+            uri = _read_only_sqlite_uri(snapshot_db_path)
+            snapshot_conn = sqlite3.connect(uri, uri=True, timeout=1.5)
+            snapshot_conn.row_factory = sqlite3.Row
+            quick_check = snapshot_conn.execute("PRAGMA quick_check").fetchone()
+            if quick_check is None or str(quick_check[0]).lower() != "ok":
+                raise RuntimeError(f"Zotero SQLite snapshot failed quick_check: {quick_check}")
+            return snapshot_conn, snapshot_dir
+        except Exception:
+            for connection in (snapshot_conn, destination_conn, source_conn):
+                if connection is not None:
+                    with contextlib.suppress(Exception):
+                        connection.close()
+            snapshot_conn = None
+            destination_conn = None
+            source_conn = None
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
+            raise
+        finally:
+            if destination_conn is not None:
+                destination_conn.close()
+            if source_conn is not None:
+                source_conn.close()
 
     @staticmethod
     def _is_lock_error(exc: Exception) -> bool:
@@ -67,8 +111,11 @@ class ZoteroRepository:
         params = tuple() if params is None else params
 
         try:
-            with self._connect_primary() as conn:
+            conn = self._connect_primary()
+            try:
                 return conn.execute(query, params).fetchall()
+            finally:
+                conn.close()
         except sqlite3.OperationalError as exc:
             if not self._is_lock_error(exc):
                 raise
