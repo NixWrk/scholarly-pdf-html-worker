@@ -1,9 +1,11 @@
 from pdf_html_polish.raw_html_polish.page_furniture import (
     drop_page_header_footer_paragraphs,
+    drop_pmc_page_chrome,
     drop_publisher_chrome_pages,
     drop_repeated_page_furniture,
     looks_running_header_line,
     strip_leading_pdf_line_number_from_body,
+    strip_internal_raw_html_title,
     strip_pdf_running_header_prefix_from_body,
 )
 
@@ -42,6 +44,40 @@ def test_drop_publisher_chrome_pages_removes_repository_cover_with_leading_image
     assert "flore-cover" not in repaired
     assert "FLORE Repository" not in repaired
     assert repaired == "<p>Article body starts.</p>"
+
+
+def test_drop_pmc_page_chrome_removes_balanced_sidebar_dialog_and_disclaimer() -> None:
+    html = (
+        "<main><h1>Article</h1><p>Body.</p></main>"
+        '<div class="pmc-sidenav desktop:grid-col-4"><section><h2>ACTIONS</h2>'
+        '<div><ul class="usa-list--actions"><li>PDF<ul><li>nested</li></ul></li></ul></div>'
+        "</section></div>"
+        '<div class="overlay" role="dialog" aria-label="Citation Dialog" hidden>'
+        '<div class="dialog citation-dialog"><h2>Cite</h2></div></div>'
+        '<div class="pmc-layout__disclaimer" role="complementary">NLM disclaimer</div>'
+        "<footer>Kept footer.</footer>"
+    )
+
+    repaired = drop_pmc_page_chrome(html)
+
+    assert repaired == "<main><h1>Article</h1><p>Body.</p></main><footer>Kept footer.</footer>"
+    assert drop_pmc_page_chrome(repaired) == repaired
+
+
+def test_drop_pmc_page_chrome_keeps_article_actions_section_without_pmc_signature() -> None:
+    html = "<article><h2>Actions</h2><ul><li>Clinical action.</li></ul></article>"
+
+    assert drop_pmc_page_chrome(html) == html
+
+
+def test_strip_internal_raw_html_title_preserves_body_text_and_is_idempotent() -> None:
+    html = "<html><head><title>Gothe atlas raw HTML</title></head><body><p>raw HTML</p></body></html>"
+
+    repaired = strip_internal_raw_html_title(html)
+
+    assert repaired == "<html><head><title>Gothe atlas</title></head><body><p>raw HTML</p></body></html>"
+    assert strip_internal_raw_html_title(repaired) == repaired
+    assert strip_internal_raw_html_title("<title>Raw HTML</title>") == "<title>Raw HTML</title>"
 
 
 def test_running_header_helpers_strip_known_prefixes() -> None:

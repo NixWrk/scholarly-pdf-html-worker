@@ -13180,6 +13180,29 @@ def test_polish_html_document_drops_repository_and_publisher_chrome_pages() -> N
     assert "rug-real-page.png" in polished
 
 
+def test_polish_html_document_drops_pmc_chrome_and_internal_raw_title() -> None:
+    html = (
+        "<html><head><title>Clinical paper raw HTML</title></head><body>"
+        "<article><h1>Clinical paper</h1><p>Article body.</p></article>"
+        '<div class="pmc-sidenav desktop:grid-col-4"><section><h2>ACTIONS</h2>'
+        '<ul class="usa-list usa-list--actions"><li>Download PDF</li></ul></section></div>'
+        '<div class="overlay" role="dialog" aria-label="Citation Dialog" hidden>'
+        '<div class="citation-dialog"><h2>Cite</h2></div></div>'
+        '<div class="pmc-layout__disclaimer">NLM disclaimer</div>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "<title>Clinical paper</title>" in polished
+    assert "Clinical paper raw HTML" not in polished
+    assert "Article body." in polished
+    assert "pmc-sidenav" not in polished
+    assert "ACTIONS" not in polished
+    assert "Citation Dialog" not in polished
+    assert "NLM disclaimer" not in polished
+
+
 def test_polish_html_document_strips_dense_pdf_line_numbers_without_units_or_citations() -> None:
     html = (
         "<html><body>"

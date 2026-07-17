@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from .frontmatter_footnotes import PAGE_HEADER_FOOTER_LINE_PATTERN
-from .html_fragments import node_has_class, visible_text
+from .html_fragments import matching_div_close_span, node_has_class, visible_text
 
 
 SENTENCE_NODE_PATTERN = re.compile(
@@ -101,6 +101,62 @@ PUBLISHER_CHROME_BLOCK_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.IGNORECASE,
     ),
 )
+
+PMC_CHROME_DIV_OPEN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r'<div\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\bpmc-sidenav\b[^"\']*["\'])[^>]*>',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'<div\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\boverlay\b[^"\']*["\'])'
+        r'(?=[^>]*\baria-label\s*=\s*["\']Citation\s+Dialog["\'])[^>]*>',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'<div\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\bpmc-layout__disclaimer\b[^"\']*["\'])[^>]*>',
+        re.IGNORECASE,
+    ),
+)
+HTML_TITLE_PATTERN = re.compile(
+    r"(?P<open><title\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></title\s*>)",
+    re.IGNORECASE,
+)
+INTERNAL_RAW_HTML_TITLE_SUFFIX_PATTERN = re.compile(
+    r"(?:[\s_-]+)raw\s+html\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_internal_raw_html_title(html: str) -> str:
+    """Remove the chunk-combiner's internal suffix from a document title."""
+
+    def replace(match: re.Match[str]) -> str:
+        body = match.group("body")
+        cleaned = INTERNAL_RAW_HTML_TITLE_SUFFIX_PATTERN.sub("", body).rstrip()
+        if not cleaned.strip() or cleaned == body:
+            return match.group(0)
+        return f"{match.group('open')}{cleaned}{match.group('close')}"
+
+    return HTML_TITLE_PATTERN.sub(replace, html)
+
+
+def drop_pmc_page_chrome(html: str) -> str:
+    """Remove balanced PMC navigation, citation-dialog, and disclaimer blocks."""
+
+    current = html
+    for pattern in PMC_CHROME_DIV_OPEN_PATTERNS:
+        search_from = 0
+        while True:
+            open_match = pattern.search(current, search_from)
+            if open_match is None:
+                break
+            close_span = matching_div_close_span(current, open_match.end())
+            if close_span is None:
+                search_from = open_match.end()
+                continue
+            current = current[: open_match.start()] + current[close_span[1] :]
+            search_from = open_match.start()
+    return current
 
 
 def drop_page_header_footer_paragraphs(html: str) -> str:
@@ -294,6 +350,7 @@ def expand_span_start_to_leading_image_paragraph(html: str, start: int) -> int:
 
 
 def drop_publisher_chrome_pages(html: str) -> str:
+    html = drop_pmc_page_chrome(html)
     spans: list[tuple[int, int]] = []
     for pattern in PUBLISHER_CHROME_BLOCK_PATTERNS:
         for match in pattern.finditer(html):
@@ -365,10 +422,12 @@ __all__ = [
     "PDF_LINE_NUMBER_CONTINUATION_BODY_PATTERN",
     "PDF_RUNNING_HEADER_PREFIX_PATTERNS",
     "PUBLISHER_CHROME_BLOCK_PATTERNS",
+    "PMC_CHROME_DIV_OPEN_PATTERNS",
     "SENTENCE_NODE_PATTERN",
     "SENTENCE_P_NODE_PATTERN",
     "WILEY_DOWNLOAD_PAGE_FURNITURE_PATTERN",
     "drop_page_header_footer_paragraphs",
+    "drop_pmc_page_chrome",
     "drop_publisher_chrome_pages",
     "drop_repeated_page_furniture",
     "expand_span_start_to_leading_image_paragraph",
@@ -380,4 +439,5 @@ __all__ = [
     "strip_leading_pdf_line_number_from_body",
     "strip_pdf_running_header_prefix_from_body",
     "strip_plain_visible_prefix_from_body",
+    "strip_internal_raw_html_title",
 ]

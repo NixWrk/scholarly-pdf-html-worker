@@ -147,6 +147,7 @@ from .raw_html_polish.page_furniture import (
     normalize_page_furniture_key as _normalize_page_furniture_key,
     repeated_page_furniture_keys as _repeated_page_furniture_keys,
     strip_leading_pdf_line_number_from_body as _strip_leading_pdf_line_number_from_body,
+    strip_internal_raw_html_title as _strip_internal_raw_html_title,
     strip_pdf_running_header_prefix_from_body as _strip_pdf_running_header_prefix_from_body,
     strip_plain_visible_prefix_from_body as _strip_plain_visible_prefix_from_body,
 )
@@ -20793,6 +20794,7 @@ def _polish_phase_pre_cleanup(state: RawPolishState, context: RawPolishContext) 
     polished = _drop_page_header_footer_paragraphs(polished)
     polished = _drop_repeated_page_furniture(polished)
     polished = _drop_publisher_chrome_pages(polished)
+    polished = _strip_internal_raw_html_title(polished)
     polished = drop_repeated_phrases(polished)
     polished = _normalize_glued_roman_suffixes(polished)
     polished = _normalize_table_cell_roman_suffixes(polished)
