@@ -28,6 +28,10 @@ from pdf_html_polish.html_stages import (
     RAW_STAGE_NAME,
     write_raw_conversion_manifest,
 )
+from pdf_html_polish.quality_loop.cached_run_state import (
+    CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
+    cached_repolish_artifact_fingerprints,
+)
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 from pdf_html_polish.quality_loop.publication_state import seal_quality_publication
@@ -98,20 +102,40 @@ def _seal_quality_output(
     source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
     source_cached_raw.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(production_raw, source_cached_raw)
+    profile_path = source_run / "profiles" / f"{article_id}.citation_profile.json"
+    _write_json(profile_path, {"status": "ok", "style": "unknown", "confidence": "low"})
     _write_json(
         source_run / "manifest.json",
         {
+            "source_snapshot_schema_version": CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
             "source_kind": "converted_raw_cache",
+            "out_dir": str(source_run),
+            "raw_count": 1,
+            "article_count": 1,
+            "raw_cache_dir": str(source_run / "raw_cache"),
+            "profile_dir": str(source_run / "profiles"),
+            "profile_status_counts": {"ok": 1},
+            "profile_style_counts": {"unknown:low": 1},
             "articles": [
                 {
+                    "index": 1,
                     "article_id": article_id,
+                    "article": article_id,
                     "raw_stage_path": str(production_raw),
                     "raw_cache_path": str(source_cached_raw),
+                    "profile_path": str(profile_path),
                     "source_polish_path": str(target_polish),
+                    "profile_status": "ok",
+                    "citation_style": "unknown",
+                    "citation_confidence": "low",
+                    **cached_repolish_artifact_fingerprints(source_cached_raw, profile_path),
                 }
             ],
         },
     )
+    source_manifest_fingerprint = fingerprint_file(source_run / "manifest.json", reject_symlink=True)
+    assert source_manifest_fingerprint is not None
+
     quality_cached_raw = quality_dir / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
     quality_cached_raw.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(production_raw, quality_cached_raw)
@@ -125,6 +149,8 @@ def _seal_quality_output(
         {
             "source_kind": "cached_raw_repolish",
             "source_run_dir": str(source_run),
+            "source_manifest_bytes": source_manifest_fingerprint.size,
+            "source_manifest_sha256": source_manifest_fingerprint.sha256,
             "articles": [
                 {"article": article_id, "raw_cache_path": str(quality_cached_raw)}
             ],
@@ -657,86 +683,12 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
 
     def fake_observe_runner(command, cwd, log):
         observe_calls.append((list(command), cwd))
-        source_run = quality_dir / "_converted_raw_source"
-        source_run.mkdir(parents=True)
-        production_raw = conversion_dir / "article_a" / "_z2m_stages" / RAW_STAGE_NAME
-        source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
-        source_cached_raw.parent.mkdir(parents=True)
-        shutil.copyfile(production_raw, source_cached_raw)
-        (source_run / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "source_kind": "converted_raw_cache",
-                    "articles": [
-                        {
-                            "article_id": article_id,
-                            "raw_stage_path": str(production_raw),
-                            "raw_cache_path": str(source_cached_raw),
-                            "source_polish_path": str(
-                                conversion_dir / "article_a" / "_z2m_stages" / "02.en.polish.html"
-                            ),
-                        }
-                    ]
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
+        _seal_quality_output(
+            quality_dir,
+            conversion_dir / "article_a" / "_z2m_stages",
+            article_id,
+            audited_html="<html><body>audited</body></html>",
         )
-        quality_cached_raw = quality_dir / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
-        quality_cached_raw.parent.mkdir(parents=True)
-        shutil.copyfile(production_raw, quality_cached_raw)
-        (quality_dir / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "source_kind": "cached_raw_repolish",
-                    "source_run_dir": str(source_run),
-                    "code_commit": "abc123",
-                    "working_tree_dirty": False,
-                    "articles": [
-                        {"article": article_id, "raw_cache_path": str(quality_cached_raw)}
-                    ],
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        final_stage = quality_dir / "audit_tree" / article_id / "02.en.polish.html"
-        final_stage.parent.mkdir(parents=True)
-        final_stage.write_text("<html><body>audited</body></html>", encoding="utf-8")
-        audit_raw = final_stage.parent / RAW_STAGE_NAME
-        shutil.copyfile(production_raw, audit_raw)
-        raw_fingerprint = fingerprint_file(audit_raw, reject_symlink=True)
-        polish_fingerprint = fingerprint_file(final_stage, reject_symlink=True)
-        assert raw_fingerprint is not None
-        assert polish_fingerprint is not None
-        (quality_dir / "audit_full_checks.json").write_text(
-            json.dumps(
-                {
-                    "audit_status": "complete",
-                    "articles": [
-                        {
-                            "article": article_id,
-                            "raw_stage_path": str(audit_raw),
-                            "polish_stage_path": str(final_stage),
-                            "raw_stage_bytes": raw_fingerprint.size,
-                            "raw_stage_sha256": raw_fingerprint.sha256,
-                            "polish_stage_bytes": polish_fingerprint.size,
-                            "polish_stage_sha256": polish_fingerprint.sha256,
-                        }
-                    ],
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        (quality_dir / "quality_gate_report.json").write_text(
-            '{"status":"pass"}\n',
-            encoding="utf-8",
-        )
-        assert seal_quality_publication(quality_dir)["status"] == "completed"
         if log is not None:
             log("observe ok")
         return 0

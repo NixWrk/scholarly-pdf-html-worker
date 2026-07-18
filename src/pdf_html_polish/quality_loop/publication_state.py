@@ -22,6 +22,10 @@ from pdf_html_polish.html_stages import (
     RawConversionValidator,
     require_validated_raw_conversion_ownership,
 )
+from pdf_html_polish.quality_loop.cached_run_state import (
+    CachedRunSourceError,
+    validate_cached_repolish_source,
+)
 
 
 QUALITY_PUBLICATION_MANIFEST_NAME = "quality_publication_manifest.json"
@@ -131,7 +135,7 @@ def _audit_fingerprint_matches(
     prefix: str,
     record: dict[str, Any],
 ) -> bool:
-    return (
+    return bool(
         audit_article.get(f"{prefix}_stage_bytes") == record["bytes"]
         and audit_article.get(f"{prefix}_stage_sha256") == record["sha256"]
     )
@@ -235,18 +239,42 @@ def build_quality_publication_snapshot(
         if source_run_path is not None and source_run_path.is_absolute()
         else None
     )
+    source_run_is_local = source_run_dir is not None and _is_within(source_run_dir, run_dir)
     if source_run_path is None:
         errors.append("quality_source_run_dir_missing")
     elif not source_run_path.is_absolute():
         errors.append("quality_source_run_dir_not_absolute")
-    elif source_run_dir is not None and not _is_within(source_run_dir, run_dir):
+    elif not source_run_is_local:
         errors.append("quality_source_run_dir_outside_quality_run")
     source_manifest: dict[str, Any] = {}
     source_manifest_record: dict[str, Any] | None = None
-    if source_run_dir is not None:
+    if source_run_is_local and source_run_dir is not None:
         source_manifest, source_manifest_record, error = _json_document(source_run_dir / "manifest.json")
         if error:
             errors.append(error)
+        try:
+            source_validation = validate_cached_repolish_source(source_run_dir)
+        except (CachedRunSourceError, OSError, ValueError) as exc:
+            errors.append(f"source_snapshot_invalid:{exc}")
+        else:
+            source_manifest = source_validation.manifest
+            validated_fingerprint = source_validation.manifest_fingerprint
+            if source_manifest_record is None or (
+                source_manifest_record.get("bytes"),
+                source_manifest_record.get("sha256"),
+            ) != (
+                validated_fingerprint.size,
+                validated_fingerprint.sha256,
+            ):
+                errors.append("source_manifest_changed_during_publication_preflight")
+            if (
+                quality_manifest.get("source_manifest_bytes"),
+                quality_manifest.get("source_manifest_sha256"),
+            ) != (
+                validated_fingerprint.size,
+                validated_fingerprint.sha256,
+            ):
+                errors.append("quality_source_manifest_fingerprint_mismatch")
 
     if quality_manifest.get("source_kind") != "cached_raw_repolish":
         errors.append("quality_source_kind_not_cached_raw_repolish")

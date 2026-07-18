@@ -15,6 +15,10 @@ from pdf_html_polish.html_stages import (
     RAW_STAGE_NAME,
     write_raw_conversion_manifest,
 )
+from pdf_html_polish.quality_loop.cached_run_state import (
+    CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
+    cached_repolish_artifact_fingerprints,
+)
 from pdf_html_polish.quality_loop.publication_state import (
     seal_quality_publication,
 )
@@ -55,14 +59,60 @@ def _seal_quality_run(quality_run: Path) -> dict:
     source_manifest_path = source_run / "manifest.json"
     source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
     quality_manifest["source_kind"] = "cached_raw_repolish"
+    source_manifest["source_snapshot_schema_version"] = CACHED_REPOLISH_SOURCE_SCHEMA_VERSION
     source_manifest["source_kind"] = "converted_raw_cache"
-    source_by_id = {
-        str(article["article_id"]): article
+    source_manifest["out_dir"] = str(source_run)
+
+    source_articles = [
+        article
         for article in source_manifest.get("articles") or []
         if isinstance(article, dict) and article.get("article_id")
-    }
+    ]
+    source_by_id = {str(article["article_id"]): article for article in source_articles}
+    for index, source_article in enumerate(source_articles, start=1):
+        article_id = str(source_article["article_id"])
+        production_raw = Path(str(source_article.get("raw_stage_path") or ""))
+        if not production_raw.is_file():
+            continue
+        source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+        source_cached_raw.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(production_raw, source_cached_raw)
+        profile_path = source_run / "profiles" / f"{article_id}.citation_profile.json"
+        _write_json(profile_path, {"status": "ok", "style": "unknown", "confidence": "low"})
+        source_article.update(
+            {
+                "index": index,
+                "article": source_article.get("article") or article_id,
+                "raw_cache_path": str(source_cached_raw),
+                "profile_path": str(profile_path),
+                "profile_status": "ok",
+                "citation_style": "unknown",
+                "citation_confidence": "low",
+                **cached_repolish_artifact_fingerprints(source_cached_raw, profile_path),
+            }
+        )
+
+    source_manifest["raw_count"] = len(source_articles)
+    source_manifest["article_count"] = len(source_articles)
+    source_manifest["raw_cache_dir"] = str(source_run / "raw_cache")
+    source_manifest["profile_dir"] = str(source_run / "profiles")
+    source_manifest["profile_status_counts"] = {"ok": len(source_articles)}
+    source_manifest["profile_style_counts"] = {"unknown:low": len(source_articles)}
+    source_manifest["articles"] = source_articles
+    _write_json(source_manifest_path, source_manifest)
+    source_fingerprint = fingerprint_file(source_manifest_path, reject_symlink=True)
+    assert source_fingerprint is not None
+    quality_manifest["source_manifest_bytes"] = source_fingerprint.size
+    quality_manifest["source_manifest_sha256"] = source_fingerprint.sha256
+
+    processed_articles = [
+        article for article in quality_manifest.get("articles") or [] if isinstance(article, dict)
+    ]
+    skipped_articles = [
+        article for article in quality_manifest.get("skipped_articles") or [] if isinstance(article, dict)
+    ]
     audit_articles: list[dict] = []
-    for quality_article in quality_manifest.get("articles") or []:
+    for quality_article in [*processed_articles, *skipped_articles]:
         article_id = str(quality_article.get("article") or "")
         source_article = source_by_id.get(article_id)
         if source_article is None or not source_article.get("raw_stage_path"):
@@ -70,15 +120,12 @@ def _seal_quality_run(quality_run: Path) -> dict:
         production_raw = Path(source_article["raw_stage_path"])
         if not production_raw.is_file():
             continue
-        source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
-        source_cached_raw.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(production_raw, source_cached_raw)
-        source_article["raw_cache_path"] = str(source_cached_raw)
-
         quality_cached_raw = quality_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
         quality_cached_raw.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(production_raw, quality_cached_raw)
         quality_article["raw_cache_path"] = str(quality_cached_raw)
+        if quality_article not in processed_articles:
+            continue
         audit_dir = quality_run / "audit_tree" / article_id
         audited_polish = audit_dir / POLISH_STAGE_NAME
         if not audited_polish.is_file():
@@ -107,14 +154,10 @@ def _seal_quality_run(quality_run: Path) -> dict:
             }
         )
 
-    _write_json(source_manifest_path, source_manifest)
     _write_json(quality_manifest_path, quality_manifest)
     _write_json(
         quality_run / "audit_full_checks.json",
-        {
-            "audit_status": "complete",
-            "articles": audit_articles,
-        },
+        {"audit_status": "complete", "articles": audit_articles},
     )
     _write_json(quality_run / "quality_gate_report.json", {"status": "pass"})
     return seal_quality_publication(quality_run)

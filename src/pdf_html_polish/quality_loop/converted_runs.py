@@ -11,6 +11,12 @@ from typing import Any, Iterable
 from pdf_html_polish.artifact_integrity import fingerprint_file
 
 from pdf_html_polish.atomic_io import copy_file_atomic
+from pdf_html_polish.quality_loop.cached_run_state import (
+    CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
+    cached_repolish_artifact_fingerprints,
+    validate_cached_repolish_source,
+    path_is_link_like,
+)
 from pdf_html_polish.citation_profile import infer_citation_style_from_text
 from pdf_html_polish.html_links import count_same_document_absolute_fragment_links
 from pdf_html_polish.html_stages import (
@@ -280,6 +286,20 @@ def _validated_source_record(validation: RawConversionValidation) -> dict[str, A
     }
 
 
+def _reject_existing_raw_cache_artifacts(out_dir: Path) -> None:
+    if not out_dir.exists():
+        return
+    entries = sorted(out_dir.iterdir(), key=lambda path: path.name.casefold())
+    if not entries:
+        return
+    owned_names = {"raw_cache", "profiles", "manifest.json"}
+    kind = "owned artifacts" if any(path.name in owned_names for path in entries) else "artifacts"
+    raise FileExistsError(
+        f"Converted raw cache already contains {kind}: "
+        + ", ".join(str(path) for path in entries)
+    )
+
+
 def _copy_validated_raw(
     validation: RawConversionValidation,
     destination: Path,
@@ -394,15 +414,24 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
     reuse already inlined production polish or local sidecar files.
     """
 
-    out_dir = out_dir.resolve(strict=False)
-    raw_cache = out_dir / "raw_cache"
-    profiles = out_dir / "profiles"
+    out_candidate = Path(out_dir).expanduser()
+    if path_is_link_like(out_candidate):
+        raise ValueError(f"Converted raw cache path must not be link-like: {out_candidate}")
+    out_dir = out_candidate.resolve(strict=False)
+    if out_dir.exists() and not out_dir.is_dir():
+        raise ValueError(f"Converted raw cache path must be a directory: {out_dir}")
+    _reject_existing_raw_cache_artifacts(out_dir)
 
     roots = [root.resolve(strict=False) for root in roots]
     raw_stages = find_converted_raw_stages(roots)
+    if not raw_stages:
+        raise ValueError("No committed converted raw stages were found for cached repolish.")
     validations_by_raw = _validated_raw_sources(raw_stages)
+    _reject_existing_raw_cache_artifacts(out_dir)
+    raw_cache = out_dir / "raw_cache"
+    profiles = out_dir / "profiles"
     for path in (raw_cache, profiles):
-        path.mkdir(parents=True, exist_ok=True)
+        path.mkdir(parents=True, exist_ok=False)
     articles: list[dict[str, Any]] = []
     profile_status_counts: Counter[str] = Counter()
     profile_style_counts: Counter[str] = Counter()
@@ -413,7 +442,7 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
         out_raw = raw_cache / f"{article_id}.{RAW_STAGE}"
         out_profile = profiles / f"{article_id}.citation_profile.json"
         _copy_validated_raw(validations_by_raw[raw_path], out_raw)
-        raw_html = out_raw.read_text(encoding="utf-8", errors="replace")
+        raw_html = out_raw.read_text(encoding="utf-8")
         profile = _converted_raw_citation_profile(raw_html, raw_path)
         write_json(out_profile, profile)
         profile_status_counts[profile["status"]] += 1
@@ -434,12 +463,14 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
                 "profile_status": profile["status"],
                 "citation_style": profile["style"],
                 "citation_confidence": profile["confidence"],
+                **cached_repolish_artifact_fingerprints(out_raw, out_profile),
                 **_validated_source_record(validations_by_raw[raw_path]),
             }
         )
 
     manifest = {
         "generated_at": now(),
+        "source_snapshot_schema_version": CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
         "source_kind": "converted_raw_cache",
         "source_roots": [str(root) for root in roots],
         "out_dir": str(out_dir),
@@ -454,4 +485,5 @@ def prepare_converted_raw_cache(roots: list[Path], out_dir: Path) -> dict[str, A
         "articles": articles,
     }
     write_json(out_dir / "manifest.json", manifest)
+    validate_cached_repolish_source(out_dir)
     return manifest

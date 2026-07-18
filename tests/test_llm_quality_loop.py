@@ -14,6 +14,15 @@ from pdf_html_polish.html_stages import (
     RAW_STAGE_NAME,
     write_raw_conversion_manifest,
 )
+from pdf_html_polish.quality_loop.cached_run_state import (
+    CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
+    CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR,
+    CachedRunSourceError,
+    cached_repolish_artifact_fingerprints,
+    validate_cached_repolish_source,
+)
+
+import pdf_html_polish.quality_loop.converted_runs as converted_runs_module
 
 import scripts.llm_quality_loop as llm_quality_loop
 from scripts.llm_quality_loop import (
@@ -108,6 +117,68 @@ def _tiny_rgba_png_bytes(red: int, green: int, blue: int, alpha: int = 255) -> b
 def _write_json(path: Path, data: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _commit_cached_repolish_source(
+    source: Path,
+    *,
+    article_metadata: dict[str, dict[str, object]] | None = None,
+    source_run_dir: Path | None = None,
+) -> dict[str, object]:
+    source = source.resolve(strict=False)
+    raw_dir = source / "raw_cache"
+    profile_dir = source / "profiles"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    metadata = article_metadata or {}
+    articles: list[dict[str, object]] = []
+    status_counts: dict[str, int] = {}
+    style_counts: dict[str, int] = {}
+    for index, raw_path in enumerate(sorted(raw_dir.glob("*.01.en.raw.html")), start=1):
+        article_id = raw_path.name.removesuffix(".01.en.raw.html")
+        profile_path = profile_dir / f"{article_id}.citation_profile.json"
+        if not profile_path.is_file():
+            _write_json(
+                profile_path,
+                {"status": "ok", "style": "unknown", "confidence": "low"},
+            )
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        assert isinstance(profile, dict)
+        status = str(profile.get("status") or "unknown")
+        style = str(profile.get("style") or "unknown")
+        confidence = str(profile.get("confidence") or "low")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        style_key = f"{style}:{confidence}"
+        style_counts[style_key] = style_counts.get(style_key, 0) + 1
+        articles.append(
+            {
+                "index": index,
+                "article_id": article_id,
+                "article": article_id,
+                "raw_cache_path": str(raw_path.resolve()),
+                "profile_path": str(profile_path.resolve()),
+                "profile_status": status,
+                "citation_style": style,
+                "citation_confidence": confidence,
+                **cached_repolish_artifact_fingerprints(raw_path, profile_path),
+                **metadata.get(article_id, {}),
+            }
+        )
+    manifest: dict[str, object] = {
+        "source_snapshot_schema_version": CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
+        "source_kind": "converted_raw_cache",
+        "out_dir": str(source),
+        "raw_count": len(articles),
+        "article_count": len(articles),
+        "raw_cache_dir": str(raw_dir.resolve()),
+        "profile_dir": str(profile_dir.resolve()),
+        "profile_status_counts": dict(sorted(status_counts.items())),
+        "profile_style_counts": dict(sorted(style_counts.items())),
+        "articles": articles,
+    }
+    if source_run_dir is not None:
+        manifest["source_run_dir"] = str(source_run_dir.resolve(strict=False))
+    _write_json(source / "manifest.json", manifest)
+    return manifest
 
 
 def test_quality_loop_script_keeps_review_helper_compatibility(tmp_path: Path) -> None:
@@ -4113,6 +4184,105 @@ def test_prepare_converted_run_rejects_uncommitted_raw_stage(tmp_path: Path) -> 
     assert not cache_dir.exists()
 
 
+def test_prepare_converted_raw_cache_preserves_existing_owned_artifacts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    _write_current_converted_pair(
+        stage_dir,
+        raw_html="<html><body><p>Validated raw.</p></body></html>",
+        polish_html="<html><body><p>Polish.</p></body></html>",
+    )
+    out_dir = tmp_path / "source"
+    sentinel = out_dir / "raw_cache" / "sentinel.bin"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_bytes(b"keep-existing-cache")
+    manifest_path = out_dir / "manifest.json"
+    original_manifest = '{"sentinel": true}\n'
+    manifest_path.write_text(original_manifest, encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already contains owned artifacts"):
+        prepare_converted_raw_cache([root], out_dir)
+
+    assert sentinel.read_bytes() == b"keep-existing-cache"
+    assert manifest_path.read_text(encoding="utf-8") == original_manifest
+    assert not (out_dir / "profiles").exists()
+
+
+def test_prepare_converted_raw_cache_rejects_unrelated_existing_artifact_before_mutation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    _write_current_converted_pair(
+        stage_dir,
+        raw_html="<html><body><p>Validated raw.</p></body></html>",
+        polish_html="<html><body><p>Polish.</p></body></html>",
+    )
+    out_dir = tmp_path / "source"
+    stale = out_dir / "audit_full_checks.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"stale": true}\n', encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already contains artifacts"):
+        prepare_converted_raw_cache([root], out_dir)
+
+    assert stale.read_text(encoding="utf-8") == '{"stale": true}\n'
+    assert not (out_dir / "raw_cache").exists()
+    assert not (out_dir / "profiles").exists()
+    assert not (out_dir / "manifest.json").exists()
+
+
+def test_prepare_converted_raw_cache_rechecks_output_after_source_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "Doc" / "_z2m_stages"
+    _write_current_converted_pair(
+        stage_dir,
+        raw_html="<html><body><p>Validated raw.</p></body></html>",
+        polish_html="<html><body><p>Polish.</p></body></html>",
+    )
+    out_dir = tmp_path / "source"
+    stale = out_dir / "audit_full_checks.json"
+    real_validate = converted_runs_module._validated_raw_sources
+
+    def validate_then_add_artifact(
+        paths: list[Path],
+    ) -> dict[Path, object]:
+        result = real_validate(paths)
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text('{"raced": true}\n', encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        converted_runs_module,
+        "_validated_raw_sources",
+        validate_then_add_artifact,
+    )
+    with pytest.raises(FileExistsError, match="already contains artifacts"):
+        prepare_converted_raw_cache([root], out_dir)
+
+    assert stale.read_text(encoding="utf-8") == '{"raced": true}\n'
+    assert not (out_dir / "raw_cache").exists()
+    assert not (out_dir / "profiles").exists()
+    assert not (out_dir / "manifest.json").exists()
+
+
+def test_prepare_converted_raw_cache_rejects_empty_input_before_creating_output(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "converted"
+    root.mkdir()
+    out_dir = tmp_path / "source"
+
+    with pytest.raises(ValueError, match="No committed converted raw stages"):
+        prepare_converted_raw_cache([root], out_dir)
+
+    assert not out_dir.exists()
+
 def test_converted_raw_cache_regenerates_missing_polish_but_audit_only_rejects_it(
     tmp_path: Path,
 ) -> None:
@@ -4907,6 +5077,7 @@ def test_repolish_cached_run_auto_policy_keeps_en_corpus_only(tmp_path: Path) ->
     ) * 80
     (raw_cache / "en_doc.01.en.raw.html").write_text(f"<html><body><p>{en_text}</p></body></html>", encoding="utf-8")
     (raw_cache / "ru_doc.01.en.raw.html").write_text(f"<html><body><p>{ru_text}</p></body></html>", encoding="utf-8")
+    _commit_cached_repolish_source(source)
 
     manifest = repolish_cached_run(
         source,
@@ -4942,6 +5113,7 @@ def test_repolish_cached_run_parallel_jobs_keep_manifest_order(tmp_path: Path) -
             profiles / f"{article}.citation_profile.json",
             {"status": "ok", "style": "unknown", "confidence": "low"},
         )
+    _commit_cached_repolish_source(source)
 
     manifest = repolish_cached_run(source, tmp_path / "run", jobs=3)
     assessment = json.loads((tmp_path / "run" / "assessment.json").read_text(encoding="utf-8"))
@@ -4950,6 +5122,260 @@ def test_repolish_cached_run_parallel_jobs_keep_manifest_order(tmp_path: Path) -
     assert manifest["article_count"] == 3
     assert [article["article"] for article in manifest["articles"]] == ["alpha", "beta", "gamma"]
     assert [article["article"] for article in assessment["articles"]] == ["alpha", "beta", "gamma"]
+
+
+def test_repolish_cached_run_rejects_uncommitted_source_before_output_mutation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Uncommitted source.</p></body></html>",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "run"
+
+    with pytest.raises(CachedRunSourceError, match="manifest_missing_empty_symlink_or_unstable"):
+        repolish_cached_run(source, out_dir)
+
+    assert not out_dir.exists()
+
+
+def test_repolish_cached_run_publishes_and_uses_internal_source_snapshot(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    source_raw = raw_dir / "doc.01.en.raw.html"
+    source_raw.write_text(
+        "<html><body><p>Committed source snapshot.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+
+    manifest = repolish_cached_run(source, out_dir)
+
+    snapshot_dir = Path(manifest["source_run_dir"])
+    assert snapshot_dir == (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).resolve()
+    assert manifest["source_origin_run_dir"] == str(source.resolve())
+    source_validation = validate_cached_repolish_source(snapshot_dir)
+    assert manifest["source_manifest_sha256"] == source_validation.manifest_fingerprint.sha256
+    assert source_validation.manifest["source_snapshot_origin"]["run_dir"] == str(source.resolve())
+    assert (out_dir / "raw_cache" / source_raw.name).read_bytes() == source_raw.read_bytes()
+
+
+def test_repolish_cached_run_uses_staged_bytes_when_origin_changes_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    source_raw = raw_dir / "doc.01.en.raw.html"
+    original_html = "<html><body><p>Original committed bytes.</p></body></html>"
+    source_raw.write_text(original_html, encoding="utf-8")
+    _commit_cached_repolish_source(source)
+    real_stage = llm_quality_loop.stage_cached_repolish_source_snapshot
+
+    def stage_then_mutate(
+        source_run_dir: Path,
+        staging_dir: Path,
+        published_dir: Path,
+    ) -> dict[str, object]:
+        result = real_stage(source_run_dir, staging_dir, published_dir)
+        source_raw.write_text(
+            "<html><body><p>Origin changed after staging.</p></body></html>",
+            encoding="utf-8",
+        )
+        return result
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "stage_cached_repolish_source_snapshot",
+        stage_then_mutate,
+    )
+    out_dir = tmp_path / "run"
+
+    repolish_cached_run(source, out_dir)
+
+    assert (out_dir / "raw_cache" / source_raw.name).read_text(encoding="utf-8") == original_html
+    assert "Original committed bytes" in (out_dir / "polish" / "doc.02.en.polish.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_repolish_cached_run_rejects_tampered_persistent_snapshot_before_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    real_validate = llm_quality_loop.validate_cached_repolish_source
+
+    def tamper_then_validate(snapshot_dir: Path):
+        snapshot_raw = next((snapshot_dir / "raw_cache").glob("*.html"))
+        snapshot_raw.write_text(
+            "<html><body><p>Tampered snapshot.</p></body></html>",
+            encoding="utf-8",
+        )
+        return real_validate(snapshot_dir)
+
+    monkeypatch.setattr(llm_quality_loop, "validate_cached_repolish_source", tamper_then_validate)
+    out_dir = tmp_path / "run"
+
+    with pytest.raises(CachedRunSourceError, match="raw_fingerprint_mismatch:doc"):
+        repolish_cached_run(source, out_dir)
+
+    assert not (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).exists()
+    assert not (out_dir / "raw_cache").exists()
+    assert not (out_dir / "manifest.json").exists()
+
+
+def test_repolish_cached_run_rejects_snapshot_mutation_during_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+    real_polish = llm_quality_loop.polish_html_document
+    mutated = False
+
+    def polish_then_mutate(*args: object, **kwargs: object) -> str:
+        nonlocal mutated
+        polished = real_polish(*args, **kwargs)
+        if not mutated:
+            snapshot_raw = out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR / "raw_cache" / "doc.01.en.raw.html"
+            snapshot_raw.write_text(
+                "<html><body><p>Changed after worker read.</p></body></html>",
+                encoding="utf-8",
+            )
+            mutated = True
+        return polished
+
+    monkeypatch.setattr(llm_quality_loop, "polish_html_document", polish_then_mutate)
+
+    with pytest.raises(CachedRunSourceError, match="raw_fingerprint_mismatch:doc"):
+        repolish_cached_run(source, out_dir)
+
+    assert not (out_dir / "manifest.json").exists()
+    assert not (out_dir / "assessment.json").exists()
+
+
+def test_repolish_cached_run_refuses_existing_owned_output_without_mutation(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+    sentinel = out_dir / "raw_cache" / "keep.txt"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already contains owned artifacts"):
+        repolish_cached_run(source, out_dir)
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert not (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).exists()
+
+
+def test_repolish_cached_run_refuses_unrelated_existing_output_artifacts(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+    stale_audit = out_dir / "audit_full_checks.json"
+    stale_audit.parent.mkdir(parents=True)
+    stale_audit.write_text('{"stale": true}\n', encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="unrelated artifacts"):
+        repolish_cached_run(source, out_dir)
+
+    assert stale_audit.read_text(encoding="utf-8") == '{"stale": true}\n'
+    assert not (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).exists()
+    assert not (out_dir / "raw_cache").exists()
+
+
+def test_repolish_cached_run_allows_only_internal_committed_source_entry(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "run"
+    source = out_dir / "_converted_raw_source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed internal source.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+
+    manifest = repolish_cached_run(source, out_dir)
+
+    assert manifest["article_count"] == 1
+    assert source.is_dir()
+    assert (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR / "manifest.json").is_file()
+
+
+def test_repolish_cached_run_rechecks_unrelated_output_after_source_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+    real_stage = llm_quality_loop.stage_cached_repolish_source_snapshot
+
+    def stage_then_add_unrelated(
+        source_run_dir: Path,
+        staging_dir: Path,
+        published_dir: Path,
+    ) -> dict[str, object]:
+        result = real_stage(source_run_dir, staging_dir, published_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "stale-gate.json").write_text('{"stale": true}\n', encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "stage_cached_repolish_source_snapshot",
+        stage_then_add_unrelated,
+    )
+
+    with pytest.raises(FileExistsError, match="gained unrelated artifacts"):
+        repolish_cached_run(source, out_dir)
+
+    assert (out_dir / "stale-gate.json").is_file()
+    assert not (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).exists()
 
 
 def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Path, monkeypatch) -> None:
@@ -4973,17 +5399,9 @@ def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Pa
     )
     (raw_cache / "spotnitz.01.en.raw.html").write_text(raw_html, encoding="utf-8")
     _write_json(profiles / "spotnitz.citation_profile.json", {"status": "ok", "style": "unknown", "confidence": "low"})
-    _write_json(
-        source / "manifest.json",
-        {
-            "articles": [
-                {
-                    "article": "spotnitz",
-                    "article_id": "spotnitz",
-                    "source_pdf_path": str(pdf_path),
-                }
-            ]
-        },
+    _commit_cached_repolish_source(
+        source,
+        article_metadata={"spotnitz": {"source_pdf_path": str(pdf_path)}},
     )
 
     monkeypatch.setattr(
@@ -5030,17 +5448,9 @@ def test_repolish_cached_run_recovers_pdf_references_from_body_citation_candidat
     raw_html = "<html><body><p>Prior work 1,2.</p></body></html>"
     (raw_cache / "bodycite.01.en.raw.html").write_text(raw_html, encoding="utf-8")
     _write_json(profiles / "bodycite.citation_profile.json", {"status": "ok", "style": "unknown", "confidence": "low"})
-    _write_json(
-        source / "manifest.json",
-        {
-            "articles": [
-                {
-                    "article": "bodycite",
-                    "article_id": "bodycite",
-                    "source_pdf_path": str(pdf_path),
-                }
-            ]
-        },
+    _commit_cached_repolish_source(
+        source,
+        article_metadata={"bodycite": {"source_pdf_path": str(pdf_path)}},
     )
 
     monkeypatch.setattr(
@@ -5121,7 +5531,7 @@ def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) ->
             ]
         },
     )
-    _write_json(source / "manifest.json", {"source_run_dir": str(chain), "articles": [{"article": "doc"}]})
+    _commit_cached_repolish_source(source, source_run_dir=chain)
 
     manifest = repolish_cached_run(source, tmp_path / "run")
     polished = (tmp_path / "run" / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
@@ -5169,7 +5579,7 @@ def test_repolish_cached_run_restores_converted_sidecar_images(tmp_path: Path) -
             ]
         },
     )
-    _write_json(source / "manifest.json", {"source_run_dir": str(chain), "articles": [{"article": "doc"}]})
+    _commit_cached_repolish_source(source, source_run_dir=chain)
 
     manifest = repolish_cached_run(source, tmp_path / "run")
     polished = (tmp_path / "run" / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")

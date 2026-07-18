@@ -10,6 +10,10 @@ from pdf_html_polish.html_stages import (
     RAW_STAGE_NAME,
     write_raw_conversion_manifest,
 )
+from pdf_html_polish.quality_loop.cached_run_state import (
+    CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
+    cached_repolish_artifact_fingerprints,
+)
 from pdf_html_polish.quality_loop.publication_state import (
     QUALITY_PUBLICATION_MANIFEST_NAME,
     seal_quality_publication,
@@ -62,20 +66,39 @@ def _quality_run(tmp_path: Path) -> tuple[Path, Path, Path]:
     source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
     source_cached_raw.parent.mkdir(parents=True)
     shutil.copyfile(production_raw, source_cached_raw)
+    profile_path = source_run / "profiles" / f"{article_id}.citation_profile.json"
+    _write_json(profile_path, {"status": "ok", "style": "unknown", "confidence": "low"})
     _write_json(
         source_run / "manifest.json",
         {
+            "source_snapshot_schema_version": CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
             "source_kind": "converted_raw_cache",
+            "out_dir": str(source_run),
+            "raw_count": 1,
+            "article_count": 1,
+            "raw_cache_dir": str(source_run / "raw_cache"),
+            "profile_dir": str(source_run / "profiles"),
+            "profile_status_counts": {"ok": 1},
+            "profile_style_counts": {"unknown:low": 1},
             "articles": [
                 {
+                    "index": 1,
                     "article_id": article_id,
+                    "article": article_id,
                     "raw_stage_path": str(production_raw),
                     "raw_cache_path": str(source_cached_raw),
+                    "profile_path": str(profile_path),
                     "source_polish_path": str(target_polish),
+                    "profile_status": "ok",
+                    "citation_style": "unknown",
+                    "citation_confidence": "low",
+                    **cached_repolish_artifact_fingerprints(source_cached_raw, profile_path),
                 }
             ],
         },
     )
+    source_manifest_fingerprint = fingerprint_file(source_run / "manifest.json", reject_symlink=True)
+    assert source_manifest_fingerprint is not None
 
     quality_cached_raw = quality_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
     quality_cached_raw.parent.mkdir(parents=True)
@@ -97,6 +120,8 @@ def _quality_run(tmp_path: Path) -> tuple[Path, Path, Path]:
         {
             "source_kind": "cached_raw_repolish",
             "source_run_dir": str(source_run),
+            "source_manifest_bytes": source_manifest_fingerprint.size,
+            "source_manifest_sha256": source_manifest_fingerprint.sha256,
             "articles": [
                 {
                     "article": article_id,
@@ -144,6 +169,35 @@ def test_quality_publication_seal_validates_exact_audited_snapshot(tmp_path: Pat
     assert validation.valid
     assert set(validation.records_by_article) == {"article_a"}
     assert (quality_run / QUALITY_PUBLICATION_MANIFEST_NAME).is_file()
+
+
+def test_quality_publication_rejects_source_profile_changed_before_seal(tmp_path: Path) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    quality_manifest = json.loads((quality_run / "manifest.json").read_text(encoding="utf-8"))
+    source_run = Path(quality_manifest["source_run_dir"])
+    profile_path = source_run / "profiles" / "article_a.citation_profile.json"
+    _write_json(profile_path, {"status": "tampered", "style": "unknown", "confidence": "low"})
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any("source_snapshot_invalid" in error for error in seal["errors"])
+
+
+def test_quality_publication_rejects_source_profile_changed_after_seal(tmp_path: Path) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    quality_manifest = json.loads((quality_run / "manifest.json").read_text(encoding="utf-8"))
+    source_run = Path(quality_manifest["source_run_dir"])
+    profile_path = source_run / "profiles" / "article_a.citation_profile.json"
+    _write_json(profile_path, {"status": "tampered", "style": "unknown", "confidence": "low"})
+
+    validation = validate_quality_publication(quality_run)
+
+
+
+    assert not validation.valid
+    assert "source_snapshot_invalid" in validation.reason
 
 
 def test_quality_publication_rejects_polish_changed_after_seal(tmp_path: Path) -> None:

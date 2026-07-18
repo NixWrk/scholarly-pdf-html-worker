@@ -15,8 +15,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -28,7 +30,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pdf_html_polish.atomic_io import copy_file_atomic, write_text_atomic  # noqa: E402
+from pdf_html_polish.atomic_io import copy_file_atomic, write_bytes_atomic, write_text_atomic  # noqa: E402
 from pdf_html_polish.single_file_html import (  # noqa: E402
     close_katex_v8_context,
     polish_html_document,
@@ -42,7 +44,14 @@ from pdf_html_polish.quality_loop.cached_images import (  # noqa: E402
     apply_data_image_cache as _apply_data_image_cache,
     cached_data_image_cache as _cached_data_image_cache,
     copy_review_html_with_inline_images as _copy_review_html_with_inline_images,
-    manifest_article_for as _manifest_article_for,
+)
+from pdf_html_polish.quality_loop.cached_run_state import (  # noqa: E402
+    CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR,
+    path_is_link_like,
+    revalidate_cached_repolish_source_unchanged,
+    read_cached_repolish_article_snapshot,
+    stage_cached_repolish_source_snapshot,
+    validate_cached_repolish_source,
 )
 from pdf_html_polish.quality_loop.converted_runs import (  # noqa: E402
     POLISH_STAGE,
@@ -2399,6 +2408,30 @@ def normalize_converted_audit_article_ids(run_dir: Path) -> dict[str, Any]:
     _write_json(run_dir / "audit_full_checks.json", audit)
     return audit
 
+def _cached_repolish_unrelated_output_entries(
+    out_dir: Path,
+    source_origin_run_dir: Path,
+) -> list[Path]:
+    if not out_dir.exists():
+        return []
+    allowed_source = (
+        source_origin_run_dir
+        if source_origin_run_dir.parent == out_dir
+        else None
+    )
+    try:
+        entries = list(out_dir.iterdir())
+    except OSError as exc:
+        raise ValueError(f"Cached repolish output directory is unreadable: {out_dir}") from exc
+    return [
+        entry
+        for entry in entries
+        if path_is_link_like(entry)
+        or allowed_source is None
+        or entry.resolve(strict=False) != allowed_source
+    ]
+
+
 
 def repolish_cached_run(
     source_run_dir: Path,
@@ -2410,20 +2443,83 @@ def repolish_cached_run(
     skip_unknown_language: bool = False,
     jobs: int = 1,
 ) -> dict[str, Any]:
-    """Regenerate polish HTML from a run directory containing raw_cache/profiles."""
-    source_run_dir = source_run_dir.resolve(strict=False)
-    out_dir = out_dir.resolve(strict=False)
-    raw_source_dir = source_run_dir / "raw_cache"
-    profile_source_dir = source_run_dir / "profiles"
-    if not raw_source_dir.is_dir():
-        raise FileNotFoundError(f"Missing raw_cache directory: {raw_source_dir}")
+    """Regenerate polish HTML from one committed raw/profile source snapshot."""
+    source_origin_candidate = Path(source_run_dir).expanduser()
+    source_origin_run_dir = source_origin_candidate.resolve(strict=False)
+    out_candidate = Path(out_dir).expanduser()
+    if path_is_link_like(out_candidate):
+        raise ValueError(f"Output run path must not be a symlink: {out_candidate}")
+    out_dir = out_candidate.resolve(strict=False)
+    if out_dir.exists() and not out_dir.is_dir():
+        raise ValueError(f"Output run path must be a regular directory: {out_dir}")
+    source_snapshot_dir = out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR
+    owned_output_paths = (
+        source_snapshot_dir,
+        out_dir / "raw_cache",
+        out_dir / "profiles",
+        out_dir / "polish",
+        out_dir / "audit_tree",
+        out_dir / "manifest.json",
+        out_dir / "assessment.json",
+    )
+    conflicts = [path for path in owned_output_paths if path.exists() or path_is_link_like(path)]
+    if conflicts:
+        raise FileExistsError(
+            "Cached repolish output already contains owned artifacts: "
+            + ", ".join(str(path) for path in conflicts)
+        )
+    unrelated = _cached_repolish_unrelated_output_entries(out_dir, source_origin_run_dir)
+    if unrelated:
+        raise FileExistsError(
+            "Cached repolish output contains unrelated artifacts: "
+            + ", ".join(str(path) for path in unrelated)
+        )
+
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{out_dir.name}.source-snapshot-",
+        dir=out_dir.parent,
+    ) as temporary_root:
+        staged_snapshot = Path(temporary_root) / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR
+        stage_cached_repolish_source_snapshot(
+            source_origin_candidate,
+            staged_snapshot,
+            source_snapshot_dir,
+        )
+        conflicts = [path for path in owned_output_paths if path.exists() or path_is_link_like(path)]
+        if conflicts:
+            raise FileExistsError(
+                "Cached repolish output changed during source preflight: "
+                + ", ".join(str(path) for path in conflicts)
+            )
+        unrelated = _cached_repolish_unrelated_output_entries(out_dir, source_origin_run_dir)
+        if unrelated:
+            raise FileExistsError(
+                "Cached repolish output gained unrelated artifacts during source preflight: "
+                + ", ".join(str(path) for path in unrelated)
+            )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if path_is_link_like(out_dir) or not out_dir.is_dir():
+            raise ValueError(f"Output run path changed during source preflight: {out_dir}")
+        staged_snapshot.rename(source_snapshot_dir)
+    try:
+        source_validation = validate_cached_repolish_source(source_snapshot_dir)
+    except BaseException:
+        shutil.rmtree(source_snapshot_dir, ignore_errors=True)
+        raise
+
+    source_run_dir = source_validation.run_dir
+    source_articles = {
+        article.article_id: article
+        for article in source_validation.articles
+    }
 
     raw_out = out_dir / "raw_cache"
     profile_out = out_dir / "profiles"
     polish_out = out_dir / "polish"
     audit_tree = out_dir / "audit_tree"
     for path in (raw_out, profile_out, polish_out, audit_tree):
-        path.mkdir(parents=True, exist_ok=True)
+        path.mkdir(parents=True, exist_ok=False)
 
     articles: list[dict[str, Any]] = []
     assessments: list[dict[str, Any]] = []
@@ -2440,11 +2536,9 @@ def repolish_cached_run(
     pdf_reference_recovery_source_counts: Counter[str] = Counter()
     pdf_reference_entries_cache: dict[str, list[dict[str, Any]]] = {}
     pdf_reference_entries_cache_lock = threading.Lock()
-    source_manifest = _load_json(source_run_dir / "manifest.json", default={})
-    raw_files: list[Path] = []
+    raw_files = [article.raw_path for article in source_validation.articles]
 
     try:
-        raw_files = sorted(raw_source_dir.glob(f"*.{RAW_STAGE}"))
         total_raw = len(raw_files)
         worker_count = max(1, int(jobs or 1))
         print(
@@ -2473,23 +2567,18 @@ def repolish_cached_run(
 
         def process_raw_file(index: int, raw_path: Path) -> dict[str, Any]:
             article = raw_path.name.removesuffix(f".{RAW_STAGE}")
-            manifest_article = _manifest_article_for(source_manifest, article) or {}
-            profile_path = profile_source_dir / f"{article}.citation_profile.json"
-            profile = (
-                _load_json(profile_path)
-                if profile_path.is_file()
-                else {"status": "missing_profile", "style": "unknown", "confidence": "low"}
+            source_article = source_articles[article]
+            manifest_article = source_article.manifest_article
+            raw_html, profile, raw_bytes, profile_bytes = read_cached_repolish_article_snapshot(
+                source_article
             )
-            raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
             out_raw = raw_out / raw_path.name
             out_profile = profile_out / f"{article}.citation_profile.json"
             out_polish = polish_out / f"{article}.{POLISH_STAGE}"
-            copy_file_atomic(raw_path, out_raw)
-            if profile_path.is_file():
-                copy_file_atomic(profile_path, out_profile)
-            else:
-                _write_json(out_profile, profile)
+            write_bytes_atomic(out_raw, raw_bytes)
+            write_bytes_atomic(out_profile, profile_bytes)
 
+            del raw_bytes, profile_bytes
             language_decision = resolve_document_polish_language(
                 raw_html,
                 table_caption_language="en",
@@ -2664,12 +2753,17 @@ def repolish_cached_run(
     finally:
         close_katex_v8_context()
 
+    revalidate_cached_repolish_source_unchanged(source_validation)
+
     totals, problematic = _assessment_totals(assessments)
     manifest = {
         "generated_at": _now(),
         "source_kind": "cached_raw_repolish",
         "mandatory_corpus_repolish": True,
         "source_run_dir": str(source_run_dir),
+        "source_origin_run_dir": str(source_origin_run_dir),
+        "source_manifest_bytes": source_validation.manifest_fingerprint.size,
+        "source_manifest_sha256": source_validation.manifest_fingerprint.sha256,
         "out_dir": str(out_dir),
         "code_commit": _git_short_head(),
         "working_tree_dirty": _git_dirty(),
