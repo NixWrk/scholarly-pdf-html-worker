@@ -322,10 +322,98 @@ def test_quality_publication_accepts_exact_all_skipped_coverage(tmp_path: Path) 
 
     assert seal["status"] == "completed"
     assert validation.valid
-    assert validation.records_by_article == {}
+    record = validation.records_by_article["article_a"]
+    assert record["publication_kind"] == "skipped_fallback"
+    assert record["final_polish"] == record["fallback_polish"]
+    assert record["fallback_polish"]["path"] == str(
+        (_production_raw.parent / POLISH_STAGE_NAME).resolve(strict=False)
+    )
     assert [record["article_id"] for record in seal["snapshot"]["skipped_articles"]] == [
         "article_a"
     ]
+
+
+@pytest.mark.parametrize("fallback_state", ["missing", "malformed"])
+def test_quality_publication_rejects_invalid_skipped_fallback_before_seal(
+    tmp_path: Path,
+    fallback_state: str,
+) -> None:
+    quality_run, production_raw, _audited_polish = _quality_run(tmp_path)
+    _mark_article_skipped(quality_run)
+    fallback = production_raw.parent / POLISH_STAGE_NAME
+    if fallback_state == "missing":
+        fallback.unlink()
+    else:
+        fallback.write_text("<html><body>truncated", encoding="utf-8")
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any("fallback_polish_invalid:article_a" in error for error in seal["errors"])
+
+
+def test_quality_publication_rejects_redirected_skipped_fallback_path(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    _mark_article_skipped(quality_run)
+    rogue = tmp_path / "rogue.html"
+    rogue.write_text("<html><body><p>Unrelated HTML.</p></body></html>", encoding="utf-8")
+    quality_manifest_path = quality_run / "manifest.json"
+    quality_manifest = json.loads(quality_manifest_path.read_text(encoding="utf-8"))
+    source_run = Path(quality_manifest["source_run_dir"])
+    source_manifest_path = source_run / "manifest.json"
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    source_manifest["articles"][0]["source_polish_path"] = str(rogue)
+    _write_json(source_manifest_path, source_manifest)
+    source_fingerprint = fingerprint_file(source_manifest_path, reject_symlink=True)
+    assert source_fingerprint is not None
+    quality_manifest["source_manifest_bytes"] = source_fingerprint.size
+    quality_manifest["source_manifest_sha256"] = source_fingerprint.sha256
+    _write_json(quality_manifest_path, quality_manifest)
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert "target_polish_path_mismatch:article_a" in seal["errors"]
+
+
+def test_quality_publication_rejects_linked_skipped_fallback(
+    tmp_path: Path,
+) -> None:
+    quality_run, production_raw, _audited_polish = _quality_run(tmp_path)
+    _mark_article_skipped(quality_run)
+    fallback = production_raw.parent / POLISH_STAGE_NAME
+    outside = tmp_path / "outside.html"
+    outside.write_bytes(fallback.read_bytes())
+    fallback.unlink()
+    try:
+        fallback.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any(
+        error.startswith("target_polish_link_like:article_a")
+        for error in seal["errors"]
+    )
+
+
+def test_quality_publication_rejects_skipped_fallback_changed_after_seal(
+    tmp_path: Path,
+) -> None:
+    quality_run, production_raw, _audited_polish = _quality_run(tmp_path)
+    _mark_article_skipped(quality_run)
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    fallback = production_raw.parent / POLISH_STAGE_NAME
+    fallback.write_text("<html><body><p>Changed fallback.</p></body></html>", encoding="utf-8")
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert "snapshot_changed" in validation.reason
 
 
 def test_quality_publication_rechecks_skipped_production_raw(tmp_path: Path) -> None:

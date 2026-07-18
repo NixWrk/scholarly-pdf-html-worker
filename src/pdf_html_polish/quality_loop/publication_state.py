@@ -24,12 +24,13 @@ from pdf_html_polish.html_stages import (
 )
 from pdf_html_polish.quality_loop.cached_run_state import (
     CachedRunSourceError,
+    path_is_link_like,
     validate_cached_repolish_source,
 )
 
 
 QUALITY_PUBLICATION_MANIFEST_NAME = "quality_publication_manifest.json"
-QUALITY_PUBLICATION_MANIFEST_SCHEMA_VERSION = 1
+QUALITY_PUBLICATION_MANIFEST_SCHEMA_VERSION = 2
 AUDIT_REPORT_NAME = "audit_full_checks.json"
 GATE_REPORT_NAME = "quality_gate_report.json"
 _MAX_PUBLICATION_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -51,6 +52,18 @@ def _path_key(path: Path) -> str:
     return os.path.normcase(str(_resolve(path)))
 
 
+def _lexical_path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(Path(path).expanduser())))
+
+
+def _path_has_link_like_component(path: Path) -> bool:
+    candidate = Path(path).expanduser()
+    return any(
+        path_is_link_like(component)
+        for component in (candidate, *candidate.parents)
+    )
+
+
 def _is_within(path: Path, root: Path) -> bool:
     try:
         _resolve(path).relative_to(_resolve(root))
@@ -60,8 +73,11 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def _file_record(path: Path, *, require_html: bool = False) -> tuple[dict[str, Any] | None, str]:
-    resolved = _resolve(path)
-    snapshot = read_bytes_with_fingerprint(resolved, reject_symlink=True)
+    candidate = Path(path).expanduser()
+    if _path_has_link_like_component(candidate):
+        return None, f"link_like_path:{candidate}"
+    resolved = _resolve(candidate)
+    snapshot = read_bytes_with_fingerprint(candidate, reject_symlink=True)
     if snapshot is None:
         return None, f"missing_empty_symlink_or_unstable:{resolved}"
     data, fingerprint = snapshot
@@ -172,7 +188,17 @@ def _raw_chain_record(
     production_raw = _manifest_path(source_article, "raw_stage_path")
     source_cached_raw = _manifest_path(source_article, "raw_cache_path")
     quality_cached_raw = _manifest_path(quality_article, "raw_cache_path")
-    target_polish = _manifest_path(source_article, "source_polish_path")
+    target_polish_value = source_article.get("source_polish_path")
+    declared_target_polish = (
+        Path(target_polish_value).expanduser()
+        if isinstance(target_polish_value, str) and target_polish_value.strip()
+        else None
+    )
+    target_polish = (
+        declared_target_polish
+        if declared_target_polish is not None and declared_target_polish.is_absolute()
+        else None
+    )
     required_paths = {
         "production_raw": production_raw,
         "source_cached_raw": source_cached_raw,
@@ -187,6 +213,14 @@ def _raw_chain_record(
     assert source_cached_raw is not None
     assert quality_cached_raw is not None
     assert target_polish is not None
+    expected_target_polish = production_raw.parent / POLISH_STAGE_NAME
+    if _lexical_path_key(target_polish) != _lexical_path_key(expected_target_polish):
+        errors.append(f"target_polish_path_mismatch:{article_id}")
+        return None
+    if _path_has_link_like_component(target_polish):
+        errors.append(f"target_polish_link_like:{article_id}")
+        return None
+    target_polish = expected_target_polish
     if source_run_dir is None or not _is_within(source_cached_raw, source_run_dir / "raw_cache"):
         errors.append(f"source_cached_raw_outside_run:{article_id}")
         return None
@@ -445,6 +479,8 @@ def build_quality_publication_snapshot(
             {
                 **common_record,
                 **audit_file_records,
+                "publication_kind": "audited",
+                "final_polish": audit_file_records["audited_polish"],
             }
         )
 
@@ -464,8 +500,26 @@ def build_quality_publication_snapshot(
             raw_validations=raw_validations,
             errors=errors,
         )
-        if common_record is not None:
-            skipped_records.append(common_record)
+        if common_record is None:
+            continue
+        fallback_polish = Path(common_record["target_polish_path"])
+        fallback_record, fallback_error = _file_record(
+            fallback_polish,
+            require_html=True,
+        )
+        if fallback_record is None:
+            errors.append(
+                f"fallback_polish_invalid:{article_id}:{fallback_error}"
+            )
+            continue
+        skipped_records.append(
+            {
+                **common_record,
+                "publication_kind": "skipped_fallback",
+                "fallback_polish": fallback_record,
+                "final_polish": fallback_record,
+            }
+        )
 
     if raw_validations:
         try:
@@ -552,14 +606,34 @@ def validate_quality_publication(quality_run_dir: Path) -> QualityPublicationVal
         or current_seal_fingerprint.sha256 != seal_fingerprint.sha256
     ):
         return QualityPublicationValidation(manifest_path, False, "manifest_changed_during_validation", {})
-    records = current_snapshot.get("articles")
-    if not isinstance(records, list):
-        return QualityPublicationValidation(manifest_path, False, "article_records_invalid", {})
-    by_article = {
-        str(record.get("article_id")): record
-        for record in records
-        if isinstance(record, dict) and record.get("article_id")
-    }
-    if len(by_article) != len(records):
-        return QualityPublicationValidation(manifest_path, False, "article_records_ambiguous", {})
+    records: list[Any] = []
+    for key in ("articles", "skipped_articles"):
+        values = current_snapshot.get(key)
+        if not isinstance(values, list):
+            return QualityPublicationValidation(
+                manifest_path,
+                False,
+                f"{key}_records_invalid",
+                {},
+            )
+        records.extend(values)
+    by_article: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            return QualityPublicationValidation(manifest_path, False, "article_records_ambiguous", {})
+        article_id = record.get("article_id")
+        if not isinstance(article_id, str) or not article_id or article_id in by_article:
+            return QualityPublicationValidation(manifest_path, False, "article_records_ambiguous", {})
+        publication_kind = record.get("publication_kind")
+        final_polish = record.get("final_polish")
+        if publication_kind not in {"audited", "skipped_fallback"}:
+            return QualityPublicationValidation(manifest_path, False, "publication_kind_invalid", {})
+        if not isinstance(final_polish, dict):
+            return QualityPublicationValidation(
+                manifest_path,
+                False,
+                f"final_polish_record_invalid:{article_id}",
+                {},
+            )
+        by_article[article_id] = record
     return QualityPublicationValidation(manifest_path, True, "", by_article)

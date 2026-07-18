@@ -18,14 +18,13 @@ from .html_stages import (
     POLISH_STAGE_NAME,
     RAW_STAGE_NAME,
     article_dir_from_html_stage,
-    article_name_from_html_stage,
     require_current_raw_conversions,
 )
 from .language_detect import LanguageGateDecision, detect_language_from_html
 from .quality_loop.publication_state import validate_quality_publication
 from .stage_contract import (
     publish_latest_polish_from_quality_run,
-    stage_audited_polish,
+    stage_sealed_polish,
 )
 
 
@@ -237,7 +236,6 @@ def _publish_final_html(
     target_dir: Path,
     sources: Sequence[tuple[str, Path]],
     copy_sources: dict[str, Path] | None = None,
-    fallback_source: str | None = None,
 ) -> FinalHtmlCollection:
     target_dir = target_dir.resolve(strict=False)
     resolved_sources = [
@@ -300,8 +298,6 @@ def _publish_final_html(
             for artifact in artifacts
         ],
     }
-    if fallback_source is not None:
-        manifest["fallback_source"] = fallback_source
     manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
     _write_json_atomic(manifest_path, manifest)
     return FinalHtmlCollection(
@@ -336,15 +332,20 @@ def collect_final_html(
             sorted(publication.records_by_article.items()),
             start=1,
         ):
-            audited_record = record.get("audited_polish")
-            if not isinstance(audited_record, dict):
-                raise RuntimeError(f"Sealed article has no audited polish record: {article}")
-            source_value = audited_record.get("path")
+            final_record = record.get("final_polish")
+            if not isinstance(final_record, dict):
+                raise RuntimeError(f"Sealed article has no final polish record: {article}")
+            source_value = final_record.get("path")
             if not isinstance(source_value, str) or not source_value:
-                raise RuntimeError(f"Sealed article has no audited polish path: {article}")
+                raise RuntimeError(f"Sealed article has no final polish path: {article}")
             source_path = Path(source_value).resolve(strict=False)
             staged_path = staging_dir / f"{index:06d}.{POLISH_STAGE_NAME}"
-            stage_audited_polish(source_path, staged_path, record)
+            stage_sealed_polish(
+                source_path,
+                staged_path,
+                record,
+                fingerprint_key="final_polish",
+            )
             sources.append((article, source_path))
             copy_sources[article] = staged_path
         rechecked = validate_quality_publication(quality_dir)
@@ -362,32 +363,6 @@ def collect_final_html(
             sources=sources,
             copy_sources=copy_sources,
         )
-
-
-def collect_converted_stage_final_html(
-    converted_root: Path,
-    quality_output_dir: Path,
-    *,
-    final_html_dir: Path | None = None,
-) -> FinalHtmlCollection:
-    converted_dir = converted_root.expanduser().resolve(strict=False)
-    quality_dir = quality_output_dir.expanduser().resolve(strict=False)
-    target_dir = (
-        final_html_dir.expanduser().resolve(strict=False)
-        if final_html_dir is not None
-        else quality_dir / FINAL_HTML_DIR_NAME
-    )
-    sources = [
-        (article_name_from_html_stage(source_path), source_path)
-        for source_path in sorted(converted_dir.rglob(POLISH_STAGE_NAME), key=str)
-        if source_path.is_file()
-    ]
-    return _publish_final_html(
-        quality_dir=quality_dir,
-        target_dir=target_dir,
-        sources=sources,
-        fallback_source="converted_stage",
-    )
 
 
 def empty_final_html_collection(
@@ -586,25 +561,6 @@ def run_clean_pipeline(
         ),
     )
     write_pipeline_manifest(converted_root)
-    if not final_html.artifacts and conversion_summary.converted_total:
-        log(
-            "Quality observe produced no audited final HTML; "
-            "using converted-stage polish fallback."
-        )
-        final_html = collect_converted_stage_final_html(
-            converted_root,
-            quality_output_dir,
-            final_html_dir=(
-                Path(options.final_html_dir).expanduser().resolve(strict=False)
-                if options.final_html_dir
-                else None
-            ),
-        )
-        if not final_html.artifacts:
-            raise RuntimeError(
-                "Quality observe completed, but no final 02.en.polish.html files "
-                f"were found under {quality_output_dir / 'audit_tree'} or {converted_root}."
-            )
 
     return CleanPipelineSummary(
         conversion_summary=conversion_summary,

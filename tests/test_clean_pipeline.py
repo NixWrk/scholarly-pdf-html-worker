@@ -208,6 +208,63 @@ def _seal_skipped_quality_output(
     audited.unlink()
     assert seal_quality_publication(quality_dir)["status"] == "completed"
 
+
+def _append_skipped_quality_output(
+    quality_dir: Path,
+    stage_dir: Path,
+    article_id: str,
+) -> None:
+    production_raw = stage_dir / RAW_STAGE_NAME
+    target_polish = stage_dir / POLISH_STAGE_NAME
+    source_run = quality_dir / "_converted_raw_source"
+    source_manifest_path = source_run / "manifest.json"
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    index = len(source_manifest["articles"]) + 1
+    source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+    shutil.copyfile(production_raw, source_cached_raw)
+    profile_path = source_run / "profiles" / f"{article_id}.citation_profile.json"
+    _write_json(profile_path, {"status": "ok", "style": "unknown", "confidence": "low"})
+    source_manifest["articles"].append(
+        {
+            "index": index,
+            "article_id": article_id,
+            "article": article_id,
+            "raw_stage_path": str(production_raw),
+            "raw_cache_path": str(source_cached_raw),
+            "profile_path": str(profile_path),
+            "source_polish_path": str(target_polish),
+            "profile_status": "ok",
+            "citation_style": "unknown",
+            "citation_confidence": "low",
+            **cached_repolish_artifact_fingerprints(source_cached_raw, profile_path),
+        }
+    )
+    source_manifest["raw_count"] = index
+    source_manifest["article_count"] = index
+    source_manifest["profile_status_counts"] = {"ok": index}
+    source_manifest["profile_style_counts"] = {"unknown:low": index}
+    _write_json(source_manifest_path, source_manifest)
+    source_fingerprint = fingerprint_file(source_manifest_path, reject_symlink=True)
+    assert source_fingerprint is not None
+
+    quality_cached_raw = quality_dir / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+    shutil.copyfile(production_raw, quality_cached_raw)
+    quality_manifest_path = quality_dir / "manifest.json"
+    quality_manifest = json.loads(quality_manifest_path.read_text(encoding="utf-8"))
+    quality_manifest["source_manifest_bytes"] = source_fingerprint.size
+    quality_manifest["source_manifest_sha256"] = source_fingerprint.sha256
+    quality_manifest.setdefault("skipped_articles", []).append(
+        {
+            "article": article_id,
+            "raw_cache_path": str(quality_cached_raw),
+            "language_skipped": True,
+            "skip_reason": "detected_non_target_language",
+        }
+    )
+    _write_json(quality_manifest_path, quality_manifest)
+    assert seal_quality_publication(quality_dir)["status"] == "completed"
+
+
 def test_default_quality_output_dir_sits_next_to_conversion_output(tmp_path: Path) -> None:
     assert default_quality_output_dir(tmp_path / "paper_run") == tmp_path / "paper_run_quality"
 
@@ -663,6 +720,73 @@ def test_collect_final_html_rejects_audited_polish_tampered_after_seal(
 
     assert final_path.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
 
+
+def test_collect_final_html_rejects_skipped_fallback_tampered_after_seal(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    stage_dir = tmp_path / "converted" / "article_es" / "_z2m_stages"
+    _write_current_stage_pair(
+        stage_dir,
+        tmp_path / "paper.pdf",
+        polish_html="<html><body>sealed fallback</body></html>",
+    )
+    _seal_skipped_quality_output(quality_dir, stage_dir, "article_es")
+    fallback = stage_dir / POLISH_STAGE_NAME
+    fallback.write_text("<html><body>changed fallback</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir()
+    previous = final_dir / "article_es.html"
+    previous.write_text("<html><body>previous</body></html>", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="requires a valid quality publication seal"):
+        collect_final_html(quality_dir)
+
+    assert previous.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
+
+
+def test_collect_final_html_rechecks_skipped_fallback_after_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    stage_dir = tmp_path / "converted" / "article_es" / "_z2m_stages"
+    _write_current_stage_pair(
+        stage_dir,
+        tmp_path / "paper.pdf",
+        polish_html="<html><body>sealed fallback</body></html>",
+    )
+    _seal_skipped_quality_output(quality_dir, stage_dir, "article_es")
+    fallback = stage_dir / POLISH_STAGE_NAME
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir()
+    previous = final_dir / "article_es.html"
+    previous.write_text("<html><body>previous</body></html>", encoding="utf-8")
+    original_stage = clean_pipeline_module.stage_sealed_polish
+
+    def stage_then_change_fallback(
+        source: Path,
+        destination: Path,
+        sealed_record: dict,
+        *,
+        fingerprint_key: str,
+    ) -> None:
+        original_stage(
+            source,
+            destination,
+            sealed_record,
+            fingerprint_key=fingerprint_key,
+        )
+        fallback.write_text("<html><body>raced fallback</body></html>", encoding="utf-8")
+
+    monkeypatch.setattr(clean_pipeline_module, "stage_sealed_polish", stage_then_change_fallback)
+
+    with pytest.raises(RuntimeError, match="changed during final HTML collection"):
+        collect_final_html(quality_dir)
+
+    assert previous.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
+
+
 def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_path: Path) -> None:
     conversion_dir = tmp_path / "converted"
     quality_dir = tmp_path / "quality"
@@ -768,6 +892,11 @@ def test_run_clean_pipeline_validates_new_and_skipped_raw_stages_together(
             "first",
             audited_html="<html><body>audited</body></html>",
         )
+        _append_skipped_quality_output(
+            quality_dir,
+            conversion_dir / "second" / "_z2m_stages",
+            "second",
+        )
         return 0
 
     summary = run_clean_pipeline(
@@ -778,7 +907,6 @@ def test_run_clean_pipeline_validates_new_and_skipped_raw_stages_together(
                 export_mode="html",
             ),
             quality_output_dir=str(quality_dir),
-            publish_latest_to_converted=False,
         ),
         MarkerRunner(),
         lambda _message: None,
@@ -789,7 +917,23 @@ def test_run_clean_pipeline_validates_new_and_skipped_raw_stages_together(
 
     assert summary.conversion_summary.converted_total == 1
     assert summary.conversion_summary.skipped_existing == 1
-    assert len(summary.final_html.artifacts) == 1
+    artifacts = {artifact.article: artifact for artifact in summary.final_html.artifacts}
+    assert set(artifacts) == {"first", "second"}
+    assert summary.converted_stage_publish_report is not None
+    assert summary.converted_stage_publish_report["published_count"] == 1
+    assert summary.converted_stage_publish_report["stage_contract_status"] == "pass"
+    assert (conversion_dir / "first" / "_z2m_stages" / POLISH_STAGE_NAME).read_text(
+        encoding="utf-8"
+    ) == "<html><body>audited</body></html>"
+    assert (conversion_dir / "second" / "_z2m_stages" / POLISH_STAGE_NAME).read_text(
+        encoding="utf-8"
+    ) == "<html><body>stale</body></html>"
+    assert artifacts["first"].final_path.read_text(encoding="utf-8") == (
+        "<html><body>audited</body></html>"
+    )
+    assert artifacts["second"].final_path.read_text(encoding="utf-8") == (
+        "<html><body>stale</body></html>"
+    )
 
 
 def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path: Path) -> None:
@@ -898,7 +1042,7 @@ def test_run_clean_pipeline_repolish_existing_requires_raw_stage(tmp_path: Path)
         )
 
 
-def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all(
+def test_run_clean_pipeline_collects_sealed_fallback_when_observe_skips_all(
     tmp_path: Path,
 ) -> None:
     conversion_dir = tmp_path / "converted"
@@ -933,7 +1077,6 @@ def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all
                 export_mode="html",
             ),
             quality_output_dir=str(quality_dir),
-            publish_latest_to_converted=False,
         ),
         MarkerRunner(),
         logs.append,
@@ -946,12 +1089,15 @@ def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all
     assert summary.final_html.artifacts[0].source_path == (
         conversion_dir / "article_es" / "_z2m_stages" / "02.en.polish.html"
     ).resolve(strict=False)
+    assert summary.converted_stage_publish_report is not None
+    assert summary.converted_stage_publish_report["published_count"] == 0
+    assert summary.converted_stage_publish_report["stage_contract_status"] == "pass"
     assert (quality_dir / "final_html" / "article_es.html").read_text(encoding="utf-8") == (
         "<html><body>limpio</body></html>"
     )
     manifest = json.loads(summary.final_html.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["fallback_source"] == "converted_stage"
-    assert any("converted-stage polish fallback" in entry for entry in logs)
+    assert "fallback_source" not in manifest
+    assert not any("converted-stage polish fallback" in entry for entry in logs)
 
 
 def test_run_clean_pipeline_skips_observe_when_conversion_failed(tmp_path: Path) -> None:

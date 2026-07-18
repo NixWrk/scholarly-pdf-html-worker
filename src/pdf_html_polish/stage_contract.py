@@ -295,14 +295,18 @@ def _sealed_record_path(record: dict[str, Any], key: str) -> Path | None:
     return _resolve(Path(path_value))
 
 
-def stage_audited_polish(
+def stage_sealed_polish(
     source: Path,
     destination: Path,
     sealed_record: dict[str, Any],
+    *,
+    fingerprint_key: str,
 ) -> None:
-    expected = sealed_record.get("audited_polish")
+    expected = sealed_record.get(fingerprint_key)
     if not isinstance(expected, dict):
-        raise RuntimeError("Quality publication seal has no audited polish fingerprint.")
+        raise RuntimeError(
+            f"Quality publication seal has no {fingerprint_key} fingerprint."
+        )
     _copy_file_atomic(source, destination)
     fingerprint = fingerprint_file(destination, reject_symlink=True, capture_edges=True)
     if (
@@ -313,7 +317,22 @@ def stage_audited_polish(
     ):
         return
     destination.unlink(missing_ok=True)
-    raise RuntimeError(f"Staged audited polish does not match quality publication seal: {source}")
+    raise RuntimeError(
+        f"Staged {fingerprint_key} does not match quality publication seal: {source}"
+    )
+
+
+def stage_audited_polish(
+    source: Path,
+    destination: Path,
+    sealed_record: dict[str, Any],
+) -> None:
+    stage_sealed_polish(
+        source,
+        destination,
+        sealed_record,
+        fingerprint_key="audited_polish",
+    )
 
 
 @dataclass(frozen=True)
