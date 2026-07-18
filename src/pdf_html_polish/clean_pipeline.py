@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
-from tempfile import TemporaryDirectory
 from unicodedata import normalize
 
+from .artifact_integrity import artifact_is_structurally_valid, fingerprint_file
 from .atomic_io import copy_file_atomic as _copy_file_atomic
 from .atomic_io import write_json_atomic as _write_json_atomic
+from .directory_publication import CompleteDirectoryPublication
 from .marker_runner import MarkerRunner
 from .models import PipelineSummary
 from .pipeline import run_pipeline
@@ -21,6 +24,7 @@ from .html_stages import (
     require_current_raw_conversions,
 )
 from .language_detect import LanguageGateDecision, detect_language_from_html
+from .quality_loop.cached_run_state import path_is_link_like
 from .quality_loop.publication_state import validate_quality_publication
 from .stage_contract import (
     publish_latest_polish_from_quality_run,
@@ -230,34 +234,242 @@ def run_observe_command(
     return int(process.wait())
 
 
+_WINDOWS_DEVICE_SUFFIXES = tuple(str(index) for index in range(1, 10)) + (
+    "\u00b9",
+    "\u00b2",
+    "\u00b3",
+)
+_WINDOWS_RESERVED_NAMES = {"aux", "con", "nul", "prn"} | {
+    f"{prefix}{suffix}"
+    for prefix in ("com", "lpt")
+    for suffix in _WINDOWS_DEVICE_SUFFIXES
+}
+_WINDOWS_FORBIDDEN_FILENAME_CHARACTERS = frozenset('<>:"/\\|?*')
+
+
+def _canonical_final_html_dir(path: Path) -> Path:
+    lexical = Path(path).expanduser()
+    if not lexical.is_absolute():
+        raise ValueError(f"final_html_dir must be absolute and canonical: {lexical}")
+    if any(part in {".", ".."} for part in lexical.parts):
+        raise ValueError(f"final_html_dir must be canonical: {lexical}")
+    if any(path_is_link_like(component) for component in (lexical, *lexical.parents)):
+        raise ValueError(f"final_html_dir contains a link-like component: {lexical}")
+    canonical = lexical.resolve(strict=False)
+    if os.path.normcase(str(lexical)) != os.path.normcase(str(canonical)):
+        raise ValueError(f"final_html_dir must be canonical: {lexical}")
+    return canonical
+
+
+def _final_html_filename(article: str) -> str:
+    if not article or article != normalize("NFC", article):
+        raise ValueError(f"Invalid final HTML article name: {article!r}")
+    if (
+        article in {".", ".."}
+        or article.endswith((" ", "."))
+        or any(ord(character) < 32 for character in article)
+        or any(
+            character in _WINDOWS_FORBIDDEN_FILENAME_CHARACTERS for character in article
+        )
+    ):
+        raise ValueError(f"Invalid final HTML article name: {article!r}")
+    if (
+        article.split(".", maxsplit=1)[0].rstrip(" .").casefold()
+        in _WINDOWS_RESERVED_NAMES
+    ):
+        raise ValueError(f"Invalid final HTML article name: {article!r}")
+    filename = f"{article}.html"
+    if len(filename.encode("utf-8")) > 240:
+        raise ValueError(f"Invalid final HTML article name: {article!r}")
+    return filename
+
+
+def _require_owned_final_html_tree(path: Path) -> None:
+    if not path.exists() and not path_is_link_like(path):
+        return
+    if path_is_link_like(path) or not path.is_dir():
+        raise RuntimeError(
+            f"Final HTML target is not an owned regular directory: {path}"
+        )
+    for entry in path.iterdir():
+        if (
+            path_is_link_like(entry)
+            or not entry.is_file()
+            or (
+                entry.name != FINAL_HTML_MANIFEST_NAME
+                and entry.suffix.casefold() != ".html"
+            )
+        ):
+            raise RuntimeError(f"Final HTML target contains a foreign entry: {entry}")
+
+
+def _require_exact_staging_tree(path: Path, expected_names: set[str]) -> None:
+    if path_is_link_like(path) or not path.is_dir():
+        raise RuntimeError(f"Final HTML staging tree is invalid: {path}")
+    actual_names: set[str] = set()
+    for entry in path.iterdir():
+        entry_stat = entry.stat(follow_symlinks=False)
+        if (
+            path_is_link_like(entry)
+            or not entry.is_file()
+            or int(entry_stat.st_nlink) != 1
+        ):
+            raise RuntimeError(
+                f"Final HTML staging tree contains an unsafe entry: {entry}"
+            )
+        actual_names.add(entry.name)
+    if actual_names != expected_names:
+        raise RuntimeError(
+            "Final HTML staging tree does not match the complete expected tree: "
+            f"expected={sorted(expected_names)!r} actual={sorted(actual_names)!r}"
+        )
+
+
+def _json_object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate_json_key:{key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"nonfinite_json_constant:{value}")
+
+
+def _final_html_tree_matches_publication(path: Path, publication_id: str) -> bool:
+    try:
+        manifest_path = path / FINAL_HTML_MANIFEST_NAME
+        manifest_stat = manifest_path.stat()
+        if (
+            path_is_link_like(manifest_path)
+            or not manifest_path.is_file()
+            or int(manifest_stat.st_nlink) != 1
+            or int(manifest_stat.st_size) > 16 * 1024 * 1024
+        ):
+            return False
+        payload = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+            parse_constant=_reject_json_constant,
+        )
+        expected_keys = {
+            "schema_version",
+            "publication_id",
+            "quality_output_dir",
+            "final_html_dir",
+            "article_count",
+            "html_files",
+        }
+        if not isinstance(payload, dict) or set(payload) != expected_keys:
+            return False
+        records = payload.get("html_files")
+        article_count = payload.get("article_count")
+        if (
+            type(payload.get("schema_version")) is not int
+            or payload["schema_version"] != 2
+            or payload.get("publication_id") != publication_id
+            or not isinstance(payload.get("quality_output_dir"), str)
+            or payload.get("final_html_dir") != str(path)
+            or type(article_count) is not int
+            or article_count < 0
+            or not isinstance(records, list)
+            or len(records) != article_count
+        ):
+            return False
+        expected_names = {FINAL_HTML_MANIFEST_NAME}
+        seen_article_keys: set[str] = set()
+        for record in records:
+            if not isinstance(record, dict) or set(record) != {
+                "article",
+                "source_path",
+                "final_path",
+                "bytes",
+                "sha256",
+            }:
+                return False
+            article = record.get("article")
+            source_path = record.get("source_path")
+            source_candidate = (
+                Path(source_path) if isinstance(source_path, str) else Path()
+            )
+            final_path = record.get("final_path")
+            byte_count = record.get("bytes")
+            sha256 = record.get("sha256")
+            article_key = (
+                normalize("NFC", article).casefold() if isinstance(article, str) else ""
+            )
+            if (
+                not isinstance(article, str)
+                or article_key in seen_article_keys
+                or not isinstance(source_path, str)
+                or not source_path
+                or not source_candidate.is_absolute()
+                or source_candidate.is_relative_to(path)
+                or not isinstance(final_path, str)
+                or type(byte_count) is not int
+                or byte_count <= 0
+                or not isinstance(sha256, str)
+                or len(sha256) != 64
+                or any(character not in "0123456789abcdef" for character in sha256)
+            ):
+                return False
+            expected_path = path / _final_html_filename(article)
+            if Path(final_path) != expected_path:
+                return False
+            fingerprint = fingerprint_file(
+                expected_path, reject_symlink=True, capture_edges=True
+            )
+            if (
+                fingerprint is None
+                or int(expected_path.stat(follow_symlinks=False).st_nlink) != 1
+                or not artifact_is_structurally_valid(expected_path, fingerprint)
+                or fingerprint.size != byte_count
+                or fingerprint.sha256 != sha256
+            ):
+                return False
+            seen_article_keys.add(article_key)
+            expected_names.add(expected_path.name)
+        _require_exact_staging_tree(path, expected_names)
+        return True
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, RuntimeError):
+        return False
+
+
 def _publish_final_html(
     *,
     quality_dir: Path,
     target_dir: Path,
     sources: Sequence[tuple[str, Path]],
-    copy_sources: dict[str, Path] | None = None,
+    sealed_records_by_article: dict[str, dict[str, Any]] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    before_mutation: Callable[[], None] | None = None,
 ) -> FinalHtmlCollection:
-    target_dir = target_dir.resolve(strict=False)
+    target_dir = _canonical_final_html_dir(target_dir)
+    quality_dir = quality_dir.expanduser().resolve(strict=False)
+    if quality_dir == target_dir or quality_dir.is_relative_to(target_dir):
+        raise ValueError(
+            f"final_html_dir must not equal or contain quality_output_dir: {target_dir}"
+        )
     resolved_sources = [
         (
             article,
             source_path.resolve(strict=False),
-            (copy_sources or {}).get(article, source_path).resolve(strict=False),
+            _final_html_filename(article),
         )
         for article, source_path in sources
     ]
     overlapping = [
-        path
-        for _article, source_path, copy_path in resolved_sources
-        for path in (source_path, copy_path)
-        if path.is_relative_to(target_dir)
+        source_path
+        for _article, source_path, _filename in resolved_sources
+        if source_path.is_relative_to(target_dir)
     ]
     if overlapping:
         raise ValueError(f"final_html_dir contains source HTML: {overlapping[0]}")
     seen_articles: dict[str, Path] = {}
-    copies_by_article: dict[str, Path] = {}
     artifacts: list[FinalHtmlArtifact] = []
-    for article, source_path, copy_path in resolved_sources:
+    for article, source_path, filename in resolved_sources:
         article_key = normalize("NFC", article).casefold()
         previous = seen_articles.get(article_key)
         if previous is not None:
@@ -266,43 +478,92 @@ def _publish_final_html(
                 f"{article!r}: {previous} and {source_path}."
             )
         seen_articles[article_key] = source_path
-        copies_by_article[article] = copy_path
         artifacts.append(
             FinalHtmlArtifact(
                 article=article,
                 source_path=source_path.resolve(strict=False),
-                final_path=(target_dir / f"{article}.html").resolve(strict=False),
+                final_path=target_dir / filename,
             )
         )
+    if sealed_records_by_article is not None and set(sealed_records_by_article) != {
+        artifact.article for artifact in artifacts
+    }:
+        raise RuntimeError(
+            "Final HTML sealed record coverage does not match the article set"
+        )
 
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for artifact in artifacts:
-        _copy_file_atomic(copies_by_article[artifact.article], artifact.final_path)
-
-    expected_paths = {artifact.final_path for artifact in artifacts}
-    for stale_path in target_dir.glob("*.html"):
-        if stale_path.resolve(strict=False) not in expected_paths:
-            stale_path.unlink()
-
-    manifest: dict[str, Any] = {
-        "schema_version": 1,
-        "quality_output_dir": str(quality_dir),
-        "final_html_dir": str(target_dir),
-        "article_count": len(artifacts),
-        "html_files": [
-            {
-                "article": artifact.article,
-                "source_path": str(artifact.source_path),
-                "final_path": str(artifact.final_path),
-            }
-            for artifact in artifacts
-        ],
+    _require_owned_final_html_tree(target_dir)
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    if _canonical_final_html_dir(target_dir) != target_dir:
+        raise RuntimeError(
+            f"Final HTML target changed while preparing publication: {target_dir}"
+        )
+    _require_owned_final_html_tree(target_dir)
+    expected_names = {artifact.final_path.name for artifact in artifacts} | {
+        FINAL_HTML_MANIFEST_NAME
     }
-    manifest_path = target_dir / FINAL_HTML_MANIFEST_NAME
-    _write_json_atomic(manifest_path, manifest)
+    with CompleteDirectoryPublication(
+        target_dir,
+        validate_existing=_require_owned_final_html_tree,
+        validate_staging=lambda path: _require_exact_staging_tree(path, expected_names),
+        committed_tree_matches=_final_html_tree_matches_publication,
+        is_cancelled=is_cancelled,
+        before_mutation=before_mutation,
+    ) as transaction:
+        manifest_records: list[dict[str, Any]] = []
+        for artifact in artifacts:
+            transaction.check_cancelled()
+            staged_path = transaction.staging_dir / artifact.final_path.name
+            if sealed_records_by_article is None:
+                _copy_file_atomic(artifact.source_path, staged_path)
+            else:
+                stage_sealed_polish(
+                    artifact.source_path,
+                    staged_path,
+                    sealed_records_by_article[artifact.article],
+                    fingerprint_key="final_polish",
+                )
+            fingerprint = fingerprint_file(
+                staged_path,
+                reject_symlink=True,
+                capture_edges=True,
+            )
+            if fingerprint is None or not artifact_is_structurally_valid(
+                staged_path,
+                fingerprint,
+            ):
+                raise RuntimeError(
+                    f"Final HTML staging artifact is invalid: {staged_path}"
+                )
+            manifest_records.append(
+                {
+                    "article": artifact.article,
+                    "source_path": str(artifact.source_path),
+                    "final_path": str(artifact.final_path),
+                    "bytes": fingerprint.size,
+                    "sha256": fingerprint.sha256,
+                }
+            )
+        transaction.check_cancelled()
+        manifest: dict[str, Any] = {
+            "schema_version": 2,
+            "publication_id": transaction.transaction_id,
+            "quality_output_dir": str(quality_dir),
+            "final_html_dir": str(target_dir),
+            "article_count": len(artifacts),
+            "html_files": manifest_records,
+        }
+        manifest_path = transaction.staging_dir / FINAL_HTML_MANIFEST_NAME
+        _write_json_atomic(manifest_path, manifest)
+        if _canonical_final_html_dir(target_dir) != target_dir:
+            raise RuntimeError(
+                f"Final HTML target changed before publication: {target_dir}"
+            )
+        transaction.commit()
+
     return FinalHtmlCollection(
         final_html_dir=target_dir,
-        manifest_path=manifest_path,
+        manifest_path=target_dir / FINAL_HTML_MANIFEST_NAME,
         artifacts=tuple(artifacts),
     )
 
@@ -311,10 +572,11 @@ def collect_final_html(
     quality_output_dir: Path,
     *,
     final_html_dir: Path | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> FinalHtmlCollection:
     quality_dir = quality_output_dir.expanduser().resolve(strict=False)
     target_dir = (
-        final_html_dir.expanduser().resolve(strict=False)
+        final_html_dir.expanduser()
         if final_html_dir is not None
         else quality_dir / FINAL_HTML_DIR_NAME
     )
@@ -324,30 +586,19 @@ def collect_final_html(
             "Final HTML collection requires a valid quality publication seal: "
             f"{publication.reason}"
         )
-    with TemporaryDirectory(prefix=".final_html_collect_", dir=quality_dir) as staging_value:
-        staging_dir = Path(staging_value)
-        sources: list[tuple[str, Path]] = []
-        copy_sources: dict[str, Path] = {}
-        for index, (article, record) in enumerate(
-            sorted(publication.records_by_article.items()),
-            start=1,
-        ):
-            final_record = record.get("final_polish")
-            if not isinstance(final_record, dict):
-                raise RuntimeError(f"Sealed article has no final polish record: {article}")
-            source_value = final_record.get("path")
-            if not isinstance(source_value, str) or not source_value:
-                raise RuntimeError(f"Sealed article has no final polish path: {article}")
-            source_path = Path(source_value).resolve(strict=False)
-            staged_path = staging_dir / f"{index:06d}.{POLISH_STAGE_NAME}"
-            stage_sealed_polish(
-                source_path,
-                staged_path,
-                record,
-                fingerprint_key="final_polish",
-            )
-            sources.append((article, source_path))
-            copy_sources[article] = staged_path
+    sources: list[tuple[str, Path]] = []
+    for article, record in sorted(publication.records_by_article.items()):
+        if is_cancelled is not None and is_cancelled():
+            raise RuntimeError("Final HTML collection cancelled before staging")
+        final_record = record.get("final_polish")
+        if not isinstance(final_record, dict):
+            raise RuntimeError(f"Sealed article has no final polish record: {article}")
+        source_value = final_record.get("path")
+        if not isinstance(source_value, str) or not source_value:
+            raise RuntimeError(f"Sealed article has no final polish path: {article}")
+        sources.append((article, Path(source_value).resolve(strict=False)))
+
+    def require_current_quality_publication() -> None:
         rechecked = validate_quality_publication(quality_dir)
         if (
             not rechecked.valid
@@ -357,22 +608,26 @@ def collect_final_html(
                 "Quality publication changed during final HTML collection: "
                 f"{rechecked.reason or 'article_records_changed'}"
             )
-        return _publish_final_html(
-            quality_dir=quality_dir,
-            target_dir=target_dir,
-            sources=sources,
-            copy_sources=copy_sources,
-        )
+
+    return _publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=target_dir,
+        sources=sources,
+        sealed_records_by_article=publication.records_by_article,
+        is_cancelled=is_cancelled,
+        before_mutation=require_current_quality_publication,
+    )
 
 
 def empty_final_html_collection(
     quality_output_dir: Path,
     *,
     final_html_dir: Path | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> FinalHtmlCollection:
     quality_dir = quality_output_dir.expanduser().resolve(strict=False)
     target_dir = (
-        final_html_dir.expanduser().resolve(strict=False)
+        final_html_dir.expanduser()
         if final_html_dir is not None
         else quality_dir / FINAL_HTML_DIR_NAME
     )
@@ -380,6 +635,7 @@ def empty_final_html_collection(
         quality_dir=quality_dir,
         target_dir=target_dir,
         sources=(),
+        is_cancelled=is_cancelled,
     )
 
 
@@ -472,14 +728,18 @@ def run_clean_pipeline(
     if quality_output_dir == converted_root:
         raise ValueError("quality_output_dir must be different from the conversion output_dir.")
 
-    if not conversion_summary.converted_total:
+    if (
+        not conversion_summary.converted_total
+        and not conversion_summary.skipped_existing
+    ):
         final_html = empty_final_html_collection(
             quality_output_dir,
             final_html_dir=(
-                Path(options.final_html_dir).expanduser().resolve(strict=False)
+                Path(options.final_html_dir).expanduser()
                 if options.final_html_dir
                 else None
             ),
+            is_cancelled=is_cancelled,
         )
         return CleanPipelineSummary(
             conversion_summary=conversion_summary,
@@ -529,6 +789,7 @@ def run_clean_pipeline(
                 cwd=cwd,
                 log=log_func,
             )
+
     observe_exit_code = active_observe_runner(observe_command, repository_root(), log)
     if observe_exit_code != 0:
         raise RuntimeError(f"Quality observe failed with exit code {observe_exit_code}.")
@@ -555,10 +816,11 @@ def run_clean_pipeline(
     final_html = collect_final_html(
         quality_output_dir,
         final_html_dir=(
-            Path(options.final_html_dir).expanduser().resolve(strict=False)
+            Path(options.final_html_dir).expanduser()
             if options.final_html_dir
             else None
         ),
+        is_cancelled=is_cancelled,
     )
     write_pipeline_manifest(converted_root)
 

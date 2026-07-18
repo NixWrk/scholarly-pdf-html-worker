@@ -94,6 +94,8 @@ def _fail(reason: str) -> NoReturn:
 
 
 def _require_canonical_utc_timestamp(value: Any, *, reason: str) -> str:
+    if not isinstance(value, str):
+        _fail(reason)
     try:
         parse_canonical_utc_timestamp(value)
     except ValueError:

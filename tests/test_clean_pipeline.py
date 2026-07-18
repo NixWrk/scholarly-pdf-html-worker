@@ -627,8 +627,12 @@ def test_collect_final_html_copies_audited_polish_outputs(tmp_path: Path) -> Non
     assert collection.artifacts[0].final_path == final_path.resolve(strict=False)
     assert final_path.read_text(encoding="utf-8") == "<html><body>clean</body></html>"
     manifest = json.loads(collection.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert len(manifest["publication_id"]) == 32
     assert manifest["article_count"] == 1
     assert manifest["html_files"][0]["article"] == "article_a"
+    assert manifest["html_files"][0]["bytes"] == final_path.stat().st_size
+    assert len(manifest["html_files"][0]["sha256"]) == 64
     assert Path(manifest["html_files"][0]["source_path"]) == source.resolve(strict=False)
     assert not stale_path.exists()
 
@@ -699,6 +703,390 @@ def test_collect_final_html_failed_copy_preserves_previous_file(
 
     assert final_path.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
     assert list(final_dir.glob("*.tmp")) == []
+
+
+def test_publish_final_html_failed_second_copy_preserves_entire_previous_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    sources: list[tuple[str, Path]] = []
+    for article in ("article_a", "article_b"):
+        source = quality_dir / "sources" / f"{article}.html"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"<html><body>new {article}</body></html>", encoding="utf-8")
+        sources.append((article, source))
+
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir(parents=True)
+    (final_dir / "article_a.html").write_text("old a", encoding="utf-8")
+    (final_dir / "article_b.html").write_text("old b", encoding="utf-8")
+    (final_dir / "stale.html").write_text("old stale", encoding="utf-8")
+    (final_dir / "final_html_manifest.json").write_text(
+        "old manifest", encoding="utf-8"
+    )
+    before = {
+        path.relative_to(final_dir).as_posix(): path.read_bytes()
+        for path in final_dir.rglob("*")
+        if path.is_file()
+    }
+
+    original_copy = clean_pipeline_module._copy_file_atomic
+    copy_count = 0
+
+    def fail_second_copy(source: Path, target: Path) -> None:
+        nonlocal copy_count
+        copy_count += 1
+        if copy_count == 2:
+            raise OSError("simulated second copy failure")
+        original_copy(source, target)
+
+    monkeypatch.setattr(clean_pipeline_module, "_copy_file_atomic", fail_second_copy)
+
+    with pytest.raises(OSError, match="simulated second copy failure"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=sources,
+        )
+
+    after = {
+        path.relative_to(final_dir).as_posix(): path.read_bytes()
+        for path in final_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_publish_final_html_manifest_failure_preserves_entire_previous_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "sources" / "article_a.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir(parents=True)
+    (final_dir / "article_a.html").write_text("old", encoding="utf-8")
+    (final_dir / "stale.html").write_text("stale", encoding="utf-8")
+    (final_dir / "final_html_manifest.json").write_text(
+        "old manifest", encoding="utf-8"
+    )
+    before = {
+        path.relative_to(final_dir).as_posix(): path.read_bytes()
+        for path in final_dir.rglob("*")
+        if path.is_file()
+    }
+
+    def fail_manifest(_path: Path, _payload: object) -> None:
+        raise OSError("simulated manifest failure")
+
+    monkeypatch.setattr(clean_pipeline_module, "_write_json_atomic", fail_manifest)
+
+    with pytest.raises(OSError, match="simulated manifest failure"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=(("article_a", source),),
+        )
+
+    after = {
+        path.relative_to(final_dir).as_posix(): path.read_bytes()
+        for path in final_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_publish_final_html_rejects_article_path_traversal_before_writing(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>source</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+
+    with pytest.raises(ValueError, match="article name"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=(("../escaped", source),),
+        )
+
+    assert not (quality_dir / "escaped.html").exists()
+    assert not final_dir.exists()
+
+
+def test_publish_final_html_rejects_quality_directory_as_empty_target(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    quality_dir.mkdir()
+    sentinel = quality_dir / "existing.html"
+    sentinel.write_text("<html><body>keep</body></html>", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="quality_output_dir"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=quality_dir,
+            sources=(),
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "<html><body>keep</body></html>"
+    assert not (quality_dir / "final_html_manifest.json").exists()
+
+
+def test_publish_final_html_rejects_noncanonical_target_before_writing(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>source</body></html>", encoding="utf-8")
+    target_dir = quality_dir / "alias" / ".." / "final_html"
+
+    with pytest.raises(ValueError, match="canonical"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=target_dir,
+            sources=(("article_a", source),),
+        )
+
+    assert not (quality_dir / "final_html").exists()
+
+
+@pytest.mark.parametrize(
+    "article",
+    [
+        "..",
+        "CON",
+        "CON .report",
+        "COM\u00b9.report",
+        "LPT\u00b2.scan",
+        "bad\\name",
+        "bad:name",
+        "bad.",
+        "e\u0301",
+    ],
+)
+def test_publish_final_html_rejects_nonportable_article_names_before_writing(
+    tmp_path: Path,
+    article: str,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>source</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+
+    with pytest.raises(ValueError, match="article name"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=((article, source),),
+        )
+
+    assert not final_dir.exists()
+
+
+def test_publish_final_html_rejects_link_like_target_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>source</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    monkeypatch.setattr(
+        clean_pipeline_module,
+        "path_is_link_like",
+        lambda path: Path(path) == final_dir,
+    )
+
+    with pytest.raises(ValueError, match="link-like"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=(("article_a", source),),
+        )
+
+
+def test_collect_final_html_rejects_noncanonical_public_target_before_writing(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    stage_dir = tmp_path / "converted" / "article_a" / "_z2m_stages"
+    _write_current_stage_pair(stage_dir, tmp_path / "paper.pdf")
+    _seal_quality_output(quality_dir, stage_dir, "article_a")
+    target_dir = tmp_path / "public" / "alias" / ".." / "final_html"
+
+    with pytest.raises(ValueError, match="canonical"):
+        collect_final_html(quality_dir, final_html_dir=target_dir)
+
+    assert not (tmp_path / "public" / "final_html").exists()
+
+
+def test_publish_final_html_cancellation_during_staging_preserves_previous_tree(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    sources: list[tuple[str, Path]] = []
+    for article in ("article_a", "article_b"):
+        source = quality_dir / "sources" / f"{article}.html"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(f"<html><body>{article}</body></html>", encoding="utf-8")
+        sources.append((article, source))
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir(parents=True)
+    previous = final_dir / "previous.html"
+    previous.write_text("<html><body>previous</body></html>", encoding="utf-8")
+    cancellation_checks = 0
+
+    def cancel_after_first_copy() -> bool:
+        nonlocal cancellation_checks
+        cancellation_checks += 1
+        return cancellation_checks >= 2
+
+    with pytest.raises(RuntimeError, match="cancelled before commit"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=sources,
+            is_cancelled=cancel_after_first_copy,
+        )
+
+    assert previous.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
+    assert {entry.name for entry in final_dir.iterdir()} == {"previous.html"}
+
+
+def test_publish_final_html_detects_byte_identical_target_directory_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir(parents=True)
+    (final_dir / "article_a.html").write_text(
+        "<html><body>old</body></html>",
+        encoding="utf-8",
+    )
+    (final_dir / "final_html_manifest.json").write_text(
+        "old manifest", encoding="utf-8"
+    )
+    detached = quality_dir / "detached_original"
+    original_write = clean_pipeline_module._write_json_atomic
+
+    def write_then_replace_target(path: Path, payload: object) -> None:
+        original_write(path, payload)
+        final_dir.replace(detached)
+        shutil.copytree(detached, final_dir, copy_function=shutil.copy2)
+
+    monkeypatch.setattr(
+        clean_pipeline_module,
+        "_write_json_atomic",
+        write_then_replace_target,
+    )
+
+    with pytest.raises(RuntimeError, match="changed during publication"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=(("article_a", source),),
+        )
+
+    assert (final_dir / "article_a.html").read_text(encoding="utf-8") == (
+        "<html><body>old</body></html>"
+    )
+    assert (detached / "article_a.html").read_text(encoding="utf-8") == (
+        "<html><body>old</body></html>"
+    )
+
+
+def test_publish_final_html_replaces_hardlinked_old_entry_without_touching_peer(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir(parents=True)
+    sentinel = quality_dir / "external_sentinel.html"
+    sentinel.write_text("<html><body>external old</body></html>", encoding="utf-8")
+    (final_dir / "article_a.html").hardlink_to(sentinel)
+
+    clean_pipeline_module._publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=final_dir,
+        sources=(("article_a", source),),
+    )
+
+    assert (
+        sentinel.read_text(encoding="utf-8") == "<html><body>external old</body></html>"
+    )
+    assert (final_dir / "article_a.html").read_text(encoding="utf-8") == (
+        "<html><body>new</body></html>"
+    )
+
+
+def test_final_html_manifest_detects_published_html_tampering(tmp_path: Path) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+
+    collection = clean_pipeline_module._publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=final_dir,
+        sources=(("article_a", source),),
+    )
+    manifest = json.loads(collection.manifest_path.read_text(encoding="utf-8"))
+    publication_id = manifest["publication_id"]
+
+    assert clean_pipeline_module._final_html_tree_matches_publication(
+        final_dir,
+        publication_id,
+    )
+    (final_dir / "article_a.html").write_text(
+        "<html><body>tampered</body></html>",
+        encoding="utf-8",
+    )
+    assert not clean_pipeline_module._final_html_tree_matches_publication(
+        final_dir,
+        publication_id,
+    )
+
+
+def test_publish_final_html_rejects_foreign_target_entry_before_writing(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir(parents=True)
+    foreign = final_dir / "owner-notes.txt"
+    foreign.write_text("do not delete", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="foreign entry"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=final_dir,
+            sources=(("article_a", source),),
+        )
+
+    assert foreign.read_text(encoding="utf-8") == "do not delete"
+    assert not (final_dir / "article_a.html").exists()
+
 
 
 def test_collect_final_html_rejects_target_containing_source(tmp_path: Path) -> None:
@@ -963,6 +1351,61 @@ def test_run_clean_pipeline_validates_new_and_skipped_raw_stages_together(
     assert artifacts["second"].final_path.read_text(encoding="utf-8") == (
         "<html><body>stale</body></html>"
     )
+
+
+def test_run_clean_pipeline_repolishes_when_every_conversion_is_already_current(
+    tmp_path: Path,
+) -> None:
+    conversion_dir = tmp_path / "converted"
+    quality_dir = tmp_path / "quality"
+    source_pdf = tmp_path / "paper.pdf"
+    observe_calls: list[list[str]] = []
+
+    def fake_pipeline_runner(*_args):
+        _write_current_stage_pair(
+            conversion_dir / "article_a" / "_z2m_stages",
+            source_pdf,
+        )
+        return _summary(
+            conversion_dir,
+            converted_total=0,
+            skipped_existing=1,
+        )
+
+    def fake_observe_runner(command, _cwd, _log):
+        observe_calls.append(list(command))
+        _seal_quality_output(
+            quality_dir,
+            conversion_dir / "article_a" / "_z2m_stages",
+            "article_a",
+            audited_html="<html><body>repolished current</body></html>",
+        )
+        return 0
+
+    summary = run_clean_pipeline(
+        CleanPipelineOptions(
+            conversion_options=PipelineOptions(
+                source_pdf_paths=[str(source_pdf)],
+                output_dir=str(conversion_dir),
+                export_mode="html",
+            ),
+            quality_output_dir=str(quality_dir),
+            publish_latest_to_converted=False,
+        ),
+        MarkerRunner(),
+        lambda _message: None,
+        lambda: False,
+        pipeline_runner=fake_pipeline_runner,
+        observe_runner=fake_observe_runner,
+    )
+
+    assert summary.conversion_summary.converted_total == 0
+    assert summary.conversion_summary.skipped_existing == 1
+    assert observe_calls
+    assert summary.final_html.artifacts[0].final_path.read_text(encoding="utf-8") == (
+        "<html><body>repolished current</body></html>"
+    )
+
 
 
 def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path: Path) -> None:
