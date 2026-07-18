@@ -63,6 +63,7 @@ def test_enrich_profile_loads_matching_pdf_reference_entries(tmp_path: Path) -> 
             SimpleNamespace(page=10, number=1, text="Alpha A. First source."),
             SimpleNamespace(page=11, number=2, text="Beta B. Second source."),
         ],
+        snapshot_pdf=lambda path: path,
     )
 
     assert count == 2

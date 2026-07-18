@@ -119,6 +119,17 @@ def _write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _assert_enrichment_snapshot_copy(
+    candidate: Path,
+    source: Path,
+    run_dir: Path,
+) -> None:
+    resolved = candidate.resolve(strict=True)
+    assert resolved != source.resolve(strict=True)
+    resolved.relative_to((run_dir / "_enrichment_snapshot" / "files").resolve(strict=True))
+    assert resolved.read_bytes() == source.read_bytes()
+
+
 def _commit_cached_repolish_source(
     source: Path,
     *,
@@ -1083,7 +1094,7 @@ def test_p62_marker_recovery_plan_builds_single_page_marker_command(
     _write_json(run_dir / "quality_compare.json", {"status": "ok", "regressions": [], "improvements": []})
 
     def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert max_pages == 80
         return (
             "fake",
@@ -1116,6 +1127,10 @@ def test_p62_marker_recovery_plan_builds_single_page_marker_command(
     assert article["marker_page_range"] == "1"
     assert article["marker_command"][article["marker_command"].index("--page_range") + 1] == "1"
     assert "--disable_multiprocessing" in article["marker_command"]
+    snapshot_pdf = Path(article["source_pdf_path"])
+    _assert_enrichment_snapshot_copy(snapshot_pdf, source_pdf, run_dir)
+    assert str(snapshot_pdf) in article["marker_command"]
+    assert str(source_pdf) not in article["marker_command"]
     assert article["existing_marker_output_validation"]["status"] == "not_run"
     assert report["marker_output_status_counts"] == {"not_run": 1}
     assert Path(article["polish_context_path"]).is_file()
@@ -1197,7 +1212,7 @@ def test_p62_marker_recovery_plan_retries_full_pdf_when_label_missed_by_page_lim
     calls: list[int | None] = []
 
     def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         calls.append(max_pages)
         if max_pages == 80:
             pages = ["ordinary production-process text"] * 80
@@ -1265,14 +1280,14 @@ def test_p62_marker_recovery_plan_rejects_toc_and_selects_visual_label_page(
     _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
 
     def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         pages = ["ordinary text"] * 20
         pages[3] = "CONTENTS ................................ Figure 2 Determination of test duration time ........ 18"
         pages[13] = "Figure 2. Na test cycle. The first cycle comprises cold and hot temperatures."
         return "fake", pages, None
 
     def fake_visuals(pdf_path: Path, page_numbers):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return {
             4: {"image_xrefs": 1, "image_blocks": 1, "drawings": 7, "text_blocks": 10},
             14: {"image_xrefs": 2, "image_blocks": 2, "drawings": 60, "text_blocks": 38},
@@ -1337,14 +1352,14 @@ def test_p62_marker_recovery_plan_uses_full_hierarchical_figure_label(
     _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
 
     def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         pages = ["ordinary text"] * 60
         pages[8] = "LIST OF FIGURES ........ FIGURE 3-3 CIRCUIT DIAGRAM ........ 53"
         pages[52] = "Figure 3-1. Circuit diagram for the sinusoidal generator with current converter."
         return "fake", pages, None
 
     def fake_visuals(pdf_path: Path, page_numbers):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return {
             9: {"image_xrefs": 0, "image_blocks": 0, "drawings": 0, "text_blocks": 28},
             53: {"image_xrefs": 11, "image_blocks": 11, "drawings": 24, "text_blocks": 33},
@@ -1908,7 +1923,7 @@ def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
     _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
 
     def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return (
             "fake",
             [
@@ -1919,7 +1934,7 @@ def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
         )
 
     def fake_render(pdf_path: Path, page_number: int, out_path: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert page_number == 2
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(_valid_tiny_png_bytes())
@@ -1958,9 +1973,17 @@ def test_p62_image_recovery_stage_renders_pdf_fallback_and_patches_html(
     assert (run_dir / "assessment.json").is_file()
 
 
+@pytest.mark.parametrize(
+    "untrusted_marker_command",
+    [
+        ["powershell", "-NoProfile", "-Command", "malicious"],
+        "powershell -NoProfile -Command malicious",
+    ],
+)
 def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
     tmp_path: Path,
     monkeypatch,
+    untrusted_marker_command: object,
 ) -> None:
     run_dir = tmp_path / "run"
     source_pdf = tmp_path / "paper.pdf"
@@ -1992,7 +2015,13 @@ def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
                     "figure_label_pdf_page_candidates": [8],
                     "polish_stage_path": str(polish_path),
                     "marker_page_range": "7",
-                    "marker_command": ["marker_single", str(source_pdf), "--page_range", "7"],
+                    "marker_command": [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "malicious",
+                        str(source_pdf),
+                    ] if isinstance(untrusted_marker_command, list) else untrusted_marker_command,
                     "marker_output_dir": str(marker_output_dir),
                     "existing_marker_output_validation": {"status": "not_run"},
                 }
@@ -2005,6 +2034,19 @@ def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
     calls: list[int] = []
 
     def fake_execute(record: dict[str, object], *, timeout_seconds: int) -> dict[str, object]:
+        snapshot_pdf = Path(str(record["source_pdf_path"]))
+        _assert_enrichment_snapshot_copy(snapshot_pdf, source_pdf, run_dir)
+        assert record["source_pdf_original_path"] == str(
+            source_pdf.resolve(strict=False)
+        )
+        marker_command = record["marker_command"]
+        assert isinstance(marker_command, list)
+        assert marker_command[0] == "marker_single"
+        assert marker_command[marker_command.index("--output_dir") + 1] == str(
+            marker_output_dir.resolve(strict=False)
+        )
+        assert str(snapshot_pdf) in marker_command
+        assert str(source_pdf.resolve(strict=False)) not in marker_command
         calls.append(timeout_seconds)
         output = Path(str(record["marker_output_dir"])) / "paper"
         output.mkdir(parents=True)
@@ -2017,6 +2059,31 @@ def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
 
     monkeypatch.setattr(llm_quality_loop, "_execute_p62_marker_command", fake_execute)
     monkeypatch.setattr(llm_quality_loop, "_render_pdf_evidence_page", fail_render)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_first_valid_image_path",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("external marker images must be validated from snapshots")
+        ),
+    )
+    real_snapshot = llm_quality_loop.snapshot_enrichment_file
+    removed_snapshot_origins: set[str] = set()
+
+    def snapshot_then_remove_marker_origin(
+        snapshot_run_dir: Path,
+        article: str,
+        purpose: str,
+        source_path: Path,
+    ) -> Path:
+        snapshotted = real_snapshot(snapshot_run_dir, article, purpose, source_path)
+        if purpose in {"p62_marker_html", "p62_marker_image"}:
+            source_path.unlink()
+            removed_snapshot_origins.add(purpose)
+        return snapshotted
+
+    monkeypatch.setattr(
+        llm_quality_loop, "snapshot_enrichment_file", snapshot_then_remove_marker_origin
+    )
 
     report = write_p62_image_recovery_stage(
         run_dir,
@@ -2032,9 +2099,85 @@ def test_p62_image_recovery_stage_runs_marker_first_with_timeout(
     assert report["status"] == "ready"
     assert report["marker_timeout_seconds"] == 600
     assert report["recovery_source_counts"] == {"marker_image": 1}
+    assert removed_snapshot_origins == {"p62_marker_html", "p62_marker_image"}
+    marker_source = marker_output_dir / "paper" / "_page_7_Figure_0.png"
+    marker_snapshot = Path(report["articles"][0]["recovery_detail"])
+    assert not marker_source.exists()
+    assert marker_snapshot.is_relative_to((run_dir / "_enrichment_snapshot").resolve(strict=False))
+    assert marker_snapshot.read_bytes() == _valid_tiny_png_bytes()
     patched_html = polish_path.read_text(encoding="utf-8")
     assert 'data-z2m-recovery-source="marker_image"' in patched_html
     assert "z2m-missing-figure-warning" not in patched_html
+
+
+def test_p62_image_recovery_stage_rejects_external_marker_output_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF-1.4\n")
+    polish_path = run_dir / "audit_tree" / "article_a" / "02.en.polish.html"
+    polish_path.parent.mkdir(parents=True)
+    polish_path.write_text(
+        '<div id="fig-7" class="z2m-float-unit z2m-figure-unit z2m-missing-figure-unit">'
+        '<p class="z2m-missing-figure-warning z2m-figure-target" role="note">'
+        "Figure 7 image was not extracted into this HTML.</p>"
+        '<p class="z2m-figure-caption">Figure 7. External marker visual.</p>'
+        "</div>",
+        encoding="utf-8",
+    )
+    external_marker_dir = tmp_path / "external-marker"
+    external_marker_dir.mkdir()
+    external_html = external_marker_dir / "paper.html"
+    external_html.write_text("<p>Figure 7. External marker visual.</p>", encoding="utf-8")
+    external_image = external_marker_dir / "image.png"
+    external_image.write_bytes(_valid_tiny_png_bytes())
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": 1,
+            "articles": [
+                {
+                    "article": "article_a",
+                    "figure_label": "7",
+                    "warning_index": 1,
+                    "status": "ready",
+                    "source_pdf_path": str(source_pdf),
+                    "source_pdf_page_number": 1,
+                    "polish_stage_path": str(polish_path),
+                    "marker_page_range": "0",
+                    "marker_command": [],
+                    "marker_output_dir": str(external_marker_dir),
+                    "existing_marker_output_validation": {
+                        "status": "recovered_image",
+                        "html_paths": [str(external_html)],
+                        "image_paths": [str(external_image)],
+                    },
+                }
+            ],
+        },
+    )
+    _write_json(run_dir / "manifest.json", {"articles": [{"article_id": "article_a"}]})
+    _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_p62_pdf_page_false_match_hint",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_p62_pdf_page_caption_label_found",
+        lambda *args, **kwargs: True,
+    )
+
+    with pytest.raises(ValueError, match="marker_output_dir_outside_run"):
+        write_p62_image_recovery_stage(
+            run_dir,
+            plan_path=plan_path,
+            execute_marker=False,
+        )
 
 
 def test_p62_image_recovery_stage_uses_pdf_figure_asset_before_page_render(
@@ -2081,7 +2224,7 @@ def test_p62_image_recovery_stage_uses_pdf_figure_asset_before_page_render(
     _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
 
     def fake_asset(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert page_number == 8
         assert figure_label == "5"
         return {
@@ -2162,7 +2305,7 @@ def test_p62_image_recovery_stage_upgrades_existing_page_render_recovery(
     _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
 
     def fake_asset(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert page_number == 8
         assert figure_label == "5"
         return {
@@ -2486,7 +2629,7 @@ def test_p62_image_recovery_stage_repairs_duplicate_existing_figure_after_recove
     )
 
     def fake_text_pages(pdf_path: Path, *, max_pages=None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return (
             "fixture",
             [
@@ -2501,7 +2644,7 @@ def test_p62_image_recovery_stage_repairs_duplicate_existing_figure_after_recove
         )
 
     def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert page_number == 5
         assert figure_label == "5"
         return {
@@ -2605,7 +2748,7 @@ def test_p62_image_recovery_stage_repairs_duplicate_marker_recovered_figures(
     )
 
     def fake_text_pages(pdf_path: Path, *, max_pages=None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return (
             "fixture",
             [
@@ -2619,7 +2762,7 @@ def test_p62_image_recovery_stage_repairs_duplicate_marker_recovered_figures(
         )
 
     def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert page_number == 5
         asset_path = fig1_asset if figure_label == "1" else fig2_asset
         return {
@@ -2713,6 +2856,79 @@ def test_p62_image_recovery_stage_parallelizes_by_article_and_preserves_record_o
     assert [article["record_index"] for article in report["articles"]] == [1, 2, 3]
     assert [article["article"] for article in report["articles"]] == ["article_a", "article_b", "article_a"]
     assert report["status_counts"] == {"already_patched": 3}
+
+
+def test_p62_image_recovery_parallel_path_snapshots_each_source_pdf(tmp_path: Path) -> None:
+    fitz = pytest.importorskip("fitz")
+    run_dir = tmp_path / "run"
+    records: list[dict[str, object]] = []
+    sources: dict[str, Path] = {}
+    for index, article in enumerate(("article_a", "article_b"), start=1):
+        source_pdf = tmp_path / f"{article}.pdf"
+        document = fitz.open()
+        page = document.new_page(width=200, height=200)
+        page.insert_text((20, 40), article)
+        document.save(str(source_pdf))
+        document.close()
+        sources[article] = source_pdf
+        for path in (
+            run_dir / "polish" / f"{article}.02.en.polish.html",
+            run_dir / "audit_tree" / article / "02.en.polish.html",
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f'<html><body><div id="fig-1">Figure 1. Already present for {article}.</div></body></html>',
+                encoding="utf-8",
+            )
+        records.append(
+            {
+                "article": article,
+                "figure_label": "1",
+                "status": "ready",
+                "source_pdf_path": str(source_pdf),
+                "source_pdf_page_number": index,
+                "figure_label_pdf_page_candidates": [index],
+            }
+        )
+
+    plan_path = run_dir / "p62_marker_recovery_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "candidate_count": len(records),
+            "articles": records,
+        },
+    )
+    _write_json(
+        run_dir / "manifest.json",
+        {"articles": [{"article_id": article} for article in sources]},
+    )
+    _write_json(run_dir / "assessment.json", {"article_count": 2, "totals": {}, "articles": []})
+
+    report = write_p62_image_recovery_stage(
+        run_dir,
+        plan_path=plan_path,
+        gate_config={
+            "p62_image_recovery_jobs": 2,
+            "p62_image_recovery_repair_duplicate_figure_images": False,
+        },
+        execute_marker=False,
+    )
+
+    validation = llm_quality_loop.validate_enrichment_snapshot(run_dir)
+    assert report["status"] == "ready"
+    assert report["jobs"] == 2
+    assert validation.artifact_count == 2
+    assert validation.usage_keys == frozenset(
+        {(article, "p62_pdf") for article in sources}
+    )
+    for item in report["articles"]:
+        article = item["article"]
+        _assert_enrichment_snapshot_copy(
+            Path(item["source_pdf_path"]),
+            sources[article],
+            run_dir,
+        )
 
 
 def test_p62_image_recovery_stage_parallel_resume_skips_completed_article_reports(
@@ -3211,11 +3427,11 @@ def test_polish_auto_repair_stage_repairs_plain_duplicate_figure_visuals(
     _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
 
     def fake_text_pages(pdf_path: Path, *, max_pages=None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return ("fixture", ["Figure 1. First source visual.", "Figure 2. Second source visual."], None)
 
     def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         asset_path = fig1_asset if figure_label == "1" else fig2_asset
         return {
             "status": "region_rendered",
@@ -3292,11 +3508,11 @@ def test_polish_auto_repair_stage_rejects_strip_like_duplicate_region_assets(
     _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
 
     def fake_text_pages(pdf_path: Path, *, max_pages=None):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return ("fixture", ["Figure 2. Query-based signage.", "Figure 5. Experimental evaluation."], None)
 
     def fake_recover(pdf_path: Path, page_number: int, figure_label: str, output_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         return {
             "status": "region_rendered",
             "path": str(strip_asset),
@@ -3355,7 +3571,8 @@ def test_polish_auto_repair_stage_uses_zotero_title_pdf_fallback_for_p96(
         storage_dir
         / "Example - 2024 - Custom Zotero Fallback Mobility Paper With Unique Nebula Marker.pdf"
     )
-    source_pdf.write_bytes(b"%PDF-1.4\n")
+    source_pdf_bytes = b"%PDF-1.4\n"
+    source_pdf.write_bytes(source_pdf_bytes)
     monkeypatch.setenv("ZOTERO_PATH_PREFIX_MAP", f"/zotero_roots/test_zotero={zotero_root}")
     _write_json(
         run_dir / "audit_full_checks.json",
@@ -3375,13 +3592,21 @@ def test_polish_auto_repair_stage_uses_zotero_title_pdf_fallback_for_p96(
 
     def fake_duplicate_repair(targets, *, pdf_path: Path, artifact_dir: Path, zoom: float, repair_plain_duplicates: bool):
         captured["pdf_path"] = pdf_path
+        source_pdf.unlink()
+        assert pdf_path.is_file()
+        assert pdf_path.read_bytes() == source_pdf_bytes
         return {"repair_count": 1, "patched_paths": [str(polish_path)], "repairs": [], "errors": []}
 
     monkeypatch.setattr(llm_quality_loop, "_apply_p62_duplicate_figure_image_repairs", fake_duplicate_repair)
 
     report = write_polish_auto_repair_stage(run_dir, gate_config={"polish_auto_repair_render_zoom": 1.0})
 
-    assert captured["pdf_path"] == source_pdf.resolve(strict=False)
+    enrichment_root = (run_dir / "_enrichment_snapshot").resolve(strict=False)
+    assert captured["pdf_path"].is_relative_to(enrichment_root)
+    assert captured["pdf_path"] != source_pdf.resolve(strict=False)
+    assert captured["pdf_path"].is_file()
+    assert not source_pdf.exists()
+    assert (enrichment_root / "manifest.json").is_file()
     assert report["status"] == "patched"
     assert report["repair_counts"] == {"P96": 1}
 
@@ -3430,7 +3655,7 @@ def test_p62_image_recovery_stage_uses_detached_plate_before_region_crop(
     _write_json(run_dir / "assessment.json", {"article_count": 1, "totals": {}, "articles": []})
 
     def fake_detached(pdf_path: Path, page_number: int, figure_label: str, artifact_dir: Path, *, zoom: float):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert page_number == 4
         assert figure_label == "2"
         return {
@@ -3589,7 +3814,7 @@ def test_p62_image_recovery_stage_probes_source_visual_unavailable_before_skippi
         marker_timeout_seconds: int,
         marker_output_dir: Path | None,
     ):
-        assert pdf_path == source_pdf
+        _assert_enrichment_snapshot_copy(pdf_path, source_pdf, run_dir)
         assert figure_label == "3"
         assert snippets == ["Figure 3. A recovered source visual."]
         assert zoom == 1.0
@@ -5404,10 +5629,11 @@ def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Pa
         article_metadata={"spotnitz": {"source_pdf_path": str(pdf_path)}},
     )
 
-    monkeypatch.setattr(
-        llm_quality_loop,
-        "extract_reference_entries_from_pdf",
-        lambda _path: [
+    captured_pdf_paths: list[Path] = []
+
+    def fake_extract_reference_entries(path: Path):
+        captured_pdf_paths.append(path.resolve(strict=False))
+        return [
             SimpleNamespace(
                 page=24,
                 number=158,
@@ -5417,15 +5643,26 @@ def test_repolish_cached_run_recovers_reference_gap_from_source_pdf(tmp_path: Pa
                     'on chronic pain and quality of life," Surgical Endoscopy, 2012.'
                 ),
             )
-        ],
+        ]
+
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "extract_reference_entries_from_pdf",
+        fake_extract_reference_entries,
     )
 
-    manifest = repolish_cached_run(source, tmp_path / "run", polish_language="en")
-    polished = (tmp_path / "run" / "polish" / "spotnitz.02.en.polish.html").read_text(encoding="utf-8")
+    run_dir = tmp_path / "run"
+    manifest = repolish_cached_run(source, run_dir, polish_language="en")
+    polished = (run_dir / "polish" / "spotnitz.02.en.polish.html").read_text(encoding="utf-8")
     profile = json.loads(
-        (tmp_path / "run" / "profiles" / "spotnitz.citation_profile.json").read_text(encoding="utf-8")
+        (run_dir / "profiles" / "spotnitz.citation_profile.json").read_text(encoding="utf-8")
     )
 
+    enrichment_root = (run_dir / "_enrichment_snapshot").resolve(strict=False)
+    assert captured_pdf_paths and captured_pdf_paths[0].is_relative_to(enrichment_root)
+    assert captured_pdf_paths[0] != pdf_path.resolve(strict=False)
+    assert profile["reference_entries_source_pdf"] == str(captured_pdf_paths[0])
+    assert manifest["enrichment_snapshot_dir"] == str(enrichment_root)
     assert manifest["pdf_reference_recovery_count"] == 1
     assert manifest["articles"][0]["pdf_reference_recovered"] == 1
     assert 'id="ref-158"' in polished
@@ -5493,7 +5730,10 @@ def test_pdf_reference_body_recovery_is_skipped_when_reference_ids_exist() -> No
     assert llm_quality_loop._pdf_reference_recovery_numbers(html) == ([], "")
 
 
-def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) -> None:
+def test_repolish_cached_run_restores_ancestor_inlined_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = tmp_path / "source"
     raw_cache = source / "raw_cache"
     profiles = source / "profiles"
@@ -5532,19 +5772,48 @@ def test_repolish_cached_run_restores_ancestor_inlined_images(tmp_path: Path) ->
         },
     )
     _commit_cached_repolish_source(source, source_run_dir=chain)
+    real_snapshot = llm_quality_loop.snapshot_enrichment_file
 
-    manifest = repolish_cached_run(source, tmp_path / "run")
-    polished = (tmp_path / "run" / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
-    audit_polished = (tmp_path / "run" / "audit_tree" / "doc" / "02.en.polish.html").read_text(encoding="utf-8")
+    def snapshot_then_corrupt_origin(
+        run_path: Path,
+        article: str,
+        purpose: str,
+        path: Path,
+    ) -> Path:
+        snapshotted = real_snapshot(run_path, article, purpose, path)
+        if Path(path).resolve(strict=False) == ancestor_polish.resolve(strict=False):
+            ancestor_polish.write_bytes(b"<html><body>\xff</body></html>")
+        return snapshotted
 
+    monkeypatch.setattr(
+        llm_quality_loop, "snapshot_enrichment_file", snapshot_then_corrupt_origin
+    )
+
+
+    run_dir = tmp_path / "run"
+    manifest = repolish_cached_run(source, run_dir)
+    polished = (run_dir / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
+    audit_polished = (run_dir / "audit_tree" / "doc" / "02.en.polish.html").read_text(encoding="utf-8")
+
+    enrichment_root = (run_dir / "_enrichment_snapshot").resolve(strict=False)
+    restored_source = Path(manifest["articles"][0]["restored_image_source"])
+    assert restored_source.is_relative_to(enrichment_root)
+    assert restored_source != ancestor_polish.resolve(strict=False)
+    assert restored_source.is_file()
+    assert manifest["articles"][0]["restored_image_origin_source"] == str(ancestor_polish.resolve(strict=False))
+    assert manifest["enrichment_snapshot_dir"] == str(enrichment_root)
     assert manifest["restored_image_count"] == 2
     assert f'data-z2m-src="fig1.png" src="{valid_image}"' in polished
+    assert ancestor_polish.read_bytes() == b"<html><body>\xff</body></html>"
     assert f'data-z2m-src="fig2.png" src="{valid_image}"' in polished
     assert '<img src="fig1.png"' not in polished
     assert audit_polished == polished
 
 
-def test_repolish_cached_run_restores_converted_sidecar_images(tmp_path: Path) -> None:
+def test_repolish_cached_run_restores_converted_sidecar_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = tmp_path / "source"
     raw_cache = source / "raw_cache"
     profiles = source / "profiles"
@@ -5561,7 +5830,8 @@ def test_repolish_cached_run_restores_converted_sidecar_images(tmp_path: Path) -
     source_exports_raw.write_text("", encoding="utf-8")
     converted_doc = tmp_path / "html" / "converted" / "lib" / "att" / "doc" / "Document"
     converted_doc.mkdir(parents=True)
-    converted_doc.joinpath("fig1.png").write_bytes(
+    sidecar = converted_doc / "fig1.png"
+    sidecar.write_bytes(
         base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
         )
@@ -5581,9 +5851,35 @@ def test_repolish_cached_run_restores_converted_sidecar_images(tmp_path: Path) -
     )
     _commit_cached_repolish_source(source, source_run_dir=chain)
 
-    manifest = repolish_cached_run(source, tmp_path / "run")
-    polished = (tmp_path / "run" / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
+    real_snapshot = llm_quality_loop.snapshot_enrichment_file
 
+    def snapshot_then_remove_origin(
+        run_path: Path,
+        article: str,
+        purpose: str,
+        path: Path,
+    ) -> Path:
+        snapshotted = real_snapshot(run_path, article, purpose, path)
+        if Path(path).resolve(strict=False) == sidecar.resolve(strict=False):
+            sidecar.unlink()
+        return snapshotted
+
+    monkeypatch.setattr(
+        llm_quality_loop, "snapshot_enrichment_file", snapshot_then_remove_origin
+    )
+
+    run_dir = tmp_path / "run"
+    manifest = repolish_cached_run(source, run_dir)
+    polished = (run_dir / "polish" / "doc.02.en.polish.html").read_text(encoding="utf-8")
+
+    enrichment_root = (run_dir / "_enrichment_snapshot").resolve(strict=False)
+    restored_source = Path(manifest["articles"][0]["restored_image_source"])
+    assert not sidecar.exists()
+    assert restored_source.is_relative_to(enrichment_root)
+    assert restored_source != converted_doc.resolve(strict=False)
+    assert restored_source.is_file()
+    assert manifest["articles"][0]["restored_image_origin_source"] == str(converted_doc.resolve(strict=False))
+    assert manifest["enrichment_snapshot_dir"] == str(enrichment_root)
     assert manifest["restored_image_count"] == 1
     assert 'data-z2m-src="fig1.png" src="data:image/png;base64,' in polished
     assert '<img src="fig1.png"' not in polished

@@ -72,10 +72,16 @@ def test_cached_data_image_cache_follows_source_run_chain(tmp_path: Path) -> Non
     write_json(source / "manifest.json", {"source_run_dir": str(ancestor), "articles": [{"article": "doc"}]})
     write_json(ancestor / "manifest.json", {"articles": [{"article": "doc"}]})
 
-    cache, source_path = cached_data_image_cache(source, "doc", '<img src="fig1.png"/>')
+    cache, source_path, origin_path = cached_data_image_cache(
+        source,
+        "doc",
+        '<img src="fig1.png"/>',
+        snapshot_file=lambda path, _purpose: path,
+    )
 
     assert cache == {"fig1.png": FIG1_DATA_URL}
     assert source_path == str(previous_polish)
+    assert origin_path == str(previous_polish)
 
 
 def test_cached_data_image_cache_reads_audit_tree_review_copy(tmp_path: Path) -> None:
@@ -88,10 +94,34 @@ def test_cached_data_image_cache_reads_audit_tree_review_copy(tmp_path: Path) ->
     )
     write_json(source / "manifest.json", {"articles": [{"article": "doc"}]})
 
-    cache, source_path = cached_data_image_cache(source, "doc", '<img src="fig1.png"/>')
+    cache, source_path, origin_path = cached_data_image_cache(
+        source,
+        "doc",
+        '<img src="fig1.png"/>',
+        snapshot_file=lambda path, _purpose: path,
+    )
 
     assert cache == {"fig1.png": FIG1_DATA_URL}
     assert source_path == str(previous_polish)
+    assert origin_path == str(previous_polish)
+
+
+def test_cached_data_image_cache_rejects_non_utf8_previous_polish(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    previous_polish = source / "audit_tree" / "doc" / "02.en.polish.html"
+    previous_polish.parent.mkdir(parents=True)
+    previous_polish.write_bytes(b"<html><body>\xff</body></html>")
+    write_json(source / "manifest.json", {"articles": [{"article": "doc"}]})
+
+    with pytest.raises(ValueError, match="not UTF-8"):
+        cached_data_image_cache(
+            source,
+            "doc",
+            '<img src="fig1.png"/>',
+            snapshot_file=lambda path, _purpose: path,
+        )
 
 
 def test_ordered_data_image_cache_does_not_guess_global_image_order() -> None:

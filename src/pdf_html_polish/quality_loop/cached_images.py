@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from html import unescape
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import re
 import urllib.parse
 
+from pdf_html_polish.artifact_integrity import read_bytes_with_fingerprint
 from pdf_html_polish.atomic_io import write_text_atomic
 from pdf_html_polish.html_images import (
     data_image_src_looks_renderable,
@@ -21,6 +22,7 @@ from .converted_runs import POLISH_STAGE, RAW_STAGE
 from .run_utils import article_dir_from_stage, load_json
 
 
+SnapshotFile = Callable[[Path, str], Path]
 IMG_SRC_RE = re.compile(r"(<img\b[^>]*?\s+src\s*=\s*)(['\"])(?P<src>.*?)(\2)", re.IGNORECASE | re.DOTALL)
 DATA_Z2M_SRC_RE = re.compile(r"\bdata-z2m-src\s*=\s*(['\"])(?P<src>.*?)\1", re.IGNORECASE | re.DOTALL)
 FIGURE_UNIT_RE = re.compile(
@@ -275,11 +277,14 @@ def cached_sidecar_image_cache(
     article: str,
     raw_html: str,
     existing: dict[str, str],
-) -> tuple[dict[str, str], str | None]:
+    *,
+    snapshot_file: SnapshotFile,
+) -> tuple[dict[str, str], str | None, str | None]:
     search_dirs = article_source_image_dirs(source_run_dir, article)
     if not search_dirs:
-        return {}, None
+        return {}, None, None
     image_cache: dict[str, str] = {}
+    source_files: set[str] = set()
     source_dirs: set[str] = set()
     raw_local_srcs = [src for src in img_srcs(raw_html) if not is_inline_or_remote_src(src)]
     for src in raw_local_srcs:
@@ -288,42 +293,71 @@ def cached_sidecar_image_cache(
         for candidate in local_image_candidates_from_dirs(src, search_dirs):
             if not candidate.is_file():
                 continue
-            data_url = to_data_url(candidate, detect_by_signature=True, log_func=None)
+            snapshotted = snapshot_file(candidate, "image_sidecar")
+            data_url = to_data_url(snapshotted, detect_by_signature=True, log_func=None)
             if (
                 data_url is None
                 or not data_image_src_looks_renderable(data_url)
-                or not validate_data_url(data_url, candidate)
+                or not validate_data_url(data_url, snapshotted)
             ):
                 continue
             image_cache[src] = data_url
-            source_dirs.add(str(candidate.parent))
+            source_files.add(str(snapshotted))
+            source_dirs.add(str(candidate.parent.resolve(strict=False)))
             break
     if not image_cache:
-        return {}, None
-    return image_cache, "; ".join(sorted(source_dirs))
+        return {}, None, None
+    return image_cache, "; ".join(sorted(source_files)), "; ".join(sorted(source_dirs))
 
 
-def cached_data_image_cache(source_run_dir: Path, article: str, raw_html: str) -> tuple[dict[str, str], str | None]:
+def cached_data_image_cache(
+    source_run_dir: Path,
+    article: str,
+    raw_html: str,
+    *,
+    snapshot_file: SnapshotFile,
+) -> tuple[dict[str, str], str | None, str | None]:
     raw_local_srcs = [src for src in img_srcs(raw_html) if not is_inline_or_remote_src(src)]
     expected_count = len(set(raw_local_srcs))
     collected: dict[str, str] = {}
     sources: list[str] = []
+    origin_sources: list[str] = []
     for candidate in previous_polish_candidates(source_run_dir, article):
         if not candidate.is_file():
             continue
-        previous_html = candidate.read_text(encoding="utf-8", errors="replace")
+        snapshotted = snapshot_file(candidate, "image_previous_polish")
+        stable = read_bytes_with_fingerprint(snapshotted, reject_symlink=True)
+        if stable is None:
+            raise ValueError(f"Snapshotted previous polish is unreadable: {snapshotted}")
+        try:
+            previous_html = stable[0].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Snapshotted previous polish is not UTF-8: {snapshotted}") from exc
         image_cache = ordered_data_image_cache(raw_html, previous_html)
         if image_cache:
             collected.update(image_cache)
-            sources.append(str(candidate))
+            sources.append(str(snapshotted))
+            origin_sources.append(str(candidate.resolve(strict=False)))
             if len(collected) >= expected_count:
-                return collected, "; ".join(sources)
-    sidecar_cache, sidecar_source = cached_sidecar_image_cache(source_run_dir, article, raw_html, collected)
+                return collected, "; ".join(sources), "; ".join(origin_sources)
+    sidecar_cache, sidecar_source, sidecar_origin_source = cached_sidecar_image_cache(
+        source_run_dir,
+        article,
+        raw_html,
+        collected,
+        snapshot_file=snapshot_file,
+    )
     if sidecar_cache:
         collected.update(sidecar_cache)
         if sidecar_source:
             sources.append(sidecar_source)
-    return collected, "; ".join(sources) if sources else None
+        if sidecar_origin_source:
+            origin_sources.append(sidecar_origin_source)
+    return (
+        collected,
+        "; ".join(sources) if sources else None,
+        "; ".join(origin_sources) if origin_sources else None,
+    )
 
 
 def review_html_image_search_dirs(stage_path: Path) -> list[Path]:

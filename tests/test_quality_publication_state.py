@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -15,6 +16,10 @@ from pdf_html_polish.html_stages import (
 from pdf_html_polish.quality_loop.cached_run_state import (
     CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
     cached_repolish_artifact_fingerprints,
+)
+from pdf_html_polish.quality_loop.enrichment_snapshot import (
+    initialize_enrichment_snapshot,
+    snapshot_enrichment_file,
 )
 from pdf_html_polish.quality_loop.publication_state import (
     QUALITY_PUBLICATION_MANIFEST_NAME,
@@ -101,6 +106,7 @@ def _quality_run(tmp_path: Path) -> tuple[Path, Path, Path]:
     )
     source_manifest_fingerprint = fingerprint_file(source_run / "manifest.json", reject_symlink=True)
     assert source_manifest_fingerprint is not None
+    enrichment_snapshot = initialize_enrichment_snapshot(quality_run)
 
     quality_cached_raw = quality_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
     quality_cached_raw.parent.mkdir(parents=True)
@@ -124,6 +130,7 @@ def _quality_run(tmp_path: Path) -> tuple[Path, Path, Path]:
             "source_run_dir": str(source_run),
             "source_manifest_bytes": source_manifest_fingerprint.size,
             "source_manifest_sha256": source_manifest_fingerprint.sha256,
+            "enrichment_snapshot_dir": str(enrichment_snapshot),
             "articles": [
                 {
                     "article": article_id,
@@ -171,6 +178,159 @@ def test_quality_publication_seal_validates_exact_audited_snapshot(tmp_path: Pat
     assert validation.valid
     assert set(validation.records_by_article) == {"article_a"}
     assert (quality_run / QUALITY_PUBLICATION_MANIFEST_NAME).is_file()
+
+
+def test_quality_publication_requires_enrichment_snapshot(tmp_path: Path) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    shutil.rmtree(quality_run / "_enrichment_snapshot")
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any(
+        error.startswith("enrichment_snapshot_invalid:")
+        for error in seal["errors"]
+    )
+
+
+def test_quality_publication_rejects_enrichment_snapshot_path_alias(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    manifest_path = quality_run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    snapshot_dir = quality_run / "_enrichment_snapshot"
+    manifest["enrichment_snapshot_dir"] = str(
+        snapshot_dir.parent / "unused" / ".." / snapshot_dir.name
+    )
+    _write_json(manifest_path, manifest)
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert "quality_enrichment_snapshot_dir_mismatch" in seal["errors"]
+
+
+def test_quality_publication_rejects_enrichment_artifact_tampered_before_seal(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    source = tmp_path / "repair.pdf"
+    source.write_bytes(b"repair-pdf")
+    artifact = snapshot_enrichment_file(
+        quality_run,
+        "article_a",
+        "p96_pdf",
+        source,
+    )
+    artifact.write_bytes(b"tampered")
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any(
+        error.startswith("enrichment_snapshot_invalid:artifact_fingerprint_mismatch")
+        for error in seal["errors"]
+    )
+
+
+def test_quality_publication_rejects_enrichment_artifact_tampered_after_seal(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    source = tmp_path / "repair.pdf"
+    source.write_bytes(b"repair-pdf")
+    artifact = snapshot_enrichment_file(
+        quality_run,
+        "article_a",
+        "p96_pdf",
+        source,
+    )
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    artifact.write_bytes(b"tampered")
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert "enrichment_snapshot_invalid:artifact_fingerprint_mismatch" in validation.reason
+
+
+@pytest.mark.parametrize(
+    "count_key",
+    ["restored_images", "pdf_reference_recovered"],
+)
+def test_quality_publication_requires_declared_enrichment_usage(
+    tmp_path: Path,
+    count_key: str,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    manifest_path = quality_run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["articles"][0][count_key] = 1
+    _write_json(manifest_path, manifest)
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert (
+        f"quality_enrichment_provenance_missing:article_a:{count_key}"
+        in seal["errors"]
+    )
+
+
+def test_quality_publication_accepts_declared_enrichment_usage(tmp_path: Path) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    source = tmp_path / "sidecar.png"
+    source.write_bytes(b"image-bytes")
+    snapshot_enrichment_file(
+        quality_run,
+        "article_a",
+        "image_sidecar",
+        source,
+    )
+    manifest_path = quality_run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["articles"][0]["restored_images"] = 1
+    _write_json(manifest_path, manifest)
+
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    assert validate_quality_publication(quality_run).valid
+
+
+def test_quality_publication_rejects_consistent_enrichment_rewrite_after_seal(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    source = tmp_path / "repair.pdf"
+    source.write_bytes(b"repair-pdf")
+    artifact = snapshot_enrichment_file(
+        quality_run,
+        "article_a",
+        "p96_pdf",
+        source,
+    )
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+
+    replacement = b"consistent-rewrite"
+    replacement_sha256 = hashlib.sha256(replacement).hexdigest()
+    replacement_path = artifact.with_name(f"{replacement_sha256}.pdf")
+    replacement_path.write_bytes(replacement)
+    artifact.unlink()
+    enrichment_manifest_path = quality_run / "_enrichment_snapshot" / "manifest.json"
+    enrichment_manifest = json.loads(enrichment_manifest_path.read_text(encoding="utf-8"))
+    record = enrichment_manifest["artifacts"][0]
+    record["path"] = str(replacement_path)
+    record["bytes"] = len(replacement)
+    record["sha256"] = replacement_sha256
+    for usage in record["uses"]:
+        usage["source_bytes"] = len(replacement)
+        usage["source_sha256"] = replacement_sha256
+    _write_json(enrichment_manifest_path, enrichment_manifest)
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert validation.reason == "snapshot_changed"
 
 
 def test_quality_publication_rejects_source_profile_changed_before_seal(tmp_path: Path) -> None:
@@ -233,8 +393,8 @@ def test_quality_publication_rejects_gate_changed_after_seal(tmp_path: Path) -> 
 @pytest.mark.parametrize(
     "seal_json",
     [
-        '{"schema_version":2,"schema_version":2}\n',
-        '{"schema_version":2,"status":"completed","snapshot":{},"probe":NaN}\n',
+        '{"schema_version":3,"schema_version":3}\n',
+        '{"schema_version":3,"status":"completed","snapshot":{},"probe":NaN}\n',
     ],
     ids=["duplicate-key", "nonfinite-number"],
 )

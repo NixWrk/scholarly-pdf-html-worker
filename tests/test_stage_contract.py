@@ -19,6 +19,9 @@ from pdf_html_polish.quality_loop.cached_run_state import (
     CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
     cached_repolish_artifact_fingerprints,
 )
+from pdf_html_polish.quality_loop.enrichment_snapshot import (
+    initialize_enrichment_snapshot,
+)
 from pdf_html_polish.quality_loop.publication_state import (
     seal_quality_publication,
 )
@@ -104,6 +107,9 @@ def _seal_quality_run(quality_run: Path) -> dict:
     assert source_fingerprint is not None
     quality_manifest["source_manifest_bytes"] = source_fingerprint.size
     quality_manifest["source_manifest_sha256"] = source_fingerprint.sha256
+    quality_manifest["enrichment_snapshot_dir"] = str(
+        initialize_enrichment_snapshot(quality_run)
+    )
 
     processed_articles = [
         article for article in quality_manifest.get("articles") or [] if isinstance(article, dict)

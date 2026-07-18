@@ -13,6 +13,53 @@ def test_execute_marker_command_skips_missing_command() -> None:
     assert report == {"status": "skipped", "reason": "marker_command_unavailable", "returncode": None}
 
 
+def test_execute_marker_command_skips_invalid_command_type(tmp_path: Path) -> None:
+    report = execute_marker_command(
+        {"marker_command": "python -c pass", "marker_output_dir": str(tmp_path / "marker")},
+        timeout_seconds=1,
+        cwd=tmp_path,
+    )
+
+    assert report == {"status": "skipped", "reason": "marker_command_invalid", "returncode": None}
+
+
+def test_execute_marker_command_skips_missing_output_dir(tmp_path: Path) -> None:
+    report = execute_marker_command(
+        {"marker_command": [sys.executable, "-c", "raise SystemExit(99)"]},
+        timeout_seconds=1,
+        cwd=tmp_path,
+    )
+
+    assert report == {"status": "skipped", "reason": "marker_output_dir_unavailable", "returncode": None}
+
+
+def test_execute_marker_command_rejects_link_like_output_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    marker_dir = tmp_path / "marker-link"
+    monkeypatch.setattr(
+        p62_marker,
+        "path_is_link_like",
+        lambda path: Path(path) == marker_dir,
+    )
+
+    report = execute_marker_command(
+        {
+            "marker_command": [sys.executable, "-c", "raise SystemExit(99)"],
+            "marker_output_dir": str(marker_dir),
+        },
+        timeout_seconds=1,
+        cwd=tmp_path,
+    )
+
+    assert report == {
+        "status": "skipped",
+        "reason": "marker_output_dir_link_like",
+        "returncode": None,
+    }
+
+
 def test_terminate_process_tree_waits_after_windows_taskkill(monkeypatch) -> None:
     class FakeProcess:
         pid = 123
@@ -94,3 +141,58 @@ def test_validate_marker_output_reports_image_without_label(tmp_path: Path) -> N
 
     assert validation["status"] == "image_without_label"
     assert validation["label_present"] is False
+
+
+def test_validate_marker_output_rejects_link_like_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    marker_dir = tmp_path / "marker-link"
+    monkeypatch.setattr(
+        p62_marker,
+        "path_is_link_like",
+        lambda path: Path(path) == marker_dir,
+    )
+
+    validation = validate_marker_output(marker_dir, "7")
+
+    assert validation["status"] == "invalid_output"
+    assert validation["reason"].startswith("invalid_output_dir:")
+    assert validation["html_paths"] == []
+    assert validation["image_paths"] == []
+
+
+def test_validate_marker_output_rejects_link_like_entry(tmp_path: Path, monkeypatch) -> None:
+    marker_dir = tmp_path / "marker"
+    marker_dir.mkdir()
+    html_path = marker_dir / "index.html"
+    html_path.write_text("<p>Figure 7. Caption.</p>", encoding="utf-8")
+    (marker_dir / "image.png").write_bytes(b"fake")
+
+    monkeypatch.setattr(
+        p62_marker,
+        "path_is_link_like",
+        lambda path: Path(path) == html_path,
+        raising=False,
+    )
+
+    validation = validate_marker_output(marker_dir, "7")
+
+    assert validation["status"] == "invalid_output"
+    assert validation["reason"].startswith("link_like_entry:")
+    assert validation["html_paths"] == []
+    assert validation["image_paths"] == []
+
+
+def test_validate_marker_output_rejects_invalid_utf8_html(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "marker"
+    marker_dir.mkdir()
+    (marker_dir / "index.html").write_bytes(b"<p>Figure 7.\xff</p>")
+    (marker_dir / "image.png").write_bytes(b"fake")
+
+    validation = validate_marker_output(marker_dir, "7")
+
+    assert validation["status"] == "invalid_output"
+    assert validation["reason"].startswith("invalid_utf8_html:")
+    assert validation["html_paths"] == []
+    assert validation["image_paths"] == []

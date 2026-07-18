@@ -27,10 +27,15 @@ from pdf_html_polish.quality_loop.cached_run_state import (
     path_is_link_like,
     validate_cached_repolish_source,
 )
+from pdf_html_polish.quality_loop.enrichment_snapshot import (
+    ENRICHMENT_SNAPSHOT_DIR_NAME,
+    EnrichmentSnapshotError,
+    validate_enrichment_snapshot,
+)
 
 
 QUALITY_PUBLICATION_MANIFEST_NAME = "quality_publication_manifest.json"
-QUALITY_PUBLICATION_MANIFEST_SCHEMA_VERSION = 2
+QUALITY_PUBLICATION_MANIFEST_SCHEMA_VERSION = 3
 AUDIT_REPORT_NAME = "audit_full_checks.json"
 GATE_REPORT_NAME = "quality_gate_report.json"
 _MAX_PUBLICATION_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -327,6 +332,33 @@ def build_quality_publication_snapshot(
             ):
                 errors.append("quality_source_manifest_fingerprint_mismatch")
 
+    expected_enrichment_dir = run_dir / ENRICHMENT_SNAPSHOT_DIR_NAME
+    enrichment_dir_value = quality_manifest.get("enrichment_snapshot_dir")
+    enrichment_manifest_record: dict[str, Any] | None = None
+    enrichment_artifact_count = 0
+    enrichment_usage_keys: frozenset[tuple[str, str]] = frozenset()
+    if not isinstance(enrichment_dir_value, str) or not enrichment_dir_value:
+        errors.append("quality_enrichment_snapshot_dir_missing")
+    else:
+        enrichment_candidate = Path(enrichment_dir_value).expanduser()
+        if not enrichment_candidate.is_absolute():
+            errors.append("quality_enrichment_snapshot_dir_not_absolute")
+        elif enrichment_dir_value != str(expected_enrichment_dir.resolve(strict=False)):
+            errors.append("quality_enrichment_snapshot_dir_mismatch")
+        else:
+            try:
+                enrichment_validation = validate_enrichment_snapshot(run_dir)
+            except (EnrichmentSnapshotError, OSError, ValueError) as exc:
+                errors.append(f"enrichment_snapshot_invalid:{exc}")
+            else:
+                enrichment_manifest_record = {
+                    "path": str(enrichment_validation.manifest_path),
+                    "bytes": enrichment_validation.manifest_fingerprint.size,
+                    "sha256": enrichment_validation.manifest_fingerprint.sha256,
+                }
+                enrichment_artifact_count = enrichment_validation.artifact_count
+                enrichment_usage_keys = enrichment_validation.usage_keys
+
     if quality_manifest.get("source_kind") != "cached_raw_repolish":
         errors.append("quality_source_kind_not_cached_raw_repolish")
     if source_manifest.get("source_kind") != "converted_raw_cache":
@@ -369,6 +401,25 @@ def build_quality_publication_snapshot(
         label="audit",
         errors=errors,
     )
+    for article_id, quality_article in quality_articles.items():
+        for count_key, purposes in (
+            (
+                "restored_images",
+                {"image_previous_polish", "image_sidecar"},
+            ),
+            ("pdf_reference_recovered", {"pdf_reference"}),
+        ):
+            count = quality_article.get(count_key, 0)
+            if type(count) is not int or count < 0:
+                errors.append(f"quality_enrichment_count_invalid:{article_id}:{count_key}")
+                continue
+            if count > 0 and not any(
+                (article_id, purpose) in enrichment_usage_keys
+                for purpose in purposes
+            ):
+                errors.append(
+                    f"quality_enrichment_provenance_missing:{article_id}:{count_key}"
+                )
     missing_audit_articles = sorted(set(quality_articles) - set(audit_articles))
     extra_audit_articles = sorted(set(audit_articles) - set(quality_articles))
     if missing_audit_articles or extra_audit_articles:
@@ -531,6 +582,8 @@ def build_quality_publication_snapshot(
         "quality_run_dir": str(run_dir),
         "quality_manifest": quality_manifest_record,
         "source_manifest": source_manifest_record,
+        "enrichment_manifest": enrichment_manifest_record,
+        "enrichment_artifact_count": enrichment_artifact_count,
         "audit_report": audit_report_record,
         "gate_report": gate_report_record,
         "gate_status": gate_status,

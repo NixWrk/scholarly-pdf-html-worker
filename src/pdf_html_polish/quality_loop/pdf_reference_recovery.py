@@ -28,6 +28,7 @@ REF_HREF_RE = re.compile(r"\bhref\s*=\s*[\"']#ref-\d+[\"']", re.IGNORECASE)
 
 ArticleSourcePdfCandidates = Callable[[Path, str, dict[str, Any], dict[str, Any]], list[dict[str, Any]]]
 ExtractReferenceEntries = Callable[[Path], list[Any]]
+SnapshotPdf = Callable[[Path], Path]
 
 
 def reference_id_numbers(html: str) -> list[int]:
@@ -187,6 +188,7 @@ def enrich_profile_with_pdf_reference_entries_if_needed(
     *,
     article_source_pdf_candidates: ArticleSourcePdfCandidates,
     extract_reference_entries: ExtractReferenceEntries,
+    snapshot_pdf: SnapshotPdf,
 ) -> tuple[dict[str, Any], int, str]:
     if profile_has_reference_entries(profile):
         return profile, 0, ""
@@ -201,11 +203,11 @@ def enrich_profile_with_pdf_reference_entries_if_needed(
         pdf_path = Path(str(candidate.get("path") or "")).expanduser()
         if not pdf_path.is_file():
             continue
-        cache_key = str(pdf_path.resolve(strict=False))
+        cache_key = str(snapshot_pdf(pdf_path).resolve(strict=False))
         if cache_key not in pdf_reference_cache:
             pdf_reference_cache[cache_key] = [
                 reference_entry_record(entry)
-                for entry in extract_reference_entries(pdf_path)
+                for entry in extract_reference_entries(Path(cache_key))
                 if getattr(entry, "number", 0) and getattr(entry, "text", "")
             ]
         entries = pdf_reference_cache[cache_key]

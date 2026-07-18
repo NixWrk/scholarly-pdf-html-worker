@@ -30,6 +30,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from pdf_html_polish.artifact_integrity import read_bytes_with_fingerprint  # noqa: E402
 from pdf_html_polish.atomic_io import copy_file_atomic, write_bytes_atomic, write_text_atomic  # noqa: E402
 from pdf_html_polish.single_file_html import (  # noqa: E402
     close_katex_v8_context,
@@ -52,6 +53,12 @@ from pdf_html_polish.quality_loop.cached_run_state import (  # noqa: E402
     read_cached_repolish_article_snapshot,
     stage_cached_repolish_source_snapshot,
     validate_cached_repolish_source,
+)
+from pdf_html_polish.quality_loop.enrichment_snapshot import (  # noqa: E402
+    ENRICHMENT_SNAPSHOT_DIR_NAME,
+    initialize_enrichment_snapshot,
+    snapshot_enrichment_file,
+    validate_enrichment_snapshot,
 )
 from pdf_html_polish.quality_loop.converted_runs import (  # noqa: E402
     POLISH_STAGE,
@@ -547,9 +554,39 @@ def write_p62_marker_recovery_plan(
     jobs: int | None = None,
 ) -> dict[str, Any]:
     """Build reproducible marker_single commands for source-backed P62 recovery."""
+    run_dir = run_dir.resolve(strict=False)
+
+    def selected_snapshotted_pdf_candidate(
+        candidate_run_dir: Path,
+        article_id: str,
+        article: dict[str, Any],
+        manifest_article: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+        selected, candidates = _selected_pdf_candidate(
+            candidate_run_dir,
+            article_id,
+            article,
+            manifest_article,
+        )
+        if not selected or not selected.get("path"):
+            return selected, candidates
+        source_path = Path(str(selected["path"])).expanduser()
+        snapshotted = snapshot_enrichment_file(
+            run_dir,
+            article_id,
+            "p62_pdf",
+            source_path,
+        )
+        return {
+            **selected,
+            "original_path": str(source_path.resolve(strict=False)),
+            "path": str(snapshotted),
+            "source": f"enrichment_snapshot:{selected.get('source') or 'unknown'}",
+        }, candidates
+
     dependencies = P62MarkerRecoveryPlanDependencies(
         index_polish_stage_files=_index_polish_stage_files,
-        selected_pdf_candidate=_selected_pdf_candidate,
+        selected_pdf_candidate=selected_snapshotted_pdf_candidate,
         find_polish_stage_path_for_article=_find_polish_stage_path_for_article,
         recovery_snippets=_p62_recovery_snippets,
         full_figure_label_from_context=_p62_full_figure_label_from_context,
@@ -573,6 +610,27 @@ def _path_is_inside(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _validated_p62_marker_output_dir(run_dir: Path, value: object) -> Path:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        raise ValueError("marker_output_dir_missing")
+    candidate = Path(raw_value).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError(f"marker_output_dir_not_absolute:{candidate}")
+    if any(
+        path_is_link_like(component)
+        for component in (candidate, *candidate.parents)
+    ):
+        raise ValueError(f"marker_output_dir_link_like:{candidate}")
+    resolved = candidate.resolve(strict=False)
+    if raw_value != str(resolved):
+        raise ValueError(f"marker_output_dir_not_canonical:{candidate}")
+    marker_root = (run_dir / "p62_marker_recovery").resolve(strict=False)
+    if resolved == marker_root or not _path_is_inside(resolved, marker_root):
+        raise ValueError(f"marker_output_dir_outside_run:{resolved}")
+    return resolved
 
 
 def _repair_p62_duplicate_figure_images(
@@ -1222,6 +1280,13 @@ def write_polish_auto_repair_stage(
                 if selected_candidate and selected_candidate.get("path"):
                     pdf_path = Path(str(selected_candidate.get("path")))
             if pdf_path.is_file() and apply_patches:
+                original_pdf_path = pdf_path.resolve(strict=False)
+                pdf_path = snapshot_enrichment_file(
+                    run_dir,
+                    article_id,
+                    "p96_pdf",
+                    pdf_path,
+                )
                 duplicate_report = _apply_p62_duplicate_figure_image_repairs(
                     targets,
                     pdf_path=pdf_path,
@@ -1230,7 +1295,14 @@ def write_polish_auto_repair_stage(
                     repair_plain_duplicates=True,
                 )
                 patched_count = int(duplicate_report.get("repair_count") or 0)
-                article_report["repairs"].append({"id": "P96", **duplicate_report})
+                article_report["repairs"].append(
+                    {
+                        "id": "P96",
+                        "source_pdf_original_path": str(original_pdf_path),
+                        "source_pdf_snapshot_path": str(pdf_path),
+                        **duplicate_report,
+                    }
+                )
                 if patched_count:
                     repair_counts["P96"] += patched_count
                     patched_article_ids.add(article_id)
@@ -1680,7 +1752,34 @@ def write_p62_image_recovery_stage(
             artifact_dir = artifact_dir / f"fig_{_slug(figure_label, max_len=20)}"
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
+        marker_output_dir_raw = str(record.get("marker_output_dir") or "").strip()
+        marker_output_dir = (
+            _validated_p62_marker_output_dir(run_dir, marker_output_dir_raw)
+            if marker_output_dir_raw
+            else None
+        )
         pdf_path = Path(str(record.get("source_pdf_path") or "")).expanduser()
+        if pdf_path.is_file():
+            original_pdf_path = pdf_path.resolve(strict=False)
+            pdf_path = snapshot_enrichment_file(
+                run_dir,
+                article_id,
+                "p62_pdf",
+                pdf_path,
+            )
+            record["source_pdf_original_path"] = str(original_pdf_path)
+            record["source_pdf_path"] = str(pdf_path)
+            marker_command = record.get("marker_command")
+            marker_page_range = str(record.get("marker_page_range") or "").strip()
+            if marker_output_dir is not None and marker_command:
+                record["marker_output_dir"] = str(marker_output_dir)
+                record["marker_command"] = build_marker_single_command(
+                    pdf_path,
+                    marker_output_dir,
+                    "html",
+                    page_range=marker_page_range or None,
+                    disable_multiprocessing=True,
+                )
         source_page_number = int(record.get("source_pdf_page_number") or 0)
         manifest_article = manifest_by_article.get(article_id, {})
         targets = _p62_patch_targets_for_record(
@@ -1847,14 +1946,23 @@ def write_p62_image_recovery_stage(
             recovered_records.append(item)
             continue
 
-        marker_validation = dict(record.get("existing_marker_output_validation") or {})
+        marker_validation = (
+            _validate_p62_marker_output(
+                marker_output_dir,
+                resolved_figure_label or figure_label,
+                snapshot_html=lambda path: snapshot_enrichment_file(
+                    run_dir, article_id, "p62_marker_html", path
+                ),
+            )
+            if marker_output_dir is not None
+            else {"status": "not_run", "html_paths": [], "image_paths": []}
+        )
         marker_command_available = bool(record.get("marker_command"))
-        marker_output_dir_raw = str(record.get("marker_output_dir") or "").strip()
         if (
             execute_marker
             and marker_validation.get("status") != "recovered_image"
             and marker_command_available
-            and marker_output_dir_raw
+            and marker_output_dir is not None
         ):
             print(
                 "P62 marker attempt: "
@@ -1863,8 +1971,13 @@ def write_p62_image_recovery_stage(
                 flush=True,
             )
             item["marker_execution"] = _execute_p62_marker_command(record, timeout_seconds=marker_timeout)
-            marker_output_dir = Path(marker_output_dir_raw)
-            marker_validation = _validate_p62_marker_output(marker_output_dir, resolved_figure_label or figure_label)
+            marker_validation = _validate_p62_marker_output(
+                marker_output_dir,
+                resolved_figure_label or figure_label,
+                snapshot_html=lambda path: snapshot_enrichment_file(
+                    run_dir, article_id, "p62_marker_html", path
+                ),
+            )
             print(
                 "P62 marker result: "
                 f"{index}/{len(records)} status={item['marker_execution'].get('status')} "
@@ -1883,15 +1996,25 @@ def write_p62_image_recovery_stage(
         data_url = ""
         recovery_source = ""
         recovery_detail = ""
-        marker_image = (
-            _first_valid_image_path(marker_validation)
-            if marker_validation.get("status") == "recovered_image"
-            else None
-        )
-        if marker_image is not None:
-            data_url = _data_url_from_image_file(marker_image) or ""
-            recovery_source = "marker_image"
-            recovery_detail = str(marker_image)
+        if marker_validation.get("status") == "recovered_image":
+            for raw_marker_image in marker_validation.get("image_paths") or []:
+                marker_image = Path(str(raw_marker_image))
+                marker_image_original_path = marker_image.resolve(strict=False)
+                marker_image_snapshot = snapshot_enrichment_file(
+                    run_dir,
+                    article_id,
+                    "p62_marker_image",
+                    marker_image,
+                )
+                candidate_data_url = _data_url_from_image_file(marker_image_snapshot) or ""
+                if not candidate_data_url:
+                    continue
+                data_url = candidate_data_url
+                recovery_source = "marker_image"
+                recovery_detail = str(marker_image_snapshot)
+                item["marker_image_original_path"] = str(marker_image_original_path)
+                item["marker_image_snapshot_path"] = str(marker_image_snapshot)
+                break
 
         source_page_is_false_match = _p62_false_match_hint_blocks_asset_recovery(
             source_page_false_match_hint,
@@ -2366,6 +2489,8 @@ def _enrich_profile_with_pdf_reference_entries_if_needed(
     article: str,
     manifest_article: dict[str, Any],
     pdf_reference_cache: dict[str, list[dict[str, Any]]],
+    *,
+    enrichment_run_dir: Path,
 ) -> tuple[dict[str, Any], int, str]:
     return _enrich_profile_with_pdf_reference_entries_if_needed_impl(
         profile,
@@ -2376,6 +2501,12 @@ def _enrich_profile_with_pdf_reference_entries_if_needed(
         pdf_reference_cache,
         article_source_pdf_candidates=_article_source_pdf_candidates,
         extract_reference_entries=extract_reference_entries_from_pdf,
+        snapshot_pdf=lambda path: snapshot_enrichment_file(
+            enrichment_run_dir,
+            article,
+            "pdf_reference",
+            path,
+        ),
     )
 
 
@@ -2453,8 +2584,10 @@ def repolish_cached_run(
     if out_dir.exists() and not out_dir.is_dir():
         raise ValueError(f"Output run path must be a regular directory: {out_dir}")
     source_snapshot_dir = out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR
+    enrichment_snapshot_dir = out_dir / ENRICHMENT_SNAPSHOT_DIR_NAME
     owned_output_paths = (
         source_snapshot_dir,
+        enrichment_snapshot_dir,
         out_dir / "raw_cache",
         out_dir / "profiles",
         out_dir / "polish",
@@ -2513,6 +2646,7 @@ def repolish_cached_run(
         article.article_id: article
         for article in source_validation.articles
     }
+    initialize_enrichment_snapshot(out_dir)
 
     raw_out = out_dir / "raw_cache"
     profile_out = out_dir / "profiles"
@@ -2625,6 +2759,7 @@ def repolish_cached_run(
                             article,
                             manifest_article,
                             pdf_reference_entries_cache,
+                            enrichment_run_dir=out_dir,
                         )
                     )
             if recovered_pdf_refs:
@@ -2636,14 +2771,33 @@ def repolish_cached_run(
                     citation_profile=profile,
                     polish_language=language_decision.selected_polish_language,
                 )
-            data_image_cache, data_image_source = _cached_data_image_cache(source_run_dir, article, raw_html)
+            data_image_cache, data_image_source, data_image_origin_source = _cached_data_image_cache(
+                source_run_dir,
+                article,
+                raw_html,
+                snapshot_file=lambda path, purpose: snapshot_enrichment_file(
+                    out_dir, article, purpose, path
+                ),
+            )
             polished, restored_images = _apply_data_image_cache(polished, data_image_cache)
             previous_polish = source_run_dir / "polish" / out_polish.name
-            previous_text = (
-                previous_polish.read_text(encoding="utf-8", errors="replace")
-                if previous_polish.is_file()
-                else None
-            )
+            previous_text = None
+            if previous_polish.is_file():
+                previous_snapshot = snapshot_enrichment_file(
+                    out_dir,
+                    article,
+                    "previous_polish_comparison",
+                    previous_polish,
+                )
+                previous_bytes = read_bytes_with_fingerprint(
+                    previous_snapshot,
+                    reject_symlink=True,
+                )
+                if previous_bytes is None:
+                    raise ValueError(
+                        f"Snapshotted previous polish is unreadable: {previous_snapshot}"
+                    )
+                previous_text = previous_bytes[0].decode("utf-8")
             changed = previous_text != polished
             write_text_atomic(out_polish, polished)
 
@@ -2666,6 +2820,7 @@ def repolish_cached_run(
                 "changed": changed,
                 "restored_images": restored_images,
                 "restored_image_source": data_image_source,
+                "restored_image_origin_source": data_image_origin_source,
                 "pdf_reference_recovered": recovered_pdf_refs,
                 "pdf_reference_source": pdf_reference_source,
                 "language_detection": language_decision.detection.to_dict(),
@@ -2754,6 +2909,7 @@ def repolish_cached_run(
         close_katex_v8_context()
 
     revalidate_cached_repolish_source_unchanged(source_validation)
+    validate_enrichment_snapshot(out_dir)
 
     totals, problematic = _assessment_totals(assessments)
     manifest = {
@@ -2765,6 +2921,7 @@ def repolish_cached_run(
         "source_manifest_bytes": source_validation.manifest_fingerprint.size,
         "source_manifest_sha256": source_validation.manifest_fingerprint.sha256,
         "out_dir": str(out_dir),
+        "enrichment_snapshot_dir": str(enrichment_snapshot_dir.resolve(strict=False)),
         "code_commit": _git_short_head(),
         "working_tree_dirty": _git_dirty(),
         "polish_language": polish_language or "en",

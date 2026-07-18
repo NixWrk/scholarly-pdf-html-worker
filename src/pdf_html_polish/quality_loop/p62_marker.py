@@ -9,9 +9,10 @@ import time
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pdf_html_polish.atomic_io import write_json_atomic
+from pdf_html_polish.quality_loop.cached_run_state import path_is_link_like
 from pdf_html_polish.quality_loop.converted_runs import visible_html_text
 from pdf_html_polish.quality_loop.p62_matching import figure_label_present_in_text
 
@@ -71,13 +72,31 @@ def execute_marker_command(
     timeout_seconds: int,
     cwd: Path,
 ) -> dict[str, Any]:
-    command = list(record.get("marker_command") or [])
-    if not command:
+    raw_command = record.get("marker_command")
+    if not raw_command:
         return {"status": "skipped", "reason": "marker_command_unavailable", "returncode": None}
+    if (
+        not isinstance(raw_command, list)
+        or not raw_command
+        or any(not isinstance(argument, str) or not argument for argument in raw_command)
+    ):
+        return {"status": "skipped", "reason": "marker_command_invalid", "returncode": None}
+    command = list(raw_command)
 
-    marker_output_dir = Path(str(record.get("marker_output_dir") or ""))
-    if marker_output_dir:
-        marker_output_dir.mkdir(parents=True, exist_ok=True)
+    marker_output_value = str(record.get("marker_output_dir") or "").strip()
+    if not marker_output_value:
+        return {
+            "status": "skipped",
+            "reason": "marker_output_dir_unavailable",
+            "returncode": None,
+        }
+    marker_output_dir = Path(marker_output_value).expanduser()
+    if any(
+        path_is_link_like(component)
+        for component in (marker_output_dir, *marker_output_dir.parents)
+    ):
+        return {"status": "skipped", "reason": "marker_output_dir_link_like", "returncode": None}
+    marker_output_dir.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     started = _now()
@@ -116,8 +135,7 @@ def execute_marker_command(
                 "timeout_seconds": timeout_seconds,
                 "stdout_tail": (stdout or "")[-4000:],
             }
-            if marker_output_dir:
-                _write_json(marker_output_dir / "marker_execution_report.json", report)
+            _write_json(marker_output_dir / "marker_execution_report.json", report)
             return report
 
         stdout = stdout or ""
@@ -143,12 +161,30 @@ def execute_marker_command(
             "error": str(exc),
         }
 
-    if marker_output_dir:
-        _write_json(marker_output_dir / "marker_execution_report.json", report)
+    _write_json(marker_output_dir / "marker_execution_report.json", report)
     return report
 
 
-def validate_marker_output(marker_output_dir: Path, figure_label: str) -> dict[str, Any]:
+def _invalid_marker_output(reason: str) -> dict[str, Any]:
+    return {
+        "status": "invalid_output",
+        "reason": reason,
+        "html_count": 0,
+        "image_count": 0,
+        "label_present": False,
+        "html_paths": [],
+        "image_paths": [],
+    }
+
+
+def validate_marker_output(
+    marker_output_dir: Path,
+    figure_label: str,
+    *,
+    snapshot_html: Callable[[Path], Path] | None = None,
+) -> dict[str, Any]:
+    if path_is_link_like(marker_output_dir):
+        return _invalid_marker_output(f"invalid_output_dir:{marker_output_dir}")
     if not marker_output_dir.exists():
         return {
             "status": "not_run",
@@ -158,19 +194,57 @@ def validate_marker_output(marker_output_dir: Path, figure_label: str) -> dict[s
             "html_paths": [],
             "image_paths": [],
         }
+    if not marker_output_dir.is_dir():
+        return _invalid_marker_output(f"invalid_output_dir:{marker_output_dir}")
 
-    html_paths = sorted(path for path in marker_output_dir.rglob("*.html") if path.is_file())
-    image_paths = sorted(
-        path
-        for path in marker_output_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
-    )
+    html_paths: list[Path] = []
+    image_paths: list[Path] = []
+    root = marker_output_dir.resolve(strict=True)
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    try:
+        for current_root, directory_names, file_names in os.walk(
+            root,
+            topdown=True,
+            onerror=raise_walk_error,
+            followlinks=False,
+        ):
+            directory_names.sort()
+            file_names.sort()
+            current = Path(current_root)
+            for name in (*directory_names, *file_names):
+                entry = current / name
+                if path_is_link_like(entry):
+                    return _invalid_marker_output(f"link_like_entry:{entry}")
+                try:
+                    entry.resolve(strict=True).relative_to(root)
+                except (OSError, ValueError):
+                    return _invalid_marker_output(f"entry_outside_output_dir:{entry}")
+            for name in file_names:
+                path = current / name
+                if not path.is_file():
+                    return _invalid_marker_output(f"irregular_output_entry:{path}")
+                if path.suffix.lower() == ".html":
+                    html_paths.append(path)
+                elif path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                    image_paths.append(path)
+    except OSError as exc:
+        return _invalid_marker_output(f"output_tree_unreadable:{exc}")
+
     label_present = False
+    html_snapshot_paths: list[str] = []
     for html_path in html_paths:
         try:
-            text = visible_html_text(html_path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
+            read_path = snapshot_html(html_path) if snapshot_html is not None else html_path
+            if snapshot_html is not None:
+                html_snapshot_paths.append(str(read_path))
+            text = visible_html_text(read_path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError:
+            return _invalid_marker_output(f"invalid_utf8_html:{html_path}")
+        except OSError as exc:
+            return _invalid_marker_output(f"html_unreadable:{html_path}:{exc}")
         if figure_label_present_in_text(text, figure_label):
             label_present = True
             break
@@ -189,5 +263,6 @@ def validate_marker_output(marker_output_dir: Path, figure_label: str) -> dict[s
         "image_count": len(image_paths),
         "label_present": label_present,
         "html_paths": [str(path) for path in html_paths[:8]],
+        "html_snapshot_paths": html_snapshot_paths[:8],
         "image_paths": [str(path) for path in image_paths[:8]],
     }

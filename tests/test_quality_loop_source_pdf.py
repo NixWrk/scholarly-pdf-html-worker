@@ -7,6 +7,7 @@ from pdf_html_polish.quality_loop.source_pdf import (
     existing_path_candidates,
     normalize_pdf_title_text,
     path_text_variants,
+    source_export_dirs_from_stage_related_path,
 )
 
 
@@ -80,6 +81,42 @@ def test_attachment_keys_accept_all_letter_zotero_keys() -> None:
         "Zotero_NIX_Dat_FCHTKCWJ_80630_1763382631000000_Vovk",
         {},
     ) == ["FCHTKCWJ"]
+
+
+def test_attachment_keys_preserve_restored_image_origin_hint(tmp_path: Path) -> None:
+    origin_image = tmp_path / "storage" / "ABC12345" / "figure.png"
+
+    assert attachment_keys_from_article(
+        "plain_article",
+        {
+            "restored_image_source": str(tmp_path / "_enrichment_snapshot" / "files" / "sha.png"),
+            "restored_image_origin_source": str(origin_image),
+        },
+    ) == ["ABC12345"]
+
+
+def test_attachment_keys_split_multiple_restored_image_origin_hints(tmp_path: Path) -> None:
+    first = tmp_path / "storage" / "ABC12345" / "figure.png"
+    second = tmp_path / "storage" / "XYZ98765" / "figure.png"
+
+    assert attachment_keys_from_article(
+        "plain_article",
+        {"restored_image_origin_source": f"{first}; {second}"},
+    ) == ["ABC12345", "XYZ98765"]
+
+
+def test_source_export_dirs_split_multiple_restored_image_origin_hints(tmp_path: Path) -> None:
+    first = tmp_path / "converted" / "library" / "parent" / "first" / "figure.png"
+    second = tmp_path / "converted" / "library" / "parent" / "second" / "figure.png"
+
+    assert source_export_dirs_from_stage_related_path(
+        f"{first}; {second}",
+        raw_stage="01.en.raw.html",
+        polish_stage="02.en.polish.html",
+    ) == [
+        (tmp_path / "source_exports" / "library" / "parent" / "first").resolve(strict=False),
+        (tmp_path / "source_exports" / "library" / "parent" / "second").resolve(strict=False),
+    ]
 
 
 def test_source_pdf_candidates_fall_back_to_all_letter_zotero_storage_key(

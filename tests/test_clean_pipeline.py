@@ -32,6 +32,9 @@ from pdf_html_polish.quality_loop.cached_run_state import (
     CACHED_REPOLISH_SOURCE_SCHEMA_VERSION,
     cached_repolish_artifact_fingerprints,
 )
+from pdf_html_polish.quality_loop.enrichment_snapshot import (
+    initialize_enrichment_snapshot,
+)
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 from pdf_html_polish.quality_loop.publication_state import seal_quality_publication
@@ -135,6 +138,7 @@ def _seal_quality_output(
     )
     source_manifest_fingerprint = fingerprint_file(source_run / "manifest.json", reject_symlink=True)
     assert source_manifest_fingerprint is not None
+    enrichment_snapshot = initialize_enrichment_snapshot(quality_dir)
 
     quality_cached_raw = quality_dir / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
     quality_cached_raw.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +155,7 @@ def _seal_quality_output(
             "source_run_dir": str(source_run),
             "source_manifest_bytes": source_manifest_fingerprint.size,
             "source_manifest_sha256": source_manifest_fingerprint.sha256,
+            "enrichment_snapshot_dir": str(enrichment_snapshot),
             "articles": [
                 {"article": article_id, "raw_cache_path": str(quality_cached_raw)}
             ],

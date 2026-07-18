@@ -148,29 +148,42 @@ def collect_pdf_path_strings(value: Any) -> list[str]:
     return found
 
 
+def _path_hint_strings(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        hints: list[str] = []
+        for nested in value:
+            hints.extend(_path_hint_strings(nested))
+        return hints
+    if not isinstance(value, str):
+        return []
+    # Legacy manifests join multiple restoration origins with this delimiter.
+    return [hint for hint in value.split("; ") if hint]
+
+
 def source_export_dirs_from_stage_related_path(
     value: Any,
     *,
     raw_stage: str,
     polish_stage: str,
 ) -> list[Path]:
-    if not value:
-        return []
-    path = Path(str(value)).resolve(strict=False)
-    if path.name in {raw_stage, polish_stage} or is_html_stage_dir_name(path.parent.name):
-        article_dir = article_dir_from_stage(path)
-    else:
-        article_dir = path
-    parts = list(article_dir.parts)
     dirs: list[Path] = []
-    for marker in ("source_exports", "converted", "final_exports"):
-        if marker not in parts:
-            continue
-        idx = parts.index(marker)
-        after = parts[idx + 1 :]
-        if len(after) < 3:
-            continue
-        dirs.append(Path(*parts[:idx], "source_exports", *after[:3]).resolve(strict=False))
+    for hint in _path_hint_strings(value):
+        path = Path(hint).resolve(strict=False)
+        if path.name in {raw_stage, polish_stage} or is_html_stage_dir_name(path.parent.name):
+            article_dir = article_dir_from_stage(path)
+        else:
+            article_dir = path
+        parts = list(article_dir.parts)
+        for marker in ("source_exports", "converted", "final_exports"):
+            if marker not in parts:
+                continue
+            idx = parts.index(marker)
+            after = parts[idx + 1 :]
+            if len(after) < 3:
+                continue
+            source_dir = Path(*parts[:idx], "source_exports", *after[:3]).resolve(strict=False)
+            if source_dir not in dirs:
+                dirs.append(source_dir)
     return dirs
 
 
@@ -239,9 +252,11 @@ def article_title_fragments(article: str, manifest_article: dict[str, Any]) -> l
         "polish_stage_path",
         "source_polish_path",
         "polish_path",
-        "restored_image_source",
     ):
         add(manifest_article.get(key))
+    for key in ("restored_image_source", "restored_image_origin_source"):
+        for hint in _path_hint_strings(manifest_article.get(key)):
+            add(hint)
     return fragments
 
 
@@ -341,13 +356,14 @@ def attachment_keys_from_article(article: str, manifest_article: dict[str, Any])
         value = manifest_article.get(key)
         if isinstance(value, str) and looks_like_attachment_key(value):
             add(value)
-    for path_key in ("raw_stage_path", "polish_stage_path", "restored_image_source"):
+    for path_key in ("raw_stage_path", "polish_stage_path", "restored_image_source", "restored_image_origin_source"):
         value = manifest_article.get(path_key)
         if not value:
             continue
-        for part in Path(str(value)).parts:
-            if looks_like_attachment_key(part):
-                add(part)
+        for hint in _path_hint_strings(value):
+            for part in Path(hint).parts:
+                if looks_like_attachment_key(part):
+                    add(part)
     return keys
 
 
@@ -408,6 +424,7 @@ def article_source_pdf_candidates(
             "polish_stage_path",
             "polish_path",
             "restored_image_source",
+            "restored_image_origin_source",
         ):
             for source_dir in source_export_dirs_from_stage_related_path(
                 item.get(key),
