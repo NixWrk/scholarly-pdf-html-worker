@@ -58,11 +58,15 @@ The former EN-to-RU translation runner and publisher web-HTML polish commands
 are intentionally outside this repository. The public automation boundary is
 file-based: PDF in, audited polished EN HTML out.
 
-`01.en.raw.html` is not enough to reproduce production citation/internal-link
-behavior. Use `scripts/pdf_profile_lab.py` plus `_source_filename_map.csv` for
-link-sensitive repolish checks. `scripts/repolish_en_from_raw.py` deliberately
-does not build or pass PDF citation profiles and should only be used for
-raw-HTML-only polish checks.
+`01.en.raw.html` alone is not a publication source: it cannot reproduce the
+PDF-derived citation profile, source manifest, quality gate, or publication
+seal. The former `scripts/repolish_en_from_raw.py` direct writer was removed;
+references to it in dated review notes are historical and must not be run.
+Repolish an existing converted tree only through the clean
+`pdf-html-polish --repolish-existing` mode with the same source PDF set and
+committed converted root. Use `scripts/pdf_profile_lab.py` only for
+non-publishing link diagnostics with
+`_source_filename_map.csv`.
 
 For a new PDF, do not stop at the internal conversion stage when the goal is the
 cleanest result. The accumulated repair knowledge is applied by the clean

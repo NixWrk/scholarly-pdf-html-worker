@@ -279,6 +279,12 @@ def test_public_console_scripts_only_expose_clean_pipeline() -> None:
     assert "pdf-html-convert" not in scripts
 
 
+def test_legacy_raw_repolish_writer_is_removed() -> None:
+    legacy_writer = Path("scripts/repolish_en_from_raw.py")
+
+    assert not legacy_writer.exists()
+
+
 def test_clean_public_parser_does_not_offer_partial_export_mode() -> None:
     parser = build_parser()
 

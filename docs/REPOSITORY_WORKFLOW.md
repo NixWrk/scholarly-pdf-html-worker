@@ -343,7 +343,11 @@ records history, and evaluates the gate.
 ## Standalone Diagnostic Modes
 
 These commands are useful, but they are not replacements for the canonical
-production conversion plus repair-enabled observe run.
+production conversion plus repair-enabled observe run. The retired
+`scripts/repolish_en_from_raw.py` writer is intentionally absent: it discovered
+mutable raw files and overwrote production polish without the source snapshot,
+quality gate, or publication seal. Any invocation retained in dated review
+notes is historical only.
 
 - `scripts/audit_en_polish.py --roots ...`
 
@@ -351,10 +355,14 @@ production conversion plus repair-enabled observe run.
   targeted checks. For PDF-grounded checks, pass `--pdf-diagnostics` and
   `--pdf-map`.
 
-- `scripts/repolish_en_from_raw.py --roots ...`
+- Clean `pdf-html-polish --repolish-existing` mode
 
-  Raw-HTML-only repolish. It does not rebuild PDF-derived citation profiles and
-  should not be used to judge citation/internal-link production parity.
+  Canonical repolish of an existing committed converted tree. Repeat `--pdf`
+  for the exact original source set and provide the normal quality options as
+  needed. This path validates the raw conversion manifests, builds and seals a
+  committed raw/profile snapshot, resolves source-PDF evidence for quality
+  diagnostics, runs the quality gate, seals every final artifact, and publishes
+  only from the accepted snapshot.
 
 - `scripts/pdf_profile_lab.py`
 
