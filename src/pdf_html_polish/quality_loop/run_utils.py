@@ -5,14 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from pdf_html_polish.atomic_io import write_json_atomic
 from pdf_html_polish.html_stages import article_dir_from_html_stage
+from pdf_html_polish.quality_loop.cached_run_state import path_is_link_like
 
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -49,6 +51,28 @@ def write_json(path: Path, data: Any) -> None:
     write_json_atomic(path, data)
 
 
+def reset_run_owned_directory(run_dir: Path, child_name: str) -> Path:
+    """Create an empty direct child without traversing link-like paths."""
+
+    child = Path(child_name)
+    if child.is_absolute() or len(child.parts) != 1 or child.name in {"", ".", ".."}:
+        raise ValueError(f"run_owned_directory_name_invalid:{child_name}")
+    root = Path(run_dir).absolute()
+    if any(path_is_link_like(component) for component in (root, *root.parents)):
+        raise ValueError(f"run_owned_directory_root_link_like:{root}")
+    target = root / child.name
+    if target.parent != root:
+        raise ValueError(f"run_owned_directory_outside_root:{target}")
+    if target.exists() or path_is_link_like(target):
+        if path_is_link_like(target):
+            raise ValueError(f"run_owned_directory_link_like:{target}")
+        if not target.is_dir():
+            raise ValueError(f"run_owned_directory_not_directory:{target}")
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=False)
+    return target.resolve(strict=True)
+
+
 def json_object(value: Any) -> dict[str, Any]:
     """Return a JSON object or an empty object for null/malformed values."""
     return value if isinstance(value, dict) else {}
@@ -56,6 +80,24 @@ def json_object(value: Any) -> dict[str, Any]:
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_canonical_utc_timestamp(value: Any) -> datetime:
+    """Parse the exact UTC ISO 8601 form emitted by ``now``."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp_invalid")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("timestamp_invalid") from exc
+    if (
+        parsed.tzinfo is None
+        or parsed.utcoffset() != timedelta(0)
+        or value != parsed.isoformat()
+    ):
+        raise ValueError("timestamp_invalid")
+    return parsed
 
 
 def console_text(value: Any) -> str:

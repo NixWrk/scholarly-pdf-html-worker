@@ -133,6 +133,7 @@ from pdf_html_polish.quality_loop.audit_pdf import (
     extract_pdf_text as _extract_pdf_text,
     first_path_value as _first_path_value,
     load_pdf_diagnostic_text,
+    load_pdf_link_summary,
     load_pdf_map as _load_pdf_map,
     PdfDiagnosticsCache as _PackagePdfDiagnosticsCache,
     pdf_citation_link_summary,
@@ -235,6 +236,15 @@ def _source_pdf_path(raw_path: Path) -> Path:
 
 
 def _pdf_citation_link_summary(pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
+    return load_pdf_link_summary(
+        pdf_path,
+        author_year_text_re=AUTHOR_YEAR_TEXT_RE,
+        sample_limit=sample_limit,
+        pdf_citation_link_summary_func=pdf_citation_link_summary,
+    )
+
+
+def _pdf_citation_link_summary_unattested(pdf_path: Path, *, sample_limit: int = 12) -> dict[str, Any]:
     return pdf_citation_link_summary(
         pdf_path,
         author_year_text_re=AUTHOR_YEAR_TEXT_RE,
@@ -258,14 +268,8 @@ def _load_pdf_diagnostic_text(
 
 class PdfDiagnosticsCache(_PackagePdfDiagnosticsCache):
     def __init__(self, cache_dir: Path) -> None:
-        def link_summary_adapter(
-            pdf_path: Path,
-            *,
-            author_year_text_re: re.Pattern[str],
-            sample_limit: int,
-        ) -> dict[str, Any]:
-            del author_year_text_re
-            return _pdf_citation_link_summary(pdf_path, sample_limit=sample_limit)
+        def link_summary_adapter(pdf_path: Path, **kwargs: Any) -> dict[str, Any]:
+            return _pdf_citation_link_summary_unattested(pdf_path, sample_limit=int(kwargs["sample_limit"]))
 
         super().__init__(
             cache_dir,

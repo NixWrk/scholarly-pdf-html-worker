@@ -1,15 +1,22 @@
+from dataclasses import replace
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from pdf_html_polish.quality_loop.audit_polish_pair import PolishPairAnalysisDeps, analyze_polish_pair
 
 
 def _pdf_summary(pdf_path: Path, text: str, status: str = "fake") -> dict[str, Any]:
+    source_bytes = pdf_path.read_bytes() if pdf_path.is_file() else b""
     return {
         "pdf_diagnostics_enabled": True,
         "source_pdf_path": str(pdf_path),
         "source_pdf_present": pdf_path.is_file(),
+        "source_pdf_bytes": len(source_bytes),
+        "source_pdf_sha256": hashlib.sha256(source_bytes).hexdigest() if source_bytes else "",
         "source_pdf_origin": "map",
         "pdf_text_status": status,
         "pdf_text_chars": len(text),
@@ -17,7 +24,7 @@ def _pdf_summary(pdf_path: Path, text: str, status: str = "fake") -> dict[str, A
     }
 
 
-def _link_summary() -> dict[str, Any]:
+def _link_summary(pdf_path: Path | None = None) -> dict[str, Any]:
     return {
         "pdf_link_text_status": "fake",
         "pdf_link_count": 3,
@@ -25,6 +32,10 @@ def _link_summary() -> dict[str, Any]:
         "pdf_author_year_link_labels": 1,
         "pdf_citation_link_samples": [{"page": 1, "dest": "cite.1", "text": "Smith 2020"}],
         "pdf_link_text_error": None,
+        "source_pdf_path": str(pdf_path) if pdf_path is not None else "",
+        "source_pdf_present": bool(pdf_path is not None and pdf_path.is_file()),
+        "source_pdf_bytes": pdf_path.stat().st_size if pdf_path is not None and pdf_path.is_file() else 0,
+        "source_pdf_sha256": hashlib.sha256(pdf_path.read_bytes()).hexdigest() if pdf_path is not None and pdf_path.is_file() else "",
     }
 
 
@@ -53,7 +64,7 @@ def _deps(observed: dict[str, Any], *, missing_images: list[dict[str, Any]] | No
             override or "PDF text",
             _pdf_summary(pdf_path or raw_path.with_name("00.source.pdf"), override or "PDF text", "override" if override else "fake"),
         ),
-        pdf_citation_link_summary=lambda pdf_path: _link_summary(),
+        pdf_citation_link_summary=lambda pdf_path: _link_summary(pdf_path),
         article_name_from_stage=lambda stage_path: stage_path.parents[1].name,
         frontmatter_defects=lambda raw_blocks, polish_blocks: [],
         citation_defects=citation_defects,
@@ -149,3 +160,53 @@ def test_analyze_polish_pair_propagates_pdf_diagnostics(tmp_path: Path) -> None:
     assert summary["pdf_text_status"] == "override"
     assert summary["pdf_link_count"] == 3
     assert summary["pdf_link_cache_status"] == "disabled"
+
+
+def test_analyze_polish_pair_rejects_text_and_link_source_mismatch(tmp_path: Path) -> None:
+    stage_dir = tmp_path / "Article sample" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / "01.en.raw.html"
+    polish_path = stage_dir / "02.en.polish.html"
+    pdf_path = tmp_path / "external.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+    polish_path.write_text(
+        "<html><body><p>Polish.</p></body></html>",
+        encoding="utf-8",
+    )
+    observed: dict[str, Any] = {}
+    deps = _deps(observed)
+
+    text_summary = _pdf_summary(pdf_path, "PDF text", "fake")
+    text_summary.update(
+        {
+            "source_pdf_bytes": pdf_path.stat().st_size,
+            "source_pdf_sha256": "a" * 64,
+        }
+    )
+    link_summary = _link_summary()
+    link_summary.update(
+        {
+            "source_pdf_path": str(pdf_path),
+            "source_pdf_present": True,
+            "source_pdf_bytes": pdf_path.stat().st_size,
+            "source_pdf_sha256": "b" * 64,
+        }
+    )
+    deps = replace(
+        deps,
+        load_pdf_diagnostic_text=lambda *_args: ("PDF text", text_summary),
+        pdf_citation_link_summary=lambda _path: link_summary,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="PDF source identity changed between text and link diagnostics",
+    ):
+        analyze_polish_pair(
+            raw_path,
+            polish_path,
+            deps=deps,
+            enable_pdf_diagnostics=True,
+            pdf_path_override=pdf_path,
+        )

@@ -113,17 +113,40 @@ def evaluate_quality_gate(
     audit_pdf_summary: dict[str, Any] | None = None
     if gate_config.get("require_pdf_text_layer_diagnostics", False):
         audit_totals = {}
+        audit_articles: list[dict[str, Any]] = []
         if isinstance(audit_report, dict):
             audit_totals = json_object(
                 json_object(audit_report.get("corpus_summary")).get("totals")
             )
+            raw_audit_articles = audit_report.get("articles")
+            if isinstance(raw_audit_articles, list):
+                audit_articles = [
+                    article
+                    for article in raw_audit_articles
+                    if isinstance(article, dict)
+                ]
+        audit_diagnostics_flags = [
+            json_object(article.get("summary")).get("pdf_diagnostics_enabled") is True
+            for article in audit_articles
+        ]
+        audit_report_used_pdf_diagnostics = bool(audit_diagnostics_flags) and all(
+            audit_diagnostics_flags
+        )
+        command_returncode = (
+            audit_command_report.get("returncode")
+            if isinstance(audit_command_report, dict)
+            else None
+        )
         audit_pdf_summary = {
             "pdf_text_chars": int(audit_totals.get("pdf_text_chars") or 0),
             "source_pdf_present": int(audit_totals.get("source_pdf_present") or 0),
+            "command_returncode": command_returncode,
             "command_used_pdf_diagnostics": bool(
                 isinstance(audit_command_report, dict)
                 and audit_command_report.get("pdf_diagnostics_enabled")
             ),
+            "audit_report_used_pdf_diagnostics": audit_report_used_pdf_diagnostics,
+            "audit_article_count": len(audit_articles),
             "pdf_map_path": (
                 audit_command_report.get("pdf_map_path")
                 if isinstance(audit_command_report, dict)
@@ -141,11 +164,29 @@ def evaluate_quality_gate(
                     "message": "audit_full_checks.json was not available for PDF text-layer diagnostics validation.",
                 }
             )
+        elif type(command_returncode) is not int or command_returncode != 0:
+            failures.append(
+                {
+                    "kind": "pdf_text_layer_diagnostics_command_failed",
+                    "returncode": command_returncode,
+                    "message": "The PDF diagnostics audit command did not prove a successful exit.",
+                }
+            )
         elif not audit_pdf_summary["command_used_pdf_diagnostics"]:
             failures.append(
                 {
                     "kind": "pdf_text_layer_diagnostics_disabled",
                     "message": "Audit did not run with --pdf-diagnostics.",
+                }
+            )
+        elif not audit_report_used_pdf_diagnostics:
+            failures.append(
+                {
+                    "kind": "pdf_text_layer_diagnostics_inconsistent",
+                    "message": (
+                        "Audit command claimed PDF diagnostics, but the article results "
+                        "do not consistently confirm that diagnostics were enabled."
+                    ),
                 }
             )
 

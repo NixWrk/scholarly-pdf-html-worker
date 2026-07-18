@@ -6,6 +6,8 @@ import shutil
 
 import pytest
 
+from conftest import write_attested_audit_command
+
 import pdf_html_polish.atomic_io as atomic_io_module
 import pdf_html_polish.stage_contract as stage_contract_module
 from pdf_html_polish.artifact_integrity import fingerprint_file
@@ -22,6 +24,7 @@ from pdf_html_polish.quality_loop.cached_run_state import (
 from pdf_html_polish.quality_loop.enrichment_snapshot import (
     initialize_enrichment_snapshot,
 )
+from pdf_html_polish.quality_loop.commands import run_quality_history, write_gate_report
 from pdf_html_polish.quality_loop.publication_state import (
     seal_quality_publication,
 )
@@ -34,6 +37,20 @@ from pdf_html_polish.stage_contract import (
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_valid_gate_report(quality_run: Path) -> None:
+    write_attested_audit_command(quality_run)
+    config_path = quality_run.parent / f".{quality_run.name}.gate_config.json"
+    run_quality_history(
+        quality_run,
+        run_id="current",
+        previous_entry=None,
+        no_append=True,
+        repo_root=Path(__file__).resolve().parents[1],
+    )
+    _write_json(config_path, {"allow_missing_previous": True, "max_regressions": 0, "max_total_deltas": {}})
+    write_gate_report(quality_run, config_path)
 
 
 def _stage_pair(article_dir: Path, *, source_pdf: Path | None = None) -> Path:
@@ -165,7 +182,7 @@ def _seal_quality_run(quality_run: Path) -> dict:
         quality_run / "audit_full_checks.json",
         {"audit_status": "complete", "articles": audit_articles},
     )
-    _write_json(quality_run / "quality_gate_report.json", {"status": "pass", "failures": []})
+    _write_valid_gate_report(quality_run)
     return seal_quality_publication(quality_run)
 
 def test_verify_stage_contract_passes_for_only_raw_and_polish(tmp_path: Path) -> None:

@@ -32,10 +32,14 @@ from pdf_html_polish.quality_loop.enrichment_snapshot import (
     EnrichmentSnapshotError,
     validate_enrichment_snapshot,
 )
+from pdf_html_polish.quality_loop.gate_provenance import (
+    GateProvenanceError,
+    validate_gate_report_provenance,
+)
 
 
 QUALITY_PUBLICATION_MANIFEST_NAME = "quality_publication_manifest.json"
-QUALITY_PUBLICATION_MANIFEST_SCHEMA_VERSION = 3
+QUALITY_PUBLICATION_MANIFEST_SCHEMA_VERSION = 4
 AUDIT_REPORT_NAME = "audit_full_checks.json"
 GATE_REPORT_NAME = "quality_gate_report.json"
 _MAX_PUBLICATION_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -287,6 +291,13 @@ def build_quality_publication_snapshot(
     gate_report, gate_report_record, error = _json_document(run_dir / GATE_REPORT_NAME)
     if error:
         errors.append(error)
+    gate_input_records: list[dict[str, Any]] = []
+    try:
+        gate_provenance = validate_gate_report_provenance(run_dir, gate_report)
+    except (GateProvenanceError, OSError, ValueError) as exc:
+        errors.append(f"gate_provenance_invalid:{exc}")
+    else:
+        gate_input_records = list(gate_provenance.input_records)
 
     source_run_value = quality_manifest.get("source_run_dir")
     source_run_path = Path(source_run_value).expanduser() if isinstance(source_run_value, str) else None
@@ -578,6 +589,29 @@ def build_quality_publication_snapshot(
         except RuntimeError as exc:
             errors.append(f"raw_conversion_ownership_invalid:{exc}")
 
+    if gate_input_records:
+        late_gate_report, late_gate_report_record, late_gate_error = _json_document(
+            run_dir / GATE_REPORT_NAME
+        )
+        if late_gate_error:
+            errors.append(f"gate_report_changed_during_publication_preflight:{late_gate_error}")
+        elif (
+            late_gate_report != gate_report
+            or late_gate_report_record != gate_report_record
+        ):
+            errors.append("gate_report_changed_during_publication_preflight")
+        else:
+            try:
+                late_gate_provenance = validate_gate_report_provenance(
+                    run_dir,
+                    late_gate_report,
+                )
+            except (GateProvenanceError, OSError, ValueError) as exc:
+                errors.append(f"gate_provenance_changed_during_publication_preflight:{exc}")
+            else:
+                if list(late_gate_provenance.input_records) != gate_input_records:
+                    errors.append("gate_inputs_changed_during_publication_preflight")
+
     snapshot = {
         "quality_run_dir": str(run_dir),
         "quality_manifest": quality_manifest_record,
@@ -586,6 +620,7 @@ def build_quality_publication_snapshot(
         "enrichment_artifact_count": enrichment_artifact_count,
         "audit_report": audit_report_record,
         "gate_report": gate_report_record,
+        "gate_inputs": gate_input_records,
         "gate_status": gate_status,
         "articles": publication_records,
         "skipped_articles": skipped_records,

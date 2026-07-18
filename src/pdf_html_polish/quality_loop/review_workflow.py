@@ -8,15 +8,56 @@ from typing import Any, Callable, Iterable
 import urllib.parse
 
 from pdf_html_polish.atomic_io import write_text_atomic
+from pdf_html_polish.artifact_integrity import FileFingerprint, fingerprint_file
 
 from .p62_recovery_stage import has_terminal_source_visual_unavailable_evidence
-from .run_utils import json_object, load_json, now, slug, write_json
+from .run_utils import json_object, load_json, now, reset_run_owned_directory, slug, write_json
 
 
 ComparisonByArticle = Callable[[dict[str, Any]], dict[str, dict[str, Any]]]
 ManifestArticleById = Callable[[dict[str, Any]], dict[str, dict[str, Any]]]
 CopyReviewHtml = Callable[[Path, Path], dict[str, Any]]
 
+ARTICLE_REVIEW_REPORT_SCHEMA_VERSION = 1
+ARTICLE_REVIEW_PROVENANCE_SCHEMA_VERSION = 1
+UNRESOLVED_MANDATORY_REVIEW_STATUSES = frozenset({"pending", "needs_fix"})
+ARTICLE_REVIEW_REPORT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "generated_at",
+        "status",
+        "run_dir",
+        "review_dir",
+        "index_html",
+        "queue_count",
+        "mandatory_count",
+        "pending_mandatory_count",
+        "reviewed_mandatory_count",
+        "selected_count",
+        "bundle_limit",
+        "copy_error_count",
+        "copy_errors",
+        "articles",
+        "provenance",
+    }
+)
+ARTICLE_REVIEW_ARTICLE_FIELDS = frozenset(
+    {
+        "article",
+        "source_article",
+        "artifact_hint",
+        "reason",
+        "review_status",
+        "review_note",
+        "raw_stage_path",
+        "polish_stage_path",
+        "review_html",
+        "review_href",
+        "inlined_image_count",
+        "missing_image_count",
+        "missing_image_srcs",
+    }
+)
 TOP_LEVEL_DELTA_METRICS = ("score", "defects", "errors", "warnings")
 DEFAULT_LOWER_IS_BETTER_METRICS = (
     "broken_internal_links",
@@ -28,6 +69,26 @@ DEFAULT_LOWER_IS_BETTER_METRICS = (
     "polish_replacement_chars",
     "table_units_with_section_ids",
 )
+
+
+def _review_file_record(
+    path: Path,
+    *,
+    kind: str,
+    article: str = "",
+    fingerprint: FileFingerprint | None = None,
+) -> dict[str, Any]:
+    resolved = path.resolve(strict=False)
+    current = fingerprint or fingerprint_file(resolved, reject_symlink=True)
+    if current is None:
+        raise ValueError(f"article_review_artifact_unstable:{kind}:{resolved}")
+    return {
+        "kind": kind,
+        "article": article,
+        "path": str(resolved),
+        "bytes": current.size,
+        "sha256": current.sha256,
+    }
 
 
 def defect_id_counts(defects: Iterable[dict[str, Any]]) -> dict[str, int]:
@@ -543,19 +604,34 @@ def write_article_review_stage(
     """Build the mandatory changed-article review bundle for a loop run."""
 
     run_dir = run_dir.resolve(strict=False)
-    review_queue = review_queue if review_queue is not None else existing_queue_items(run_dir / "manual_review_queue.json")
-    review_dir = run_dir / "article_review"
-    review_dir.mkdir(parents=True, exist_ok=True)
+    queue_path = run_dir / "manual_review_queue.json"
+    review_queue = review_queue if review_queue is not None else existing_queue_items(queue_path)
+    if not queue_path.is_file():
+        write_json(queue_path, review_queue)
+    elif existing_queue_items(queue_path) != review_queue:
+        raise ValueError("article_review_queue_changed_before_bundle")
+    queue_fingerprint = fingerprint_file(queue_path, reject_symlink=True)
+    if queue_fingerprint is None:
+        raise ValueError("article_review_queue_unstable")
+    queue_record = _review_file_record(
+        queue_path,
+        kind="manual_review_queue",
+        fingerprint=queue_fingerprint,
+    )
+    review_dir = reset_run_owned_directory(run_dir, "article_review")
 
     mandatory_items = [item for item in review_queue if item.get("mandatory_review")]
     pending_mandatory = [
-        item for item in mandatory_items if str(item.get("review_status") or "pending") == "pending"
+        item
+        for item in mandatory_items
+        if str(item.get("review_status") or "pending") in UNRESOLVED_MANDATORY_REVIEW_STATUSES
     ]
     limit = len(mandatory_items) if max_articles is None or int(max_articles) <= 0 else int(max_articles)
     selected_items = mandatory_items[:limit]
 
     articles: list[dict[str, Any]] = []
     copy_errors: list[dict[str, Any]] = []
+    article_artifact_records: list[dict[str, Any]] = []
     for index, item in enumerate(selected_items, start=1):
         article = str(item.get("article") or f"article_{index}")
         source_path = stage_path_for_review(run_dir, item.get("polish_stage_path"), repo_root=repo_root)
@@ -563,8 +639,32 @@ def write_article_review_stage(
         copy_info: dict[str, Any] = {}
         if source_path is not None and source_path.is_file():
             try:
+                source_fingerprint = fingerprint_file(source_path, reject_symlink=True)
+                if source_fingerprint is None:
+                    raise ValueError("source polish is unstable")
                 copy_info = copy_review_html_with_inline_images(source_path, target_path)
+                source_after = fingerprint_file(source_path, reject_symlink=True)
+                if source_after is None or (
+                    source_after.size,
+                    source_after.sha256,
+                ) != (
+                    source_fingerprint.size,
+                    source_fingerprint.sha256,
+                ):
+                    raise ValueError("source polish changed while building review bundle")
+                article_artifact_records.extend(
+                    [
+                        _review_file_record(
+                            source_path,
+                            kind="source_html",
+                            article=article,
+                            fingerprint=source_fingerprint,
+                        ),
+                        _review_file_record(target_path, kind="review_html", article=article),
+                    ]
+                )
             except Exception as exc:  # pragma: no cover - defensive artifact generation
+                reset_run_owned_directory(review_dir, target_path.parent.name)
                 copy_errors.append({"article": article, "polish_stage_path": str(source_path), "error": str(exc)})
         else:
             copy_errors.append(
@@ -629,6 +729,7 @@ def write_article_review_stage(
     index_lines.extend(["</tbody></table>", "</body></html>"])
     index_path = review_dir / "index.html"
     write_text_atomic(index_path, "\n".join(index_lines) + "\n")
+    artifact_records = [_review_file_record(index_path, kind="index_html"), *article_artifact_records]
 
     status = "ready"
     if not mandatory_items:
@@ -639,6 +740,7 @@ def write_article_review_stage(
         status = "partial"
 
     report = {
+        "schema_version": ARTICLE_REVIEW_REPORT_SCHEMA_VERSION,
         "generated_at": now(),
         "status": status,
         "run_dir": str(run_dir),
@@ -651,8 +753,13 @@ def write_article_review_stage(
         "selected_count": len(articles),
         "bundle_limit": limit,
         "copy_error_count": len(copy_errors),
-        "copy_errors": copy_errors[:20],
+        "copy_errors": copy_errors,
         "articles": articles,
+        "provenance": {
+            "schema_version": ARTICLE_REVIEW_PROVENANCE_SCHEMA_VERSION,
+            "queue": queue_record,
+            "artifacts": artifact_records,
+        },
     }
     write_json(run_dir / "article_review_report.json", report)
     return report

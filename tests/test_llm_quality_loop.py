@@ -9,6 +9,10 @@ import zlib
 
 import pytest
 
+from pdf_html_polish.quality_loop.audit_command_provenance import (
+    AuditCommandProvenanceError,
+    validate_audit_command_report,
+)
 from pdf_html_polish.html_stages import (
     POLISH_STAGE_NAME,
     RAW_STAGE_NAME,
@@ -434,9 +438,19 @@ def test_quality_gate_requires_pdf_text_and_problem_evidence_when_configured() -
         comparison,
         gate_config,
         audit_report={
-            "corpus_summary": {"totals": {"source_pdf_present": 2, "pdf_text_chars": 1200}}
+            "corpus_summary": {"totals": {"source_pdf_present": 2, "pdf_text_chars": 1200}},
+            "articles": [
+                {
+                    "article": "paper",
+                    "summary": {"pdf_diagnostics_enabled": True},
+                }
+            ],
         },
-        audit_command_report={"pdf_diagnostics_enabled": True, "pdf_map_path": "source_pdf_map.json"},
+        audit_command_report={
+            "returncode": 0,
+            "pdf_diagnostics_enabled": True,
+            "pdf_map_path": "source_pdf_map.json",
+        },
         pdf_problem_evidence_report={
             "status": "ready",
             "report_path": "pdf_problem_evidence_report.json",
@@ -467,9 +481,16 @@ def test_quality_gate_accepts_scanned_pdf_when_diagnostics_ran() -> None:
             "require_pdf_text_layer_diagnostics": True,
         },
         audit_report={
-            "corpus_summary": {"totals": {"source_pdf_present": 1, "pdf_text_chars": 0}}
+            "corpus_summary": {"totals": {"source_pdf_present": 1, "pdf_text_chars": 0}},
+            "articles": [
+                {
+                    "article": "paper",
+                    "summary": {"pdf_diagnostics_enabled": True},
+                }
+            ],
         },
         audit_command_report={
+            "returncode": 0,
             "pdf_diagnostics_enabled": True,
             "pdf_map_path": "source_pdf_map.json",
         },
@@ -477,6 +498,35 @@ def test_quality_gate_accepts_scanned_pdf_when_diagnostics_ran() -> None:
 
     assert report["status"] == "pass"
     assert report["pdf_text_layer_diagnostics"]["source_pdf_text_layer_empty"] is True
+
+
+@pytest.mark.parametrize("returncode", [1, None, "0"])
+def test_quality_gate_rejects_unproven_or_failed_audit_command(returncode: object) -> None:
+    report = evaluate_quality_gate(
+        {"status": "ok", "regressions": [], "improvements": []},
+        {"require_pdf_text_layer_diagnostics": True},
+        audit_report={
+            "corpus_summary": {
+                "totals": {"source_pdf_present": 1, "pdf_text_chars": 10}
+            },
+            "articles": [
+                {
+                    "article": "paper",
+                    "summary": {"pdf_diagnostics_enabled": True},
+                }
+            ],
+        },
+        audit_command_report={
+            "returncode": returncode,
+            "pdf_diagnostics_enabled": True,
+            "pdf_map_path": "source_pdf_map.json",
+        },
+    )
+
+    assert report["status"] == "fail"
+    assert {failure["kind"] for failure in report["failures"]} == {
+        "pdf_text_layer_diagnostics_command_failed"
+    }
 
 
 def test_write_article_review_stage_builds_mandatory_bundle(tmp_path: Path) -> None:
@@ -991,7 +1041,9 @@ def test_pdf_problem_evidence_stage_requires_render_and_text_layer(tmp_path: Pat
     source_pdf.write_bytes(b"%PDF-1.4\n")
 
     def fake_pages(pdf_path: Path, *, max_pages: int | None = None):
-        assert pdf_path == source_pdf
+        assert pdf_path != source_pdf
+        assert pdf_path.parent == run_dir / "_enrichment_snapshot" / "files"
+        assert pdf_path.read_bytes() == source_pdf.read_bytes()
         assert max_pages == 80
         return "fake", ["First page.", "The PDF text layer has the correct DOI boundary."], None
 
@@ -4010,6 +4062,99 @@ def test_p62_source_visual_probe_skips_false_label_pages(
     assert probe["visual_inventory"]["native_image_count"] == 0
 
 
+def test_observe_preflights_raw_output_directory_before_any_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alias_parent = tmp_path / "unused"
+    alias_parent.mkdir()
+    raw_out_dir = alias_parent / ".." / "run"
+    args = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            str(tmp_path / "source"),
+            "--out-dir",
+            str(raw_out_dir),
+        ]
+    )
+
+    def reject_raw_path(path: Path, *, label: str) -> Path:
+        assert path == raw_out_dir
+        assert label == "Quality run directory"
+        raise ValueError("quality_run_directory_preflight")
+
+    monkeypatch.setattr(
+        llm_quality_loop.quality_commands,
+        "canonical_run_directory",
+        reject_raw_path,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "prepare_gate_config_for_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("writer reached before run-directory preflight")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="quality_run_directory_preflight"):
+        llm_quality_loop.observe(args)
+
+
+@pytest.mark.parametrize(
+    "argv_tail",
+    [
+        ["gate", "--run-dir", "{run}"],
+        ["pack", "--run-dir", "{run}"],
+        ["recover-p62", "--run-dir", "{run}"],
+        [
+            "record-observation",
+            "--ledger",
+            "{ledger}",
+            "--run-dir",
+            "{run}",
+            "--article",
+            "Doc",
+            "--snippet",
+            "problem",
+        ],
+    ],
+)
+def test_writer_subcommands_preflight_raw_run_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    argv_tail: list[str],
+) -> None:
+    alias_parent = tmp_path / "unused"
+    alias_parent.mkdir()
+    raw_run_dir = alias_parent / ".." / "run"
+    argv = [
+        value.format(
+            run=str(raw_run_dir),
+            ledger=str(tmp_path / "observations.jsonl"),
+        )
+        for value in argv_tail
+    ]
+
+    def reject_raw_path(path: Path, *, label: str) -> Path:
+        assert path == raw_run_dir
+        assert label == "Quality run directory"
+        raise ValueError("quality_subcommand_run_directory_preflight")
+
+    monkeypatch.setattr(
+        llm_quality_loop.quality_commands,
+        "canonical_run_directory",
+        reject_raw_path,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="quality_subcommand_run_directory_preflight",
+    ):
+        llm_quality_loop.main(argv)
+
+
 def test_observe_runs_configured_tests_by_default() -> None:
     args = parse_args(
         [
@@ -4038,6 +4183,37 @@ def test_observe_runs_configured_tests_by_default() -> None:
     )
 
     assert args.run_tests is False
+
+
+def test_review_bundle_cli_override_must_match_immutable_gate_config() -> None:
+    assert (
+        llm_quality_loop._resolved_article_review_bundle_limit(
+            args_value=None,
+            gate_config={"article_review_bundle_max_articles": 0},
+        )
+        == 0
+    )
+    assert (
+        llm_quality_loop._resolved_article_review_bundle_limit(
+            args_value=7,
+            gate_config={"article_review_bundle_max_articles": 7},
+        )
+        == 7
+    )
+    with pytest.raises(SystemExit, match="immutable gate config"):
+        llm_quality_loop._resolved_article_review_bundle_limit(
+            args_value=7,
+            gate_config={"article_review_bundle_max_articles": 0},
+        )
+
+
+@pytest.mark.parametrize("configured", [True, -1, "7"])
+def test_review_bundle_rejects_invalid_gate_config(configured: object) -> None:
+    with pytest.raises(SystemExit, match="non-negative integer"):
+        llm_quality_loop._resolved_article_review_bundle_limit(
+            args_value=None,
+            gate_config={"article_review_bundle_max_articles": configured},
+        )
 
 
 def test_observe_accepts_parallel_document_job_overrides() -> None:
@@ -4833,6 +5009,214 @@ def test_normalize_converted_audit_article_ids_uses_manifest_paths(tmp_path: Pat
     assert all(article["artifact_hint"] for article in audit["articles"])
 
 
+def test_normalize_converted_audit_ids_records_postprocessor_chain(tmp_path: Path) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "lib" / "KEY" / "222" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / "01.en.raw.html"
+    polish_path = stage_dir / "02.en.polish.html"
+    raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+    polish_path.write_text("<html><body><p>Polish.</p></body></html>", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_audit(run_dir, roots=[root])
+    _write_json(
+        run_dir / "manifest.json",
+        {
+            "source_kind": "converted_stage_roots",
+            "articles": [
+                {
+                    "article_id": "canonical_doc",
+                    "article": "Doc",
+                    "raw_stage_path": str(raw_path.resolve(strict=False)),
+                    "polish_stage_path": str(polish_path.resolve(strict=False)),
+                    "artifact_hint": "lib/KEY/222/Doc/_z2m_stages/01.en.raw.html",
+                }
+            ],
+        },
+    )
+    audit_path = run_dir / "audit_full_checks.json"
+    command_path = run_dir / "audit_command_report.json"
+    baseline_audit_bytes = audit_path.read_bytes()
+    baseline_command_bytes = command_path.read_bytes()
+    baseline_manifest_bytes = (run_dir / "manifest.json").read_bytes()
+
+    audit = normalize_converted_audit_article_ids(run_dir)
+    command = json.loads(
+        (run_dir / "audit_command_report.json").read_text(encoding="utf-8")
+    )
+
+    validate_audit_command_report(run_dir, audit, command)
+    assert audit["articles"][0]["article"] == "canonical_doc"
+    assert [item["name"] for item in command["postprocessors"]] == [
+        "normalize_converted_audit_article_ids"
+    ]
+    assert command["command_output"] != command["audit_output"]
+    postprocessor = command["postprocessors"][0]
+    input_snapshot = Path(postprocessor["input_snapshot"]["path"])
+    command_snapshot = Path(postprocessor["command_snapshot"]["path"])
+    manifest_snapshot = Path(postprocessor["inputs"][0]["snapshot"]["path"])
+    assert input_snapshot.read_bytes() == baseline_audit_bytes
+    assert command_snapshot.read_bytes() == baseline_command_bytes
+    assert manifest_snapshot.read_bytes() == baseline_manifest_bytes
+    snapshot_validation = llm_quality_loop.validate_enrichment_snapshot(run_dir)
+    assert {
+        ("__audit__", "audit_postprocessor_input"),
+        ("__audit__", "audit_postprocessor_command"),
+        ("__audit__", "audit_postprocessor_manifest"),
+    } <= snapshot_validation.usage_keys
+
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["tampered"] = True
+    _write_json(manifest_path, manifest)
+    validate_audit_command_report(run_dir, audit, command)
+
+    manifest_snapshot_bytes = manifest_snapshot.read_bytes()
+    manifest_snapshot.write_bytes(manifest_snapshot_bytes + b" ")
+    with pytest.raises(
+        AuditCommandProvenanceError,
+        match="audit_postprocessor_manifest_snapshot_fingerprint_mismatch",
+    ):
+        validate_audit_command_report(run_dir, audit, command)
+    manifest_snapshot.write_bytes(manifest_snapshot_bytes)
+
+    input_snapshot_bytes = input_snapshot.read_bytes()
+    input_snapshot.write_bytes(input_snapshot_bytes + b" ")
+    with pytest.raises(
+        AuditCommandProvenanceError,
+        match="audit_postprocessor_input_snapshot_fingerprint_mismatch",
+    ):
+        validate_audit_command_report(run_dir, audit, command)
+    input_snapshot.write_bytes(input_snapshot_bytes)
+
+    command_snapshot_bytes = command_snapshot.read_bytes()
+    command_snapshot.write_bytes(command_snapshot_bytes + b" ")
+    with pytest.raises(
+        AuditCommandProvenanceError,
+        match="audit_postprocessor_command_snapshot_fingerprint_mismatch",
+    ):
+        validate_audit_command_report(run_dir, audit, command)
+    command_snapshot.write_bytes(command_snapshot_bytes)
+
+    semantic_snapshot = json.loads(command_snapshot_bytes.decode("utf-8"))
+    semantic_snapshot["jobs"] = 2
+    _write_json(command_snapshot, semantic_snapshot)
+    semantic_snapshot_record = (
+        llm_quality_loop.quality_audit_provenance.file_record(
+            command_snapshot,
+            label="audit_postprocessor_command_snapshot",
+        )
+    )
+    semantic_command = json.loads(json.dumps(command))
+    semantic_postprocessor = semantic_command["postprocessors"][0]
+    semantic_postprocessor["command_snapshot"] = dict(semantic_snapshot_record)
+    semantic_command_input = dict(semantic_snapshot_record)
+    semantic_command_input["path"] = str(command_path.resolve(strict=False))
+    semantic_postprocessor["command_input"] = semantic_command_input
+    with pytest.raises(
+        AuditCommandProvenanceError,
+        match="audit_postprocessor_command_snapshot_content_mismatch",
+    ):
+        validate_audit_command_report(
+            run_dir,
+            audit,
+            semantic_command,
+        )
+    command_snapshot.write_bytes(command_snapshot_bytes)
+
+    forged_audit = json.loads(json.dumps(audit))
+    forged_audit["articles"][0]["artifact_hint"] = "forged"
+    _write_json(audit_path, forged_audit)
+    forged_output = llm_quality_loop.quality_audit_provenance.file_record(
+        audit_path,
+        label="audit_output",
+    )
+    forged_command = json.loads(json.dumps(command))
+    forged_command["audit_output"] = dict(forged_output)
+    forged_command["postprocessors"][0]["output"] = dict(forged_output)
+    with pytest.raises(
+        AuditCommandProvenanceError,
+        match="audit_postprocessor_output_replay_mismatch",
+    ):
+        validate_audit_command_report(
+            run_dir,
+            forged_audit,
+            forged_command,
+        )
+
+
+@pytest.mark.parametrize("failure_mode", ["record", "semantic-output"])
+def test_normalize_converted_audit_ids_rolls_back_when_chain_recording_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    root = tmp_path / "converted"
+    stage_dir = root / "lib" / "KEY" / "222" / "Doc" / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw_path = stage_dir / "01.en.raw.html"
+    polish_path = stage_dir / "02.en.polish.html"
+    raw_path.write_text("<html><body><p>Raw.</p></body></html>", encoding="utf-8")
+    polish_path.write_text(
+        "<html><body><p>Polish.</p></body></html>",
+        encoding="utf-8",
+    )
+    run_dir = tmp_path / "run"
+    run_audit(run_dir, roots=[root])
+    _write_json(
+        run_dir / "manifest.json",
+        {
+            "source_kind": "converted_stage_roots",
+            "articles": [
+                {
+                    "article_id": "canonical_doc",
+                    "article": "Doc",
+                    "raw_stage_path": str(raw_path.resolve(strict=False)),
+                    "polish_stage_path": str(polish_path.resolve(strict=False)),
+                    "artifact_hint": "lib/KEY/222/Doc/_z2m_stages/01.en.raw.html",
+                }
+            ],
+        },
+    )
+    audit_path = run_dir / "audit_full_checks.json"
+    command_path = run_dir / "audit_command_report.json"
+    baseline_audit_bytes = audit_path.read_bytes()
+    baseline_command_bytes = command_path.read_bytes()
+
+    if failure_mode == "record":
+        def fail_record(*_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AuditCommandProvenanceError("injected_postprocessor_record_failure")
+
+        monkeypatch.setattr(
+            llm_quality_loop.quality_audit_provenance,
+            "record_audit_postprocessor",
+            fail_record,
+        )
+        reason = "injected_postprocessor_record_failure"
+    else:
+        original_transform = llm_quality_loop.normalize_converted_audit_article_ids_payload
+
+        def forge_output(audit: dict, manifest: dict) -> dict:
+            forged = original_transform(audit, manifest)
+            forged["articles"][0]["artifact_hint"] = "forged"
+            return forged
+
+        monkeypatch.setattr(
+            llm_quality_loop,
+            "normalize_converted_audit_article_ids_payload",
+            forge_output,
+        )
+        reason = "audit_postprocessor_output_replay_mismatch"
+    with pytest.raises(
+        AuditCommandProvenanceError,
+        match=reason,
+    ):
+        normalize_converted_audit_article_ids(run_dir)
+
+    assert audit_path.read_bytes() == baseline_audit_bytes
+    assert command_path.read_bytes() == baseline_command_bytes
+
+
 def test_run_audit_writes_stream_logs_and_command_report(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     stage_dir = run_dir / "audit_tree" / "Doc" / "_z2m_stages"
@@ -4885,7 +5269,14 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
             _write_json(run_dir / "audit_full_checks.json", {"roots": [str(run_dir / "audit_tree")], "articles": []})
         audit_calls.append({"args": args, "kwargs": kwargs})
 
-    monkeypatch.setattr(llm_quality_loop, "load_gate_config", lambda *args, **kwargs: gate_config)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "prepare_gate_config_for_run",
+        lambda candidate_run_dir, _path: SimpleNamespace(
+            config=gate_config,
+            path=candidate_run_dir / "quality_gate_config_snapshot.json",
+        ),
+    )
     monkeypatch.setattr(llm_quality_loop, "repolish_cached_run", fake_repolish)
     monkeypatch.setattr(llm_quality_loop, "run_audit", fake_run_audit)
     monkeypatch.setattr(llm_quality_loop, "run_quality_history", lambda *args, **kwargs: None)
@@ -5008,7 +5399,14 @@ def test_observe_converted_roots_default_runs_repolish_and_repair_stages(
             _write_json(run_dir / "audit_full_checks.json", {"roots": [str(run_dir / "audit_tree")], "articles": []})
         audit_calls.append({"args": args, "kwargs": kwargs})
 
-    monkeypatch.setattr(llm_quality_loop, "load_gate_config", lambda *args, **kwargs: gate_config)
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "prepare_gate_config_for_run",
+        lambda candidate_run_dir, _path: SimpleNamespace(
+            config=gate_config,
+            path=candidate_run_dir / "quality_gate_config_snapshot.json",
+        ),
+    )
     monkeypatch.setattr(llm_quality_loop, "prepare_converted_raw_cache", fake_prepare_converted_raw_cache)
     monkeypatch.setattr(llm_quality_loop, "repolish_cached_run", fake_repolish)
     monkeypatch.setattr(llm_quality_loop, "run_audit", fake_run_audit)

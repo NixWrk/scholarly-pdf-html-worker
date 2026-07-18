@@ -8,19 +8,90 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
-from .gates import evaluate_quality_gate, load_gate_config
-from .run_utils import DEFAULT_REPO_ROOT, load_json, now, write_json
+from pdf_html_polish.html_stages import (
+    POLISH_STAGE_NAME,
+    RAW_STAGE_NAME,
+    article_name_from_html_stage,
+)
+from .audit_command_provenance import (
+    AUDIT_COMMAND_REPORT_NAME,
+    AUDIT_COMMAND_REPORT_SCHEMA_VERSION,
+    AUDIT_SUBPROCESS_ENVIRONMENT_OVERRIDES,
+    AUDIT_OUTPUT_NAME,
+    AuditCommandProvenanceError,
+    absent_audit_input,
+    build_audit_code_manifest,
+    build_audit_command,
+    build_audit_command_report,
+    build_merge_previous_input_record,
+    build_pdf_map_input_record,
+    canonical_existing_root,
+    load_audit_json_object,
+    validate_audit_command_report,
+)
+from .audit_pdf import load_pdf_map
+from .audit_report import find_stage_pairs
+from .cached_run_state import path_is_link_like
+from .enrichment_snapshot import snapshot_enrichment_file
+from .gate_provenance import (
+    GATE_CONFIG_SNAPSHOT_NAME,
+    PDF_PROBLEM_EVIDENCE_REPORT_NAME,
+    build_provenanced_gate_report,
+    prepare_gate_config_snapshot,
+    validate_gate_report_provenance,
+)
+from .run_utils import DEFAULT_REPO_ROOT, now, write_json
+
+
+def canonical_run_directory(path: Path, *, label: str) -> Path:
+    candidate = Path(path).expanduser()
+    lexical = candidate if candidate.is_absolute() else Path.cwd() / candidate
+    if any(
+        path_is_link_like(component)
+        for component in (lexical, *lexical.parents)
+    ):
+        raise ValueError(f"{label} is link-like: {lexical}")
+    canonical = lexical.resolve(strict=False)
+    if str(lexical) != str(canonical):
+        raise ValueError(f"{label} must be canonical: {lexical}")
+    if canonical.exists() and not canonical.is_dir():
+        raise ValueError(f"{label} is not a directory: {canonical}")
+    canonical.mkdir(parents=True, exist_ok=True)
+    if any(
+        path_is_link_like(component)
+        for component in (canonical, *canonical.parents)
+    ):
+        raise ValueError(f"{label} became link-like: {canonical}")
+    if not canonical.is_dir():
+        raise ValueError(f"{label} is not a directory: {canonical}")
+    return canonical.resolve(strict=True)
+
+
+def _remove_existing_run_owned_file(path: Path, *, label: str) -> None:
+    if not (path.exists() or path_is_link_like(path)):
+        return
+    if path_is_link_like(path):
+        raise ValueError(f"Existing {label} is link-like: {path}")
+    if not path.is_file():
+        raise ValueError(f"Existing {label} is not a regular file: {path}")
+    path.unlink()
 
 
 def run_test_command(command: str, run_dir: Path, *, cwd: Path = DEFAULT_REPO_ROOT) -> dict[str, Any]:
+    run_dir = canonical_run_directory(run_dir, label="Test run directory")
     started = now()
-    run_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = run_dir / "test_stdout.log"
     stderr_path = run_dir / "test_stderr.log"
+    for log_path, label in (
+        (stdout_path, "test stdout"),
+        (stderr_path, "test stderr"),
+    ):
+        _remove_existing_run_owned_file(log_path, label=label)
     print(f"Tests started: {command}", flush=True)
-    with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
-        "w",
+    with stdout_path.open("x", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
+        "x",
         encoding="utf-8",
         errors="replace",
     ) as stderr_file:
@@ -63,6 +134,105 @@ def run_test_command(command: str, run_dir: Path, *, cwd: Path = DEFAULT_REPO_RO
     return report
 
 
+def _audit_article_ids(audit_roots: Iterable[Path]) -> set[str]:
+    pairs = find_stage_pairs(
+        audit_roots,
+        raw_stage=RAW_STAGE_NAME,
+        polish_stage=POLISH_STAGE_NAME,
+    )
+    article_ids = [article_name_from_html_stage(polish_path) for _raw_path, polish_path in pairs]
+    if len(set(article_ids)) != len(article_ids):
+        raise ValueError("Audit roots contain duplicate article identities.")
+    return set(article_ids)
+
+
+def _canonical_pdf_map_path(path: Path, *, label: str) -> Path:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError(f"Audit PDF map path must be absolute: {label}: {candidate}")
+    if any(
+        path_is_link_like(component)
+        for component in (candidate, *candidate.parents)
+    ):
+        raise ValueError(f"Audit PDF map path is link-like: {label}: {candidate}")
+    canonical = candidate.resolve(strict=False)
+    if str(candidate) != str(canonical):
+        raise ValueError(f"Audit PDF map path must be canonical: {label}: {candidate}")
+    return canonical
+
+
+def _canonical_pdf_diagnostics_cache_dir(path: Path) -> Path:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError(
+            f"Audit diagnostics cache path must be absolute: {candidate}"
+        )
+    if any(
+        path_is_link_like(component)
+        for component in (candidate, *candidate.parents)
+    ):
+        raise ValueError(
+            f"Audit diagnostics cache path is link-like: {candidate}"
+        )
+    canonical = candidate.resolve(strict=False)
+    if str(candidate) != str(canonical):
+        raise ValueError(
+            f"Audit diagnostics cache path must be canonical: {candidate}"
+        )
+    return canonical
+
+
+def _materialize_pdf_map_input(
+    run_dir: Path,
+    article_ids: set[str],
+    pdf_map_source: Path,
+) -> dict[str, Any]:
+    source_snapshot = snapshot_enrichment_file(
+        run_dir,
+        "__audit__",
+        "audit_pdf_map_source",
+        pdf_map_source,
+    )
+    try:
+        supplied_map = load_pdf_map(source_snapshot)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"Audit PDF map is invalid: {pdf_map_source}") from exc
+
+    materialized_map: dict[str, str] = {}
+    pdf_sources: list[tuple[str, Path, Path]] = []
+    for article in sorted(article_ids & set(supplied_map)):
+        source_path = _canonical_pdf_map_path(
+            supplied_map[article],
+            label=article,
+        )
+        snapshot = snapshot_enrichment_file(
+            run_dir,
+            article,
+            "audit_source_pdf",
+            source_path,
+        )
+        materialized_map[article] = str(snapshot)
+        pdf_sources.append((article, source_path, snapshot))
+
+    temporary_map = run_dir / f".audit_pdf_map_materialized.{uuid4().hex}.json"
+    try:
+        write_json(temporary_map, materialized_map)
+        materialized_snapshot = snapshot_enrichment_file(
+            run_dir,
+            "__audit__",
+            "audit_pdf_map_materialized",
+            temporary_map,
+        )
+    finally:
+        temporary_map.unlink(missing_ok=True)
+    return build_pdf_map_input_record(
+        pdf_map_source,
+        source_snapshot,
+        materialized_snapshot,
+        pdf_sources,
+    )
+
+
 def run_audit(
     run_dir: Path,
     roots: Iterable[Path] | None = None,
@@ -74,41 +244,132 @@ def run_audit(
     merge_previous_report_path: Path | None = None,
     repo_root: Path = DEFAULT_REPO_ROOT,
 ) -> None:
-    audit_roots = [root.resolve(strict=False) for root in roots] if roots else [run_dir / "audit_tree"]
-    if not audit_roots:
+    run_dir = canonical_run_directory(run_dir, label="Audit run directory")
+    repo_root = Path(repo_root).expanduser().resolve(strict=False)
+    supplied_roots = list(roots) if roots is not None else [run_dir / "audit_tree"]
+    if not supplied_roots:
         raise ValueError("No audit roots supplied.")
-    missing_roots = [root for root in audit_roots if not root.exists()]
-    if missing_roots:
-        raise FileNotFoundError(f"Missing audit root(s): {', '.join(str(root) for root in missing_roots)}")
+    audit_roots = [canonical_existing_root(root) for root in supplied_roots]
+    if len({os.path.normcase(str(root)) for root in audit_roots}) != len(audit_roots):
+        raise ValueError("Duplicate audit roots supplied.")
+    if type(jobs) is not int or jobs < 1:
+        raise ValueError("Audit jobs must be a positive integer.")
+    target_article_ids = _audit_article_ids(audit_roots)
 
-    env = os.environ.copy()
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    started = now()
+    merge_previous_input = absent_audit_input()
+    if merge_previous_report_path is not None:
+        if not target_article_ids:
+            raise ValueError("Targeted audit requires at least one article.")
+        previous_candidate = Path(merge_previous_report_path).expanduser()
+        if not previous_candidate.is_absolute():
+            raise ValueError("Targeted audit baseline path must be absolute.")
+        previous_source = previous_candidate.resolve(strict=False)
+        if str(previous_candidate) != str(previous_source):
+            raise ValueError("Targeted audit baseline path must be canonical.")
+        expected_previous = run_dir / AUDIT_OUTPUT_NAME
+        if previous_source != expected_previous:
+            raise ValueError(
+                f"Targeted audit baseline must be the current run output: {expected_previous}"
+            )
+        previous_command_source = run_dir / AUDIT_COMMAND_REPORT_NAME
+        try:
+            baseline_report = load_audit_json_object(
+                previous_source,
+                label="audit_baseline_report",
+            )
+            baseline_command = load_audit_json_object(
+                previous_command_source,
+                label="audit_baseline_command",
+            )
+        except AuditCommandProvenanceError as exc:
+            raise ValueError(f"Targeted audit baseline JSON is invalid: {exc}") from exc
+        if baseline_command.get("targeted_merge_enabled") is not False:
+            raise ValueError("Targeted audit baseline must be a full audit.")
+        if baseline_command.get("pdf_diagnostics_enabled") is not enable_pdf_diagnostics:
+            raise ValueError("Targeted audit baseline PDF diagnostics mode does not match.")
+        try:
+            validate_audit_command_report(
+                run_dir,
+                baseline_report,
+                baseline_command,
+                repo_root=repo_root,
+                allowed_changed_article_ids=target_article_ids,
+            )
+        except AuditCommandProvenanceError as exc:
+            raise ValueError(f"Targeted audit baseline provenance is invalid: {exc}") from exc
+        previous_snapshot = snapshot_enrichment_file(
+            run_dir,
+            "__audit__",
+            "audit_merge_baseline",
+            previous_source,
+        )
+        previous_command_snapshot = snapshot_enrichment_file(
+            run_dir,
+            "__audit__",
+            "audit_merge_baseline_command",
+            previous_command_source,
+        )
+        merge_previous_input = build_merge_previous_input_record(
+            previous_source,
+            previous_snapshot,
+            previous_command_source,
+            previous_command_snapshot,
+            allowed_changed_articles=target_article_ids,
+        )
+
+    pdf_map_input = absent_audit_input()
+    if pdf_map_path is not None:
+        if not enable_pdf_diagnostics:
+            raise ValueError("Audit PDF map requires PDF diagnostics to be enabled.")
+        pdf_map_source = _canonical_pdf_map_path(
+            pdf_map_path,
+            label="source map",
+        )
+        pdf_map_input = _materialize_pdf_map_input(
+            run_dir,
+            target_article_ids,
+            pdf_map_source,
+        )
+
+    cache_dir = (
+        _canonical_pdf_diagnostics_cache_dir(pdf_diagnostics_cache_dir)
+        if pdf_diagnostics_cache_dir is not None
+        else None
+    )
+
+    output_path = run_dir / AUDIT_OUTPUT_NAME
+    command_report_path = run_dir / AUDIT_COMMAND_REPORT_NAME
     stdout_path = run_dir / "audit_stdout.log"
     stderr_path = run_dir / "audit_stderr.log"
-    command = [
-        sys.executable,
-        str(repo_root / "scripts" / "audit_en_polish.py"),
-        "--roots",
-        *[str(root) for root in audit_roots],
-        "--out",
-        str(run_dir / "audit_full_checks.json"),
-    ]
-    if enable_pdf_diagnostics:
-        command.append("--pdf-diagnostics")
-    if pdf_map_path is not None:
-        command.extend(["--pdf-map", str(pdf_map_path)])
-    if pdf_diagnostics_cache_dir is not None:
-        command.extend(["--pdf-diagnostics-cache-dir", str(pdf_diagnostics_cache_dir)])
-    if int(jobs or 1) > 1:
-        command.extend(["--jobs", str(int(jobs or 1))])
-    if merge_previous_report_path is not None:
-        command.extend(["--merge-previous-report", str(merge_previous_report_path)])
+    for stale_path, label in (
+        (output_path, "audit output"),
+        (command_report_path, "audit command report"),
+        (stdout_path, "audit stdout"),
+        (stderr_path, "audit stderr"),
+    ):
+        _remove_existing_run_owned_file(stale_path, label=label)
 
-    print(f"Audit started: roots={len(audit_roots)} out={run_dir / 'audit_full_checks.json'}", flush=True)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    with stdout_path.open("w", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
-        "w",
+    env = os.environ.copy()
+    environment_overrides = dict(
+        AUDIT_SUBPROCESS_ENVIRONMENT_OVERRIDES
+    )
+    env.update(environment_overrides)
+    started = now()
+    command = build_audit_command(
+        repo_root=repo_root,
+        roots=audit_roots,
+        output_path=output_path,
+        enable_pdf_diagnostics=enable_pdf_diagnostics,
+        pdf_map_input=pdf_map_input,
+        pdf_diagnostics_cache_dir=cache_dir,
+        jobs=jobs,
+        merge_previous_report_input=merge_previous_input,
+    )
+    code_manifest_before = build_audit_code_manifest(repo_root)
+
+    print(f"Audit started: roots={len(audit_roots)} out={output_path}", flush=True)
+    with stdout_path.open("x", encoding="utf-8", errors="replace") as stdout_file, stderr_path.open(
+        "x",
         encoding="utf-8",
         errors="replace",
     ) as stderr_file:
@@ -136,33 +397,47 @@ def run_audit(
 
     stdout_tail = stdout_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stdout_path.is_file() else ""
     stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-4000:] if stderr_path.is_file() else ""
-    write_json(
-        run_dir / "audit_command_report.json",
-        {
-            "command": command,
-            "roots": [str(root) for root in audit_roots],
-            "pdf_diagnostics_enabled": enable_pdf_diagnostics,
-            "pdf_map_path": str(pdf_map_path) if pdf_map_path is not None else "",
-            "pdf_diagnostics_cache_dir": (
-                str(pdf_diagnostics_cache_dir) if pdf_diagnostics_cache_dir is not None else ""
-            ),
-            "jobs": int(jobs or 1),
-            "merge_previous_report_path": (
-                str(merge_previous_report_path) if merge_previous_report_path is not None else ""
-            ),
-            "targeted_merge_enabled": merge_previous_report_path is not None,
-            "started_at": started,
-            "finished_at": now(),
-            "returncode": returncode,
-            "stdout_path": str(stdout_path),
-            "stderr_path": str(stderr_path),
-            "stdout_tail": stdout_tail,
-            "stderr_tail": stderr_tail,
-        },
-    )
+    finished = now()
+    code_manifest_after = build_audit_code_manifest(repo_root)
     print(f"Audit finished: exit={returncode}", flush=True)
-    if returncode != 0:
-        raise SystemExit(f"Audit command failed with exit code {returncode}. See {run_dir / 'audit_command_report.json'}")
+    if returncode != 0 or code_manifest_after != code_manifest_before:
+        write_json(
+            command_report_path,
+            {
+                "schema_version": AUDIT_COMMAND_REPORT_SCHEMA_VERSION,
+                "kind": "quality_audit_command_failure",
+                "command": command,
+                "started_at": started,
+                "finished_at": finished,
+                "environment_overrides": environment_overrides,
+                "returncode": returncode,
+                "code_stable": code_manifest_after == code_manifest_before,
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+            },
+        )
+        if returncode != 0:
+            raise SystemExit(
+                f"Audit command failed with exit code {returncode}. See {command_report_path}"
+            )
+        raise RuntimeError(f"Audit code changed while the command was running. See {command_report_path}")
+
+    report = build_audit_command_report(
+        run_dir,
+        repo_root=repo_root,
+        roots=audit_roots,
+        enable_pdf_diagnostics=enable_pdf_diagnostics,
+        pdf_map_input=pdf_map_input,
+        pdf_diagnostics_cache_dir=cache_dir,
+        jobs=jobs,
+        merge_previous_report_input=merge_previous_input,
+        started_at=started,
+        finished_at=finished,
+        returncode=returncode,
+        environment_overrides=environment_overrides,
+        code_manifest=code_manifest_before,
+    )
+    write_json(command_report_path, report)
 
 
 def run_quality_history(
@@ -185,7 +460,9 @@ def run_quality_history(
         command.extend(["--previous-entry", str(previous_entry)])
     if no_append:
         command.append("--no-append")
-    subprocess.run(command, cwd=repo_root, check=True)
+    environment = os.environ.copy()
+    environment.update(AUDIT_SUBPROCESS_ENVIRONMENT_OVERRIDES)
+    subprocess.run(command, cwd=repo_root, env=environment, check=True)
 
 
 def write_gate_report(
@@ -193,27 +470,14 @@ def write_gate_report(
     gate_config_path: Path,
     *,
     out_path: Path | None = None,
-    pdf_problem_evidence_name: str = "pdf_problem_evidence_report.json",
+    pdf_problem_evidence_name: str = PDF_PROBLEM_EVIDENCE_REPORT_NAME,
 ) -> dict[str, Any]:
-    comparison = load_json(run_dir / "quality_compare.json", default={"status": "no_previous_entry"})
-    gate_config = load_gate_config(gate_config_path)
-    article_review_path = run_dir / "article_review_report.json"
-    article_review_report = load_json(article_review_path) if article_review_path.is_file() else None
-    audit_path = run_dir / "audit_full_checks.json"
-    audit_report = load_json(audit_path) if audit_path.is_file() else None
-    audit_command_path = run_dir / "audit_command_report.json"
-    audit_command_report = load_json(audit_command_path) if audit_command_path.is_file() else None
-    pdf_problem_evidence_path = run_dir / pdf_problem_evidence_name
-    pdf_problem_evidence_report = (
-        load_json(pdf_problem_evidence_path) if pdf_problem_evidence_path.is_file() else None
-    )
-    report = evaluate_quality_gate(
-        comparison,
-        gate_config,
-        article_review_report=article_review_report,
-        audit_report=audit_report,
-        audit_command_report=audit_command_report,
-        pdf_problem_evidence_report=pdf_problem_evidence_report,
-    )
+    if pdf_problem_evidence_name != PDF_PROBLEM_EVIDENCE_REPORT_NAME:
+        raise ValueError("Gate provenance requires the canonical PDF evidence report name.")
+    snapshot = prepare_gate_config_snapshot(run_dir, gate_config_path)
+    report = build_provenanced_gate_report(run_dir)
     write_json(out_path or (run_dir / "quality_gate_report.json"), report)
+    validate_gate_report_provenance(run_dir, report)
+    if snapshot.path != Path(run_dir).resolve(strict=False) / GATE_CONFIG_SNAPSHOT_NAME:
+        raise RuntimeError("Gate config snapshot path changed unexpectedly.")
     return report

@@ -74,6 +74,43 @@ def disabled_pdf_text_summary(
     }
 
 
+def _pdf_source_identity(summary: dict[str, Any], *, label: str) -> tuple[str, bool, int, str]:
+    path_value = summary.get("source_pdf_path")
+    present = summary.get("source_pdf_present")
+    size = summary.get("source_pdf_bytes")
+    sha256 = summary.get("source_pdf_sha256")
+    if (
+        not isinstance(path_value, str)
+        or not Path(path_value).is_absolute()
+        or path_value != str(Path(path_value).resolve(strict=False))
+        or type(present) is not bool
+        or type(size) is not int
+        or not isinstance(sha256, str)
+    ):
+        raise RuntimeError(f"Invalid PDF source identity in {label} diagnostics")
+    if present:
+        if (
+            size < 1
+            or len(sha256) != 64
+            or any(character not in "0123456789abcdef" for character in sha256)
+        ):
+            raise RuntimeError(f"Invalid PDF source identity in {label} diagnostics")
+    elif size != 0 or sha256:
+        raise RuntimeError(f"Invalid PDF source identity in {label} diagnostics")
+    return path_value, present, size, sha256
+
+
+def _require_matching_pdf_source_identity(
+    text_summary: dict[str, Any],
+    link_summary: dict[str, Any],
+) -> None:
+    if _pdf_source_identity(text_summary, label="text") != _pdf_source_identity(
+        link_summary,
+        label="link",
+    ):
+        raise RuntimeError("PDF source identity changed between text and link diagnostics")
+
+
 def analyze_polish_pair(
     raw_path: Path,
     polish_path: Path,
@@ -119,6 +156,7 @@ def analyze_polish_pair(
         else:
             pdf_link_summary = deps.pdf_citation_link_summary(Path(pdf_summary["source_pdf_path"]))
             pdf_link_summary["pdf_link_cache_status"] = "disabled"
+        _require_matching_pdf_source_identity(pdf_summary, pdf_link_summary)
 
     defects: list[Defect] = []
     defects.extend(deps.frontmatter_defects(raw_blocks, polish_blocks))

@@ -2838,7 +2838,7 @@ def test_build_report_uses_external_pdf_map_for_pdf_diagnostics() -> None:
         pdf_text = "FUNDING Support statement. SUPPLEMENTARY MATERIAL online. REFERENCES 1. Example reference."
 
         def fake_extract(pdf_path: Path):
-            assert pdf_path == external_pdf
+            assert pdf_path == external_pdf.resolve(strict=False)
             return "fake", pdf_text, None
 
         audit._extract_pdf_text = fake_extract
@@ -2852,7 +2852,7 @@ def test_build_report_uses_external_pdf_map_for_pdf_diagnostics() -> None:
         article = result["articles"][0]
         defect_ids = {defect["id"] for defect in article["defects_found"]}
         assert "P24" in defect_ids
-        assert article["summary"]["source_pdf_path"] == str(external_pdf)
+        assert article["summary"]["source_pdf_path"] == str(external_pdf.resolve(strict=False))
         assert article["summary"]["source_pdf_origin"] == "map"
         assert article["summary"]["source_pdf_present"] is True
         assert article["summary"]["pdf_text_status"] == "fake"
@@ -2967,11 +2967,11 @@ def test_merge_targeted_report_matches_full_reaudit() -> None:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 
-def test_pdf_diagnostics_cache_reuses_and_invalidates_by_pdf_stat() -> None:
+def test_pdf_diagnostics_cache_reuses_and_invalidates_by_pdf_content() -> None:
     audit = _load_audit_module()
     tmp_path = _make_temp_dir()
     original_extract = audit._extract_pdf_text
-    original_link_summary = audit._pdf_citation_link_summary
+    original_link_summary = audit._pdf_citation_link_summary_unattested
     try:
         root = tmp_path / "root"
         for article_name in ("Article one", "Article two"):
@@ -2984,12 +2984,12 @@ def test_pdf_diagnostics_cache_reuses_and_invalidates_by_pdf_stat() -> None:
         calls = {"text": 0, "links": 0}
 
         def fake_extract(path: Path):
-            assert path == pdf_path
+            assert path == pdf_path.resolve(strict=False)
             calls["text"] += 1
             return "fake", f"PDF text {calls['text']}", None
 
         def fake_link_summary(path: Path, *, sample_limit: int = 12):
-            assert path == pdf_path
+            assert path == pdf_path.resolve(strict=False)
             calls["links"] += 1
             return {
                 "pdf_link_text_status": "fake",
@@ -3001,7 +3001,7 @@ def test_pdf_diagnostics_cache_reuses_and_invalidates_by_pdf_stat() -> None:
             }
 
         audit._extract_pdf_text = fake_extract
-        audit._pdf_citation_link_summary = fake_link_summary
+        audit._pdf_citation_link_summary_unattested = fake_link_summary
         pdf_map = {"Article one": pdf_path, "Article two": pdf_path}
         cache_dir = tmp_path / "pdf_cache"
 
@@ -3035,7 +3035,7 @@ def test_pdf_diagnostics_cache_reuses_and_invalidates_by_pdf_stat() -> None:
         assert calls == {"text": 2, "links": 2}
     finally:
         audit._extract_pdf_text = original_extract
-        audit._pdf_citation_link_summary = original_link_summary
+        audit._pdf_citation_link_summary_unattested = original_link_summary
         shutil.rmtree(tmp_path, ignore_errors=True)
 
 

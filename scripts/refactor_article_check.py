@@ -96,13 +96,17 @@ def main(argv: list[str] | None = None) -> int:
             list(report.get("selected_articles") or []),
             enable_pdf_diagnostics=args.rerun_pdf_diagnostics,
         )
+        corpus_summary_value = audit.get("corpus_summary")
+        corpus_summary = (
+            corpus_summary_value if isinstance(corpus_summary_value, dict) else {}
+        )
         rerun_summary = {
             "audit_status": audit.get("audit_status"),
             "article_count": audit.get("article_count"),
             "missing_selected_roots": audit.get("_missing_selected_roots", []),
-            "quality_defect_counts": (audit.get("corpus_summary") or {}).get("defect_counts", {}),
-            "observed_defect_counts": (audit.get("corpus_summary") or {}).get("observed_defect_counts", {}),
-            "non_quality_defect_counts": (audit.get("corpus_summary") or {}).get("non_quality_defect_counts", {}),
+            "quality_defect_counts": corpus_summary.get("defect_counts", {}),
+            "observed_defect_counts": corpus_summary.get("observed_defect_counts", {}),
+            "non_quality_defect_counts": corpus_summary.get("non_quality_defect_counts", {}),
         }
         if args.rerun_audit_out is not None:
             args.rerun_audit_out.parent.mkdir(parents=True, exist_ok=True)

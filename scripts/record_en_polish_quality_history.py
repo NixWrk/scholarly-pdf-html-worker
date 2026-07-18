@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 from typing import Any
 
@@ -17,6 +18,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from pdf_html_polish.atomic_io import write_json_atomic  # noqa: E402
+from pdf_html_polish.artifact_integrity import read_bytes_with_fingerprint  # noqa: E402
+from pdf_html_polish.quality_loop.cached_run_state import path_is_link_like  # noqa: E402
 
 
 SEVERITY_WEIGHT = {
@@ -43,8 +46,95 @@ DERIVED_METRIC_PAIRS = {
 }
 
 
+PREVIOUS_ENTRY_SNAPSHOT_SCHEMA_VERSION = 1
+PREVIOUS_ENTRY_SNAPSHOT_NAME = "quality_previous_entry_snapshot.json"
+
+
+def _json_object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate_json_key:{key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"nonfinite_json_constant:{value}")
+
+
+def _loads_json(data: bytes | str) -> Any:
+    text = data.decode("utf-8") if isinstance(data, bytes) else data
+    return json.loads(
+        text,
+        object_pairs_hook=_json_object_without_duplicates,
+        parse_constant=_reject_json_constant,
+    )
+
+
+def _canonical_lexical_input(path: Path, *, label: str) -> Path:
+    expanded = path.expanduser()
+    if ".." in expanded.parts:
+        raise ValueError(f"{label}_path_alias:{expanded}")
+    lexical = expanded if expanded.is_absolute() else Path.cwd() / expanded
+    if any(path_is_link_like(component) for component in (lexical, *lexical.parents)):
+        raise ValueError(f"{label}_link_like:{lexical}")
+    return lexical.resolve(strict=False)
+
+
+def _read_stable_json(path: Path) -> tuple[Any, dict[str, Any]]:
+    candidate = _canonical_lexical_input(path, label="json_input")
+    snapshot = read_bytes_with_fingerprint(candidate, reject_symlink=True)
+    if snapshot is None:
+        raise ValueError(f"JSON input is missing, empty, linked, or unstable: {candidate}")
+    data, fingerprint = snapshot
+    return _loads_json(data), {
+        "path": str(candidate),
+        "bytes": fingerprint.size,
+        "sha256": fingerprint.sha256,
+    }
+
+
 def _load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload, _record = _read_stable_json(path)
+    return payload
+
+
+def _json_object(value: Any, *, label: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{label}_not_object")
+    return value
+
+
+def _json_object_list(value: Any, *, label: str) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{label}_not_list")
+    if any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"{label}_item_not_object")
+    return value
+
+
+def _articles_by_id(
+    payload: dict[str, Any] | None,
+    *,
+    label: str,
+) -> dict[str, dict[str, Any]]:
+    articles = (
+        _json_object_list(payload.get("articles"), label=f"{label}_articles")
+        if payload
+        else []
+    )
+    by_id: dict[str, dict[str, Any]] = {}
+    for article in articles:
+        article_id = str(article.get("article") or "")
+        if not article_id or article_id in by_id:
+            raise ValueError(f"{label}_article_identity_invalid")
+        by_id[article_id] = article
+    return by_id
 
 
 def _default_path(run_dir: Path, name: str) -> Path:
@@ -64,7 +154,7 @@ def _severity_counts(defects: list[dict[str, Any]]) -> dict[str, int]:
 def _quality_counted_defects(defects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counted: list[dict[str, Any]] = []
     for defect in defects:
-        extra = defect.get("extra") if isinstance(defect.get("extra"), dict) else {}
+        extra = _json_object(defect.get("extra"), label="quality_defect_extra")
         if extra.get("quality_counted") is False:
             continue
         counted.append(defect)
@@ -72,23 +162,11 @@ def _quality_counted_defects(defects: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _assessment_articles(assessment: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    if not assessment:
-        return {}
-    return {
-        str(article.get("article") or ""): article
-        for article in assessment.get("articles", [])
-        if article.get("article")
-    }
+    return _articles_by_id(assessment, label="assessment")
 
 
 def _audit_articles(audit: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    if not audit:
-        return {}
-    return {
-        str(article.get("article") or ""): article
-        for article in audit.get("articles", [])
-        if article.get("article")
-    }
+    return _articles_by_id(audit, label="audit")
 
 
 def _numeric_value(value: Any) -> int | float | None:
@@ -111,7 +189,9 @@ def _copy_numeric_values(source: dict[str, Any]) -> dict[str, int | float]:
 
 
 def _article_labels(article: dict[str, Any], audit_article: dict[str, Any] | None) -> dict[str, str]:
-    summary = audit_article.get("summary") if audit_article and isinstance(audit_article.get("summary"), dict) else {}
+    summary = (
+        _json_object(audit_article.get("summary"), label="audit_article_summary") if audit_article is not None else {}
+    )
     return {
         "profile_style": str(article.get("profile_style") or ""),
         "profile_confidence": str(article.get("profile_confidence") or ""),
@@ -122,8 +202,10 @@ def _article_labels(article: dict[str, Any], audit_article: dict[str, Any] | Non
 
 
 def _article_metrics(article: dict[str, Any], audit_article: dict[str, Any] | None) -> dict[str, int | float]:
-    href_counts = article.get("href_counts") if isinstance(article.get("href_counts"), dict) else {}
-    summary = audit_article.get("summary") if audit_article and isinstance(audit_article.get("summary"), dict) else {}
+    href_counts = _json_object(article.get("href_counts"), label="assessment_href_counts")
+    summary = (
+        _json_object(audit_article.get("summary"), label="audit_article_summary") if audit_article is not None else {}
+    )
     metrics = _copy_numeric_values(summary)
     metrics.update(
         {
@@ -194,23 +276,27 @@ def build_entry(
     for article_name in article_names:
         assessment_article = assessment_by_article.get(article_name, {})
         audit_article = audit_by_article.get(article_name, {})
-        defects = list(audit_article.get("defects_found") or [])
+        defects = _json_object_list(audit_article.get("defects_found"), label="audit_article_defects")
         quality_defects = _quality_counted_defects(defects)
         severities = _severity_counts(quality_defects)
         metrics = _article_metrics(assessment_article, audit_article)
         labels = _article_labels(assessment_article, audit_article)
+        defect_count = len(quality_defects)
+        error_count = severities.get("error", 0)
+        warning_count = severities.get("warning", 0)
+        info_count = severities.get("info", 0)
         defect_ids: dict[str, int] = {}
         for defect in quality_defects:
             defect_id = str(defect.get("id") or "unknown")
             defect_ids[defect_id] = defect_ids.get(defect_id, 0) + 1
         score = _article_score(quality_defects, metrics)
-        record = {
+        record: dict[str, Any] = {
             "article": article_name,
             "score": score,
-            "defects": len(quality_defects),
-            "errors": severities.get("error", 0),
-            "warnings": severities.get("warning", 0),
-            "infos": severities.get("info", 0),
+            "defects": defect_count,
+            "errors": error_count,
+            "warnings": warning_count,
+            "infos": info_count,
             "unique_defect_ids": len(defect_ids),
             "defect_ids": dict(sorted(defect_ids.items())),
             "labels": labels,
@@ -218,48 +304,163 @@ def build_entry(
             **metrics,
         }
         articles[article_name] = record
-        totals["score"] = round(totals["score"] + score, 2)
-        totals["defects"] += record["defects"]
-        totals["errors"] += record["errors"]
-        totals["warnings"] += record["warnings"]
-        totals["infos"] += record["infos"]
+        totals["score"] = round(float(totals["score"]) + score, 2)
+        totals["defects"] = int(totals["defects"]) + defect_count
+        totals["errors"] = int(totals["errors"]) + error_count
+        totals["warnings"] = int(totals["warnings"]) + warning_count
+        totals["infos"] = int(totals["infos"]) + info_count
         for metric, value in metrics.items():
             totals[metric] = round(float(totals.get(metric, 0)) + float(value), 2)
 
     ranking = sorted(articles.values(), key=lambda item: (-item["score"], item["article"]))
+    audit_summary = _json_object(audit.get("corpus_summary"), label="audit_corpus_summary") if audit else {}
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "run_id": run_id,
         "run_dir": str(run_dir),
         "article_count": len(articles),
         "totals": totals,
-        "audit_defect_counts": (audit or {}).get("corpus_summary", {}).get("defect_counts", {}),
+        "audit_defect_counts": _json_object(audit_summary.get("defect_counts"), label="audit_defect_counts"),
         "articles": articles,
         "ranking": ranking,
     }
 
 
 def _read_last_history_entry(history_path: Path) -> dict[str, Any] | None:
-    if not history_path.is_file():
-        return None
-    for line in reversed(history_path.read_text(encoding="utf-8").splitlines()):
+    entry, _source = _resolve_previous_entry(None, history_path)
+    return entry
+
+
+def _resolve_previous_entry(
+    previous_entry_path: Path | None,
+    history_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if previous_entry_path is not None:
+        payload, record = _read_stable_json(previous_entry_path)
+        if not isinstance(payload, dict):
+            raise ValueError("Previous quality entry must be a JSON object.")
+        return payload, {"kind": "explicit_json", **record}
+    candidate = _canonical_lexical_input(history_path, label="quality_history")
+    if not candidate.is_file():
+        return None, {"kind": "none"}
+
+    snapshot = read_bytes_with_fingerprint(candidate, reject_symlink=True)
+    if snapshot is None:
+        raise ValueError(f"Quality history is empty, linked, or unstable: {candidate}")
+    data, fingerprint = snapshot
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeError as exc:
+        raise ValueError(f"Quality history is not UTF-8: {candidate}") from exc
+    entries: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
         try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entry, dict):
-            return entry
-    return None
+            entry = _loads_json(line)
+        except (json.JSONDecodeError, ValueError) as exc:
+            if line_number == len(lines) and not data.endswith((b"\n", b"\r")):
+                break
+            raise ValueError(
+                f"Quality history contains invalid JSON at line {line_number}: {candidate}"
+            ) from exc
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"Quality history entry at line {line_number} is not an object: {candidate}"
+            )
+        entries.append(entry)
+    source = {
+        "kind": "history_jsonl",
+        "path": str(candidate),
+        "bytes": fingerprint.size,
+        "sha256": fingerprint.sha256,
+    }
+    return (entries[-1] if entries else None), source
+
+
+def _write_previous_entry_snapshot(
+    path: Path,
+    *,
+    previous: dict[str, Any] | None,
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": PREVIOUS_ENTRY_SNAPSHOT_SCHEMA_VERSION,
+        "present": previous is not None,
+        "source": source,
+        "entry": previous,
+    }
+    if path.exists():
+        existing = _load_json(path)
+        if existing != payload:
+            raise ValueError(
+                f"Previous-entry snapshot conflicts with the existing run authority: {path}"
+            )
+    else:
+        write_json_atomic(path, payload)
+    return payload
+
+
+def _history_file_identity(value: os.stat_result) -> tuple[int, int, int]:
+    return (
+        int(value.st_dev),
+        int(value.st_ino),
+        int(stat.S_IFMT(value.st_mode)),
+    )
+
+
+def _validate_open_history_file(
+    candidate: Path,
+    descriptor: int,
+) -> os.stat_result:
+    opened = os.fstat(descriptor)
+    current = os.stat(candidate, follow_symlinks=False)
+    if not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(current.st_mode):
+        raise ValueError(f"quality_history_not_regular:{candidate}")
+    if int(opened.st_nlink) != 1 or int(current.st_nlink) != 1:
+        raise ValueError(f"quality_history_hardlink:{candidate}")
+    if _history_file_identity(opened) != _history_file_identity(current):
+        raise ValueError(f"quality_history_changed_before_append:{candidate}")
+    return opened
 
 
 def _append_history_entry(history_path: Path, entry: dict[str, Any]) -> None:
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    with history_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    candidate = _canonical_lexical_input(history_path, label="quality_history")
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate = _canonical_lexical_input(candidate, label="quality_history")
+    flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
+    if candidate.exists():
+        current = os.stat(candidate, follow_symlinks=False)
+        if not stat.S_ISREG(current.st_mode):
+            raise ValueError(f"quality_history_not_regular:{candidate}")
+        if int(current.st_nlink) != 1:
+            raise ValueError(f"quality_history_hardlink:{candidate}")
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+    else:
+        flags |= os.O_CREAT | os.O_EXCL
+
+    descriptor = os.open(candidate, flags, 0o600)
+    try:
+        opened = _validate_open_history_file(candidate, descriptor)
+        data = (
+            json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("quality_history_append_incomplete")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+        final = os.stat(candidate, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(final.st_mode)
+            or int(final.st_nlink) != 1
+            or _history_file_identity(final) != _history_file_identity(opened)
+        ):
+            raise ValueError(f"quality_history_changed_during_append:{candidate}")
+    finally:
+        os.close(descriptor)
 
 
 def _record_metrics(record: dict[str, Any]) -> dict[str, int | float]:
@@ -398,6 +599,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-entry", type=Path)
     parser.add_argument("--out-compare", type=Path)
     parser.add_argument("--out-ranking", type=Path)
+    parser.add_argument("--out-previous-snapshot", type=Path)
     parser.add_argument("--no-append", action="store_true")
     return parser.parse_args()
 
@@ -411,13 +613,25 @@ def main() -> int:
     out_entry = args.out_entry or _default_path(run_dir, "quality_history_entry.json")
     out_compare = args.out_compare or _default_path(run_dir, "quality_compare.json")
     out_ranking = args.out_ranking or _default_path(run_dir, "brokenness_ranking.json")
+    out_previous_snapshot = args.out_previous_snapshot or _default_path(
+        run_dir,
+        PREVIOUS_ENTRY_SNAPSHOT_NAME,
+    )
 
     assessment = _load_json(assessment_path) if assessment_path.is_file() else None
     audit = _load_json(audit_path) if audit_path.is_file() else None
     if assessment is None and audit is None:
         raise SystemExit("No assessment or audit report found.")
 
-    previous = _load_json(args.previous_entry) if args.previous_entry else _read_last_history_entry(history_path)
+    previous, previous_source = _resolve_previous_entry(
+        args.previous_entry,
+        history_path,
+    )
+    _write_previous_entry_snapshot(
+        out_previous_snapshot,
+        previous=previous,
+        source=previous_source,
+    )
     entry = build_entry(
         run_dir=run_dir,
         run_id=args.run_id or run_dir.name,
@@ -453,6 +667,7 @@ def main() -> int:
     print(f"Wrote {out_entry}")
     print(f"Wrote {out_compare}")
     print(f"Wrote {out_ranking}")
+    print(f"Wrote {out_previous_snapshot}")
     return 0
 
 

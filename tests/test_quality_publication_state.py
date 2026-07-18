@@ -7,6 +7,8 @@ import shutil
 
 import pytest
 
+from conftest import write_attested_audit_command
+
 from pdf_html_polish.artifact_integrity import fingerprint_file
 from pdf_html_polish.html_stages import (
     POLISH_STAGE_NAME,
@@ -21,6 +23,8 @@ from pdf_html_polish.quality_loop.enrichment_snapshot import (
     initialize_enrichment_snapshot,
     snapshot_enrichment_file,
 )
+from pdf_html_polish.quality_loop.commands import run_quality_history, write_gate_report
+from pdf_html_polish.quality_loop.review_workflow import write_article_review_stage
 from pdf_html_polish.quality_loop.publication_state import (
     QUALITY_PUBLICATION_MANIFEST_NAME,
     seal_quality_publication,
@@ -147,7 +151,7 @@ def _quality_run(tmp_path: Path) -> tuple[Path, Path, Path]:
             "articles": [_audit_record(article_id, audit_raw, audited_polish)],
         },
     )
-    _write_json(quality_run / "quality_gate_report.json", {"status": "pass", "failures": []})
+    _write_gate_from_current_inputs(quality_run, tmp_path)
     return quality_run, production_raw, audited_polish
 
 
@@ -167,6 +171,81 @@ def _mark_article_skipped(quality_run: Path) -> None:
     audit_dir = quality_run / "audit_tree" / "article_a"
     (audit_dir / RAW_STAGE_NAME).unlink()
     (audit_dir / POLISH_STAGE_NAME).unlink()
+    _write_gate_from_current_inputs(quality_run, quality_run.parent)
+
+def _write_gate_from_current_inputs(
+    quality_run: Path,
+    tmp_path: Path,
+) -> tuple[Path, Path, Path]:
+    write_attested_audit_command(quality_run)
+    comparison_path = quality_run / "quality_compare.json"
+    article_review_path = quality_run / "article_review_report.json"
+    gate_config_path = tmp_path / "gate_config.json"
+    write_article_review_stage(
+        quality_run,
+        [],
+        repo_root=tmp_path,
+        polish_stage="02.en.polish.html",
+        copy_review_html_with_inline_images=lambda _source, _target: {},
+    )
+    run_quality_history(
+        quality_run,
+        run_id="current",
+        previous_entry=None,
+        no_append=True,
+        repo_root=Path(__file__).resolve().parents[1],
+    )
+    _write_json(
+        gate_config_path,
+        {
+            "max_regressions": 0,
+            "max_total_deltas": {},
+            "require_article_review_stage": True,
+            "allow_missing_previous": True,
+            "max_pending_mandatory_reviews": 0,
+        },
+    )
+    write_gate_report(quality_run, gate_config_path)
+    return comparison_path, article_review_path, gate_config_path
+
+
+def test_quality_publication_rejects_comparison_changed_after_gate_report(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    comparison_path, _article_review_path, _gate_config_path = _write_gate_from_current_inputs(
+        quality_run,
+        tmp_path,
+    )
+    _write_json(
+        comparison_path,
+        {"status": "ok", "regressions": [{"article": "late_regression"}]},
+    )
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any("gate_provenance" in error for error in seal["errors"])
+
+
+def test_quality_publication_rejects_article_review_changed_after_gate_report(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    _comparison_path, article_review_path, _gate_config_path = _write_gate_from_current_inputs(
+        quality_run,
+        tmp_path,
+    )
+    _write_json(
+        article_review_path,
+        {"status": "ready", "pending_mandatory_count": 1},
+    )
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any("gate_provenance" in error for error in seal["errors"])
+
 
 def test_quality_publication_seal_validates_exact_audited_snapshot(tmp_path: Path) -> None:
     quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
@@ -177,7 +256,58 @@ def test_quality_publication_seal_validates_exact_audited_snapshot(tmp_path: Pat
     assert seal["status"] == "completed"
     assert validation.valid
     assert set(validation.records_by_article) == {"article_a"}
+    assert [record["name"] for record in seal["snapshot"]["gate_inputs"]] == [
+        "gate_config",
+        "assessment",
+        "quality_history_entry",
+        "quality_previous_entry",
+        "quality_compare",
+        "article_review",
+        "audit_report",
+        "audit_command",
+        "pdf_problem_evidence",
+    ]
     assert (quality_run / QUALITY_PUBLICATION_MANIFEST_NAME).is_file()
+
+
+@pytest.mark.parametrize(
+    ("input_name", "replacement"),
+    [
+        ("quality_compare.json", {"status": "ok", "regressions": [{"article": "late"}]}),
+        ("article_review_report.json", {"status": "ready", "pending_mandatory_count": 1}),
+        ("audit_command_report.json", {"pdf_diagnostics_enabled": True}),
+        ("pdf_problem_evidence_report.json", {"status": "ready"}),
+    ],
+)
+def test_quality_publication_rejects_gate_input_changed_after_seal(
+    tmp_path: Path,
+    input_name: str,
+    replacement: dict,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    _write_json(quality_run / input_name, replacement)
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert "gate_provenance" in validation.reason
+
+
+def test_quality_publication_rejects_gate_config_snapshot_changed_after_seal(
+    tmp_path: Path,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    snapshot_path = quality_run / "quality_gate_config_snapshot.json"
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    snapshot["config"]["max_regressions"] = 99
+    _write_json(snapshot_path, snapshot)
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert "gate_provenance" in validation.reason
 
 
 def test_quality_publication_requires_enrichment_snapshot(tmp_path: Path) -> None:

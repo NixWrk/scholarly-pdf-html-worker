@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import write_attested_audit_command
+
 import pdf_html_polish.atomic_io as atomic_io_module
 import pdf_html_polish.clean_pipeline as clean_pipeline_module
 import pdf_html_polish.cli.clean_convert as clean_convert_module
@@ -35,6 +37,7 @@ from pdf_html_polish.quality_loop.cached_run_state import (
 from pdf_html_polish.quality_loop.enrichment_snapshot import (
     initialize_enrichment_snapshot,
 )
+from pdf_html_polish.quality_loop.commands import run_quality_history, write_gate_report
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 from pdf_html_polish.quality_loop.publication_state import seal_quality_publication
@@ -90,6 +93,20 @@ def _write_current_stage_pair(
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_valid_gate_report(quality_dir: Path) -> None:
+    write_attested_audit_command(quality_dir)
+    config_path = quality_dir.parent / f".{quality_dir.name}.gate_config.json"
+    run_quality_history(
+        quality_dir,
+        run_id="current",
+        previous_entry=None,
+        no_append=True,
+        repo_root=Path(__file__).resolve().parents[1],
+    )
+    _write_json(config_path, {"allow_missing_previous": True, "max_regressions": 0, "max_total_deltas": {}})
+    write_gate_report(quality_dir, config_path)
 
 
 def _seal_quality_output(
@@ -182,7 +199,7 @@ def _seal_quality_output(
             ],
         },
     )
-    _write_json(quality_dir / "quality_gate_report.json", {"status": "pass", "failures": []})
+    _write_valid_gate_report(quality_dir)
     assert seal_quality_publication(quality_dir)["status"] == "completed"
     return audited
 
@@ -211,6 +228,7 @@ def _seal_skipped_quality_output(
     _write_json(audit_report_path, audit_report)
     (audited.parent / RAW_STAGE_NAME).unlink()
     audited.unlink()
+    _write_valid_gate_report(quality_dir)
     assert seal_quality_publication(quality_dir)["status"] == "completed"
 
 

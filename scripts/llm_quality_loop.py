@@ -39,7 +39,12 @@ from pdf_html_polish.single_file_html import (  # noqa: E402
 from pdf_html_polish.citation_profile import extract_reference_entries_from_pdf  # noqa: E402
 from pdf_html_polish.marker_runner import build_marker_single_command  # noqa: E402
 from pdf_html_polish.polish_language import resolve_document_polish_language  # noqa: E402
-from pdf_html_polish.quality_loop import commands as quality_commands  # noqa: E402
+from pdf_html_polish.quality_loop import audit_command_provenance as quality_audit_provenance  # noqa: E402
+from pdf_html_polish.quality_loop.audit_postprocessors import (  # noqa: E402
+    AuditPostprocessorError,
+    normalize_converted_audit_article_ids_payload,
+)
+import pdf_html_polish.quality_loop.commands as quality_commands  # noqa: E402
 from pdf_html_polish.quality_loop.analysis_prompt import render_llm_prompt  # noqa: E402
 from pdf_html_polish.quality_loop.cached_images import (  # noqa: E402
     apply_data_image_cache as _apply_data_image_cache,
@@ -72,6 +77,7 @@ from pdf_html_polish.quality_loop.converted_runs import (  # noqa: E402
 )
 from pdf_html_polish.quality_loop import gates as quality_gates  # noqa: E402
 from pdf_html_polish.quality_loop import source_pdf as quality_source_pdf  # noqa: E402
+from pdf_html_polish.quality_loop.gate_provenance import GateConfigSnapshot  # noqa: E402
 from pdf_html_polish.quality_loop.observations import (  # noqa: E402
     compact_observation_text as _compact_observation_text,
     manual_observation_signature,
@@ -149,8 +155,8 @@ from pdf_html_polish.quality_loop.run_utils import (  # noqa: E402
     converted_article_id as _converted_article_id,
     git_dirty as _git_dirty,
     git_short_head as _git_short_head,
+    json_object as _json_object,
     load_json as _load_json,
-    norm_path as _norm_path,
     now as _now,
     profile_value as _profile_value,
     slug as _slug,
@@ -474,7 +480,7 @@ def write_pdf_problem_evidence_stage(
     return _write_pdf_problem_evidence_stage_impl(
         run_dir,
         pack,
-        gate_config=gate_config or load_gate_config(),
+        gate_config=gate_config if gate_config is not None else load_gate_config(),
         out_path=out_path,
         output_name=DEFAULT_PDF_PROBLEM_EVIDENCE_NAME,
         pdf_text_pages=_pdf_text_pages,
@@ -540,7 +546,7 @@ def _selected_pdf_candidate(
     article: dict[str, Any],
     manifest_article: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    summary = article.get("summary") if isinstance(article.get("summary"), dict) else {}
+    summary = _json_object(article.get("summary"))
     candidates = _article_source_pdf_candidates(run_dir, article_id, summary, manifest_article)
     selected = next((candidate for candidate in candidates if candidate.get("exists")), None)
     return selected, candidates
@@ -596,7 +602,7 @@ def write_p62_marker_recovery_plan(
     )
     return _write_p62_marker_recovery_plan_impl(
         run_dir,
-        gate_config=gate_config or load_gate_config(),
+        gate_config=gate_config if gate_config is not None else load_gate_config(),
         dependencies=dependencies,
         out_path=out_path,
         plan_name=DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME,
@@ -1120,7 +1126,7 @@ def write_polish_auto_repair_stage(
 ) -> dict[str, Any]:
     """Apply source-backed local repairs promoted from post-audit defect checks."""
 
-    gate_config = gate_config or load_gate_config()
+    gate_config = gate_config if gate_config is not None else load_gate_config()
     run_dir = run_dir.resolve(strict=False)
     out_path = out_path or (run_dir / DEFAULT_POLISH_AUTO_REPAIR_REPORT_NAME)
     repair_root = run_dir / "polish_auto_repair"
@@ -1199,12 +1205,14 @@ def write_polish_auto_repair_stage(
                 target_patch_counts.update(
                     {str(key): int(value) for key, value in (group_report.get("patched_targets") or {}).items()}
                 )
-                for article_report in group_report.get("articles") or []:
-                    if not isinstance(article_report, dict):
+                for raw_article_report in group_report.get("articles") or []:
+                    if not isinstance(raw_article_report, dict):
                         continue
-                    article_report = dict(article_report)
-                    article_report["index"] = article_order.get(str(article_report.get("article") or article_id), 0)
-                    report_articles.append(article_report)
+                    completed_article_report = dict(raw_article_report)
+                    completed_article_report["index"] = article_order.get(
+                        str(completed_article_report.get("article") or article_id), 0
+                    )
+                    report_articles.append(completed_article_report)
                 print(
                     "Polish auto repair article complete: "
                     f"{completed_count}/{len(repair_items)} article={_console_text(article_id)} "
@@ -1552,7 +1560,7 @@ def write_p62_image_recovery_stage(
 ) -> dict[str, Any]:
     """Recover P62 missing-figure visuals through marker, then PDF page render fallback."""
 
-    gate_config = gate_config or load_gate_config()
+    gate_config = gate_config if gate_config is not None else load_gate_config()
     run_dir = run_dir.resolve(strict=False)
     plan_path = plan_path or (run_dir / DEFAULT_P62_MARKER_RECOVERY_PLAN_NAME)
     out_path = out_path or (run_dir / DEFAULT_P62_IMAGE_RECOVERY_REPORT_NAME)
@@ -1708,13 +1716,18 @@ def write_p62_image_recovery_stage(
                         flush=True,
                     )
 
-            for group_report in reports_by_group:
-                if not isinstance(group_report, dict):
+            for completed_group_report in reports_by_group:
+                if not isinstance(completed_group_report, dict):
                     continue
                 recovered_records.extend(
-                    item for item in (group_report.get("articles") or []) if isinstance(item, dict)
+                    item
+                    for item in (completed_group_report.get("articles") or [])
+                    if isinstance(item, dict)
                 )
-                patched_article_ids.update(str(article) for article in (group_report.get("patched_articles") or []))
+                patched_article_ids.update(
+                    str(article)
+                    for article in (completed_group_report.get("patched_articles") or [])
+                )
             recovered_records.sort(key=lambda item: int(item.get("record_index") or 0))
 
             if patched_article_ids and refresh_assessment:
@@ -1902,7 +1915,7 @@ def write_p62_image_recovery_stage(
                 elif str(record.get("defect_id") or "") == "P61":
                     pass
                 else:
-                    duplicate_repair = (
+                    duplicate_repair: dict[str, Any] = (
                         _apply_p62_duplicate_figure_image_repairs(
                             targets,
                             pdf_path=pdf_path,
@@ -2061,7 +2074,7 @@ def write_p62_image_recovery_stage(
                 )
                 item["source_visual_probe"] = source_visual_probe
                 item["source_visual_probe_status"] = source_visual_probe.get("status") or "unknown"
-                probe_asset = source_visual_probe.get("asset") if isinstance(source_visual_probe.get("asset"), dict) else {}
+                probe_asset = _json_object(source_visual_probe.get("asset"))
                 if probe_asset.get("path") and probe_asset.get("source"):
                     asset_path = Path(str(probe_asset.get("path")))
                     data_url = _data_url_from_image_file(asset_path) or ""
@@ -2200,7 +2213,7 @@ def write_p62_image_recovery_stage(
                 )
                 item["source_visual_probe"] = source_visual_probe
                 item["source_visual_probe_status"] = source_visual_probe.get("status") or "unknown"
-                probe_asset = source_visual_probe.get("asset") if isinstance(source_visual_probe.get("asset"), dict) else {}
+                probe_asset = _json_object(source_visual_probe.get("asset"))
                 if probe_asset.get("path") and probe_asset.get("source"):
                     asset_path = Path(str(probe_asset.get("path")))
                     data_url = _data_url_from_image_file(asset_path) or ""
@@ -2470,18 +2483,6 @@ def write_p62_image_recovery_stage(
     return report
 
 
-def _converted_manifest_by_pair(manifest: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    articles: dict[tuple[str, str], dict[str, Any]] = {}
-    for article in manifest.get("articles") or []:
-        if not isinstance(article, dict):
-            continue
-        raw_path = _norm_path(article.get("raw_stage_path"))
-        polish_path = _norm_path(article.get("polish_stage_path"))
-        if raw_path and polish_path:
-            articles[(raw_path, polish_path)] = article
-    return articles
-
-
 def _enrich_profile_with_pdf_reference_entries_if_needed(
     profile: dict[str, Any],
     polished_html: str,
@@ -2513,30 +2514,155 @@ def _enrich_profile_with_pdf_reference_entries_if_needed(
 def normalize_converted_audit_article_ids(run_dir: Path) -> dict[str, Any]:
     """Rewrite audit article names to unique converted-run artifact ids."""
 
-    manifest = _load_json(run_dir / "manifest.json", default={})
-    audit = _load_json(run_dir / "audit_full_checks.json", default={"articles": []})
+    audit_path = run_dir / "audit_full_checks.json"
+    command_report_path = run_dir / "audit_command_report.json"
+    manifest_path = run_dir / "manifest.json"
+    if not audit_path.is_file():
+        return {"articles": []}
+    audit = quality_audit_provenance.load_audit_json_object(
+        audit_path,
+        label="audit_postprocessor_audit_source",
+    )
+    if not manifest_path.is_file():
+        return audit
+    manifest = quality_audit_provenance.load_audit_json_object(
+        manifest_path,
+        label="audit_postprocessor_manifest_source",
+    )
     if manifest.get("source_kind") != "converted_stage_roots":
         return audit
 
-    by_pair = _converted_manifest_by_pair(manifest)
-    unmatched: list[dict[str, Any]] = []
-    for article in audit.get("articles") or []:
-        if not isinstance(article, dict):
-            continue
-        raw_path = _norm_path(article.get("raw_stage_path"))
-        polish_path = _norm_path(article.get("polish_stage_path"))
-        manifest_article = by_pair.get((raw_path, polish_path))
-        if not manifest_article:
-            unmatched.append({"raw_stage_path": raw_path, "polish_stage_path": polish_path})
-            continue
-        article["source_article"] = article.get("source_article") or article.get("article")
-        article["article"] = manifest_article["article_id"]
-        article["artifact_hint"] = manifest_article.get("artifact_hint")
+    audit_input_record: dict[str, Any] | None = None
+    audit_input_snapshot: Path | None = None
+    command_input_record: dict[str, Any] | None = None
+    command_input_snapshot: Path | None = None
+    manifest_input_record: dict[str, Any] | None = None
+    manifest_input_snapshot: Path | None = None
+    if command_report_path.is_file():
+        command_before = quality_audit_provenance.load_audit_json_object(
+            command_report_path,
+            label="audit_command_report_for_postprocessor",
+        )
+        audit_input_record = quality_audit_provenance.file_record(
+            audit_path,
+            label="audit_postprocessor_input",
+        )
+        if command_before.get("audit_output") != audit_input_record:
+            raise quality_audit_provenance.AuditCommandProvenanceError(
+                "audit_postprocessor_input_mismatch"
+            )
+        command_input_record = quality_audit_provenance.file_record(
+            command_report_path,
+            label="audit_postprocessor_command_input",
+        )
+        manifest_input_record = quality_audit_provenance.file_record(
+            manifest_path,
+            label="audit_postprocessor_manifest_source",
+        )
+        audit_input_snapshot = snapshot_enrichment_file(
+            run_dir,
+            "__audit__",
+            "audit_postprocessor_input",
+            audit_path,
+        )
+        command_input_snapshot = snapshot_enrichment_file(
+            run_dir,
+            "__audit__",
+            "audit_postprocessor_command",
+            command_report_path,
+        )
+        manifest_input_snapshot = snapshot_enrichment_file(
+            run_dir,
+            "__audit__",
+            "audit_postprocessor_manifest",
+            manifest_path,
+        )
+        audit_snapshot_record = quality_audit_provenance.file_record(
+            audit_input_snapshot,
+            label="audit_postprocessor_input_snapshot",
+        )
+        manifest_snapshot_record = quality_audit_provenance.file_record(
+            manifest_input_snapshot,
+            label="audit_postprocessor_manifest_snapshot",
+        )
+        if (
+            audit_input_record["bytes"],
+            audit_input_record["sha256"],
+        ) != (
+            audit_snapshot_record["bytes"],
+            audit_snapshot_record["sha256"],
+        ):
+            raise quality_audit_provenance.AuditCommandProvenanceError(
+                "audit_postprocessor_input_snapshot_mismatch"
+            )
+        if (
+            manifest_input_record["bytes"],
+            manifest_input_record["sha256"],
+        ) != (
+            manifest_snapshot_record["bytes"],
+            manifest_snapshot_record["sha256"],
+        ):
+            raise quality_audit_provenance.AuditCommandProvenanceError(
+                "audit_postprocessor_manifest_snapshot_mismatch"
+            )
+        audit = quality_audit_provenance.load_audit_json_object(
+            audit_input_snapshot,
+            label="audit_postprocessor_input_snapshot",
+            expected_record=audit_snapshot_record,
+        )
+        manifest = quality_audit_provenance.load_audit_json_object(
+            manifest_input_snapshot,
+            label="audit_postprocessor_manifest_snapshot",
+            expected_record=manifest_snapshot_record,
+        )
 
-    audit["article_count"] = len(audit.get("articles") or [])
-    if unmatched:
-        audit["converted_id_normalization_unmatched"] = unmatched
-    _write_json(run_dir / "audit_full_checks.json", audit)
+    try:
+        audit = normalize_converted_audit_article_ids_payload(audit, manifest)
+    except AuditPostprocessorError as exc:
+        raise quality_audit_provenance.AuditCommandProvenanceError(
+            f"audit_postprocessor_normalization_invalid:{exc}"
+        ) from exc
+    if audit_input_record is not None:
+        current_input = quality_audit_provenance.file_record(
+            audit_path,
+            label="audit_postprocessor_input",
+        )
+        if current_input != audit_input_record:
+            raise quality_audit_provenance.AuditCommandProvenanceError(
+                "audit_postprocessor_source_changed_before_write"
+            )
+    _write_json(audit_path, audit)
+    if audit_input_record is not None:
+        assert audit_input_snapshot is not None
+        assert command_input_record is not None
+        assert command_input_snapshot is not None
+        assert manifest_input_record is not None
+        assert manifest_input_snapshot is not None
+        try:
+            quality_audit_provenance.record_audit_postprocessor(
+                run_dir,
+                name=quality_audit_provenance.NORMALIZE_CONVERTED_IDS_POSTPROCESSOR,
+                input_record=audit_input_record,
+                input_snapshot_path=audit_input_snapshot,
+                command_input_record=command_input_record,
+                command_snapshot_path=command_input_snapshot,
+                inputs=[
+                    (
+                        "manifest",
+                        manifest_input_record,
+                        manifest_input_snapshot,
+                    )
+                ],
+            )
+        except Exception:
+            try:
+                copy_file_atomic(audit_input_snapshot, audit_path)
+                copy_file_atomic(command_input_snapshot, command_report_path)
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "audit_postprocessor_rollback_failed"
+                ) from rollback_error
+            raise
     return audit
 
 def _cached_repolish_unrelated_output_entries(
@@ -2980,6 +3106,10 @@ def load_gate_config(path: Path = DEFAULT_GATE_CONFIG) -> dict[str, Any]:
     return quality_gates.load_gate_config(path)
 
 
+def prepare_gate_config_for_run(run_dir: Path, path: Path) -> GateConfigSnapshot:
+    return quality_commands.prepare_gate_config_snapshot(run_dir, path)
+
+
 def evaluate_quality_gate(
     comparison: dict[str, Any],
     gate_config: dict[str, Any],
@@ -3001,7 +3131,7 @@ def evaluate_quality_gate(
 
 def _defect_summary(defect: dict[str, Any], defect_patterns: dict[str, Any]) -> dict[str, Any]:
     defect_id = str(defect.get("id") or "unknown")
-    pattern = defect_patterns.get(defect_id) if isinstance(defect_patterns.get(defect_id), dict) else {}
+    pattern = _json_object(defect_patterns.get(defect_id))
     return {
         "id": defect_id,
         "severity": defect.get("severity"),
@@ -3095,7 +3225,11 @@ def write_manual_review_queue(
 ) -> list[dict[str, Any]]:
     return _write_manual_review_queue_impl(
         run_dir,
-        gate_config=gate_config or load_gate_config(gate_config_path),
+        gate_config=(
+            gate_config
+            if gate_config is not None
+            else load_gate_config(gate_config_path)
+        ),
         ignored_defect_ids=ignored_defect_ids,
         comparison_by_article=_comparison_by_article,
         manifest_article_by_id=_manifest_article_by_id,
@@ -3150,7 +3284,7 @@ def build_analysis_pack(
     defect_patterns: dict[str, Any] | None = None,
     ignored_defect_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    gate_config = gate_config or load_gate_config()
+    gate_config = gate_config if gate_config is not None else load_gate_config()
     defect_patterns = defect_patterns or _load_json(DEFAULT_DEFECT_PATTERNS, default={})
     ignored = set(gate_config.get("ignored_defect_ids_for_analysis") or [])
     if ignored_defect_ids:
@@ -3457,11 +3591,12 @@ def write_analysis_pack(
     out_prompt: Path | None = None,
     max_articles: int = 12,
     gate_config_path: Path = DEFAULT_GATE_CONFIG,
+    gate_config: dict[str, Any] | None = None,
     defect_patterns_path: Path = DEFAULT_DEFECT_PATTERNS,
     ignored_defect_ids: set[str] | None = None,
     manual_observation_ledger: Path | None = None,
 ) -> dict[str, Any]:
-    gate_config = load_gate_config(gate_config_path)
+    gate_config = gate_config if gate_config is not None else load_gate_config(gate_config_path)
     defect_patterns = _load_json(defect_patterns_path, default={})
     write_manual_observation_summary(run_dir, ledger_path=manual_observation_ledger)
     write_resolver_decisions(run_dir)
@@ -3580,6 +3715,27 @@ def _resolved_stage_jobs(
     return max(1, int(value or 1))
 
 
+def _resolved_article_review_bundle_limit(
+    *,
+    args_value: int | None,
+    gate_config: dict[str, Any],
+) -> int:
+    configured = gate_config.get("article_review_bundle_max_articles", 0)
+    if type(configured) is not int or configured < 0:
+        raise SystemExit(
+            "article_review_bundle_max_articles must be a non-negative integer."
+        )
+    if args_value is not None:
+        if type(args_value) is not int or args_value < 0:
+            raise SystemExit("--max-review-articles must be a non-negative integer.")
+        if args_value != configured:
+            raise SystemExit(
+                "--max-review-articles must match article_review_bundle_max_articles "
+                "in the immutable gate config."
+            )
+    return configured
+
+
 def _quality_observe_exit_code(
     gate_report: dict[str, Any],
     publication_seal: dict[str, Any],
@@ -3602,11 +3758,15 @@ def _quality_observe_exit_code(
 
 
 def observe(args: argparse.Namespace) -> int:
-    run_dir = args.out_dir.resolve(strict=False)
+    run_dir = quality_commands.canonical_run_directory(
+        args.out_dir,
+        label="Quality run directory",
+    )
     converted_roots = list(args.converted_roots or [])
     if args.source_run_dir and converted_roots:
         raise SystemExit("Use either --source-run-dir or --converted-roots, not both.")
-    gate_config = load_gate_config(args.gate_config)
+    gate_config_snapshot = prepare_gate_config_for_run(run_dir, args.gate_config)
+    gate_config = gate_config_snapshot.config
     default_jobs = max(1, int(args.jobs or gate_config.get("document_jobs") or 1))
     repolish_jobs = _resolved_stage_jobs(
         args_value=args.repolish_jobs,
@@ -3782,12 +3942,12 @@ def observe(args: argparse.Namespace) -> int:
     review_queue = write_manual_review_queue(
         run_dir,
         gate_config_path=args.gate_config,
+        gate_config=gate_config,
         ignored_defect_ids=set(args.ignore_defect_id or []),
     )
-    review_bundle_limit = (
-        args.max_review_articles
-        if args.max_review_articles is not None
-        else gate_config.get("article_review_bundle_max_articles")
+    review_bundle_limit = _resolved_article_review_bundle_limit(
+        args_value=args.max_review_articles,
+        gate_config=gate_config,
     )
     article_review_report = write_article_review_stage(
         run_dir,
@@ -3807,11 +3967,12 @@ def observe(args: argparse.Namespace) -> int:
         run_dir,
         max_articles=args.max_articles,
         gate_config_path=args.gate_config,
+        gate_config=gate_config,
         defect_patterns_path=args.defect_patterns,
         ignored_defect_ids=set(args.ignore_defect_id or []),
         manual_observation_ledger=args.manual_observation_ledger,
     )
-    gate_report = _write_gate_report(run_dir, args.gate_config)
+    gate_report = _write_gate_report(run_dir, gate_config_snapshot.path)
     publication_seal = seal_quality_publication(run_dir)
     print(
         "Quality publication seal: "
@@ -4124,6 +4285,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     if args.command == "observe":
         return observe(args)
+    if args.command in {"gate", "pack", "recover-p62"} or (
+        args.command == "record-observation" and args.run_dir is not None
+    ):
+        args.run_dir = quality_commands.canonical_run_directory(
+            args.run_dir,
+            label="Quality run directory",
+        )
     if args.command == "gate":
         report = _write_gate_report(args.run_dir, args.gate_config, args.out)
         print(f"Quality gate: {report['status']} failures={len(report['failures'])}")
