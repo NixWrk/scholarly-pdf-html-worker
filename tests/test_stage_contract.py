@@ -159,7 +159,7 @@ def _seal_quality_run(quality_run: Path) -> dict:
         quality_run / "audit_full_checks.json",
         {"audit_status": "complete", "articles": audit_articles},
     )
-    _write_json(quality_run / "quality_gate_report.json", {"status": "pass"})
+    _write_json(quality_run / "quality_gate_report.json", {"status": "pass", "failures": []})
     return seal_quality_publication(quality_run)
 
 def test_verify_stage_contract_passes_for_only_raw_and_polish(tmp_path: Path) -> None:

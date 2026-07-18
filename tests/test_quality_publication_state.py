@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import shutil
 
+import pytest
+
 from pdf_html_polish.artifact_integrity import fingerprint_file
 from pdf_html_polish.html_stages import (
     POLISH_STAGE_NAME,
@@ -138,7 +140,7 @@ def _quality_run(tmp_path: Path) -> tuple[Path, Path, Path]:
             "articles": [_audit_record(article_id, audit_raw, audited_polish)],
         },
     )
-    _write_json(quality_run / "quality_gate_report.json", {"status": "pass"})
+    _write_json(quality_run / "quality_gate_report.json", {"status": "pass", "failures": []})
     return quality_run, production_raw, audited_polish
 
 
@@ -212,6 +214,45 @@ def test_quality_publication_rejects_polish_changed_after_seal(tmp_path: Path) -
     validation = validate_quality_publication(quality_run)
     assert not validation.valid
     assert "audit_polish_fingerprint_mismatch" in validation.reason
+
+
+def test_quality_publication_rejects_gate_changed_after_seal(tmp_path: Path) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    _write_json(
+        quality_run / "quality_gate_report.json",
+        {"status": "fail", "failures": [{"kind": "late_regression"}]},
+    )
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert "quality_gate_not_pass:fail" in validation.reason
+
+
+@pytest.mark.parametrize(
+    "seal_json",
+    [
+        '{"schema_version":2,"schema_version":2}\n',
+        '{"schema_version":2,"status":"completed","snapshot":{},"probe":NaN}\n',
+    ],
+    ids=["duplicate-key", "nonfinite-number"],
+)
+def test_quality_publication_rejects_ambiguous_seal_json(
+    tmp_path: Path,
+    seal_json: str,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    assert seal_quality_publication(quality_run)["status"] == "completed"
+    (quality_run / QUALITY_PUBLICATION_MANIFEST_NAME).write_text(
+        seal_json,
+        encoding="utf-8",
+    )
+
+    validation = validate_quality_publication(quality_run)
+
+    assert not validation.valid
+    assert validation.reason == "manifest_unreadable"
 
 
 def test_quality_publication_rejects_production_raw_changed_after_seal(tmp_path: Path) -> None:
@@ -357,3 +398,73 @@ def test_quality_publication_rejects_relative_source_run_path(tmp_path: Path) ->
 
     assert seal["status"] == "invalid"
     assert "quality_source_run_dir_not_absolute" in seal["errors"]
+
+
+@pytest.mark.parametrize(
+    "gate_payload",
+    [
+        {"status": "fail", "failures": [{"kind": "regression"}]},
+        {"status": "unknown", "failures": []},
+        {},
+    ],
+    ids=["failed", "unknown", "missing-status"],
+)
+def test_quality_publication_rejects_gate_that_did_not_pass(
+    tmp_path: Path,
+    gate_payload: dict,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    _write_json(quality_run / "quality_gate_report.json", gate_payload)
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any(error.startswith("quality_gate_not_pass:") for error in seal["errors"])
+    assert not validate_quality_publication(quality_run).valid
+
+
+@pytest.mark.parametrize(
+    "gate_json",
+    [
+        '{"status":"pass","status":"pass"}\n',
+        '{"status":"pass","score":NaN}\n',
+    ],
+    ids=["duplicate-key", "nonfinite-number"],
+)
+def test_quality_publication_rejects_ambiguous_gate_json(
+    tmp_path: Path,
+    gate_json: str,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    (quality_run / "quality_gate_report.json").write_text(gate_json, encoding="utf-8")
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any("quality_gate_report" in error or "json_unreadable" in error for error in seal["errors"])
+    assert not validate_quality_publication(quality_run).valid
+
+
+@pytest.mark.parametrize(
+    "gate_payload",
+    [
+        {"status": "pass"},
+        {"status": "pass", "failures": {}},
+        {"status": "pass", "failures": [{"kind": "hidden_failure"}]},
+    ],
+    ids=["missing-failures", "invalid-failures", "inconsistent-pass"],
+)
+def test_quality_publication_requires_consistent_pass_gate_contract(
+    tmp_path: Path,
+    gate_payload: dict,
+) -> None:
+    quality_run, _production_raw, _audited_polish = _quality_run(tmp_path)
+    _write_json(quality_run / "quality_gate_report.json", gate_payload)
+
+    seal = seal_quality_publication(quality_run)
+
+    assert seal["status"] == "invalid"
+    assert any(
+        error in {"quality_gate_failures_invalid", "quality_gate_pass_has_failures"}
+        for error in seal["errors"]
+    )

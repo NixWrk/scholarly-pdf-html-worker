@@ -3423,6 +3423,27 @@ def _resolved_stage_jobs(
     return max(1, int(value or 1))
 
 
+def _quality_observe_exit_code(
+    gate_report: dict[str, Any],
+    publication_seal: dict[str, Any],
+    *,
+    fail_on_gate: bool,
+) -> int:
+    gate_status = gate_report.get("status")
+    seal_status = publication_seal.get("status")
+    seal_errors = publication_seal.get("errors")
+    if gate_status == "pass" and seal_status == "completed" and seal_errors == []:
+        return 0
+    if (
+        not fail_on_gate
+        and gate_status == "fail"
+        and seal_status == "invalid"
+        and seal_errors == ["quality_gate_not_pass:fail"]
+    ):
+        return 0
+    return 1
+
+
 def observe(args: argparse.Namespace) -> int:
     run_dir = args.out_dir.resolve(strict=False)
     converted_roots = list(args.converted_roots or [])
@@ -3652,7 +3673,11 @@ def observe(args: argparse.Namespace) -> int:
         f"resolver_repairs={sum((pack.get('resolver_decisions') or {}).get('repair_candidate_counts', {}).values())} "
         f"articles_in_pack={len(pack['articles'])} run_dir={run_dir}"
     )
-    return 1 if gate_report["status"] == "fail" and args.fail_on_gate else 0
+    return _quality_observe_exit_code(
+        gate_report,
+        publication_seal,
+        fail_on_gate=bool(args.fail_on_gate),
+    )
 
 
 def run_llm_command(prompt_path: Path, out_path: Path, command: list[str]) -> int:
@@ -3823,13 +3848,25 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     )
     observe_parser.add_argument("--skip-history", action="store_true")
     observe_parser.add_argument("--no-append-history", action="store_true")
-    observe_parser.add_argument("--fail-on-gate", action="store_true")
+    observe_parser.add_argument("--fail-on-gate", dest="fail_on_gate", action="store_true")
+    observe_parser.add_argument(
+        "--diagnostic-allow-gate-failure",
+        dest="fail_on_gate",
+        action="store_false",
+    )
+    observe_parser.set_defaults(fail_on_gate=True)
 
     gate_parser = subparsers.add_parser("gate", help="Evaluate quality_compare.json against configured gates.")
     gate_parser.add_argument("--run-dir", type=Path, required=True)
     gate_parser.add_argument("--gate-config", type=Path, default=DEFAULT_GATE_CONFIG)
     gate_parser.add_argument("--out", type=Path)
-    gate_parser.add_argument("--fail-on-gate", action="store_true")
+    gate_parser.add_argument("--fail-on-gate", dest="fail_on_gate", action="store_true")
+    gate_parser.add_argument(
+        "--diagnostic-allow-gate-failure",
+        dest="fail_on_gate",
+        action="store_false",
+    )
+    gate_parser.set_defaults(fail_on_gate=True)
 
     pack_parser = subparsers.add_parser("pack", help="Build llm_analysis_pack.json and llm_analysis_prompt.md.")
     pack_parser.add_argument("--run-dir", type=Path, required=True)
@@ -3933,7 +3970,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     if args.command == "gate":
         report = _write_gate_report(args.run_dir, args.gate_config, args.out)
         print(f"Quality gate: {report['status']} failures={len(report['failures'])}")
-        return 1 if report["status"] == "fail" and args.fail_on_gate else 0
+        gate_status = report.get("status")
+        if gate_status == "pass":
+            return 0
+        if gate_status == "fail" and not args.fail_on_gate:
+            return 0
+        return 1
     if args.command == "pack":
         pack = write_analysis_pack(
             args.run_dir,

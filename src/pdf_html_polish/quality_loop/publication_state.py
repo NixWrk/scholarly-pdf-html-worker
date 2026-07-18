@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from pdf_html_polish.artifact_integrity import (
     artifact_is_structurally_valid,
@@ -79,6 +79,19 @@ def _file_record(path: Path, *, require_html: bool = False) -> tuple[dict[str, A
     }, ""
 
 
+def _json_object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate_json_key:{key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> NoReturn:
+    raise ValueError(f"nonfinite_json_constant:{value}")
+
+
 def _json_document(path: Path) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
     resolved = _resolve(path)
     snapshot = read_bytes_with_fingerprint(resolved, reject_symlink=True)
@@ -86,8 +99,12 @@ def _json_document(path: Path) -> tuple[dict[str, Any], dict[str, Any] | None, s
         return {}, None, f"json_missing_empty_symlink_or_unstable:{resolved}"
     data, fingerprint = snapshot
     try:
-        payload = json.loads(data.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError):
+        payload = json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError):
         return {}, None, f"json_unreadable:{resolved}"
     if not isinstance(payload, dict):
         return {}, None, f"json_not_object:{resolved}"
@@ -282,6 +299,17 @@ def build_quality_publication_snapshot(
         errors.append("source_kind_not_converted_raw_cache")
     if audit_report.get("audit_status") != "complete":
         errors.append("audit_report_not_complete")
+    gate_status = gate_report.get("status")
+    if gate_status != "pass":
+        gate_status_label = (
+            gate_status if isinstance(gate_status, str) and gate_status else "missing_or_invalid"
+        )
+        errors.append(f"quality_gate_not_pass:{gate_status_label}")
+    gate_failures = gate_report.get("failures")
+    if not isinstance(gate_failures, list):
+        errors.append("quality_gate_failures_invalid")
+    elif gate_status == "pass" and gate_failures:
+        errors.append("quality_gate_pass_has_failures")
 
     quality_articles = _article_map(
         quality_manifest,
@@ -451,7 +479,7 @@ def build_quality_publication_snapshot(
         "source_manifest": source_manifest_record,
         "audit_report": audit_report_record,
         "gate_report": gate_report_record,
-        "gate_status": gate_report.get("status"),
+        "gate_status": gate_status,
         "articles": publication_records,
         "skipped_articles": skipped_records,
     }
@@ -490,8 +518,12 @@ def validate_quality_publication(quality_run_dir: Path) -> QualityPublicationVal
     if seal_fingerprint.size > _MAX_PUBLICATION_MANIFEST_BYTES:
         return QualityPublicationValidation(manifest_path, False, "manifest_too_large", {})
     try:
-        payload = json.loads(seal_bytes.decode("utf-8"))
-    except (UnicodeError, json.JSONDecodeError):
+        payload = json.loads(
+            seal_bytes.decode("utf-8"),
+            object_pairs_hook=_json_object_without_duplicates,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError):
         return QualityPublicationValidation(manifest_path, False, "manifest_unreadable", {})
     if not isinstance(payload, dict):
         return QualityPublicationValidation(manifest_path, False, "manifest_not_object", {})

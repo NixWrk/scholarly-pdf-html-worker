@@ -5587,3 +5587,118 @@ def test_repolish_cached_run_restores_converted_sidecar_images(tmp_path: Path) -
     assert manifest["restored_image_count"] == 1
     assert 'data-z2m-src="fig1.png" src="data:image/png;base64,' in polished
     assert '<img src="fig1.png"' not in polished
+
+
+def test_quality_commands_fail_closed_by_default_and_expose_diagnostic_bypass() -> None:
+    observe_default = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            "source",
+            "--out-dir",
+            "out",
+        ]
+    )
+    observe_diagnostic = parse_args(
+        [
+            "observe",
+            "--source-run-dir",
+            "source",
+            "--out-dir",
+            "out",
+            "--diagnostic-allow-gate-failure",
+        ]
+    )
+    gate_default = parse_args(["gate", "--run-dir", "run"])
+    gate_diagnostic = parse_args(
+        ["gate", "--run-dir", "run", "--diagnostic-allow-gate-failure"]
+    )
+
+    assert observe_default.fail_on_gate is True
+    assert observe_diagnostic.fail_on_gate is False
+    assert gate_default.fail_on_gate is True
+    assert gate_diagnostic.fail_on_gate is False
+
+
+def test_gate_command_returns_failure_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_write_gate_report",
+        lambda *args, **kwargs: {
+            "status": "fail",
+            "failures": [{"kind": "regression"}],
+        },
+    )
+
+    assert llm_quality_loop.main(["gate", "--run-dir", "run"]) == 1
+    assert (
+        llm_quality_loop.main(
+            ["gate", "--run-dir", "run", "--diagnostic-allow-gate-failure"]
+        )
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "gate_status",
+        "seal_status",
+        "seal_errors",
+        "fail_on_gate",
+        "expected",
+    ),
+    [
+        ("pass", "completed", [], True, 0),
+        ("fail", "invalid", ["quality_gate_not_pass:fail"], True, 1),
+        ("fail", "invalid", ["quality_gate_not_pass:fail"], False, 0),
+        ("unknown", "invalid", ["quality_gate_not_pass:unknown"], False, 1),
+        ("unknown", "completed", [], False, 1),
+        ("fail", "completed", [], False, 1),
+        ("pass", "completed", ["unexpected"], True, 1),
+        ("pass", "invalid", ["audit_report_not_complete"], False, 1),
+        (
+            "fail",
+            "invalid",
+            ["quality_gate_not_pass:fail", "audit_report_not_complete"],
+            False,
+            1,
+        ),
+    ],
+)
+def test_quality_observe_exit_code_limits_diagnostic_bypass(
+    gate_status: str,
+    seal_status: str,
+    seal_errors: list[str],
+    fail_on_gate: bool,
+    expected: int,
+) -> None:
+    assert (
+        llm_quality_loop._quality_observe_exit_code(
+            {"status": gate_status},
+            {"status": seal_status, "errors": seal_errors},
+            fail_on_gate=fail_on_gate,
+        )
+        == expected
+    )
+
+
+def test_gate_diagnostic_bypass_rejects_unknown_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_write_gate_report",
+        lambda *args, **kwargs: {
+            "status": "unknown",
+            "failures": [],
+        },
+    )
+
+    assert (
+        llm_quality_loop.main(
+            ["gate", "--run-dir", "run", "--diagnostic-allow-gate-failure"]
+        )
+        == 1
+    )

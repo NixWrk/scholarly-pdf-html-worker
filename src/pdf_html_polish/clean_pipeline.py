@@ -51,7 +51,7 @@ class CleanPipelineOptions:
     final_html_dir: str | None = None
     no_append_history: bool = True
     skip_quality_tests: bool = False
-    fail_on_gate: bool = False
+    fail_on_gate: bool = True
     publish_latest_to_converted: bool = True
     prune_extra_html: bool = True
     publish_report_path: str | None = None
@@ -166,7 +166,7 @@ def build_observe_command(
     gate_config: Path | None = None,
     no_append_history: bool = True,
     skip_quality_tests: bool = False,
-    fail_on_gate: bool = False,
+    fail_on_gate: bool = True,
     script_path: Path | None = None,
 ) -> list[str]:
     script = script_path or quality_loop_script_path()
@@ -201,6 +201,8 @@ def build_observe_command(
         command.append("--skip-tests")
     if fail_on_gate:
         command.append("--fail-on-gate")
+    else:
+        command.append("--diagnostic-allow-gate-failure")
     return command
 
 

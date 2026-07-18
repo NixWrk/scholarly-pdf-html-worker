@@ -177,7 +177,7 @@ def _seal_quality_output(
             ],
         },
     )
-    _write_json(quality_dir / "quality_gate_report.json", {"status": "pass"})
+    _write_json(quality_dir / "quality_gate_report.json", {"status": "pass", "failures": []})
     assert seal_quality_publication(quality_dir)["status"] == "completed"
     return audited
 
@@ -518,6 +518,7 @@ def test_build_observe_command_uses_repair_enabled_converted_root_defaults(tmp_p
         "--previous-entry",
         str(tmp_path / "previous" / "quality_history_entry.json"),
         "--no-append-history",
+        "--fail-on-gate",
     ]
     assert "--audit-converted-existing" not in command
     assert "--skip-tests" not in command
@@ -1007,3 +1008,38 @@ def test_run_clean_pipeline_skips_observe_when_nothing_converted(tmp_path: Path)
     assert summary.observe_exit_code == 0
     assert summary.final_html.artifacts == ()
     assert not stale_path.exists()
+
+
+def test_clean_pipeline_gate_policy_is_fail_closed_by_default(tmp_path: Path) -> None:
+    assert CleanPipelineOptions.__dataclass_fields__["fail_on_gate"].default is True
+
+    command = build_observe_command(
+        converted_root=tmp_path / "converted",
+        quality_output_dir=tmp_path / "quality",
+        run_id="quality",
+        script_path=tmp_path / "scripts" / "llm_quality_loop.py",
+    )
+    diagnostic_command = build_observe_command(
+        converted_root=tmp_path / "converted",
+        quality_output_dir=tmp_path / "quality-diagnostic",
+        run_id="quality-diagnostic",
+        fail_on_gate=False,
+        script_path=tmp_path / "scripts" / "llm_quality_loop.py",
+    )
+
+    assert "--fail-on-gate" in command
+    assert "--diagnostic-allow-gate-failure" not in command
+    assert "--diagnostic-allow-gate-failure" in diagnostic_command
+    assert "--fail-on-gate" not in diagnostic_command
+
+
+def test_clean_public_parser_fails_on_gate_by_default() -> None:
+    parser = build_parser()
+
+    default_args = parser.parse_args(["--pdf", "paper.pdf", "--output-dir", "out"])
+    diagnostic_args = parser.parse_args(
+        ["--pdf", "paper.pdf", "--output-dir", "out", "--diagnostic-allow-gate-failure"]
+    )
+
+    assert default_args.fail_on_gate is True
+    assert diagnostic_args.fail_on_gate is False

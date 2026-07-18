@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--fail-on-gate",
         action="store_true",
-        help="Return failure when quality_gate_report.json status is fail.",
+        help="Require quality_gate_report.json status to be pass; enabled by default.",
     )
     parser.add_argument(
         "--diagnostic-allow-gate-failure",
@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Allow diagnostic output even when the document quality gate fails.",
     )
+    parser.set_defaults(fail_on_gate=True)
     parser.add_argument(
         "--raw-only",
         action="store_true",
