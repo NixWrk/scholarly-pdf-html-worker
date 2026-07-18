@@ -4465,6 +4465,7 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     audit_calls: list[dict[str, object]] = []
     repolish_calls: list[dict[str, object]] = []
     repair_calls: list[tuple[str, dict[str, object]]] = []
+    finalization_calls: list[str] = []
 
     gate_config = {
         "repolish_jobs": 3,
@@ -4531,7 +4532,17 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
         "write_analysis_pack",
         lambda *args, **kwargs: {"resolver_decisions": {"repair_candidate_counts": {}}, "articles": []},
     )
-    monkeypatch.setattr(llm_quality_loop, "_write_gate_report", lambda *args, **kwargs: {"status": "pass"})
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "_write_gate_report",
+        lambda *args, **kwargs: finalization_calls.append("gate") or {"status": "pass"},
+    )
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "seal_quality_publication",
+        lambda *args, **kwargs: finalization_calls.append("seal")
+        or {"status": "completed", "errors": []},
+    )
 
     args = parse_args(
         [
@@ -4557,6 +4568,7 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     assert audit_calls[0]["kwargs"].get("merge_previous_report_path") is None
     assert audit_calls[1]["kwargs"]["roots"] == [stage_dir]
     assert audit_calls[1]["kwargs"]["merge_previous_report_path"] == run_dir / "audit_full_checks.json"
+    assert finalization_calls == ["gate", "seal"]
 
 
 def test_observe_converted_roots_default_runs_repolish_and_repair_stages(
@@ -4645,6 +4657,11 @@ def test_observe_converted_roots_default_runs_repolish_and_repair_stages(
         lambda *args, **kwargs: {"resolver_decisions": {"repair_candidate_counts": {}}, "articles": []},
     )
     monkeypatch.setattr(llm_quality_loop, "_write_gate_report", lambda *args, **kwargs: {"status": "pass"})
+    monkeypatch.setattr(
+        llm_quality_loop,
+        "seal_quality_publication",
+        lambda *args, **kwargs: {"status": "completed", "errors": []},
+    )
 
     args = parse_args(
         [

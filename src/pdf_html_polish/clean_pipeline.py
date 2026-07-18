@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
+from tempfile import TemporaryDirectory
 from unicodedata import normalize
 
 from .atomic_io import copy_file_atomic as _copy_file_atomic
@@ -21,7 +22,11 @@ from .html_stages import (
     require_current_raw_conversions,
 )
 from .language_detect import LanguageGateDecision, detect_language_from_html
-from .stage_contract import publish_latest_polish_from_quality_run
+from .quality_loop.publication_state import validate_quality_publication
+from .stage_contract import (
+    publish_latest_polish_from_quality_run,
+    stage_audited_polish,
+)
 
 
 QUALITY_LOOP_SCRIPT = "scripts/llm_quality_loop.py"
@@ -229,22 +234,30 @@ def _publish_final_html(
     quality_dir: Path,
     target_dir: Path,
     sources: Sequence[tuple[str, Path]],
+    copy_sources: dict[str, Path] | None = None,
     fallback_source: str | None = None,
 ) -> FinalHtmlCollection:
     target_dir = target_dir.resolve(strict=False)
     resolved_sources = [
-        (article, source_path.resolve(strict=False))
+        (
+            article,
+            source_path.resolve(strict=False),
+            (copy_sources or {}).get(article, source_path).resolve(strict=False),
+        )
         for article, source_path in sources
     ]
     overlapping = [
-        source_path for _article, source_path in resolved_sources
-        if source_path.is_relative_to(target_dir)
+        path
+        for _article, source_path, copy_path in resolved_sources
+        for path in (source_path, copy_path)
+        if path.is_relative_to(target_dir)
     ]
     if overlapping:
         raise ValueError(f"final_html_dir contains source HTML: {overlapping[0]}")
     seen_articles: dict[str, Path] = {}
+    copies_by_article: dict[str, Path] = {}
     artifacts: list[FinalHtmlArtifact] = []
-    for article, source_path in resolved_sources:
+    for article, source_path, copy_path in resolved_sources:
         article_key = normalize("NFC", article).casefold()
         previous = seen_articles.get(article_key)
         if previous is not None:
@@ -253,6 +266,7 @@ def _publish_final_html(
                 f"{article!r}: {previous} and {source_path}."
             )
         seen_articles[article_key] = source_path
+        copies_by_article[article] = copy_path
         artifacts.append(
             FinalHtmlArtifact(
                 article=article,
@@ -263,7 +277,7 @@ def _publish_final_html(
 
     target_dir.mkdir(parents=True, exist_ok=True)
     for artifact in artifacts:
-        _copy_file_atomic(artifact.source_path, artifact.final_path)
+        _copy_file_atomic(copies_by_article[artifact.article], artifact.final_path)
 
     expected_paths = {artifact.final_path for artifact in artifacts}
     for stale_path in target_dir.glob("*.html"):
@@ -306,17 +320,46 @@ def collect_final_html(
         if final_html_dir is not None
         else quality_dir / FINAL_HTML_DIR_NAME
     )
-    audit_tree = quality_dir / "audit_tree"
-    sources = [
-        (source_path.parent.name, source_path)
-        for source_path in sorted(audit_tree.rglob(POLISH_STAGE_NAME), key=str)
-        if source_path.is_file()
-    ]
-    return _publish_final_html(
-        quality_dir=quality_dir,
-        target_dir=target_dir,
-        sources=sources,
-    )
+    publication = validate_quality_publication(quality_dir)
+    if not publication.valid:
+        raise RuntimeError(
+            "Final HTML collection requires a valid quality publication seal: "
+            f"{publication.reason}"
+        )
+    with TemporaryDirectory(prefix=".final_html_collect_", dir=quality_dir) as staging_value:
+        staging_dir = Path(staging_value)
+        sources: list[tuple[str, Path]] = []
+        copy_sources: dict[str, Path] = {}
+        for index, (article, record) in enumerate(
+            sorted(publication.records_by_article.items()),
+            start=1,
+        ):
+            audited_record = record.get("audited_polish")
+            if not isinstance(audited_record, dict):
+                raise RuntimeError(f"Sealed article has no audited polish record: {article}")
+            source_value = audited_record.get("path")
+            if not isinstance(source_value, str) or not source_value:
+                raise RuntimeError(f"Sealed article has no audited polish path: {article}")
+            source_path = Path(source_value).resolve(strict=False)
+            staged_path = staging_dir / f"{index:06d}.{POLISH_STAGE_NAME}"
+            stage_audited_polish(source_path, staged_path, record)
+            sources.append((article, source_path))
+            copy_sources[article] = staged_path
+        rechecked = validate_quality_publication(quality_dir)
+        if (
+            not rechecked.valid
+            or rechecked.records_by_article != publication.records_by_article
+        ):
+            raise RuntimeError(
+                "Quality publication changed during final HTML collection: "
+                f"{rechecked.reason or 'article_records_changed'}"
+            )
+        return _publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=target_dir,
+            sources=sources,
+            copy_sources=copy_sources,
+        )
 
 
 def collect_converted_stage_final_html(

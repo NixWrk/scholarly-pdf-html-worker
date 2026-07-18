@@ -65,6 +65,41 @@ def fingerprint_file(
     )
 
 
+def read_bytes_with_fingerprint(
+    path: Path,
+    *,
+    reject_symlink: bool,
+) -> tuple[bytes, FileFingerprint] | None:
+    """Read one stable file snapshot and fingerprint the exact returned bytes."""
+
+    candidate = Path(path)
+    try:
+        if reject_symlink and candidate.is_symlink():
+            return None
+        before = candidate.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
+            return None
+        digest = hashlib.sha256()
+        content = bytearray()
+        with candidate.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+                content.extend(chunk)
+        after = candidate.stat()
+    except OSError:
+        return None
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        return None
+    data = bytes(content)
+    return data, FileFingerprint(
+        size=int(after.st_size),
+        mtime_ns=int(after.st_mtime_ns),
+        sha256=digest.hexdigest(),
+        head=data[:ARTIFACT_EDGE_BYTES],
+        tail=data[-ARTIFACT_EDGE_BYTES:],
+    )
+
+
 def metadata_still_matches(path: Path, fingerprint: FileFingerprint) -> bool:
     try:
         current = Path(path).stat()

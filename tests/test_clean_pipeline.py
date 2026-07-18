@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 import pdf_html_polish.atomic_io as atomic_io_module
 import pdf_html_polish.clean_pipeline as clean_pipeline_module
 import pdf_html_polish.cli.clean_convert as clean_convert_module
+from pdf_html_polish.artifact_integrity import fingerprint_file
 from pdf_html_polish.cli.clean_convert import build_parser
 from pdf_html_polish.clean_pipeline import (
     CleanPipelineOptions,
@@ -28,6 +30,7 @@ from pdf_html_polish.html_stages import (
 )
 from pdf_html_polish.pipeline import run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
+from pdf_html_polish.quality_loop.publication_state import seal_quality_publication
 from pdf_html_polish.result_state import (
     RESULT_MANIFEST_NAME,
     completed_result_is_current,
@@ -76,6 +79,108 @@ def _write_current_stage_pair(
         raw_stage_path=raw_path,
     )
 
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _seal_quality_output(
+    quality_dir: Path,
+    stage_dir: Path,
+    article_id: str,
+    *,
+    audited_html: str = "<html><body>clean</body></html>",
+) -> Path:
+    production_raw = stage_dir / RAW_STAGE_NAME
+    target_polish = stage_dir / POLISH_STAGE_NAME
+    source_run = quality_dir / "_converted_raw_source"
+    source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+    source_cached_raw.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(production_raw, source_cached_raw)
+    _write_json(
+        source_run / "manifest.json",
+        {
+            "source_kind": "converted_raw_cache",
+            "articles": [
+                {
+                    "article_id": article_id,
+                    "raw_stage_path": str(production_raw),
+                    "raw_cache_path": str(source_cached_raw),
+                    "source_polish_path": str(target_polish),
+                }
+            ],
+        },
+    )
+    quality_cached_raw = quality_dir / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+    quality_cached_raw.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(production_raw, quality_cached_raw)
+    audited = quality_dir / "audit_tree" / article_id / POLISH_STAGE_NAME
+    audited.parent.mkdir(parents=True, exist_ok=True)
+    audit_raw = audited.parent / RAW_STAGE_NAME
+    shutil.copyfile(production_raw, audit_raw)
+    audited.write_text(audited_html, encoding="utf-8")
+    _write_json(
+        quality_dir / "manifest.json",
+        {
+            "source_kind": "cached_raw_repolish",
+            "source_run_dir": str(source_run),
+            "articles": [
+                {"article": article_id, "raw_cache_path": str(quality_cached_raw)}
+            ],
+        },
+    )
+    raw_fingerprint = fingerprint_file(audit_raw, reject_symlink=True)
+    polish_fingerprint = fingerprint_file(audited, reject_symlink=True)
+    assert raw_fingerprint is not None
+    assert polish_fingerprint is not None
+    _write_json(
+        quality_dir / "audit_full_checks.json",
+        {
+            "audit_status": "complete",
+            "articles": [
+                {
+                    "article": article_id,
+                    "raw_stage_path": str(audit_raw),
+                    "polish_stage_path": str(audited),
+                    "raw_stage_bytes": raw_fingerprint.size,
+                    "raw_stage_sha256": raw_fingerprint.sha256,
+                    "polish_stage_bytes": polish_fingerprint.size,
+                    "polish_stage_sha256": polish_fingerprint.sha256,
+                }
+            ],
+        },
+    )
+    _write_json(quality_dir / "quality_gate_report.json", {"status": "pass"})
+    assert seal_quality_publication(quality_dir)["status"] == "completed"
+    return audited
+
+
+
+def _seal_skipped_quality_output(
+    quality_dir: Path,
+    stage_dir: Path,
+    article_id: str,
+) -> None:
+    audited = _seal_quality_output(quality_dir, stage_dir, article_id)
+    quality_manifest_path = quality_dir / "manifest.json"
+    quality_manifest = json.loads(quality_manifest_path.read_text(encoding="utf-8"))
+    skipped = quality_manifest["articles"].pop()
+    skipped.update(
+        {
+            "language_skipped": True,
+            "skip_reason": "detected_non_target_language",
+        }
+    )
+    quality_manifest["skipped_articles"] = [skipped]
+    _write_json(quality_manifest_path, quality_manifest)
+    audit_report_path = quality_dir / "audit_full_checks.json"
+    audit_report = json.loads(audit_report_path.read_text(encoding="utf-8"))
+    audit_report["articles"] = []
+    _write_json(audit_report_path, audit_report)
+    (audited.parent / RAW_STAGE_NAME).unlink()
+    audited.unlink()
+    assert seal_quality_publication(quality_dir)["status"] == "completed"
 
 def test_default_quality_output_dir_sits_next_to_conversion_output(tmp_path: Path) -> None:
     assert default_quality_output_dir(tmp_path / "paper_run") == tmp_path / "paper_run_quality"
@@ -394,14 +499,13 @@ def test_build_observe_command_uses_repair_enabled_converted_root_defaults(tmp_p
 
 def test_collect_final_html_copies_audited_polish_outputs(tmp_path: Path) -> None:
     quality_dir = tmp_path / "quality"
-    article_dir = quality_dir / "audit_tree" / "article_a"
-    article_dir.mkdir(parents=True)
+    stage_dir = tmp_path / "converted" / "article_a" / "_z2m_stages"
+    _write_current_stage_pair(stage_dir, tmp_path / "paper.pdf")
+    source = _seal_quality_output(quality_dir, stage_dir, "article_a")
     final_dir = quality_dir / "final_html"
     final_dir.mkdir()
     stale_path = final_dir / "removed_article.html"
     stale_path.write_text("<html><body>stale</body></html>", encoding="utf-8")
-    source = article_dir / "02.en.polish.html"
-    source.write_text("<html><body>clean</body></html>", encoding="utf-8")
 
     collection = collect_final_html(quality_dir)
 
@@ -412,20 +516,27 @@ def test_collect_final_html_copies_audited_polish_outputs(tmp_path: Path) -> Non
     manifest = json.loads(collection.manifest_path.read_text(encoding="utf-8"))
     assert manifest["article_count"] == 1
     assert manifest["html_files"][0]["article"] == "article_a"
+    assert Path(manifest["html_files"][0]["source_path"]) == source.resolve(strict=False)
     assert not stale_path.exists()
 
 
-def test_collect_final_html_rejects_duplicate_article_names_before_writing(
+def test_publish_final_html_rejects_duplicate_article_names_before_writing(
     tmp_path: Path,
 ) -> None:
     quality_dir = tmp_path / "quality"
+    sources: list[tuple[str, Path]] = []
     for branch, body in (("first", "one"), ("second", "two")):
         source = quality_dir / "audit_tree" / branch / "duplicate" / "02.en.polish.html"
         source.parent.mkdir(parents=True)
         source.write_text(f"<html><body>{body}</body></html>", encoding="utf-8")
+        sources.append(("duplicate", source))
 
     with pytest.raises(RuntimeError, match="Duplicate final HTML article name 'duplicate'"):
-        collect_final_html(quality_dir)
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=quality_dir / "final_html",
+            sources=sources,
+        )
 
     assert not (quality_dir / "final_html" / "duplicate.html").exists()
     assert not (quality_dir / "final_html" / "final_html_manifest.json").exists()
@@ -456,9 +567,9 @@ def test_collect_final_html_failed_copy_preserves_previous_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     quality_dir = tmp_path / "quality"
-    source = quality_dir / "audit_tree" / "article_a" / "02.en.polish.html"
-    source.parent.mkdir(parents=True)
-    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    stage_dir = tmp_path / "converted" / "article_a" / "_z2m_stages"
+    _write_current_stage_pair(stage_dir, tmp_path / "paper.pdf")
+    _seal_quality_output(quality_dir, stage_dir, "article_a", audited_html="<html><body>new</body></html>")
     final_dir = quality_dir / "final_html"
     final_dir.mkdir()
     final_path = final_dir / "article_a.html"
@@ -479,10 +590,12 @@ def test_collect_final_html_failed_copy_preserves_previous_file(
 
 def test_collect_final_html_rejects_target_containing_source(tmp_path: Path) -> None:
     quality_dir = tmp_path / "quality"
-    article_dir = quality_dir / "audit_tree" / "article_a"
-    article_dir.mkdir(parents=True)
-    source = article_dir / "02.en.polish.html"
-    source.write_text("<html><body>source</body></html>", encoding="utf-8")
+    stage_dir = tmp_path / "converted" / "article_a" / "_z2m_stages"
+    _write_current_stage_pair(stage_dir, tmp_path / "paper.pdf")
+    source = _seal_quality_output(
+        quality_dir, stage_dir, "article_a", audited_html="<html><body>source</body></html>"
+    )
+    article_dir = source.parent
 
     with pytest.raises(ValueError, match="final_html_dir contains source HTML"):
         collect_final_html(quality_dir, final_html_dir=article_dir)
@@ -491,6 +604,37 @@ def test_collect_final_html_rejects_target_containing_source(tmp_path: Path) -> 
     assert not (article_dir / "article_a.html").exists()
     assert not (article_dir / "final_html_manifest.json").exists()
 
+
+
+def test_collect_final_html_rejects_missing_publication_seal(tmp_path: Path) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "audit_tree" / "article_a" / POLISH_STAGE_NAME
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>unsealed</body></html>", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="requires a valid quality publication seal"):
+        collect_final_html(quality_dir)
+
+    assert not (quality_dir / "final_html" / "article_a.html").exists()
+
+
+def test_collect_final_html_rejects_audited_polish_tampered_after_seal(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    stage_dir = tmp_path / "converted" / "article_a" / "_z2m_stages"
+    _write_current_stage_pair(stage_dir, tmp_path / "paper.pdf")
+    source = _seal_quality_output(quality_dir, stage_dir, "article_a")
+    final_dir = quality_dir / "final_html"
+    final_dir.mkdir()
+    final_path = final_dir / "article_a.html"
+    final_path.write_text("<html><body>previous</body></html>", encoding="utf-8")
+    source.write_text("<html><body>tampered but valid</body></html>", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="requires a valid quality publication seal"):
+        collect_final_html(quality_dir)
+
+    assert final_path.read_text(encoding="utf-8") == "<html><body>previous</body></html>"
 
 def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_path: Path) -> None:
     conversion_dir = tmp_path / "converted"
@@ -515,13 +659,19 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
         observe_calls.append((list(command), cwd))
         source_run = quality_dir / "_converted_raw_source"
         source_run.mkdir(parents=True)
+        production_raw = conversion_dir / "article_a" / "_z2m_stages" / RAW_STAGE_NAME
+        source_cached_raw = source_run / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+        source_cached_raw.parent.mkdir(parents=True)
+        shutil.copyfile(production_raw, source_cached_raw)
         (source_run / "manifest.json").write_text(
             json.dumps(
                 {
+                    "source_kind": "converted_raw_cache",
                     "articles": [
                         {
                             "article_id": article_id,
-                            "raw_stage_path": str(conversion_dir / "article_a" / "_z2m_stages" / "01.en.raw.html"),
+                            "raw_stage_path": str(production_raw),
+                            "raw_cache_path": str(source_cached_raw),
                             "source_polish_path": str(
                                 conversion_dir / "article_a" / "_z2m_stages" / "02.en.polish.html"
                             ),
@@ -533,13 +683,19 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
             + "\n",
             encoding="utf-8",
         )
+        quality_cached_raw = quality_dir / "raw_cache" / f"{article_id}.{RAW_STAGE_NAME}"
+        quality_cached_raw.parent.mkdir(parents=True)
+        shutil.copyfile(production_raw, quality_cached_raw)
         (quality_dir / "manifest.json").write_text(
             json.dumps(
                 {
+                    "source_kind": "cached_raw_repolish",
                     "source_run_dir": str(source_run),
                     "code_commit": "abc123",
                     "working_tree_dirty": False,
-                    "articles": [{"article": article_id}],
+                    "articles": [
+                        {"article": article_id, "raw_cache_path": str(quality_cached_raw)}
+                    ],
                 },
                 indent=2,
             )
@@ -549,6 +705,38 @@ def test_run_clean_pipeline_runs_conversion_observe_and_collects_final_html(tmp_
         final_stage = quality_dir / "audit_tree" / article_id / "02.en.polish.html"
         final_stage.parent.mkdir(parents=True)
         final_stage.write_text("<html><body>audited</body></html>", encoding="utf-8")
+        audit_raw = final_stage.parent / RAW_STAGE_NAME
+        shutil.copyfile(production_raw, audit_raw)
+        raw_fingerprint = fingerprint_file(audit_raw, reject_symlink=True)
+        polish_fingerprint = fingerprint_file(final_stage, reject_symlink=True)
+        assert raw_fingerprint is not None
+        assert polish_fingerprint is not None
+        (quality_dir / "audit_full_checks.json").write_text(
+            json.dumps(
+                {
+                    "audit_status": "complete",
+                    "articles": [
+                        {
+                            "article": article_id,
+                            "raw_stage_path": str(audit_raw),
+                            "polish_stage_path": str(final_stage),
+                            "raw_stage_bytes": raw_fingerprint.size,
+                            "raw_stage_sha256": raw_fingerprint.sha256,
+                            "polish_stage_bytes": polish_fingerprint.size,
+                            "polish_stage_sha256": polish_fingerprint.sha256,
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (quality_dir / "quality_gate_report.json").write_text(
+            '{"status":"pass"}\n',
+            encoding="utf-8",
+        )
+        assert seal_quality_publication(quality_dir)["status"] == "completed"
         if log is not None:
             log("observe ok")
         return 0
@@ -621,9 +809,12 @@ def test_run_clean_pipeline_validates_new_and_skipped_raw_stages_together(
         )
 
     def fake_observe_runner(_command, _cwd, _log):
-        final_stage = quality_dir / "audit_tree" / "first" / POLISH_STAGE_NAME
-        final_stage.parent.mkdir(parents=True)
-        final_stage.write_text("<html><body>audited</body></html>", encoding="utf-8")
+        _seal_quality_output(
+            quality_dir,
+            conversion_dir / "first" / "_z2m_stages",
+            "first",
+            audited_html="<html><body>audited</body></html>",
+        )
         return 0
 
     summary = run_clean_pipeline(
@@ -665,9 +856,12 @@ def test_run_clean_pipeline_repolishes_existing_raw_without_conversion(tmp_path:
 
     def fake_observe_runner(command, cwd, log):
         observe_calls.append(list(command))
-        final_stage = quality_dir / "audit_tree" / "article_a" / "02.en.polish.html"
-        final_stage.parent.mkdir(parents=True)
-        final_stage.write_text("<html><body>repolished</body></html>", encoding="utf-8")
+        _seal_quality_output(
+            quality_dir,
+            stage_dir,
+            "article_a",
+            audited_html="<html><body>repolished</body></html>",
+        )
         if log is not None:
             log("repolish observe ok")
         return 0
@@ -769,22 +963,10 @@ def test_run_clean_pipeline_uses_converted_stage_fallback_when_observe_skips_all
         return _summary(conversion_dir)
 
     def fake_observe_runner(command, cwd, log):
-        (quality_dir / "audit_tree").mkdir(parents=True)
-        (quality_dir / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "articles": [],
-                    "skipped_articles": [
-                        {
-                            "article": "article_es",
-                            "language_skipped": True,
-                            "skip_reason": "detected_es_not_en",
-                        }
-                    ],
-                }
-            )
-            + "\n",
-            encoding="utf-8",
+        _seal_skipped_quality_output(
+            quality_dir,
+            conversion_dir / "article_es" / "_z2m_stages",
+            "article_es",
         )
         if log is not None:
             log("observe skipped non-en article")

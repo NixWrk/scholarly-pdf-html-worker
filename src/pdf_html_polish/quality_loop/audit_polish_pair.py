@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
 from typing import Any
+from pdf_html_polish.artifact_integrity import read_bytes_with_fingerprint
 
 from pdf_html_polish.quality_loop.audit_blocks import (
     Block,
@@ -83,8 +84,16 @@ def analyze_polish_pair(
     pdf_path_override: Path | None = None,
     pdf_diagnostics_cache: Any | None = None,
 ) -> dict[str, Any]:
-    raw_html = raw_path.read_text(encoding="utf-8", errors="replace")
-    polish_html = polish_path.read_text(encoding="utf-8", errors="replace")
+    raw_snapshot = read_bytes_with_fingerprint(raw_path, reject_symlink=True)
+    polish_snapshot = read_bytes_with_fingerprint(polish_path, reject_symlink=True)
+    if raw_snapshot is None or polish_snapshot is None:
+        raise RuntimeError(
+            f"Raw or polish stage changed during audit: {raw_path}, {polish_path}"
+        )
+    raw_bytes, raw_fingerprint = raw_snapshot
+    polish_bytes, polish_fingerprint = polish_snapshot
+    raw_html = raw_bytes.decode("utf-8", errors="replace")
+    polish_html = polish_bytes.decode("utf-8", errors="replace")
     raw_blocks = parse_blocks(raw_html)
     polish_blocks = parse_blocks(polish_html)
     polish_reference_blocks = reference_identity_blocks(polish_html)
@@ -156,6 +165,10 @@ def analyze_polish_pair(
         "article": deps.article_name_from_stage(polish_path),
         "raw_stage_path": str(raw_path),
         "polish_stage_path": str(polish_path),
+        "raw_stage_bytes": raw_fingerprint.size,
+        "raw_stage_sha256": raw_fingerprint.sha256,
+        "polish_stage_bytes": polish_fingerprint.size,
+        "polish_stage_sha256": polish_fingerprint.sha256,
         "summary": summary,
         "defects_found": [asdict(defect) for defect in defects],
     }

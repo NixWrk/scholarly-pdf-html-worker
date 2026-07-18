@@ -65,6 +65,9 @@ from pdf_html_polish.quality_loop.observations import (  # noqa: E402
 from pdf_html_polish.quality_loop.pattern_observations import (  # noqa: E402
     write_pattern_observations as _write_pattern_observations,
 )
+from pdf_html_polish.quality_loop.publication_state import (  # noqa: E402
+    seal_quality_publication,
+)
 from pdf_html_polish.quality_loop.pdf_evidence import (  # noqa: E402
     attach_pdf_evidence_to_pack as _attach_pdf_evidence_to_pack,
     problem_snippets_for_evidence as _problem_snippets_for_evidence,
@@ -3537,6 +3540,12 @@ def observe(args: argparse.Namespace) -> int:
         manual_observation_ledger=args.manual_observation_ledger,
     )
     gate_report = _write_gate_report(run_dir, args.gate_config)
+    publication_seal = seal_quality_publication(run_dir)
+    print(
+        "Quality publication seal: "
+        f"status={publication_seal['status']} errors={len(publication_seal['errors'])}",
+        flush=True,
+    )
     print(
         "LLM quality loop: "
         f"gate={gate_report['status']} review_queue={len(review_queue)} "
