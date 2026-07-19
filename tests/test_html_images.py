@@ -155,6 +155,24 @@ def test_refresh_image_cache_clears_stale_skip_on_valid_payload() -> None:
     assert f'src="{cached_data_url}"' in refreshed
 
 
+def test_refresh_image_cache_restores_valid_but_changed_payload() -> None:
+    cached_data_url = _data_url("image/png", _valid_png_blob())
+    changed_data_url = _data_url("image/jpeg", b"\xff\xd8other\xff\xd9")
+    html = (
+        '<img data-z2m-image-key="img-1" data-z2m-src="original.png" '
+        f'src="{changed_data_url}">'
+    )
+
+    refreshed, count = refresh_inlined_data_urls_by_cache(
+        html,
+        image_cache={"img-1": cached_data_url},
+    )
+
+    assert count == 1
+    assert changed_data_url not in refreshed
+    assert f'src="{cached_data_url}"' in refreshed
+
+
 def test_inline_images_from_html_text_inlines_sidecar_and_records_cache(tmp_path) -> None:
     image_path = tmp_path / "plot.png"
     image_path.write_bytes(_valid_png_blob())
@@ -250,6 +268,38 @@ def test_inline_images_from_html_text_downscales_above_default_style_threshold(t
     decoded = decode_data_image_payload(next(iter(image_cache.values())))
     assert decoded is not None
     assert len(decoded[1]) < image_path.stat().st_size
+
+
+def test_polish_and_inline_preserves_downscaled_payload(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image_path = tmp_path / "atlas.bmp"
+    Image.new("RGB", (300, 300), (90, 120, 150)).save(image_path, format="BMP")
+    original_size = image_path.stat().st_size
+    html_path = tmp_path / "article.html"
+    html_path.write_text(
+        '<html><body><img alt="Atlas" src="atlas.bmp"></body></html>',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PDF_HTML_INLINE_IMAGE_MAX_BYTES", "0")
+    monkeypatch.setenv("PDF_HTML_INLINE_IMAGE_TOTAL_MAX_BYTES", "0")
+    monkeypatch.setenv("PDF_HTML_INLINE_IMAGE_DOWNSCALE_BYTES", "8000")
+    monkeypatch.setenv("PDF_HTML_INLINE_IMAGE_HARD_MAX_BYTES", "1000000")
+
+    result = polish_and_inline_html_file(html_path)
+
+    sources = html_node_image_srcs(result.html)
+    assert len(sources) == 1
+    assert sources[0].startswith("data:image/jpeg;base64,")
+    decoded = decode_data_image_payload(sources[0])
+    assert decoded is not None
+    assert len(decoded[1]) < original_size
+    assert 'data-z2m-src="atlas.bmp"' in result.html
+    assert "data-z2m-inline-skip" not in result.html
 
 
 def test_inline_images_from_html_text_hard_skips_when_recompression_fails(tmp_path) -> None:

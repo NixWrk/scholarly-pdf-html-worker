@@ -602,6 +602,15 @@ def refresh_inlined_data_urls_by_hint(
         if not src_value.lower().startswith("data:"):
             return match.group(0)
 
+        if (
+            IMAGE_CACHE_KEY_ATTR_PATTERN.search(prefix) is not None
+            and data_image_src_looks_renderable(src_value)
+        ):
+            clean_prefix = clear_inline_skip_metadata(prefix)
+            if clean_prefix != prefix:
+                return f"{clean_prefix}{quote}{src_value}{suffix}"
+            return match.group(0)
+
         hint_match = re.search(
             r'\bdata-z2m-src\s*=\s*(["\'])([^"\']+)\1',
             prefix,
@@ -659,7 +668,10 @@ def refresh_inlined_data_urls_by_cache(
             return match.group(0)
         if not data_image_src_looks_renderable(cached_data_url):
             return match.group(0)
-        if src_value.lower().startswith("data:image/") and data_image_src_looks_renderable(src_value):
+        if (
+            src_value == cached_data_url
+            and data_image_src_looks_renderable(src_value)
+        ):
             clean_prefix = clear_inline_skip_metadata(prefix)
             if clean_prefix != prefix:
                 return f"{clean_prefix}{quote}{src_value}{suffix}"

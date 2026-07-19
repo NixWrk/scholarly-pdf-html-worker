@@ -21395,16 +21395,16 @@ def polish_and_inline_html_file(html_path: Path, citation_profile: Any | None = 
     )
     inlined_html = _repair_duplicate_fragment_targets(inlined_html).html
     inlined_html = _unwrap_broken_local_fragment_links(inlined_html).html
-    inlined_html, refreshed_after_polish = _refresh_inlined_data_urls_by_hint(
-        inlined_html,
-        base_dir=base_dir,
-    )
-    inlined_count += refreshed_after_polish
     inlined_html, refreshed_from_cache = _refresh_inlined_data_urls_by_cache(
         inlined_html,
         image_cache=image_cache,
     )
     inlined_count += refreshed_from_cache
+    inlined_html, refreshed_after_polish = _refresh_inlined_data_urls_by_hint(
+        inlined_html,
+        base_dir=base_dir,
+    )
+    inlined_count += refreshed_after_polish
     image_integrity = _inspect_inline_image_integrity(inlined_html)
     if not image_integrity.publishable:
         raise RuntimeError(
