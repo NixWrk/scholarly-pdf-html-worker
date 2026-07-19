@@ -7,6 +7,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 import pdf_html_polish.marker_runner as marker_runner_module
 
 from pdf_html_polish.marker_runner import (
@@ -353,6 +355,60 @@ def test_marker_runner_bounds_unterminated_stdout_lines() -> None:
     assert len(output_chunks) == 2
     assert len(output_chunks[0]) <= marker_runner_module._MAX_LOG_LINE_CHARS + len(" [continued]")
 
+
+def test_marker_runner_reports_numpy_memory_failure_reason(
+    tmp_path: Path,
+) -> None:
+    runner = MarkerRunner()
+    logs: list[str] = []
+
+    result = runner._run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('numpy._core._exceptions._ArrayMemoryError: "
+            "Unable to allocate 1.49 GiB'); sys.exit(1)",
+        ],
+        dict(os.environ),
+        logs.append,
+        progress=ProgressContext(
+            input_files=1,
+            pages_total=40,
+            output_dir=tmp_path,
+            artifact_extension=".html",
+        ),
+    )
+
+    assert result.exit_code == 1
+    assert result.failure_reason == "memory_exhausted"
+    assert any("failure_reason=memory_exhausted" in entry for entry in logs)
+    status = json.loads(
+        (tmp_path / "marker_status.json").read_text(encoding="utf-8")
+    )
+    assert status["failure_reason"] == "memory_exhausted"
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "stall_detected", "streamed_reason", "expected"),
+    [
+        (0, True, "memory_exhausted", None),
+        (1, True, "memory_exhausted", "stall_timeout"),
+        (1, False, "memory_exhausted", "memory_exhausted"),
+        (137, False, None, "process_exit_137"),
+        (1, False, None, None),
+    ],
+)
+def test_completed_marker_failure_reason_is_fail_specific(
+    exit_code: int,
+    stall_detected: bool,
+    streamed_reason: str | None,
+    expected: str | None,
+) -> None:
+    assert marker_runner_module._completed_marker_failure_reason(
+        exit_code=exit_code,
+        stall_detected=stall_detected,
+        streamed_reason=streamed_reason,
+    ) == expected
 
 
 def test_marker_runner_wraps_batch_in_gpu_container(tmp_path: Path) -> None:

@@ -23,7 +23,7 @@ from .html_stages import (
     write_raw_conversion_manifest,
 )
 from .llm_bundle import LlmBundleResult, create_llm_bundle
-from .marker_runner import MarkerRunner
+from .marker_runner import MarkerRunner, RunResult
 from .models import PipelineSummary, StagedFile
 from .ocr_quality import assess_ocr_quality_from_html, enqueue_reocr_candidate, load_reocr_queue
 from .output_state import detect_existing_results, normalize_source_path
@@ -58,6 +58,30 @@ from .zotero_pending import (
 
 
 OVERLAY_SUFFIX_RE = re.compile(r"_([0-9a-f]{8})(?:\.pdf)?$", re.IGNORECASE)
+
+_SCOPE_REDUCTION_FAILURE_REASONS = frozenset(
+    {
+        "memory_exhausted",
+        "stall_timeout",
+        "process_exit_137",
+    }
+)
+
+
+def _marker_scope_reduction_reason(
+    result: RunResult,
+    *,
+    staged_total: int,
+    pending_total: int,
+) -> str | None:
+    if staged_total != 1 or pending_total != 1:
+        return None
+    reason = result.failure_reason
+    if reason is None and result.exit_code == 137:
+        reason = "process_exit_137"
+    if reason in _SCOPE_REDUCTION_FAILURE_REASONS:
+        return reason
+    return None
 
 
 @dataclass(frozen=True)
@@ -412,9 +436,22 @@ def run_raw_html_pipeline(
                 continue
             pending.append(staged_file)
 
-        if pending:
-            log(f"Raw-only fallback conversion for unconfirmed outputs: {len(pending)}")
-        for staged_file in pending:
+        scope_reduction_reason = _marker_scope_reduction_reason(
+            batch_result,
+            staged_total=len(stage.staged_files),
+            pending_total=len(pending),
+        )
+        if scope_reduction_reason is not None:
+            log(f"marker_scope_reduction_required={scope_reduction_reason}")
+            fallback_pending: list[StagedFile] = []
+        else:
+            fallback_pending = pending
+        if fallback_pending:
+            log(
+                "Raw-only fallback conversion for unconfirmed outputs: "
+                f"{len(fallback_pending)}"
+            )
+        for staged_file in fallback_pending:
             if is_cancelled():
                 raise RuntimeError("Cancelled during raw-only fallback conversion.")
             artifact_path = expected_output_artifact_path(
@@ -853,11 +890,24 @@ def run_pipeline(
                 f"unchanged_existing_after_batch={unchanged_existing}"
             )
 
-            if pending:
-                log(f"Fallback conversion for unconfirmed outputs: {len(pending)}")
+            scope_reduction_reason = _marker_scope_reduction_reason(
+                batch_result,
+                staged_total=len(stage.staged_files),
+                pending_total=len(pending),
+            )
+            if scope_reduction_reason is not None:
+                log(f"marker_scope_reduction_required={scope_reduction_reason}")
+                fallback_pending = []
+            else:
+                fallback_pending = pending
+            if fallback_pending:
+                log(
+                    "Fallback conversion for unconfirmed outputs: "
+                    f"{len(fallback_pending)}"
+                )
 
             fallback_started_at = perf_counter()
-            for staged_file in pending:
+            for staged_file in fallback_pending:
                 if is_cancelled():
                     raise RuntimeError("Cancelled during fallback conversion.")
 
@@ -893,7 +943,7 @@ def run_pipeline(
                         f"source={staged_file.source_pdf_path.name} "
                         f"exit_code={single_result.exit_code}"
                     )
-            if pending:
+            if fallback_pending:
                 _log_elapsed(log, "pipeline.fallback_total", fallback_started_at)
             _log_elapsed(log, "pipeline.conversion_total", conversion_started_at)
 

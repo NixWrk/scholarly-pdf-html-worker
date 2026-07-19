@@ -32,6 +32,18 @@ _MARKER_BATCH_SIZE_OPTIONS = (
     ("--equation_batch_size", "MARKER_EQUATION_BATCH_SIZE"),
 )
 
+_MARKER_MEMORY_FAILURE_MARKERS = (
+    "arraymemoryerror",
+    "memoryerror",
+    "unable to allocate",
+    "cannot allocate memory",
+    "out of memory",
+    "outofmemoryerror",
+    "cublas_status_alloc_failed",
+    "memory exhausted",
+    "resource exhausted",
+)
+
 
 def _marker_batch_size_args(env: dict[str, str] | None = None) -> list[str]:
     source = env if env is not None else os.environ
@@ -145,10 +157,36 @@ def _docker_container_name(command: list[str]) -> str | None:
     except (ValueError, IndexError):
         return None
 
+
+def _marker_memory_failure_reason(line: str) -> str | None:
+    normalized = line.casefold()
+    if any(marker in normalized for marker in _MARKER_MEMORY_FAILURE_MARKERS):
+        return "memory_exhausted"
+    return None
+
+
+def _completed_marker_failure_reason(
+    *,
+    exit_code: int,
+    stall_detected: bool,
+    streamed_reason: str | None,
+) -> str | None:
+    if exit_code == 0:
+        return None
+    if stall_detected:
+        return "stall_timeout"
+    if streamed_reason is not None:
+        return streamed_reason
+    if exit_code == 137:
+        return "process_exit_137"
+    return None
+
+
 @dataclass(frozen=True)
 class RunResult:
     command: list[str]
     exit_code: int
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -464,11 +502,16 @@ class MarkerRunner:
         max_output_gap = 0.0
         line_count = 0
         last_marker_line = ""
+        streamed_failure_reason: str | None = None
         heartbeat_stop = threading.Event()
         stall_stop_sent = threading.Event()
         stall_timeout_seconds = _marker_stall_timeout_seconds(env)
 
-        def log_progress(kind: str, exit_code: int | None = None) -> dict[str, object]:
+        def log_progress(
+            kind: str,
+            exit_code: int | None = None,
+            failure_reason: str | None = None,
+        ) -> dict[str, object]:
             nonlocal heartbeat_index
             nonlocal last_filesystem_activity_at
             nonlocal last_output_signature
@@ -519,6 +562,8 @@ class MarkerRunner:
                 **output_snapshot,
                 **snapshot,
             }
+            if failure_reason is not None:
+                payload["failure_reason"] = failure_reason
             log(_format_progress_payload(payload))
             _append_progress_jsonl(progress, payload)
             return payload
@@ -571,6 +616,7 @@ class MarkerRunner:
                 nonlocal max_output_gap
                 nonlocal line_count
                 nonlocal last_marker_line
+                nonlocal streamed_failure_reason
 
                 if first_output_at is None:
                     first_output_at = emitted_at
@@ -580,6 +626,10 @@ class MarkerRunner:
                 last_output_at = emitted_at
                 line_count += 1
                 last_marker_line = line
+                if streamed_failure_reason is None:
+                    streamed_failure_reason = _marker_memory_failure_reason(
+                        line
+                    )
                 log(line)
                 if _looks_like_marker_progress_line(line):
                     log_progress("marker_stdout_progress")
@@ -610,14 +660,28 @@ class MarkerRunner:
             if last_output_at is not None:
                 log(f"[timer] runner.last_output: {last_output_at - run_started_at:.2f}s")
             log(f"[timer] runner.total: {perf_counter() - run_started_at:.2f}s")
+            failure_reason = _completed_marker_failure_reason(
+                exit_code=exit_code,
+                stall_detected=stall_stop_sent.is_set(),
+                streamed_reason=streamed_failure_reason,
+            )
             log(
                 "Runner diagnostics: "
                 f"exit_code={exit_code}, "
+                f"failure_reason={failure_reason or 'none'}, "
                 f"stdout_lines={line_count}, "
                 f"max_gap_between_lines={max_output_gap:.2f}s"
             )
-            log_progress("complete", exit_code=exit_code)
-            return RunResult(command=command, exit_code=exit_code)
+            log_progress(
+                "complete",
+                exit_code=exit_code,
+                failure_reason=failure_reason,
+            )
+            return RunResult(
+                command=command,
+                exit_code=exit_code,
+                failure_reason=failure_reason,
+            )
         finally:
             heartbeat_stop.set()
             heartbeat_thread.join(timeout=0.2)

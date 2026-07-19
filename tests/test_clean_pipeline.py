@@ -12,6 +12,7 @@ from conftest import write_attested_audit_command
 import pdf_html_polish.atomic_io as atomic_io_module
 import pdf_html_polish.clean_pipeline as clean_pipeline_module
 import pdf_html_polish.cli.clean_convert as clean_convert_module
+import pdf_html_polish.pipeline as pipeline_module
 from pdf_html_polish.artifact_integrity import fingerprint_file
 from pdf_html_polish.cli.clean_convert import build_parser
 from pdf_html_polish.clean_pipeline import (
@@ -38,7 +39,7 @@ from pdf_html_polish.quality_loop.enrichment_snapshot import (
     initialize_enrichment_snapshot,
 )
 from pdf_html_polish.quality_loop.commands import run_quality_history, write_gate_report
-from pdf_html_polish.pipeline import run_raw_html_pipeline
+from pdf_html_polish.pipeline import run_pipeline, run_raw_html_pipeline
 from pdf_html_polish.pipeline_options import PipelineOptions
 from pdf_html_polish.quality_loop.publication_state import seal_quality_publication
 from pdf_html_polish.result_state import (
@@ -481,6 +482,115 @@ def test_run_raw_html_pipeline_rejects_partial_failed_marker_output(tmp_path: Pa
     assert recovered.converted_total == 1
     assert recovered.failed_total == 0
     assert completed_result_is_current(source_pdf, result_path)
+
+
+def test_raw_only_resource_failure_requests_smaller_scope_without_same_pdf_retry(
+    tmp_path: Path,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF")
+    output_dir = tmp_path / "converted"
+    logs: list[str] = []
+
+    class ResourceFailureRunner:
+        def run_batch(self, **_kwargs):
+            return RunResult(
+                command=["marker"],
+                exit_code=1,
+                failure_reason="memory_exhausted",
+            )
+
+        def run_single(self, **_kwargs):
+            raise AssertionError(
+                "resource failure must return to the caller for a smaller PDF scope"
+            )
+
+    summary = run_raw_html_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            export_mode="html",
+        ),
+        ResourceFailureRunner(),  # type: ignore[arg-type]
+        logs.append,
+        lambda: False,
+    )
+
+    assert summary.converted_total == 0
+    assert summary.failed_total == 1
+    assert any(
+        "marker_scope_reduction_required=memory_exhausted" in entry
+        for entry in logs
+    )
+
+
+def test_full_pipeline_resource_failure_requests_smaller_scope_without_same_pdf_retry(
+    tmp_path: Path,
+) -> None:
+    source_pdf = tmp_path / "paper.pdf"
+    source_pdf.write_bytes(b"%PDF")
+    output_dir = tmp_path / "converted"
+    logs: list[str] = []
+
+    class ResourceFailureRunner:
+        def run_batch(self, **_kwargs):
+            return RunResult(
+                command=["marker"],
+                exit_code=1,
+                failure_reason="stall_timeout",
+            )
+
+        def run_single(self, **_kwargs):
+            raise AssertionError(
+                "resource failure must return to the caller for a smaller PDF scope"
+            )
+
+    summary = run_pipeline(
+        PipelineOptions(
+            source_pdf_paths=[str(source_pdf)],
+            output_dir=str(output_dir),
+            skip_existing=False,
+        ),
+        ResourceFailureRunner(),  # type: ignore[arg-type]
+        logs.append,
+        lambda: False,
+    )
+
+    assert summary.converted_total == 0
+    assert summary.failed_total == 1
+    assert any(
+        "marker_scope_reduction_required=stall_timeout" in entry
+        for entry in logs
+    )
+
+
+@pytest.mark.parametrize(
+    ("result", "staged_total", "pending_total", "expected"),
+    [
+        (
+            RunResult(["marker"], 1, "memory_exhausted"),
+            1,
+            1,
+            "memory_exhausted",
+        ),
+        (RunResult(["marker"], 137), 1, 1, "process_exit_137"),
+        (RunResult(["marker"], 1), 1, 1, None),
+        (RunResult(["marker"], 1, "memory_exhausted"), 2, 2, None),
+        (RunResult(["marker"], 1, "memory_exhausted"), 2, 1, None),
+        (RunResult(["marker"], 1, "memory_exhausted"), 1, 0, None),
+    ],
+)
+def test_marker_scope_reduction_policy(
+    result: RunResult,
+    staged_total: int,
+    pending_total: int,
+    expected: str | None,
+) -> None:
+    assert pipeline_module._marker_scope_reduction_reason(
+        result,
+        staged_total=staged_total,
+        pending_total=pending_total,
+    ) == expected
 
 
 def test_raw_force_retry_invalidates_previous_completion_before_marker(
