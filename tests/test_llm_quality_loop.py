@@ -5348,6 +5348,9 @@ def test_observe_defers_repair_rerun_audit_until_all_repair_stages(tmp_path: Pat
     assert [name for name, _kwargs in repair_calls] == ["p62_plan", "p62_recovery", "polish_auto_repair"]
     assert [kwargs["jobs"] for _name, kwargs in repair_calls] == [5, 5, 5]
     assert repolish_calls[0]["kwargs"]["jobs"] == 3
+    assert repolish_calls[0]["kwargs"]["allowed_existing_output_paths"] == (
+        run_dir / "quality_gate_config_snapshot.json",
+    )
     assert len(audit_calls) == 2
     assert audit_calls[0]["kwargs"]["jobs"] == 2
     assert audit_calls[1]["kwargs"]["jobs"] == 2
@@ -5472,6 +5475,9 @@ def test_observe_converted_roots_default_runs_repolish_and_repair_stages(
     assert converted_cache_calls[0]["args"] == ([converted_root], run_dir / "_converted_raw_source")
     assert repolish_calls[0]["args"][0] == run_dir / "_converted_raw_source"
     assert repolish_calls[0]["kwargs"]["jobs"] == 3
+    assert repolish_calls[0]["kwargs"]["allowed_existing_output_paths"] == (
+        run_dir / "quality_gate_config_snapshot.json",
+    )
     assert [name for name, _kwargs in repair_calls] == ["p62_plan", "p62_recovery", "polish_auto_repair"]
     assert len(audit_calls) == 2
     assert audit_calls[0]["kwargs"].get("roots") is None
@@ -5941,6 +5947,61 @@ def test_repolish_cached_run_refuses_unrelated_existing_output_artifacts(
     assert stale_audit.read_text(encoding="utf-8") == '{"stale": true}\n'
     assert not (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).exists()
     assert not (out_dir / "raw_cache").exists()
+
+
+def test_repolish_cached_run_allows_validated_observe_snapshot_only(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+    snapshot = out_dir / "quality_gate_config_snapshot.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text('{"validated": true}\n', encoding="utf-8")
+
+    manifest = repolish_cached_run(
+        source,
+        out_dir,
+        allowed_existing_output_paths=(snapshot,),
+    )
+
+    assert manifest["article_count"] == 1
+    assert snapshot.read_text(encoding="utf-8") == '{"validated": true}\n'
+
+
+def test_repolish_cached_run_rejects_unrelated_artifact_beside_allowed_snapshot(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    raw_dir = source / "raw_cache"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "doc.01.en.raw.html").write_text(
+        "<html><body><p>Committed bytes.</p></body></html>",
+        encoding="utf-8",
+    )
+    _commit_cached_repolish_source(source)
+    out_dir = tmp_path / "run"
+    snapshot = out_dir / "quality_gate_config_snapshot.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text('{"validated": true}\n', encoding="utf-8")
+    unrelated = out_dir / "unexpected.json"
+    unrelated.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="unrelated artifacts"):
+        repolish_cached_run(
+            source,
+            out_dir,
+            allowed_existing_output_paths=(snapshot,),
+        )
+
+    assert unrelated.read_text(encoding="utf-8") == "{}\n"
+    assert not (out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR).exists()
 
 
 def test_repolish_cached_run_allows_only_internal_committed_source_entry(

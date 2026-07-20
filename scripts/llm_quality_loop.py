@@ -2668,6 +2668,7 @@ def normalize_converted_audit_article_ids(run_dir: Path) -> dict[str, Any]:
 def _cached_repolish_unrelated_output_entries(
     out_dir: Path,
     source_origin_run_dir: Path,
+    allowed_existing_output_paths: frozenset[Path],
 ) -> list[Path]:
     if not out_dir.exists():
         return []
@@ -2680,13 +2681,43 @@ def _cached_repolish_unrelated_output_entries(
         entries = list(out_dir.iterdir())
     except OSError as exc:
         raise ValueError(f"Cached repolish output directory is unreadable: {out_dir}") from exc
-    return [
-        entry
-        for entry in entries
-        if path_is_link_like(entry)
-        or allowed_source is None
-        or entry.resolve(strict=False) != allowed_source
-    ]
+    unrelated: list[Path] = []
+    for entry in entries:
+        if path_is_link_like(entry):
+            unrelated.append(entry)
+            continue
+        resolved = entry.resolve(strict=False)
+        if allowed_source is not None and resolved == allowed_source:
+            continue
+        if resolved in allowed_existing_output_paths and entry.is_file():
+            continue
+        unrelated.append(entry)
+    return unrelated
+
+
+def _validated_cached_repolish_allowed_output_paths(
+    out_dir: Path,
+    paths: Iterable[Path],
+) -> frozenset[Path]:
+    allowed: set[Path] = set()
+    for value in paths:
+        candidate = Path(value).expanduser()
+        if path_is_link_like(candidate):
+            raise ValueError(
+                f"Allowed cached repolish output must not be link-like: {candidate}"
+            )
+        resolved = candidate.resolve(strict=False)
+        if resolved.parent != out_dir:
+            raise ValueError(
+                "Allowed cached repolish output must be an immediate child of the output directory: "
+                f"{candidate}"
+            )
+        if not resolved.is_file():
+            raise ValueError(
+                f"Allowed cached repolish output must be a regular file: {candidate}"
+            )
+        allowed.add(resolved)
+    return frozenset(allowed)
 
 
 
@@ -2699,6 +2730,7 @@ def repolish_cached_run(
     skip_non_target_language: bool = False,
     skip_unknown_language: bool = False,
     jobs: int = 1,
+    allowed_existing_output_paths: Iterable[Path] = (),
 ) -> dict[str, Any]:
     """Regenerate polish HTML from one committed raw/profile source snapshot."""
     source_origin_candidate = Path(source_run_dir).expanduser()
@@ -2709,6 +2741,11 @@ def repolish_cached_run(
     out_dir = out_candidate.resolve(strict=False)
     if out_dir.exists() and not out_dir.is_dir():
         raise ValueError(f"Output run path must be a regular directory: {out_dir}")
+    allowed_existing_output_paths = tuple(allowed_existing_output_paths)
+    allowed_output_paths = _validated_cached_repolish_allowed_output_paths(
+        out_dir,
+        allowed_existing_output_paths,
+    )
     source_snapshot_dir = out_dir / CACHED_REPOLISH_SOURCE_SNAPSHOT_DIR
     enrichment_snapshot_dir = out_dir / ENRICHMENT_SNAPSHOT_DIR_NAME
     owned_output_paths = (
@@ -2727,7 +2764,11 @@ def repolish_cached_run(
             "Cached repolish output already contains owned artifacts: "
             + ", ".join(str(path) for path in conflicts)
         )
-    unrelated = _cached_repolish_unrelated_output_entries(out_dir, source_origin_run_dir)
+    unrelated = _cached_repolish_unrelated_output_entries(
+        out_dir,
+        source_origin_run_dir,
+        allowed_output_paths,
+    )
     if unrelated:
         raise FileExistsError(
             "Cached repolish output contains unrelated artifacts: "
@@ -2751,7 +2792,15 @@ def repolish_cached_run(
                 "Cached repolish output changed during source preflight: "
                 + ", ".join(str(path) for path in conflicts)
             )
-        unrelated = _cached_repolish_unrelated_output_entries(out_dir, source_origin_run_dir)
+        allowed_output_paths = _validated_cached_repolish_allowed_output_paths(
+            out_dir,
+            allowed_existing_output_paths,
+        )
+        unrelated = _cached_repolish_unrelated_output_entries(
+            out_dir,
+            source_origin_run_dir,
+            allowed_output_paths,
+        )
         if unrelated:
             raise FileExistsError(
                 "Cached repolish output gained unrelated artifacts during source preflight: "
@@ -3807,6 +3856,7 @@ def observe(args: argparse.Namespace) -> int:
             skip_non_target_language=args.skip_non_target_language,
             skip_unknown_language=args.skip_unknown_language,
             jobs=repolish_jobs,
+            allowed_existing_output_paths=(gate_config_snapshot.path,),
         )
         print(
             "Repolished cached run: "
@@ -3828,6 +3878,7 @@ def observe(args: argparse.Namespace) -> int:
                 skip_non_target_language=args.skip_non_target_language,
                 skip_unknown_language=args.skip_unknown_language,
                 jobs=repolish_jobs,
+                allowed_existing_output_paths=(gate_config_snapshot.path,),
             )
             print(
                 "Repolished converted raw stages: "
