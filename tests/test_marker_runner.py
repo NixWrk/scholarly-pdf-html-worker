@@ -339,6 +339,41 @@ def test_marker_runner_cleans_tracking_after_normal_exit() -> None:
     assert runner._tracked_snapshot() == []
 
 
+def test_marker_runner_stops_process_when_log_callback_fails(monkeypatch) -> None:
+    runner = MarkerRunner()
+    spawned: list[subprocess.Popen[str]] = []
+    real_popen = subprocess.Popen
+
+    def tracking_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    def failing_log(line: str) -> None:
+        if line == "trigger-cleanup":
+            raise OSError("injected log failure")
+
+    monkeypatch.setattr(marker_runner_module.subprocess, "Popen", tracking_popen)
+
+    with pytest.raises(OSError, match="injected log failure"):
+        runner._run(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('trigger-cleanup', flush=True); time.sleep(30)",
+            ],
+            dict(os.environ),
+            failing_log,
+        )
+
+    assert len(spawned) == 1
+    deadline = time.monotonic() + 5
+    while spawned[0].poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert spawned[0].poll() is not None
+    assert runner._tracked_snapshot() == []
+
+
 def test_marker_runner_bounds_unterminated_stdout_lines() -> None:
     runner = MarkerRunner()
     logs: list[str] = []

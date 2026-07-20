@@ -685,12 +685,15 @@ class MarkerRunner:
         finally:
             heartbeat_stop.set()
             heartbeat_thread.join(timeout=0.2)
-            self._register_child_pids(process.pid)
+            if process.poll() is None:
+                self._stop_process_tree(process)
+            else:
+                self._register_child_pids(process.pid)
             with self._lock:
                 if self._current_process is process:
                     self._current_process = None
                 self._tracked_pids.pop(process.pid, None)
-            self.cleanup_spawned_processes(log)
+            self.cleanup_spawned_processes()
 
     def run_batch(
         self,
@@ -803,6 +806,11 @@ class MarkerRunner:
             page_range=str(page_number - 1),
             disable_multiprocessing=True,
         )
+
+
+def terminate_process_tree(pid: int) -> bool:
+    """Terminate a spawned process and all descendants."""
+    return MarkerRunner._kill_pid_tree(pid)
 
 
 def _artifact_extension_for_output_format(output_format: str) -> str:

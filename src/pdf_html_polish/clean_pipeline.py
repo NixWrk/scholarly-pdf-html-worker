@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from .artifact_integrity import artifact_is_structurally_valid, fingerprint_file
 from .atomic_io import copy_file_atomic as _copy_file_atomic
 from .atomic_io import write_json_atomic as _write_json_atomic
 from .directory_publication import CompleteDirectoryPublication
-from .marker_runner import MarkerRunner
+from .marker_runner import MarkerRunner, terminate_process_tree
 from .models import PipelineSummary
 from .pipeline import run_pipeline
 from .pipeline_options import PipelineOptions
@@ -36,6 +37,7 @@ QUALITY_LOOP_SCRIPT = "scripts/llm_quality_loop.py"
 FINAL_HTML_DIR_NAME = "final_html"
 FINAL_HTML_MANIFEST_NAME = "final_html_manifest.json"
 PIPELINE_MANIFEST_NAME = "pipeline_manifest.json"
+_MAX_FINAL_HTML_MANIFEST_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -226,12 +228,27 @@ def run_observe_command(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        start_new_session=os.name != "nt",
+        creationflags=(
+            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        ),
     )
-    assert process.stdout is not None
-    for line in process.stdout:
-        if log is not None:
-            log(line.rstrip("\r\n"))
-    return int(process.wait())
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            if log is not None:
+                log(line.rstrip("\r\n"))
+        return int(process.wait())
+    finally:
+        if process.poll() is None:
+            terminated = terminate_process_tree(process.pid)
+            if not terminated:
+                process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 _WINDOWS_DEVICE_SUFFIXES = tuple(str(index) for index in range(1, 10)) + (
@@ -284,14 +301,20 @@ def _final_html_filename(article: str) -> str:
     return filename
 
 
-def _require_owned_final_html_tree(path: Path) -> None:
+def _require_owned_final_html_tree(
+    path: Path,
+    *,
+    expected_target_dir: Path | None = None,
+    allow_unsealed_legacy: bool = False,
+) -> None:
     if not path.exists() and not path_is_link_like(path):
         return
     if path_is_link_like(path) or not path.is_dir():
         raise RuntimeError(
             f"Final HTML target is not an owned regular directory: {path}"
         )
-    for entry in path.iterdir():
+    entries = list(path.iterdir())
+    for entry in entries:
         if (
             path_is_link_like(entry)
             or not entry.is_file()
@@ -301,6 +324,24 @@ def _require_owned_final_html_tree(path: Path) -> None:
             )
         ):
             raise RuntimeError(f"Final HTML target contains a foreign entry: {entry}")
+    if not entries or allow_unsealed_legacy:
+        return
+
+    payload = _load_final_html_manifest(path / FINAL_HTML_MANIFEST_NAME)
+    publication_id = payload.get("publication_id") if payload is not None else None
+    expected_target = expected_target_dir or path
+    if (
+        not isinstance(publication_id, str)
+        or len(publication_id) != 32
+        or any(character not in "0123456789abcdef" for character in publication_id)
+        or not _final_html_tree_matches_publication(
+            path, publication_id, expected_target_dir=expected_target
+        )
+    ):
+        raise RuntimeError(
+            "Final HTML target is nonempty but lacks a valid ownership manifest: "
+            f"{path}"
+        )
 
 
 def _require_exact_staging_tree(path: Path, expected_names: set[str]) -> None:
@@ -338,22 +379,60 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"nonfinite_json_constant:{value}")
 
 
-def _final_html_tree_matches_publication(path: Path, publication_id: str) -> bool:
+def _load_final_html_manifest(path: Path) -> dict[str, Any] | None:
     try:
-        manifest_path = path / FINAL_HTML_MANIFEST_NAME
-        manifest_stat = manifest_path.stat()
+        if path_is_link_like(path):
+            return None
+        before = path.stat(follow_symlinks=False)
         if (
-            path_is_link_like(manifest_path)
-            or not manifest_path.is_file()
-            or int(manifest_stat.st_nlink) != 1
-            or int(manifest_stat.st_size) > 16 * 1024 * 1024
+            not stat.S_ISREG(before.st_mode)
+            or int(before.st_nlink) != 1
+            or int(before.st_size) <= 0
+            or int(before.st_size) > _MAX_FINAL_HTML_MANIFEST_BYTES
         ):
-            return False
+            return None
+        with path.open("rb") as handle:
+            opened = os.fstat(handle.fileno())
+            data = handle.read(_MAX_FINAL_HTML_MANIFEST_BYTES + 1)
+            finished = os.fstat(handle.fileno())
+        after = path.stat(follow_symlinks=False)
+
+        def identity(value: os.stat_result) -> tuple[int, int, int, int]:
+            return (
+                int(value.st_dev),
+                int(value.st_ino),
+                int(value.st_size),
+                int(value.st_mtime_ns),
+            )
+
+        if (
+            len(data) > _MAX_FINAL_HTML_MANIFEST_BYTES
+            or identity(before) != identity(opened)
+            or identity(opened) != identity(finished)
+            or identity(finished) != identity(after)
+        ):
+            return None
         payload = json.loads(
-            manifest_path.read_text(encoding="utf-8"),
+            data.decode("utf-8"),
             object_pairs_hook=_json_object_without_duplicates,
             parse_constant=_reject_json_constant,
         )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _final_html_tree_matches_publication(
+    path: Path,
+    publication_id: str,
+    *,
+    expected_target_dir: Path | None = None,
+) -> bool:
+    try:
+        payload = _load_final_html_manifest(path / FINAL_HTML_MANIFEST_NAME)
+        if payload is None:
+            return False
+        target_dir = expected_target_dir or path
         expected_keys = {
             "schema_version",
             "publication_id",
@@ -362,7 +441,7 @@ def _final_html_tree_matches_publication(path: Path, publication_id: str) -> boo
             "article_count",
             "html_files",
         }
-        if not isinstance(payload, dict) or set(payload) != expected_keys:
+        if set(payload) != expected_keys:
             return False
         records = payload.get("html_files")
         article_count = payload.get("article_count")
@@ -371,7 +450,7 @@ def _final_html_tree_matches_publication(path: Path, publication_id: str) -> boo
             or payload["schema_version"] != 2
             or payload.get("publication_id") != publication_id
             or not isinstance(payload.get("quality_output_dir"), str)
-            or payload.get("final_html_dir") != str(path)
+            or payload.get("final_html_dir") != str(target_dir)
             or type(article_count) is not int
             or article_count < 0
             or not isinstance(records, list)
@@ -406,7 +485,7 @@ def _final_html_tree_matches_publication(path: Path, publication_id: str) -> boo
                 or not isinstance(source_path, str)
                 or not source_path
                 or not source_candidate.is_absolute()
-                or source_candidate.is_relative_to(path)
+                or source_candidate.is_relative_to(target_dir)
                 or not isinstance(final_path, str)
                 or type(byte_count) is not int
                 or byte_count <= 0
@@ -416,7 +495,8 @@ def _final_html_tree_matches_publication(path: Path, publication_id: str) -> boo
             ):
                 return False
             expected_path = path / _final_html_filename(article)
-            if Path(final_path) != expected_path:
+            expected_final_path = target_dir / _final_html_filename(article)
+            if Path(final_path) != expected_final_path:
                 return False
             fingerprint = fingerprint_file(
                 expected_path, reject_symlink=True, capture_edges=True
@@ -433,7 +513,7 @@ def _final_html_tree_matches_publication(path: Path, publication_id: str) -> boo
             expected_names.add(expected_path.name)
         _require_exact_staging_tree(path, expected_names)
         return True
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, RuntimeError):
+    except (OSError, ValueError, RuntimeError):
         return False
 
 
@@ -492,19 +572,29 @@ def _publish_final_html(
             "Final HTML sealed record coverage does not match the article set"
         )
 
-    _require_owned_final_html_tree(target_dir)
+    allow_unsealed_legacy = target_dir == quality_dir / FINAL_HTML_DIR_NAME
+
+    def validate_existing(path: Path) -> None:
+        _require_owned_final_html_tree(
+            path,
+            expected_target_dir=target_dir,
+            allow_unsealed_legacy=allow_unsealed_legacy,
+        )
+
+    validate_existing(target_dir)
     target_dir.parent.mkdir(parents=True, exist_ok=True)
     if _canonical_final_html_dir(target_dir) != target_dir:
         raise RuntimeError(
             f"Final HTML target changed while preparing publication: {target_dir}"
         )
-    _require_owned_final_html_tree(target_dir)
+
+    validate_existing(target_dir)
     expected_names = {artifact.final_path.name for artifact in artifacts} | {
         FINAL_HTML_MANIFEST_NAME
     }
     with CompleteDirectoryPublication(
         target_dir,
-        validate_existing=_require_owned_final_html_tree,
+        validate_existing=validate_existing,
         validate_staging=lambda path: _require_exact_staging_tree(path, expected_names),
         committed_tree_matches=_final_html_tree_matches_publication,
         is_cancelled=is_cancelled,

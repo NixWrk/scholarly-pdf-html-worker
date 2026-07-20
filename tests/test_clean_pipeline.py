@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import time
 import shutil
 import tomllib
 from pathlib import Path
@@ -1197,6 +1200,52 @@ def test_publish_final_html_rejects_foreign_target_entry_before_writing(
     assert foreign.read_text(encoding="utf-8") == "do not delete"
     assert not (final_dir / "article_a.html").exists()
 
+def test_publish_final_html_rejects_unowned_nonempty_external_target(
+    tmp_path: Path,
+) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>new</body></html>", encoding="utf-8")
+    external_dir = tmp_path / "operator-selected-html"
+    external_dir.mkdir()
+    foreign = external_dir / "important.html"
+    foreign.write_text("<html><body>keep</body></html>", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="valid ownership manifest"):
+        clean_pipeline_module._publish_final_html(
+            quality_dir=quality_dir,
+            target_dir=external_dir,
+            sources=(("article_a", source),),
+        )
+
+    assert foreign.read_text(encoding="utf-8") == "<html><body>keep</body></html>"
+    assert not (external_dir / "article_a.html").exists()
+
+
+def test_publish_final_html_republishes_owned_external_target(tmp_path: Path) -> None:
+    quality_dir = tmp_path / "quality"
+    source = quality_dir / "source.html"
+    source.parent.mkdir(parents=True)
+    source.write_text("<html><body>first</body></html>", encoding="utf-8")
+    external_dir = tmp_path / "published-html"
+
+    clean_pipeline_module._publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=external_dir,
+        sources=(("article_a", source),),
+    )
+    source.write_text("<html><body>second</body></html>", encoding="utf-8")
+    clean_pipeline_module._publish_final_html(
+        quality_dir=quality_dir,
+        target_dir=external_dir,
+        sources=(("article_a", source),),
+    )
+
+    assert (external_dir / "article_a.html").read_text(encoding="utf-8") == (
+        "<html><body>second</body></html>"
+    )
+
 
 
 def test_collect_final_html_rejects_target_containing_source(tmp_path: Path) -> None:
@@ -1771,3 +1820,43 @@ def test_clean_public_parser_fails_on_gate_by_default() -> None:
 
     assert default_args.fail_on_gate is True
     assert diagnostic_args.fail_on_gate is False
+
+
+def test_run_observe_command_stops_process_when_log_callback_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spawned: list[subprocess.Popen[str]] = []
+    real_popen = subprocess.Popen
+
+    def tracking_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    def failing_log(line: str) -> None:
+        if line == "trigger-cleanup":
+            raise OSError("injected observe log failure")
+
+    monkeypatch.setattr(
+        clean_pipeline_module.subprocess,
+        "Popen",
+        tracking_popen,
+    )
+
+    with pytest.raises(OSError, match="injected observe log failure"):
+        clean_pipeline_module.run_observe_command(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('trigger-cleanup', flush=True); time.sleep(30)",
+            ],
+            cwd=tmp_path,
+            log=failing_log,
+        )
+
+    assert len(spawned) == 1
+    deadline = time.monotonic() + 5
+    while spawned[0].poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert spawned[0].poll() is not None
