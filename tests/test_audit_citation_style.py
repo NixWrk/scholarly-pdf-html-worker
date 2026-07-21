@@ -60,7 +60,9 @@ def test_ref_match_inside_bracketed_numeric_citation_detects_linked_list() -> No
     assert anchor is not None
     assert plain_anchor is not None
 
-    assert ref_match_inside_bracketed_numeric_citation(raw, anchor.start(), anchor.end())
+    assert ref_match_inside_bracketed_numeric_citation(
+        raw, anchor.start(), anchor.end()
+    )
     assert not ref_match_inside_bracketed_numeric_citation(
         plain_raw,
         plain_anchor.start(),
@@ -69,7 +71,9 @@ def test_ref_match_inside_bracketed_numeric_citation_detects_linked_list() -> No
 
 
 def test_stat_ref_classifiers_accept_numeric_measurement_contexts() -> None:
-    comma_raw = 'The Cohen d = <a href="#ref-1">1</a>, <a href="#ref-2">2</a> in the analysis.'
+    comma_raw = (
+        'The Cohen d = <a href="#ref-1">1</a>, <a href="#ref-2">2</a> in the analysis.'
+    )
     comma_match = re.search(
         r"<a\b[^>]*href=\"#ref-1\"[^>]*>1</a>\s*,\s*<a\b[^>]*href=\"#ref-2\"[^>]*>2</a>",
         comma_raw,
@@ -95,12 +99,16 @@ def test_flattened_sup_filters_detect_figure_labels_and_doi_fragments() -> None:
 
 
 def test_linked_ref_near_non_citation_context_flags_unit_like_context() -> None:
-    block = _single_block('<p>Urine pH <a href="#ref-7" class="z2m-ref-link">7</a> was recorded.</p>')
+    block = _single_block(
+        '<p>Urine pH <a href="#ref-7" class="z2m-ref-link">7</a> was recorded.</p>'
+    )
 
     assert linked_ref_near_non_citation_context(block)
 
 
-def test_linked_ref_near_non_citation_context_ignores_sentence_final_superscript() -> None:
+def test_linked_ref_near_non_citation_context_ignores_sentence_final_superscript() -> (
+    None
+):
     block = _single_block(
         "<p>OAB should be investigated."
         '<sup><a href="#ref-10" class="z2m-ref-link">10</a></sup> '
@@ -122,12 +130,16 @@ def test_linked_ref_near_non_citation_context_ignores_truncated_phoneme_tail() -
 
 
 def test_linked_ref_near_non_citation_context_ignores_month_word_citation() -> None:
-    block = _single_block('<p>Symptoms improved at month <a href="#ref-13" class="z2m-ref-link">13</a>.</p>')
+    block = _single_block(
+        '<p>Symptoms improved at month <a href="#ref-13" class="z2m-ref-link">13</a>.</p>'
+    )
 
     assert not linked_ref_near_non_citation_context(block)
 
 
-def test_citation_style_consistency_defects_reports_numeric_ref_in_author_year_article() -> None:
+def test_citation_style_consistency_defects_reports_numeric_ref_in_author_year_article() -> (
+    None
+):
     html = (
         "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
         "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
@@ -142,7 +154,9 @@ def test_citation_style_consistency_defects_reports_numeric_ref_in_author_year_a
     assert defects[0].first_broken_stage == "02.en.polish.html"
 
 
-def test_citation_style_consistency_defects_reports_missing_author_year_ref_links() -> None:
+def test_citation_style_consistency_defects_reports_missing_author_year_ref_links() -> (
+    None
+):
     html = (
         "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
         "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
@@ -159,7 +173,74 @@ def test_citation_style_consistency_defects_reports_missing_author_year_ref_link
     assert defects[0].extra["ref_link_count"] == 0
 
 
-def test_citation_style_consistency_defects_ignores_parenthetical_numeric_dominant_article() -> None:
+def test_citation_style_consistency_defects_ignores_unlinked_parenthetical_numeric_article() -> (
+    None
+):
+    html = (
+        "<p>Between 1997 and 2007, Smith (1958), Jones (1965), Brown (1971), "
+        "White (1978), Green (1982), and Black (1991) described earlier work.</p>"
+        "<p>Current evidence follows the numbered sources (1), (2), (3), (4), (5), and (6).</p>"
+        + "".join(f'<p id="ref-{idx}">Reference {idx}.</p>' for idx in range(1, 7))
+    )
+
+    assert _citation_style_defects(html) == []
+
+
+def test_citation_style_consistency_defects_ignores_unlinked_bracket_numeric_article() -> (
+    None
+):
+    html = (
+        "<p>Smith (2020), Jones (2021), Brown (2022), White (2023), Green (2024), "
+        "and Black (2025) describe prior work.</p>"
+        "<p>Current evidence uses numbered sources [1], [2], [3], and [4].</p>"
+        + "".join(f'<p id="ref-{idx}">Reference {idx}.</p>' for idx in range(1, 5))
+    )
+
+    assert _citation_style_defects(html) == []
+
+
+def test_citation_style_consistency_defects_ignores_sparse_superscript_numeric_article() -> (
+    None
+):
+    html = (
+        "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
+        "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
+        "make the front matter look author-year.</p>"
+        "<p>Dedicated scanners existed in our institution5 and others.<sup>"
+        '<a href="#ref-6" class="z2m-ref-link">6</a></sup> In general, they worked.</p>'
+        "<h4>References</h4><ul>"
+        + "".join(
+            f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> Reference {idx}.</li>'
+            for idx in range(1, 7)
+        )
+        + "</ul>"
+    )
+
+    assert _citation_style_defects(html) == []
+
+
+def test_citation_style_consistency_defects_ignores_unlinked_flattened_numeric_article() -> (
+    None
+):
+    html = (
+        "<p>Smith et al. (2020), Jones and Brown (2021), Gupta &amp; Pruthi (2025), "
+        "Lund and Naheem (2023), Yeo-The &amp; Tang (2023), and Lehman and Stanley (2011) "
+        "make the front matter look author-year.</p>"
+        "<p>Dedicated scanners existed in our institution5 and others. 6 In general, they worked.</p>"
+        "<h4>References</h4><ul>"
+        + "".join(
+            f'<li id="ref-{idx}"><span class="z2m-ref-num">{idx}.</span> Reference {idx}.</li>'
+            for idx in range(1, 7)
+        )
+        + "</ul>"
+    )
+
+    assert _citation_style_defects(html) == []
+
+
+def test_citation_style_consistency_defects_ignores_parenthetical_numeric_dominant_article() -> (
+    None
+):
     numeric_citations = [
         f'<p>Numeric citation evidence <a href="#ref-{idx}" class="z2m-ref-link">({idx})</a>.</p>'
         for idx in range(1, 6)
@@ -192,3 +273,12 @@ def test_citation_style_consistency_defects_ignores_bracket_numeric_citations() 
     defects = _citation_style_defects(html)
 
     assert defects == []
+
+
+def test_linked_ref_near_non_citation_context_ignores_author_year_anchor() -> None:
+    block = _single_block(
+        '<p>The pH shifts described by (<a href="#ref-7" class="z2m-ref-link">'
+        "Cogan, 2008</a>) were reproduced.</p>"
+    )
+
+    assert not linked_ref_near_non_citation_context(block)

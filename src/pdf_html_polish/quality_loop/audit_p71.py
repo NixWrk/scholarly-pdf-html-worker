@@ -107,6 +107,8 @@ def known_ocr_token_is_false_positive(plain: str, match: re.Match[str]) -> bool:
         return re.search(r"\b(?:collodion|albumen|surface|coating|print)\b", context, re.IGNORECASE) is not None
     if token == "OceanofPDF.com":
         return True
+    if re.fullmatch(r"In\s+some\s+\[880\]\s+embodiments", token, re.IGNORECASE):
+        return True
     if token == "63 DPhotoWorks":
         context = plain[max(0, match.start() - 120) : min(len(plain), match.end() + 120)]
         return "DPhotoWorks website" in context or "3DPhotoWorks" in context

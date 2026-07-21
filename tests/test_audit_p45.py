@@ -72,3 +72,5 @@ def test_roman_word_split_defects_classifies_affiliation_label_telemetry() -> No
 def test_roman_word_split_defects_skips_reference_blocks_and_false_prefixes() -> None:
     assert _defects(_block("The surname Belyae v remains split."), is_reference=True) == []
     assert _defects(_block("Figure v shows the result.")) == []
+    assert _defects(_block("Panel i shows the result.")) == []
+    assert _defects(_block("Whenever v changes, the result is updated.")) == []

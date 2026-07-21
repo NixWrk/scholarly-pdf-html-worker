@@ -5,18 +5,28 @@ from collections.abc import Callable
 import re
 
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME
-from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, plain_text, snippet, strip_tags
+from pdf_html_polish.quality_loop.audit_blocks import (
+    Block,
+    Defect,
+    plain_text,
+    snippet,
+    strip_tags,
+)
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 from pdf_html_polish.quality_loop.audit_reference_identity import REFERENCES_HEADING_RE
 
 
-FIG_CAPTION_RE = re.compile(r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE)
+FIG_CAPTION_RE = re.compile(
+    r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+[A-Za-z]?\b", re.IGNORECASE
+)
 SUPPLEMENTARY_FIGURE_LABEL_RE = re.compile(
     r"^\s*(?:Supplementary|Supplemental|Suppl\.?)\s+"
     r"(?:Fig(?:ure)?\.?|Figure)\s+(?:S\s*)?\d{1,3}[A-Za-z]?\b",
     re.IGNORECASE,
 )
-TABLE_CAPTION_RE = re.compile(r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE)
+TABLE_CAPTION_RE = re.compile(
+    r"^\s*(?:TABLE|Table)\s+(?:[IVXLCM]+|\d+)\b", re.IGNORECASE
+)
 MULTIPANEL_FIG_REF_RE = re.compile(
     r"\bfigures?\s+\d+\s*\([A-Za-z]\)\s*,\s*\([A-Za-z]\)",
     re.IGNORECASE,
@@ -87,6 +97,18 @@ def has_terminal_source_visual_unavailable_warning(block: Block) -> bool:
     return TERMINAL_SOURCE_VISUAL_UNAVAILABLE_WARNING_RE.search(block.raw) is not None
 
 
+def has_image_backed_duplicate_figure(block: Block, blocks: list[Block]) -> bool:
+    block_id = block.id.lower()
+    if not block_id.startswith("fig-") or "--z2m-d" in block_id:
+        return False
+    duplicate_prefix = f"{block_id}--z2m-d"
+    return any(
+        candidate.has_figure_visual
+        and candidate.id.lower().startswith(duplicate_prefix)
+        for candidate in blocks
+    )
+
+
 def is_supplementary_figure_block(block: Block) -> bool:
     return (
         block.id.lower().startswith("fig-supplementary-")
@@ -97,7 +119,9 @@ def is_supplementary_figure_block(block: Block) -> bool:
 def looks_like_body_figure_reference_list(block: Block) -> bool:
     if (block.id or "").lower().startswith("fig-"):
         return False
-    if block.classes.intersection({"z2m-figure-caption", "z2m-figure-unit", "z2m-float-unit"}):
+    if block.classes.intersection(
+        {"z2m-figure-caption", "z2m-figure-unit", "z2m-float-unit"}
+    ):
         return False
     text = re.sub(r"\s+", " ", block.text).strip()
     if not BODY_FIGURE_REFERENCE_START_RE.match(text):
@@ -134,19 +158,29 @@ def looks_like_figure_prose_reference_text(text: str) -> bool:
     ):
         return True
     label_hits = re.findall(r"\b(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE)
-    if len(label_hits) >= 2 and re.search(r"\b\d{1,4}\s+(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE):
+    if len(label_hits) >= 2 and re.search(
+        r"\b\d{1,4}\s+(?:Figure|Fig\.?|FIGURE)\s+\d", text, re.IGNORECASE
+    ):
         return True
-    if re.fullmatch(r"\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z])?\s*\.?\s*", text, re.IGNORECASE):
+    if re.fullmatch(
+        r"\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[.\-\u2010-\u2014]\d+)*(?:[A-Za-z])?\s*\.?\s*",
+        text,
+        re.IGNORECASE,
+    ):
         return True
     return False
 
 
-def looks_like_figure_caption(block: Block, *, fig_caption_re: re.Pattern[str] = FIG_CAPTION_RE) -> bool:
+def looks_like_figure_caption(
+    block: Block, *, fig_caption_re: re.Pattern[str] = FIG_CAPTION_RE
+) -> bool:
     if block.id.startswith("fig-"):
         return True
     if fig_caption_re.match(block.text) is None:
         return False
-    if not (block.classes & {"z2m-figure-caption", "z2m-figure-target"}) and looks_like_figure_prose_reference_text(block.text):
+    if not (
+        block.classes & {"z2m-figure-caption", "z2m-figure-target"}
+    ) and looks_like_figure_prose_reference_text(block.text):
         return False
     if re.match(
         r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+\s*"
@@ -167,23 +201,30 @@ def looks_like_figure_caption(block: Block, *, fig_caption_re: re.Pattern[str] =
         re.IGNORECASE,
     ):
         return False
-    return re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?\s+"
-        r"(?:shows|showed|showcases|illustrates|presents|contains|plots|visualizes|visualises|"
-        r"displays|maps|describes|examines|suggests|validates|details|exemplifies|represents|reveals|highlights)\b",
-        block.text,
-        re.IGNORECASE,
-    ) is None and re.match(
-        r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?"
-        r"\s+(?:and|or|,|&)\s+[A-Za-z]\s+(?:shows?|depicts?|illustrates?|examines?|suggests?|validates?|details?|exemplif(?:y|ies))\b",
-        block.text,
-        re.IGNORECASE,
-    ) is None
+    return (
+        re.match(
+            r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?\s+"
+            r"(?:shows|showed|showcases|illustrates|presents|contains|plots|visualizes|visualises|"
+            r"displays|maps|describes|examines|suggests|validates|details|exemplifies|represents|reveals|highlights)\b",
+            block.text,
+            re.IGNORECASE,
+        )
+        is None
+        and re.match(
+            r"^\s*(?:Figure|Fig\.?|FIGURE)\s+\d+(?:[A-Za-z]|\s*\([A-Za-z]\)|\s+[A-Za-z](?=\s))?"
+            r"\s+(?:and|or|,|&)\s+[A-Za-z]\s+(?:shows?|depicts?|illustrates?|examines?|suggests?|validates?|details?|exemplif(?:y|ies))\b",
+            block.text,
+            re.IGNORECASE,
+        )
+        is None
+    )
 
 
 def figure_caption_number_from_caption_node(raw_body: str) -> int | None:
     text = strip_tags(raw_body)
-    match = re.match(r"\s*(?:Fig\.?|Figure|FIGURE)\s+(\d+)\b(?P<tail>[\s\S]*)$", text, re.IGNORECASE)
+    match = re.match(
+        r"\s*(?:Fig\.?|Figure|FIGURE)\s+(\d+)\b(?P<tail>[\s\S]*)$", text, re.IGNORECASE
+    )
     if match is None:
         return None
     tail = match.group("tail").lstrip()
@@ -237,7 +278,9 @@ def figure_unit_allows_shared_image_alias(
     caption_nums = {
         number
         for caption_match in figure_caption_node_re.finditer(body)
-        for number in figure_caption_numbers_from_caption_node(caption_match.group("body"))
+        for number in figure_caption_numbers_from_caption_node(
+            caption_match.group("body")
+        )
     }
     expected = set(unrelated)
     if not expected.issubset(float_alias_nums) or not expected.issubset(caption_nums):
@@ -245,13 +288,18 @@ def figure_unit_allows_shared_image_alias(
     all_caption_nums = sorted(caption_nums | {wrapper_num})
     if image_count > len(all_caption_nums):
         return False
-    return all_caption_nums == list(range(min(all_caption_nums), max(all_caption_nums) + 1))
+    return all_caption_nums == list(
+        range(min(all_caption_nums), max(all_caption_nums) + 1)
+    )
 
 
 def looks_like_float_or_caption(block: Block) -> bool:
     return (
         block.has_figure_visual
-        or bool(block.classes & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"})
+        or bool(
+            block.classes
+            & {"z2m-float-unit", "z2m-figure-unit", "z2m-table-unit", "z2m-box-unit"}
+        )
         or block.tag in {"table", "figure", "figcaption"}
         or looks_like_figure_caption(block)
         or TABLE_CAPTION_RE.match(block.text) is not None
@@ -306,7 +354,9 @@ def figure_caption_ux_defects(
                 check="BioRender caption URL split into standalone heading",
                 severity="warning",
                 block=None,
-                snippet=snippet(plain_text(polish_html), split_match.start(), split_match.end()),
+                snippet=snippet(
+                    plain_text(polish_html), split_match.start(), split_match.end()
+                ),
                 stage=polish_stage,
                 hypothesis="Marker split a figure caption credit/URL into a heading-like fragment.",
                 proposed_fix_layer="EN polish caption-fragment merger",
@@ -315,7 +365,9 @@ def figure_caption_ux_defects(
         )
 
     for block in polish_blocks:
-        is_caption = bool(looks_like_figure_caption(block) or table_caption_re.match(block.text))
+        is_caption = bool(
+            looks_like_figure_caption(block) or table_caption_re.match(block.text)
+        )
         caption_raw = caption_raw_for_tex_residue(block) if is_caption else ""
         if caption_raw and CAPTION_TEX_RESIDUE_RE.search(caption_raw):
             defects.append(
@@ -335,7 +387,10 @@ def figure_caption_ux_defects(
             break
 
     for index, block in enumerate(polish_blocks[:-1]):
-        if "z2m-figure-caption" not in block.classes or "biorender" not in block.text.lower():
+        if (
+            "z2m-figure-caption" not in block.classes
+            or "biorender" not in block.text.lower()
+        ):
             continue
         next_block = polish_blocks[index + 1]
         if (
@@ -361,7 +416,9 @@ def figure_caption_ux_defects(
 
     figure_id_counts = Counter(
         match.group("id")
-        for match in re.finditer(r'\bid\s*=\s*(["\'])(?P<id>fig-[^"\']+)\1', polish_html, re.IGNORECASE)
+        for match in re.finditer(
+            r'\bid\s*=\s*(["\'])(?P<id>fig-[^"\']+)\1', polish_html, re.IGNORECASE
+        )
     )
 
     for block in polish_blocks:
@@ -374,6 +431,7 @@ def figure_caption_ux_defects(
             and not is_supplementary_figure_block(block)
             and not is_handled_missing_figure_block(block)
             and not has_terminal_source_visual_unavailable_warning(block)
+            and not has_image_backed_duplicate_figure(block, polish_blocks)
             and figure_id_counts.get(block.id, 0) <= 1
             and not has_nearby_image(polish_blocks, block.index)
             and not has_nearby_missing_figure_warning(polish_blocks, block.index)
@@ -428,7 +486,9 @@ def figure_caption_ux_defects(
             continue
         if has_nearby_missing_figure_warning(polish_blocks, block.index):
             continue
-        if re.search(rf"href\s*=\s*['\"]#{re.escape(block.id)}['\"]", polish_html, re.IGNORECASE):
+        if re.search(
+            rf"href\s*=\s*['\"]#{re.escape(block.id)}['\"]", polish_html, re.IGNORECASE
+        ):
             defects.append(
                 make_defect(
                     defect_id="P14",
@@ -445,7 +505,9 @@ def figure_caption_ux_defects(
             )
             break
 
-    if has_internal_links and (":target" not in polish_html or "scroll-margin" not in polish_html):
+    if has_internal_links and (
+        ":target" not in polish_html or "scroll-margin" not in polish_html
+    ):
         defects.append(
             make_defect(
                 defect_id="P15",
@@ -480,10 +542,16 @@ def figure_caption_ux_defects(
             break
 
     for index, block in enumerate(polish_blocks[:-2]):
-        if block.tag != "p" or looks_like_figure_caption(block) or references_heading_re.match(block.text):
+        if (
+            block.tag != "p"
+            or looks_like_figure_caption(block)
+            or references_heading_re.match(block.text)
+        ):
             continue
         left = block.text.strip()
-        if not re.search(r"\b(?:and|or|but|with|of|the|sensor's)\s*$", left, re.IGNORECASE):
+        if not re.search(
+            r"\b(?:and|or|but|with|of|the|sensor's)\s*$", left, re.IGNORECASE
+        ):
             continue
         saw_float = False
         for candidate in polish_blocks[index + 1 : min(len(polish_blocks), index + 12)]:
@@ -544,7 +612,11 @@ def figure_caption_ux_defects(
                 check="Figure-caption prose intrusion remains after backslash cleanup",
                 severity="warning",
                 block=None,
-                snippet=snippet(plain_text(polish_html), caption_intrusion.start(), caption_intrusion.end()),
+                snippet=snippet(
+                    plain_text(polish_html),
+                    caption_intrusion.start(),
+                    caption_intrusion.end(),
+                ),
                 stage=polish_stage,
                 hypothesis="A caption/body split was cleaned syntactically but not reassembled semantically.",
                 proposed_fix_layer="EN polish caption-intrusion recovery",

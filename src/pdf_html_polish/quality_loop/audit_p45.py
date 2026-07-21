@@ -22,10 +22,12 @@ ROMAN_WORD_SPLIT_FALSE_PREFIXES = {
     "mimics",
     "node",
     "numbered",
+    "panel",
     "reference",
     "section",
     "table",
     "type",
+    "whenever",
     "where",
 }
 

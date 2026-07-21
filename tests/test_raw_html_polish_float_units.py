@@ -13,28 +13,44 @@ from pdf_html_polish.raw_html_polish.float_units import (
 )
 
 
-def test_caption_tail_opens_caption_distinguishes_caption_from_prose_reference() -> None:
+def test_caption_tail_opens_caption_distinguishes_caption_from_prose_reference() -> (
+    None
+):
     assert caption_tail_opens_caption(". Cortical response after stimulation")
     assert not caption_tail_opens_caption(" shows cortical response")
 
 
-def test_figure_caption_num_from_visible_handles_regular_compound_and_supplementary() -> None:
+def test_figure_caption_num_from_visible_handles_regular_compound_and_supplementary() -> (
+    None
+):
     assert figure_caption_num_from_visible("Fig. 3. Cortical response") == "3"
     assert figure_caption_num_from_visible("Figure 3.2. Compound caption") == "3-2"
-    assert figure_caption_num_from_visible("Supplementary Fig. S2. Extra data") == "supplementary-s2"
+    assert (
+        figure_caption_num_from_visible("Supplementary Fig. S2. Extra data")
+        == "supplementary-s2"
+    )
     assert figure_caption_num_from_visible("Fig. 3 shows cortical response") is None
 
 
 def test_table_caption_key_extractors() -> None:
     assert table_caption_key_from_visible("Table 1. Baseline characteristics") == "1"
     assert table_caption_key_from_visible("TABLE II: Outcomes") == "ii"
-    assert embedded_table_caption_key_from_visible("Results are summarized in Table A1: details") == "a1"
+    assert (
+        embedded_table_caption_key_from_visible(
+            "Results are summarized in Table A1: details"
+        )
+        == "a1"
+    )
 
 
 def test_table_note_detection_helpers() -> None:
     assert raw_has_class('<p class="foo z2m-table-note">Note</p>', "z2m-table-note")
     assert looks_table_note_text("Abbreviations: BMI, body mass index")
-    assert is_table_note_node('<p><sup>a</sup>Values represent mean SD.</p>')
+    assert looks_table_note_text("CI: confidence interval")
+    assert not looks_table_note_text(
+        "Each benchmark has a confidence interval shown in S1: details."
+    )
+    assert is_table_note_node("<p><sup>a</sup>Values represent mean SD.</p>")
     assert is_table_note_node('<p class="z2m-table-note">Any short note</p>')
 
 
@@ -46,6 +62,18 @@ def test_caption_node_predicates() -> None:
 
 
 def test_single_file_html_keeps_legacy_private_float_aliases() -> None:
-    assert single_file_html._figure_caption_num_from_visible is figure_caption_num_from_visible
-    assert single_file_html._table_caption_key_from_visible is table_caption_key_from_visible
+    assert (
+        single_file_html._figure_caption_num_from_visible
+        is figure_caption_num_from_visible
+    )
+    assert (
+        single_file_html._table_caption_key_from_visible
+        is table_caption_key_from_visible
+    )
     assert single_file_html._is_caption_node is is_caption_node
+
+
+def test_table_note_detection_ignores_abstract_result_sentence() -> None:
+    assert not looks_table_note_text(
+        "Results: Self-care behavior score improved significantly after discharge."
+    )

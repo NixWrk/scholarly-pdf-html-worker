@@ -1399,15 +1399,26 @@ def meine_recent_link_structure_defects(
             make_defect(
                 defect_id="P53",
                 cc_class="CC-00/CC-14",
-                check="Likely non-English source reached the English polish audit",
-                severity="error",
+                check="Non-English source observed by the English corpus audit",
+                severity="warning",
                 block=None,
                 snippet=snippet(plain, 0, min(len(plain), 600)),
                 stage=raw_stage,
-                hypothesis="Source-language gating did not exclude a German document before the English marker/polish profile.",
-                proposed_fix_layer="Pre-marker source-language detection and run routing",
-                regression_test="German sources are tagged as source_language=de before marker and are not sent through the EN polish profile.",
-                extra={"german_hint_count": len(german_hits), "german_hints": sorted(german_keys)[:12]},
+                hypothesis=(
+                    "The corpus contains a German source; auto language routing selects "
+                    "the neutral 'other' polish policy before downstream RU translation."
+                ),
+                proposed_fix_layer="Language-aware polish routing audit",
+                regression_test=(
+                    "German sources remain observable as routing metadata without "
+                    "counting as output-quality defects."
+                ),
+                extra={
+                    "quality_counted": False,
+                    "routing_observation": True,
+                    "german_hint_count": len(german_hits),
+                    "german_hints": sorted(german_keys)[:12],
+                },
             )
         )
 

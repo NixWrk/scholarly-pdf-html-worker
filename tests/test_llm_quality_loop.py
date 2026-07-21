@@ -69,6 +69,153 @@ def _valid_tiny_png_data_url() -> str:
     return f"data:image/png;base64,{_VALID_TINY_PNG_B64}"
 
 
+def test_converted_raw_profile_uses_numeric_superscripts_and_numbered_bibliography() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    body = "".join(
+        f"<p>{name} et al., 2020 described the result.<sup>{index}</sup></p>"
+        for index, name in enumerate(names, start=1)
+    )
+    references = "".join(
+        f"<li>{index}. Reference author {index}. Journal 2020.</li>"
+        for index in range(1, 9)
+    )
+    html = f"<html><body>{body}<h2>References</h2><ol>{references}</ol></body></html>"
+
+    profile = converted_runs_module._converted_raw_citation_profile(html, Path("paper.html"))
+
+    assert profile["style"] == "superscript_numeric"
+    assert profile["confidence"] == "high"
+    assert profile["numeric_superscript_hint_count"] == 8
+    assert profile["numbered_reference_hint_count"] == 8
+
+
+def test_converted_raw_profile_uses_escaped_marker_superscripts() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    body = "".join(
+        (
+            f"<p>{name} et al., 2020 described the result."
+            f"&lt;sup&gt;{index}&lt;/sup&gt;</p>"
+        )
+        for index, name in enumerate(names, start=1)
+    )
+    references = "".join(
+        f"<li>{index}. Reference author {index}. Journal 2020.</li>"
+        for index in range(1, 9)
+    )
+    html = f"<html><body>{body}<h2>References</h2><ol>{references}</ol></body></html>"
+
+    profile = converted_runs_module._converted_raw_citation_profile(html, Path("paper.html"))
+
+    assert profile["style"] == "superscript_numeric"
+    assert profile["confidence"] == "high"
+    assert profile["numeric_superscript_hint_count"] == 8
+
+
+def test_converted_raw_profile_uses_flattened_superscript_evidence() -> None:
+    body = "".join(
+        (
+            f"<p>The observation was replicated.{index} "
+            "Additional analysis followed.</p>"
+        )
+        for index in range(1, 9)
+    )
+    references = "".join(
+        f"<li>{index}. Reference author {index}. Journal 2020.</li>"
+        for index in range(1, 9)
+    )
+    html = f"<html><body>{body}<h2>References</h2><ol>{references}</ol></body></html>"
+
+    profile = converted_runs_module._converted_raw_citation_profile(
+        html, Path("paper.html")
+    )
+
+    assert profile["style"] == "superscript_numeric"
+    assert profile["confidence"] == "high"
+    assert profile["numeric_superscript_hint_count"] == 0
+    assert profile["flattened_numeric_citation_hint_count"] == 8
+
+
+def test_converted_raw_profile_keeps_author_year_with_numbered_bibliography() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    body = "".join(
+        f"<p>{name} et al., 2020 described the result.</p>"
+        for name in names
+    )
+    references = "".join(
+        f"<li>{index}. {name}. Study title. Journal 2020.</li>"
+        for index, name in enumerate(names, start=1)
+    )
+    html = f"<html><body>{body}<h2>References</h2><ol>{references}</ol></body></html>"
+
+    profile = converted_runs_module._converted_raw_citation_profile(html, Path("paper.html"))
+
+    assert profile["style"] == "author_year"
+    assert profile["confidence"] == "medium"
+    assert profile["numbered_reference_hint_count"] == 8
+
+
+def test_converted_raw_profile_excludes_unheaded_numbered_bibliography() -> None:
+    body = "".join(
+        f"<p>Observation {index} supports the visual prosthesis result.</p>"
+        for index in range(1, 20)
+    )
+    references = "".join(
+        f"<li>{index}. Smith, J. ({2000 + index}). Study title. Journal.</li>"
+        for index in range(1, 9)
+    )
+    html = (
+        f"<html><body>{body}<h3>Acknowledgments</h3><p>Thanks.</p>"
+        f"<ol>{references}</ol></body></html>"
+    )
+
+    profile = converted_runs_module._converted_raw_citation_profile(
+        html, Path("paper.html")
+    )
+
+    assert profile["style"] == "unknown"
+    assert profile["confidence"] == "low"
+    assert profile["body_only_inferred_style"] == "unknown"
+    assert profile["numbered_reference_hint_count"] == 8
+
+
+def test_converted_raw_profile_does_not_call_numeric_page_anchors_author_year() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    body = "".join(
+        f'<p>{name} et al., 2020 described the result.<a href="#page-{index}">{index}</a></p>'
+        for index, name in enumerate(names, start=1)
+    )
+    references = "".join(
+        f"<li>{index}. Reference author {index}. Journal 2020.</li>"
+        for index in range(1, 9)
+    )
+    html = f"<html><body>{body}<h2>References</h2><ol>{references}</ol></body></html>"
+
+    profile = converted_runs_module._converted_raw_citation_profile(html, Path("paper.html"))
+
+    assert profile["style"] == "unknown"
+    assert profile["numeric_page_anchor_hint_count"] == 8
+    assert profile["numbered_reference_hint_count"] == 8
+
+
+def test_converted_raw_profile_keeps_true_unnumbered_author_year_style() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    body = "".join(
+        f"<p>{name} et al., 2020 described the result.</p>"
+        for name in names
+    )
+    references = "".join(
+        f"<li>{name}. Study title. Journal 2020.</li>"
+        for name in names
+    )
+    html = f"<html><body>{body}<h2>References</h2><ul>{references}</ul></body></html>"
+
+    profile = converted_runs_module._converted_raw_citation_profile(html, Path("paper.html"))
+
+    assert profile["style"] == "author_year"
+    assert profile["confidence"] == "medium"
+    assert profile["numbered_reference_hint_count"] == 0
+
+
 def _commit_current_converted_raw(
     stage_dir: Path,
     *,
@@ -4883,7 +5030,7 @@ def test_prepare_converted_raw_cache_infers_citation_style_from_raw_html(tmp_pat
     assert article["citation_style"] == "unknown"
     assert article["citation_confidence"] == "low"
     assert profile["source"] == "converted_raw_html"
-    assert profile["source_policy"] == "use_high_confidence_or_medium_author_year_inferred_style"
+    assert profile["source_policy"] == "use_high_confidence_or_evidence_backed_medium_inferred_style"
     assert profile["inferred_style"] == "bracket_numeric"
     assert profile["inferred_confidence"] == "medium"
     assert profile["bracket_numeric_count"] == 7

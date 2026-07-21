@@ -5,6 +5,7 @@ from pdf_html_polish.raw_html_polish.url_anchors import (
     merge_adjacent_same_href_url_anchors,
     merge_post_autolink_split_url_anchors,
     merge_split_same_href_doi_anchors,
+    merge_same_href_reference_anchor_runs,
     normalize_double_escaped_url_anchor_text,
     normalize_mailto_address,
     normalize_same_href_text_anchor_label,
@@ -299,3 +300,49 @@ def test_merge_post_autolink_split_url_anchors_rejects_mismatched_continuation()
     )
 
     assert merge_post_autolink_split_url_anchors(html) == html
+
+
+def test_merge_split_same_href_doi_anchors_merges_adjacent_doi_chunks() -> None:
+    href = "https://doi.org/10.3109/00016488009131742"
+    html = (
+        f'<p>doi: <a href="{href}"> 10.3109/ </a> '
+        f'<a href="{href}"> 00016488009131742 </a></p>'
+    )
+
+    repaired = merge_split_same_href_doi_anchors(html)
+
+    assert repaired == f'<p>doi: <a href="{href}">10.3109/00016488009131742</a></p>'
+
+
+def test_merge_split_same_href_doi_anchors_normalizes_bare_doi_href() -> None:
+    href = "10.1177/0264619618814071"
+    html = (
+        f'<p>DOI: <a href="{href}">10.1177/</a> '
+        f'<a href="{href}">0264619618814071</a></p>'
+    )
+
+    repaired = merge_split_same_href_doi_anchors(html)
+
+    assert repaired == (
+        '<p>DOI: <a href="https://doi.org/10.1177/0264619618814071">'
+        "10.1177/0264619618814071</a></p>"
+    )
+
+
+def test_merge_same_href_reference_anchor_runs_joins_refhub_text_gaps() -> None:
+    href = "http://refhub.elsevier.com/S0968-0160(16)30017-5/rf0060"
+    html = (
+        '<li id="ref-12">'
+        f'<a href="{href}">The accu </a> racy of bone tunnel position using fl '
+        f'<a href="{href}"> uoroscopic-based navigation system in anterior </a> '
+        f'<a href="{href}">cruciate ligament reconstruction.</a>'
+        "</li>"
+    )
+
+    repaired = merge_same_href_reference_anchor_runs(html)
+
+    assert repaired.count(f'href="{href}"') == 2
+    assert "accuracy of bone tunnel position using fluoroscopic-based" in repaired
+    assert "accu racy" not in repaired
+    assert repaired.startswith('<li id="ref-12"><a ')
+    assert repaired.endswith("</a></li>")

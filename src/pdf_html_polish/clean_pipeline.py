@@ -185,6 +185,9 @@ def build_observe_command(
         str(quality_output_dir),
         "--run-id",
         run_id,
+        "--polish-language",
+        "auto",
+        "--include-non-target-language",
     ]
     for flag, value in (
         ("--jobs", jobs),

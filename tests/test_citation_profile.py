@@ -21,7 +21,7 @@ from pdf_html_polish.single_file_html import polish_html_document
 
 def _refs(count: int) -> str:
     items = "".join(f"<li>{idx}. Reference {idx}.</li>" for idx in range(1, count + 1))
-    return f"<h1>REFERENCES</h1><p block-type=\"ListGroup\"><ul>{items}</ul></p>"
+    return f'<h1>REFERENCES</h1><p block-type="ListGroup"><ul>{items}</ul></p>'
 
 
 def test_require_zotero_overlay_evidence_rejects_unavailable_profile() -> None:
@@ -32,7 +32,9 @@ def test_require_zotero_overlay_evidence_rejects_unavailable_profile() -> None:
         zotero_overlay_error="probe missing",
     )
 
-    with pytest.raises(RuntimeError, match="Zotero/pdf.js overlay evidence is required"):
+    with pytest.raises(
+        RuntimeError, match="Zotero/pdf.js overlay evidence is required"
+    ):
         require_zotero_overlay_evidence(profile)
 
 
@@ -95,18 +97,51 @@ def test_infer_citation_style_detects_author_year_pdf_reference_links() -> None:
     assert bracket_count == 0
 
 
+def test_numeric_reference_structure_suppresses_false_medium_author_year() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    text = " ".join(f"{name} et al., 2020 discussed the result." for name in names)
+
+    style, confidence, _, _ = infer_citation_style_from_text(
+        text,
+        numeric_structure_hint_count=40,
+        numbered_reference_hint_count=40,
+    )
+
+    assert style == "unknown"
+    assert confidence == "low"
+
+
+def test_explicit_author_year_evidence_wins_over_weaker_numeric_structure() -> None:
+    names = ("Smith", "Jones", "Brown", "Taylor", "Miller", "Wilson", "Moore", "Clark")
+    text = " ".join(f"{name} et al., 2020 discussed the result." for name in names)
+
+    style, confidence, _, _ = infer_citation_style_from_text(
+        text,
+        author_year_hint_count=20,
+        numeric_structure_hint_count=6,
+        numbered_reference_hint_count=6,
+    )
+
+    assert style == "author_year"
+    assert confidence == "high"
+
+
 def test_latex_cite_destinations_count_as_author_year_reference_evidence() -> None:
     annotations = [
         PdfLinkAnnotation(
             page=1,
-            kind="reference" if _is_reference_citation_dest("cite.smith2020baseline") else "internal",
+            kind="reference"
+            if _is_reference_citation_dest("cite.smith2020baseline")
+            else "internal",
             dest="cite.smith2020baseline",
             target="cite.smith2020baseline",
             text="Smith et al. (2020)",
         ),
         PdfLinkAnnotation(
             page=1,
-            kind="reference" if _is_reference_citation_dest("cite.jones2021extension") else "internal",
+            kind="reference"
+            if _is_reference_citation_dest("cite.jones2021extension")
+            else "internal",
             dest="cite.jones2021extension",
             target="cite.jones2021extension",
             text="Jones and Brown (2021)",
@@ -118,7 +153,9 @@ def test_latex_cite_destinations_count_as_author_year_reference_evidence() -> No
     assert _author_year_reference_hint_count(annotations) == 2
 
 
-def test_reference_entries_from_page_texts_extracts_spotnitz_style_bracket_refs() -> None:
+def test_reference_entries_from_page_texts_extracts_spotnitz_style_bracket_refs() -> (
+    None
+):
     entries = _reference_entries_from_page_texts(
         [
             (
@@ -159,7 +196,9 @@ def test_reference_entries_from_page_texts_extracts_spaced_reference_heading() -
     assert "American Journal" in entries[1].text
 
 
-def test_reference_entries_from_page_texts_extracts_tail_sequence_without_heading() -> None:
+def test_reference_entries_from_page_texts_extracts_tail_sequence_without_heading() -> (
+    None
+):
     entries = _reference_entries_from_page_texts(
         [
             (
@@ -168,7 +207,7 @@ def test_reference_entries_from_page_texts_extracts_tail_sequence_without_headin
                 "1 Brindley, G. S., and Lewin, W., J. Physiol., 1968.\n"
                 "2 Brindley, G. S., Handbook of Sensory Physiology, 1973.\n"
                 "3 Dobelle, W. H., Mladejovsky, M. G., and Girvin, J. P., Science, 1974.\n"
-                "4 Donaldson, P. E. K., IEE Proc., 1973.\n"
+                "4 Donaldson, P. E. K., IEE Proc., 1973.\n",
             )
         ]
     )
@@ -177,7 +216,9 @@ def test_reference_entries_from_page_texts_extracts_tail_sequence_without_headin
     assert "Dobelle" in entries[2].text
 
 
-def test_reference_entries_from_page_texts_extracts_zero_width_and_tight_number_refs() -> None:
+def test_reference_entries_from_page_texts_extracts_zero_width_and_tight_number_refs() -> (
+    None
+):
     entries = _reference_entries_from_page_texts(
         [
             (
@@ -199,7 +240,9 @@ def test_reference_entries_from_page_texts_extracts_zero_width_and_tight_number_
     assert "Laureys" in entries[3].text
 
 
-def test_reference_entries_from_page_texts_extracts_number_only_reference_markers() -> None:
+def test_reference_entries_from_page_texts_extracts_number_only_reference_markers() -> (
+    None
+):
     entries = _reference_entries_from_page_texts(
         [
             (
@@ -224,7 +267,9 @@ def test_reference_entries_from_page_texts_extracts_number_only_reference_marker
     assert 10 not in [entry.number for entry in entries]
 
 
-def test_reference_entries_from_page_texts_ignores_short_numbered_body_without_heading() -> None:
+def test_reference_entries_from_page_texts_ignores_short_numbered_body_without_heading() -> (
+    None
+):
     entries = _reference_entries_from_page_texts(
         [
             (
@@ -253,7 +298,11 @@ def test_load_zotero_overlay_citations_reads_probe_summary() -> None:
                                 "pageIndex": 0,
                                 "text": "3-5",
                                 "context": "pretreatment UDS.3-5Recently",
-                                "references": [{"index": 3}, {"index": 4}, {"index": 5}],
+                                "references": [
+                                    {"index": 3},
+                                    {"index": 4},
+                                    {"index": 5},
+                                ],
                             }
                         ]
                     }
@@ -314,7 +363,9 @@ def test_load_zotero_overlay_citations_rejects_boolean_and_nonpositive_ids() -> 
     assert citations[0].refs == [2]
 
 
-def test_parenthetical_numeric_profile_retargers_page_anchor_citations_without_sup_false_positive() -> None:
+def test_parenthetical_numeric_profile_retargers_page_anchor_citations_without_sup_false_positive() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>Sentinel lymph node biopsy provides accurate staging "
@@ -342,12 +393,14 @@ def test_parenthetical_numeric_profile_retargers_page_anchor_citations_without_s
     assert 'href="#ref-13"' in polished
     assert 'href="#ref-16"' in polished
     assert 'href="#ref-38"' not in polished
-    assert "<sup>2,38</sup>" in polished
+    assert 'data-z2m-tex="\\(5.22 \\pm 2.38, p = 0.075\\)"' in polished
     assert "staging (" in polished
     assert ") can be avoided" in polished
 
 
-def test_parenthetical_numeric_profile_links_plain_text_citations_but_not_percentages_or_years() -> None:
+def test_parenthetical_numeric_profile_links_plain_text_citations_but_not_percentages_or_years() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>Ignored either (8). The total was 35 (19.2%) patients, "
@@ -372,7 +425,9 @@ def test_parenthetical_numeric_profile_links_plain_text_citations_but_not_percen
     assert "(2022)" in polished
 
 
-def test_parenthetical_numeric_profile_keeps_low_number_citation_near_data_word() -> None:
+def test_parenthetical_numeric_profile_keeps_low_number_citation_near_data_word() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>Exploration should be carried out only after opening the axillary fascia; "
@@ -452,7 +507,6 @@ def test_strong_parenthetical_numeric_html_recovers_without_pdf_profile() -> Non
         assert f'href="#ref-{number}"' in polished
 
 
-
 def test_parenthetical_numeric_profile_uses_annotation_budget_when_available() -> None:
     html = (
         "<html><body>"
@@ -469,16 +523,24 @@ def test_parenthetical_numeric_profile_uses_annotation_budget_when_available() -
             "confidence": "high",
             "ref_dest_prefix": "B",
             "annotations": [
-                {"page": 2, "kind": "reference", "dest": "B8", "target": "8", "text": "(8)."}
+                {
+                    "page": 2,
+                    "kind": "reference",
+                    "dest": "B8",
+                    "target": "8",
+                    "text": "(8).",
+                }
             ],
         },
     )
 
     assert polished.count('href="#ref-8"') == 1
-    assert 'number (8).' in polished
+    assert "number (8)." in polished
 
 
-def test_pdf_annotation_profile_links_author_year_label_without_linking_bare_years() -> None:
+def test_pdf_annotation_profile_links_author_year_label_without_linking_bare_years() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>Prior work (Smith et al., 2020) found the same pattern. "
@@ -510,7 +572,9 @@ def test_pdf_annotation_profile_links_author_year_label_without_linking_bare_yea
     assert "from 2019 to 2020" in polished
 
 
-def test_pdf_annotation_profile_retargets_author_year_page_anchor_once_per_annotation() -> None:
+def test_pdf_annotation_profile_retargets_author_year_page_anchor_once_per_annotation() -> (
+    None
+):
     html = (
         "<html><body>"
         '<p><a href="#page-2-0">Smith et al., 2020</a> reported this. '
@@ -538,7 +602,10 @@ def test_pdf_annotation_profile_retargets_author_year_page_anchor_once_per_annot
         },
     )
 
-    assert '<a href="#ref-7" class="z2m-ref-link">Smith et al., 2020</a> reported this' in polished
+    assert (
+        '<a href="#ref-7" class="z2m-ref-link">Smith et al., 2020</a> reported this'
+        in polished
+    )
     assert polished.count('href="#ref-7"') == 1
     assert "mentioned again as plain prose" in polished
 
@@ -608,8 +675,14 @@ def test_superscript_numeric_profile_wraps_annotation_backed_ref_runs_only() -> 
         },
     )
 
-    assert '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a></sup>' in polished
-    assert '<sup><a href="#ref-4" class="z2m-ref-link">4</a>,<a href="#ref-5" class="z2m-ref-link">5</a></sup>' in polished
+    assert (
+        '<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a></sup>'
+        in polished
+    )
+    assert (
+        '<sup><a href="#ref-4" class="z2m-ref-link">4</a>,<a href="#ref-5" class="z2m-ref-link">5</a></sup>'
+        in polished
+    )
     assert "</sup> and fluorescent" in polished
     assert "phantom 1 and 2" in polished
 
@@ -635,11 +708,16 @@ def test_superscript_numeric_profile_links_annotation_backed_tex_sup_range() -> 
         },
     )
 
-    assert '<sup><a href="#ref-12" class="z2m-ref-link">12</a>-<a href="#ref-14" class="z2m-ref-link">14</a></sup>' in polished
+    assert (
+        '<sup><a href="#ref-12" class="z2m-ref-link">12</a>-<a href="#ref-14" class="z2m-ref-link">14</a></sup>'
+        in polished
+    )
     assert r"\(2^{16}\)" in polished
 
 
-def test_flattened_superscript_numeric_document_links_groups_without_line_numbers_or_exponents() -> None:
+def test_flattened_superscript_numeric_document_links_groups_without_line_numbers_or_exponents() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>High tissue penetration. 1,2,3,4 However, dyes remain challenging. "
@@ -661,16 +739,27 @@ def test_flattened_superscript_numeric_document_links_groups_without_line_number
         table_caption_language="en",
     )
 
-    assert 'penetration.<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a>,<a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-4" class="z2m-ref-link">4</a></sup> However' in polished
-    assert 'dyes.<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a>,<a href="#ref-16" class="z2m-ref-link">16</a>,<a href="#ref-17" class="z2m-ref-link">17</a></sup> FRET' in polished
-    assert 'three dyes.<sup><a href="#ref-20" class="z2m-ref-link">20</a>,<a href="#ref-21" class="z2m-ref-link">21</a></sup>' in polished
+    assert (
+        'penetration.<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a>,<a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-4" class="z2m-ref-link">4</a></sup> However'
+        in polished
+    )
+    assert (
+        'dyes.<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a>,<a href="#ref-16" class="z2m-ref-link">16</a>,<a href="#ref-17" class="z2m-ref-link">17</a></sup> FRET'
+        in polished
+    )
+    assert (
+        'three dyes.<sup><a href="#ref-20" class="z2m-ref-link">20</a>,<a href="#ref-21" class="z2m-ref-link">21</a></sup>'
+        in polished
+    )
     assert "cell 20 and" in polished
     assert "QDs 30 and" in polished
     assert '10<sup class="z2m-unit-exp">-17</sup>' in polished
     assert 'nm<sup class="z2m-unit-exp">4</sup>' in polished
 
 
-def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_only() -> None:
+def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_only() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>The x2 test and \u03c72 independence test were used before the clinical text. "
@@ -692,8 +781,18 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
             "style": "unknown",
             "confidence": "low",
             "zotero_citations": [
-                {"page": 2, "text": "2", "refs": [2], "context": "parity and x2test was used"},
-                {"page": 3, "text": "2", "refs": [2], "context": "\u03c72independence test showed"},
+                {
+                    "page": 2,
+                    "text": "2",
+                    "refs": [2],
+                    "context": "parity and x2test was used",
+                },
+                {
+                    "page": 3,
+                    "text": "2",
+                    "refs": [2],
+                    "context": "\u03c72independence test showed",
+                },
                 {
                     "page": 1,
                     "text": "2",
@@ -744,13 +843,33 @@ def test_zotero_overlay_profile_links_confirmed_flattened_superscript_citations_
     assert "\u03c7<sup>2</sup> independence test" in polished
     assert 'x<sup><a href="#ref-2"' not in polished
     assert '\u03c7<sup><a href="#ref-2"' not in polished
-    assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
-    assert 'UDS.<sup><a href="#ref-3" class="z2m-ref-link">3</a>-<a href="#ref-5" class="z2m-ref-link">5</a></sup> Recently' in polished
-    assert 'protein.<sup><a href="#ref-6" class="z2m-ref-link">6</a>-<a href="#ref-10" class="z2m-ref-link">10</a></sup> Genetic' in polished
-    assert 'al.<sup><a href="#ref-12" class="z2m-ref-link">12</a></sup> created' in polished
-    assert 'residual).<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a></sup> Digesu' in polished
-    assert 'parameter.<sup><a href="#ref-19" class="z2m-ref-link">19</a></sup> The' in polished
-    assert 'PVR).<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> In' in polished
+    assert (
+        'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published'
+        in polished
+    )
+    assert (
+        'UDS.<sup><a href="#ref-3" class="z2m-ref-link">3</a>-<a href="#ref-5" class="z2m-ref-link">5</a></sup> Recently'
+        in polished
+    )
+    assert (
+        'protein.<sup><a href="#ref-6" class="z2m-ref-link">6</a>-<a href="#ref-10" class="z2m-ref-link">10</a></sup> Genetic'
+        in polished
+    )
+    assert (
+        'al.<sup><a href="#ref-12" class="z2m-ref-link">12</a></sup> created'
+        in polished
+    )
+    assert (
+        'residual).<sup><a href="#ref-14" class="z2m-ref-link">14</a>,<a href="#ref-15" class="z2m-ref-link">15</a></sup> Digesu'
+        in polished
+    )
+    assert (
+        'parameter.<sup><a href="#ref-19" class="z2m-ref-link">19</a></sup> The'
+        in polished
+    )
+    assert (
+        'PVR).<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> In' in polished
+    )
 
 
 def test_superscript_numeric_profile_links_comma_before_range_citation() -> None:
@@ -773,7 +892,9 @@ def test_superscript_numeric_profile_links_comma_before_range_citation() -> None
     ) in polished
 
 
-def test_superscript_numeric_profile_recovers_author_adjacent_flattened_citations() -> None:
+def test_superscript_numeric_profile_recovers_author_adjacent_flattened_citations() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>Martiniello et al. 18 report broad tablet adoption. "
@@ -791,9 +912,18 @@ def test_superscript_numeric_profile_recovers_author_adjacent_flattened_citation
         citation_profile={"style": "superscript_numeric", "confidence": "high"},
     )
 
-    assert 'et al.<sup><a href="#ref-18" class="z2m-ref-link">18</a></sup> report' in polished
-    assert 'et al<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> compared' in polished
-    assert 'management.<sup><a href="#ref-21" class="z2m-ref-link">21</a></sup> improved' in polished
+    assert (
+        'et al.<sup><a href="#ref-18" class="z2m-ref-link">18</a></sup> report'
+        in polished
+    )
+    assert (
+        'et al<sup><a href="#ref-24" class="z2m-ref-link">24</a></sup> compared'
+        in polished
+    )
+    assert (
+        'management.<sup><a href="#ref-21" class="z2m-ref-link">21</a></sup> improved'
+        in polished
+    )
     assert "FRET pair 30 dyes" in polished
     assert "Figure 2 shows" in polished
     assert 'href="#ref-30"' not in polished
@@ -846,10 +976,12 @@ def test_superscript_numeric_profile_moves_closing_paren_out_of_ref_link() -> No
         citation_profile={"style": "superscript_numeric", "confidence": "high"},
     )
 
-    assert 'r=0.29 <sup><a href="#ref-56" class="z2m-ref-link">56</a></sup>)' in polished
+    assert (
+        'r=0.29 <sup><a href="#ref-56" class="z2m-ref-link">56</a></sup>)' in polished
+    )
     assert '92% <sup><a href="#ref-51" class="z2m-ref-link">51</a></sup>)' in polished
-    assert '>56)</a>' not in polished
-    assert '>51)</a>' not in polished
+    assert ">56)</a>" not in polished
+    assert ">51)</a>" not in polished
 
 
 def test_superscript_numeric_profile_does_not_link_comma_measurement_series() -> None:
@@ -890,7 +1022,12 @@ def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None
                 {"page": 1, "text": "2", "refs": [2], "context": "The H2O signal"},
                 {"page": 1, "text": "2", "refs": [2], "context": "CO2 signal"},
                 {"page": 1, "text": "2", "refs": [2], "context": "TiO2 layer"},
-                {"page": 1, "text": "2", "refs": [2], "context": "sp2 carbon were compared"},
+                {
+                    "page": 1,
+                    "text": "2",
+                    "refs": [2],
+                    "context": "sp2 carbon were compared",
+                },
                 {
                     "page": 1,
                     "text": "2",
@@ -909,7 +1046,10 @@ def test_zotero_overlay_profile_does_not_link_chemical_formula_numbers() -> None
     assert 'CO<sup><a href="#ref-2"' not in polished
     assert 'TiO<sup><a href="#ref-2"' not in polished
     assert 'sp<sup><a href="#ref-2"' not in polished
-    assert 'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published' in polished
+    assert (
+        'symptoms.<sup><a href="#ref-2" class="z2m-ref-link">2</a></sup> Published'
+        in polished
+    )
 
 
 def test_zotero_overlay_profile_handles_rsc_notes_and_references_front_matter() -> None:
@@ -941,26 +1081,52 @@ def test_zotero_overlay_profile_handles_rsc_notes_and_references_front_matter() 
             "style": "unknown",
             "confidence": "low",
             "zotero_citations": [
-                {"text": "1,2", "refs": [1, 2], "context": "were below 10 nm.1,2Owing to robust"},
-                {"text": "3,4", "refs": [3, 4], "context": "useful in bioimaging,3,4photocatalysis"},
-                {"text": "5,6", "refs": [5, 6], "context": "photocatalysis.5,6and light-emitting"},
+                {
+                    "text": "1,2",
+                    "refs": [1, 2],
+                    "context": "were below 10 nm.1,2Owing to robust",
+                },
+                {
+                    "text": "3,4",
+                    "refs": [3, 4],
+                    "context": "useful in bioimaging,3,4photocatalysis",
+                },
+                {
+                    "text": "5,6",
+                    "refs": [5, 6],
+                    "context": "photocatalysis.5,6and light-emitting",
+                },
             ],
         },
     )
 
-    assert '<li><sup>a</sup> Key Laboratory' in polished
+    assert "<li><sup>a</sup> Key Laboratory" in polished
     assert 'id="ref-1"><span class="z2m-ref-num">1.</span> Y. Fang' in polished
     assert 'id="ref-1"><sup>a</sup>' not in polished
-    assert 'below 10 nm.<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a></sup> Owing' in polished
-    assert 'bioimaging,<sup><a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-4" class="z2m-ref-link">4</a></sup> photocatalysis' in polished
-    assert 'photocatalysis.<sup><a href="#ref-5" class="z2m-ref-link">5</a>,<a href="#ref-6" class="z2m-ref-link">6</a></sup> and' in polished
+    assert (
+        'below 10 nm.<sup><a href="#ref-1" class="z2m-ref-link">1</a>,<a href="#ref-2" class="z2m-ref-link">2</a></sup> Owing'
+        in polished
+    )
+    assert (
+        'bioimaging,<sup><a href="#ref-3" class="z2m-ref-link">3</a>,<a href="#ref-4" class="z2m-ref-link">4</a></sup> photocatalysis'
+        in polished
+    )
+    assert (
+        'photocatalysis.<sup><a href="#ref-5" class="z2m-ref-link">5</a>,<a href="#ref-6" class="z2m-ref-link">6</a></sup> and'
+        in polished
+    )
 
 
-def test_rsc_nested_reference_items_keep_true_numbers_and_link_series_superscripts() -> None:
+def test_rsc_nested_reference_items_keep_true_numbers_and_link_series_superscripts() -> (
+    None
+):
     ref_prefix = "".join(f"<li>{idx}. Reference {idx}.</li>" for idx in range(1, 5))
     ref_middle = (
         "<li>25 5 H. Li, X. He and S. T. Lee, Angew. Chem. Int. Ed., 2010, 49, 4430-4434.</li>"
-        + "".join(f"<li>{idx} A. Author, Journal, 2012, {idx}, 1-2.</li>" for idx in range(6, 21))
+        + "".join(
+            f"<li>{idx} A. Author, Journal, 2012, {idx}, 1-2.</li>"
+            for idx in range(6, 21)
+        )
     )
     html = (
         "<html><body>"
@@ -1011,7 +1177,11 @@ def test_rsc_nested_reference_items_keep_true_numbers_and_link_series_superscrip
             "style": "superscript_numeric",
             "confidence": "high",
             "zotero_citations": [
-                {"text": "21", "refs": [21], "context": "sources such as soybeans,21orange juice"}
+                {
+                    "text": "21",
+                    "refs": [21],
+                    "context": "sources such as soybeans,21orange juice",
+                }
             ],
         },
     )
@@ -1020,17 +1190,27 @@ def test_rsc_nested_reference_items_keep_true_numbers_and_link_series_superscrip
     assert 'id="ref-5"><span class="z2m-ref-num">5.</span> H. Li' in ref_section
     assert 'id="ref-22"><span class="z2m-ref-num">22.</span> S. Sahu' in ref_section
     assert 'id="ref-23"><span class="z2m-ref-num">23.</span> L. Tian' in ref_section
-    assert 'id="ref-29"><span class="z2m-ref-num">29.</span> I. A. W. Tan' in ref_section
-    assert 'id="ref-32"><span class="z2m-ref-num">32.</span> M. H. Wheeler' in ref_section
+    assert (
+        'id="ref-29"><span class="z2m-ref-num">29.</span> I. A. W. Tan' in ref_section
+    )
+    assert (
+        'id="ref-32"><span class="z2m-ref-num">32.</span> M. H. Wheeler' in ref_section
+    )
     assert 'id="ref-40"><span class="z2m-ref-num">40.</span> P. V. Kamat' in ref_section
     assert 'id="ref-41"><span class="z2m-ref-num">41.</span> Y. Yan' in ref_section
     assert "25 5 H. Li" not in ref_section
     assert "60 21 C. Zhu" not in ref_section
     assert "100 39 Khokhlov" not in ref_section
     assert "V. Y. Khokhlov" in ref_section
-    assert 'routes<sup><a href="#ref-15" class="z2m-ref-link">15</a>-<a href="#ref-18" class="z2m-ref-link">18</a></sup> and' in polished
+    assert (
+        'routes<sup><a href="#ref-15" class="z2m-ref-link">15</a>-<a href="#ref-18" class="z2m-ref-link">18</a></sup> and'
+        in polished
+    )
     for ref_id in (21, 22, 23, 24, 25, 26, 27, 28, 37, 39, 40, 41):
-        assert f'href="#ref-{ref_id}"' in polished[: polished.index("Notes and references")]
+        assert (
+            f'href="#ref-{ref_id}"'
+            in polished[: polished.index("Notes and references")]
+        )
 
 
 def test_notes_and_references_heading_requires_zotero_overlay_evidence() -> None:
@@ -1048,7 +1228,9 @@ def test_notes_and_references_heading_requires_zotero_overlay_evidence() -> None
     assert 'href="#ref-1"' not in polished
 
 
-def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> None:
+def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_context() -> (
+    None
+):
     html = (
         "<html><body>"
         "<p>A control value 15 The device ignored this. "
@@ -1065,11 +1247,41 @@ def test_superscript_numeric_profile_links_annotation_backed_plain_number_by_con
             "style": "superscript_numeric",
             "confidence": "high",
             "annotations": [
-                {"page": 5, "kind": "reference", "target": "15", "text": "intestin G.15 Th"},
+                {
+                    "page": 5,
+                    "kind": "reference",
+                    "target": "15",
+                    "text": "intestin G.15 Th",
+                },
             ],
         },
     )
 
     assert "control value 15 The device" in polished
-    assert 'ICG.<sup><a href="#ref-15" class="z2m-ref-link">15</a></sup> The NOVADAQ' in polished
+    assert (
+        'ICG.<sup><a href="#ref-15" class="z2m-ref-link">15</a></sup> The NOVADAQ'
+        in polished
+    )
     assert polished.count('href="#ref-15"') == 1
+
+
+def test_infer_citation_style_detects_cyrillic_author_year_labels() -> None:
+    labels = (
+        "\u0418\u0432\u0430\u043d\u043e\u0432 \u0438 \u041f\u0435\u0442\u0440\u043e\u0432, 2020",
+        "\u0421\u0438\u0434\u043e\u0440\u043e\u0432 \u0438 \u0434\u0440., 2021\u0430",
+        "\u0421\u043c\u0438\u0440\u043d\u043e\u0432 \u0438 \u0412\u043e\u043b\u043a\u043e\u0432, 2019",
+        "\u041a\u0443\u0437\u043d\u0435\u0446\u043e\u0432 \u0438 \u0434\u0440., 2018",
+        "\u041f\u043e\u043f\u043e\u0432 \u0438 \u0421\u043e\u043a\u043e\u043b\u043e\u0432, 2017",
+        "\u041b\u0435\u0431\u0435\u0434\u0435\u0432 \u0438 \u0434\u0440., 2016",
+        "\u041a\u043e\u0437\u043b\u043e\u0432 \u0438 \u041d\u043e\u0432\u0438\u043a\u043e\u0432, 2015",
+        "\u041c\u043e\u0440\u043e\u0437\u043e\u0432 \u0438 \u0434\u0440., 2014",
+    )
+
+    style, confidence, paren_count, bracket_count = infer_citation_style_from_text(
+        ". ".join(labels)
+    )
+
+    assert style == "author_year"
+    assert confidence == "medium"
+    assert paren_count == 0
+    assert bracket_count == 0

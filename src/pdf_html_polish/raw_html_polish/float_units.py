@@ -22,20 +22,24 @@ FIG_RELAXED_KEY_TOKEN = (
     r"(?!\d)"
 )
 FIG_PANEL_SUFFIX_TOKEN = r"[a-z]"
-FIG_CAPTION_PANEL_SUFFIX_TOKEN = rf"(?:{FIG_PANEL_SUFFIX_TOKEN}|\s+[A-Za-z](?=\s|[).:|,\-\u2010-\u2014]))"
+FIG_CAPTION_PANEL_SUFFIX_TOKEN = (
+    rf"(?:{FIG_PANEL_SUFFIX_TOKEN}|\s+[A-Za-z](?=\s|[).:|,\-\u2010-\u2014]))"
+)
 FIG_REF_LABEL_TOKEN = (
     r"(?:Figs?|Figures?|FIGS?|FIGURES?"
-    r"|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|\u0440\u0438\u0441(?:\u0443\u043d\u043e\u043a)?"
-    r"|\u0424\u0438\u0433(?:\u0443\u0440\u0430)?|\u0444\u0438\u0433(?:\u0443\u0440\u0430)?)"
+    r"|(?i:\u0440\u0438\u0441(?:\.|\u0443\u043d(?:\u043e\u043a|\u043a(?:\u0430|\u0435|\u0443|\u043e\u043c|\u0438|\u043e\u0432|\u0430\u043c|\u0430\u043c\u0438|\u0430\u0445)))?)"
+    r"|(?i:\u0444\u0438\u0433(?:\.|\u0443\u0440\u0430)?))"
 )
 SUPPLEMENTARY_FIG_PREFIX_TOKEN = r"(?:Supplementary|Supplemental|Suppl\.?)"
 SUPPLEMENTARY_FIG_KEY_TOKEN = rf"(?:S\s*)?{FIG_KEY_TOKEN}"
 SUPPLEMENTARY_FIG_RELAXED_KEY_TOKEN = rf"(?:S\s*)?{FIG_RELAXED_KEY_TOKEN}"
 EXTENDED_DATA_FIG_PREFIX_TOKEN = r"(?:Extended\s+Data)"
-TABLE_KEY_TOKEN = r"(?:[A-Z]\d+|[IVXLCM]+|\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*)"
+TABLE_KEY_TOKEN = (
+    r"(?:[A-Z]\d+|[IVXLCM]+|\d+(?:[.\-\u2010\u2011\u2012\u2013\u2014]\d+)*)"
+)
 TABLE_REF_WORD_TOKEN = (
     r"(?:TABLES?|Tables?|"
-    r"\u0422\u0430\u0431\u043b\u0438\u0446(?:\u0430|\u044b|\u0435|\u0430\u0445|\u0443)?)"
+    r"(?i:\u0442\u0430\u0431\u043b(?:\.|\u0438\u0446(?:\u0430|\u044b|\u0435|\u0443|\u0435\u0439|\u0435\u044e|\u0430\u0445|\u0430\u043c|\u0430\u043c\u0438)?)?))"
 )
 
 
@@ -281,11 +285,15 @@ def figure_caption_num_from_visible(visible: str) -> str | None:
     )
     if extended_data_match is not None:
         tail = extended_data_match.group(3)
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+        if re.match(
+            r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE
+        ):
             return None
         if not caption_tail_opens_caption(tail):
             return None
-        return extended_data_figure_key_from_visible_number(extended_data_match.group(1))
+        return extended_data_figure_key_from_visible_number(
+            extended_data_match.group(1)
+        )
 
     supplementary_match = re.match(
         rf"^\s*{SUPPLEMENTARY_FIG_PREFIX_TOKEN}\s+"
@@ -298,11 +306,15 @@ def figure_caption_num_from_visible(visible: str) -> str | None:
     )
     if supplementary_match is not None:
         tail = supplementary_match.group(3)
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+        if re.match(
+            r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE
+        ):
             return None
         if not caption_tail_opens_caption(tail):
             return None
-        return supplementary_figure_key_from_visible_number(supplementary_match.group(1))
+        return supplementary_figure_key_from_visible_number(
+            supplementary_match.group(1)
+        )
 
     compound_match = re.match(
         r"^\s*(?:FIG(?:URE)?|Fig(?:ure)?"
@@ -314,7 +326,9 @@ def figure_caption_num_from_visible(visible: str) -> str | None:
     )
     if compound_match is not None:
         tail = compound_match.group(3)
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+        if re.match(
+            r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE
+        ):
             return None
         if not caption_tail_opens_caption(tail):
             return None
@@ -335,12 +349,18 @@ def figure_caption_num_from_visible(visible: str) -> str | None:
             if caption_tail_opens_caption(full_tail):
                 return figure_key_from_visible_number(spaced_decimal_match.group(1))
             return None
-        if tail and not tail[:1].isspace() and tail[:1] not in ".|:-\u2010\u2011\u2012\u2013\u2014([{":
+        if (
+            tail
+            and not tail[:1].isspace()
+            and tail[:1] not in ".|:-\u2010\u2011\u2012\u2013\u2014([{"
+        ):
             full_tail = f". {spaced_decimal_match.group(2)}{tail}"
             if caption_tail_opens_caption(full_tail):
                 return figure_key_from_visible_number(spaced_decimal_match.group(1))
             return None
-        if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+        if re.match(
+            r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE
+        ):
             return None
         if not caption_tail_opens_caption(tail):
             return None
@@ -359,7 +379,9 @@ def figure_caption_num_from_visible(visible: str) -> str | None:
     if match is None:
         return None
     tail = match.group(3)
-    if re.match(r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE):
+    if re.match(
+        r"^\s*\(\s*(?:see\s+legend|continued)\b[\s\S]*\)\s*$", tail, re.IGNORECASE
+    ):
         return None
     if not caption_tail_opens_caption(tail):
         return None
@@ -393,7 +415,9 @@ def embedded_table_caption_key_from_visible(visible: str) -> str | None:
 
 
 def raw_has_class(raw: str, class_name: str) -> bool:
-    class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', raw, re.IGNORECASE | re.DOTALL)
+    class_match = re.search(
+        r'\bclass\s*=\s*(["\'])(.*?)\1', raw, re.IGNORECASE | re.DOTALL
+    )
     if class_match is None:
         return False
     return class_name in class_match.group(2).split()
@@ -404,6 +428,11 @@ def looks_table_note_text(visible: str) -> bool:
     if not text:
         return False
     lower = text.lower()
+    if re.match(
+        r"^(?:abstract|background|objective|aim|purpose|methods?|results?|conclusions?)\s*[:\u2013\u2014-]",
+        lower,
+    ):
+        return False
     if re.match(r"^(?:notes?|table\s+notes?)\b", lower):
         return True
     if lower.startswith(("\ufffd", "пїЅ")):
@@ -412,7 +441,9 @@ def looks_table_note_text(visible: str) -> bool:
         return True
     if re.match(r"^\?\s*:\s*statistically\s+significant\b", lower):
         return True
-    if re.match(r"^(?:(?:median\s+value|values?\s+represent)\b|positive\s+value\s*=)", lower):
+    if re.match(
+        r"^(?:(?:median\s+value|values?\s+represent)\b|positive\s+value\s*=)", lower
+    ):
         return True
     if re.match("^(?:delta|\u03b4)\\s*pvr\\b", lower):
         return True
@@ -423,7 +454,10 @@ def looks_table_note_text(visible: str) -> bool:
         lower,
     ):
         return True
-    if ":" in text and re.search(r"\b(?:odds ratio|confidence interval|perioperative change)\b", lower):
+    if re.match(
+        r"^(?:(?:or|ci|pic)\s*:\s*)?(?:odds ratio|confidence interval|perioperative change)\b",
+        lower,
+    ):
         return True
     if re.match(r"^https?://doi\.org/10\.\d{4,9}/\S+\.t\d+\b", lower):
         return True

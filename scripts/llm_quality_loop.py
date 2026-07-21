@@ -2917,7 +2917,7 @@ def repolish_cached_run(
 
             polished = polish_html_document(
                 raw_html,
-                table_caption_language="en",
+                table_caption_language=language_decision.selected_polish_language,
                 enable_citation_linkify=True,
                 citation_profile=profile,
                 polish_language=language_decision.selected_polish_language,
@@ -2941,7 +2941,7 @@ def repolish_cached_run(
                 _write_json(out_profile, profile)
                 polished = polish_html_document(
                     raw_html,
-                    table_caption_language="en",
+                    table_caption_language=language_decision.selected_polish_language,
                     enable_citation_linkify=True,
                     citation_profile=profile,
                     polish_language=language_decision.selected_polish_language,

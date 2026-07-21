@@ -36,9 +36,9 @@ REFERENCE_PARAGRAPH_ATTR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 DOI_MISWRAPPED_ANCHOR_LABEL_PATTERN = re.compile(
-    r'<a\b(?P<attrs>[^>]*)>'
-    r'(?P<body>(?:(?!</a>).)*?\bdoi:\s*10\.\d{4,9}/\s*)</a>'
-    r'\s*(?P<tail>[^\s<]+)',
+    r"<a\b(?P<attrs>[^>]*)>"
+    r"(?P<body>(?:(?!</a>).)*?\bdoi:\s*10\.\d{4,9}/\s*)</a>"
+    r"\s*(?P<tail>[^\s<]+)",
     re.IGNORECASE | re.DOTALL,
 )
 DOI_SWALLOWED_BROKEN_BLOCK_TAIL_PATTERN = re.compile(
@@ -54,13 +54,13 @@ DOI_SWALLOWED_HREF_TAIL_PATTERN = re.compile(
     r"(?P<open><p\b[^>]*>\s*(?:DOI\s*:\s*)?)"
     r"<a\b[^>]*\bhref\s*=\s*(?P<quote>['\"])"
     r"(?P<url>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
-    r"(?P<tail>\s+[A-Za-z][A-Za-z-]{2,80})(?P=quote)[^>]*>"
+    r"(?P<tail>\s+[A-Za-z][A-Za-z-]{1,80})(?P=quote)[^>]*>"
     r"(?P<label>https?://(?:dx\.)?doi\.org/10\.\d{4,9}/[A-Za-z0-9._~-]+)"
     r"(?P=tail)</a>\s*(?P<rest>[\s\S]*?)</p>",
     re.IGNORECASE,
 )
 PARAGRAPH_BLOCK_PATTERN = re.compile(
-    r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
+    r"(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)",
     re.IGNORECASE,
 )
 
@@ -74,12 +74,18 @@ def repair_miswrapped_doi_anchor_labels(html: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         href = href_attr_literal(match.group("attrs")) or ""
-        href_match = re.match(r"https?://(?:dx\.)?doi\.org/(?P<doi>10\..+)$", href, re.IGNORECASE)
+        href_match = re.match(
+            r"https?://(?:dx\.)?doi\.org/(?P<doi>10\..+)$", href, re.IGNORECASE
+        )
         if href_match is None:
             return match.group(0)
         href_doi = href_match.group("doi")
         body = match.group("body")
-        doi_match = re.search(r"(?P<prefix>[\s\S]*?\bdoi:\s*)(?P<head>10\.\d{4,9}/)\s*$", body, re.IGNORECASE)
+        doi_match = re.search(
+            r"(?P<prefix>[\s\S]*?\bdoi:\s*)(?P<head>10\.\d{4,9}/)\s*$",
+            body,
+            re.IGNORECASE,
+        )
         if doi_match is None:
             return match.group(0)
         full_doi = doi_match.group("head") + match.group("tail")
@@ -88,7 +94,7 @@ def repair_miswrapped_doi_anchor_labels(html: str) -> str:
         full_doi, trailing = split_url_and_trailing_punct(full_doi)
         attrs = match.group("attrs")
         label = _escape_html_text(full_doi)
-        return f'{doi_match.group("prefix")}<a{attrs}>{label}</a>{trailing}'
+        return f"{doi_match.group('prefix')}<a{attrs}>{label}</a>{trailing}"
 
     return DOI_MISWRAPPED_ANCHOR_LABEL_PATTERN.sub(replace, html)
 
@@ -123,7 +129,9 @@ def repair_doi_anchor_swallowed_prose_tails(html: str) -> str:
     current = html
     while previous != current:
         previous = current
-        current = DOI_SWALLOWED_BROKEN_BLOCK_TAIL_PATTERN.sub(replace_broken_block, current)
+        current = DOI_SWALLOWED_BROKEN_BLOCK_TAIL_PATTERN.sub(
+            replace_broken_block, current
+        )
         current = DOI_SWALLOWED_HREF_TAIL_PATTERN.sub(replace_href_tail, current)
     return current
 
@@ -156,10 +164,14 @@ def split_doi_metadata_body_paragraphs(html: str) -> str:
             return match.group(0)
 
         prefix_text = visible_text(body[: boundary.start("doi")])
-        if len(prefix_text) > 500 and not is_plos_table_doi and not re.search(
-            r"\b(?:fig(?:ure)?|table|doi|copyright|license|received|published|available|plos)\b",
-            prefix_text,
-            re.IGNORECASE,
+        if (
+            len(prefix_text) > 500
+            and not is_plos_table_doi
+            and not re.search(
+                r"\b(?:fig(?:ure)?|table|doi|copyright|license|received|published|available|plos)\b",
+                prefix_text,
+                re.IGNORECASE,
+            )
         ):
             return match.group(0)
 

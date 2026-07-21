@@ -4,7 +4,13 @@ from collections.abc import Callable
 import html as html_lib
 import re
 
-from .html_fragments import add_class_attr, add_id_attr, append_class_to_attrs, node_has_class, visible_text
+from .html_fragments import (
+    add_class_attr,
+    add_id_attr,
+    append_class_to_attrs,
+    node_has_class,
+    visible_text,
+)
 
 SUPERSCRIPT_DIGIT_TRANSLATION = str.maketrans(
     {
@@ -48,7 +54,7 @@ AFFILIATION_LABEL_OCR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 FOOTNOTE_P_NODE_PATTERN = re.compile(
-    r'^(?P<open><p\b[^>]*>)(?P<body>[\s\S]*)(?P<close></p>)$',
+    r"^(?P<open><p\b[^>]*>)(?P<body>[\s\S]*)(?P<close></p>)$",
     re.IGNORECASE,
 )
 LEADING_PAGE_SPAN_PATTERN = re.compile(
@@ -56,18 +62,18 @@ LEADING_PAGE_SPAN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 P_BLOCK_PATTERN = re.compile(
-    r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
+    r"(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)",
     re.IGNORECASE,
 )
 P_OR_H_BLOCK_PATTERN = re.compile(
-    r'(?P<open><(?P<tag>p|h[1-6])\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></(?P=tag)>)',
+    r"(?P<open><(?P<tag>p|h[1-6])\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></(?P=tag)>)",
     re.IGNORECASE,
 )
 LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>([\s\S]*?)</li>", re.IGNORECASE)
 SUP_PATTERN = re.compile(r"<sup\b[^>]*>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 PAGE_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
-    r'(?P<body>[\s\S]*?)</a>',
+    r"(?P<body>[\s\S]*?)</a>",
     re.IGNORECASE,
 )
 FOOTNOTE_CLASS_PATTERN = re.compile(
@@ -84,7 +90,7 @@ LEADING_URL_FOOTNOTE_PAGE_SPAN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 LEADING_URL_FOOTNOTE_ANCHOR_PATTERN = re.compile(
-    r'\s*<a\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</a>',
+    r"\s*<a\b(?P<attrs>[^>]*)>(?P<body>[\s\S]*?)</a>",
     re.IGNORECASE,
 )
 FRONT_MATTER_KEYWORDS = (
@@ -217,7 +223,9 @@ def looks_author_byline_front_matter(raw: str, visible: str) -> bool:
         lower,
     ):
         return False
-    if re.search(r"\b(?:box|fig(?:ure)?s?|table|section|appendix|equations?|eqs?\.?)\s+\d", lower):
+    if re.search(
+        r"\b(?:box|fig(?:ure)?s?|table|section|appendix|equations?|eqs?\.?)\s+\d", lower
+    ):
         return False
 
     sup_marker_hits = len(
@@ -276,8 +284,15 @@ def looks_author_marker_ocr_candidate(raw: str) -> bool:
     marker_like = (
         re.search(r"[\u00c2\u0412]?\u00a9\s*\d", marker_visible) is not None
         or re.search(r"\b\d{1,2}\.\d{1,2}\.\d{1,2}\b", marker_visible) is not None
-        or re.search(r"(?:\b[A-Z][A-Za-z.'-]+\s+){1,5}\d{1,2}\s+\d{1,2}\b", marker_visible) is not None
-        or re.search(r"\b[A-Z][A-Za-z.'-]+\d{1,2}[\*\u2020\u2021\u22a0\u2709]?(?:,|&|$)", marker_visible) is not None
+        or re.search(
+            r"(?:\b[A-Z][A-Za-z.'-]+\s+){1,5}\d{1,2}\s+\d{1,2}\b", marker_visible
+        )
+        is not None
+        or re.search(
+            r"\b[A-Z][A-Za-z.'-]+\d{1,2}[\*\u2020\u2021\u22a0\u2709]?(?:,|&|$)",
+            marker_visible,
+        )
+        is not None
     )
     if re.match(r"^\s*(?:received|accepted|published)\b", lower) and not marker_like:
         return False
@@ -332,7 +347,11 @@ def leading_footnote_number(raw: str) -> int | None:
     )
     if sup_match is not None:
         return int(sup_match.group(1))
-    text_match = re.match(r"^\s*(\d{1,2})(?=\s+[A-Z]|(?:https?://|www\.))", visible_text(leading), re.IGNORECASE)
+    text_match = re.match(
+        r"^\s*(\d{1,2})(?=\s+[A-Z]|(?:https?://|www\.))",
+        visible_text(leading),
+        re.IGNORECASE,
+    )
     if text_match is not None:
         return int(text_match.group(1))
     return None
@@ -369,7 +388,10 @@ def looks_footnote_block(
         return len(text) <= 700
     if len(text) < 35 or len(text) > 700:
         return False
-    if figure_caption_num_from_visible(text) is not None or table_caption_key_from_visible(text) is not None:
+    if (
+        figure_caption_num_from_visible(text) is not None
+        or table_caption_key_from_visible(text) is not None
+    ):
         return False
     lower = text.lower()
     if lower.startswith(("abstract", "introduction", "references", "bibliography")):
@@ -398,22 +420,49 @@ def looks_front_matter_block(
         r"competing|conflicts?|data availability|correspondence|e-mail|email)\b",
         lower,
     ):
-        long_author_markers = (
-            len(re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible))
-            + len(
-                re.findall(
-                    r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\s+"
-                    r"\d{1,2}\s*(?:[,\.]\s*\d{1,2}){0,5}",
-                    visible,
-                )
+        long_author_markers = len(
+            re.findall(r"[\u00c2\u0412]?\u00a9\s*\d", visible)
+        ) + len(
+            re.findall(
+                r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6}\s+"
+                r"\d{1,2}\s*(?:[,\.]\s*\d{1,2}){0,5}",
+                visible,
             )
         )
         if long_author_markers < 2:
             return False
 
+    sentence_count = len(re.findall(r"[.!?](?:\s|$)", visible))
+    starts_with_metadata_label = (
+        re.match(
+            r"^\s*(?:keywords|received|accepted|published|copyright|funding|"
+            r"competing|conflicts?|data availability|correspondence|e-mail|email)\b",
+            lower,
+        )
+        is not None
+    )
+    body_topic = (
+        re.search(
+            r"\b(?:projects?|repository|repositories|datasets?|data\s+sharing)\b",
+            lower,
+        )
+        is not None
+    )
+    if (
+        not starts_with_metadata_label
+        and len(visible) > 180
+        and body_topic
+        and sentence_count >= 1
+    ):
+        return False
+    if not starts_with_metadata_label and len(visible) > 320 and sentence_count >= 3:
+        return False
+
     if any(keyword in lower for keyword in FRONT_MATTER_KEYWORDS):
         return True
-    if "contributed equally" in lower and (leading_footnote_number(raw) is not None or "author" in lower):
+    if "contributed equally" in lower and (
+        leading_footnote_number(raw) is not None or "author" in lower
+    ):
         return True
     if looks_author_byline_front_matter(raw, visible):
         return True
@@ -439,9 +488,18 @@ def looks_front_matter_block(
         len(re.findall(r"\b[A-Z][A-Za-z.'-]+\s+[A-Z][A-Za-z.'-]+\b", visible)),
         unicode_capitalized_name_pair_count(visible),
     )
-    sup_marker_hits = len(re.findall(r"<sup\b[^>]*>\s*[\d,\s*\u2020\u2021-]+\s*</sup>", raw, re.IGNORECASE))
+    sup_marker_hits = len(
+        re.findall(
+            r"<sup\b[^>]*>\s*[\d,\s*\u2020\u2021-]+\s*</sup>", raw, re.IGNORECASE
+        )
+    )
     glued_marker_hits = max(
-        len(re.findall(r"\b[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3}\d{1,2}(?:,\d{1,2})*", visible)),
+        len(
+            re.findall(
+                r"\b[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3}\d{1,2}(?:,\d{1,2})*",
+                visible,
+            )
+        ),
         unicode_glued_author_marker_count(visible),
     )
     if name_like >= 3 and (sup_marker_hits >= 2 or glued_marker_hits >= 2):
@@ -498,9 +556,16 @@ def mark_footnote_paragraphs_and_refs(
                 range_numbers = [int(value) for value in re.findall(r"\d{1,2}", inner)]
                 if (
                     len(range_numbers) < 2
-                    or not re.fullmatch(r"\s*\d{1,2}(?:\s*(?:[,;\-\u2013\u2014])\s*\d{1,2}){1,12}\s*", inner)
-                    or any(number not in footnote_keyword_map for number in range_numbers)
-                    or not numeric_superscript_context_allows_citation(body, sup_match.start(), sup_match.end())
+                    or not re.fullmatch(
+                        r"\s*\d{1,2}(?:\s*(?:[,;\-\u2013\u2014])\s*\d{1,2}){1,12}\s*",
+                        inner,
+                    )
+                    or any(
+                        number not in footnote_keyword_map for number in range_numbers
+                    )
+                    or not numeric_superscript_context_allows_citation(
+                        body, sup_match.start(), sup_match.end()
+                    )
                 ):
                     return sup_raw
                 open_end = sup_raw.find(">")
@@ -538,10 +603,19 @@ def repair_page_footnote_ref_links(html: str) -> str:
         raw = block.group(0)
         if FOOTNOTE_CLASS_PATTERN.search(raw) is None:
             continue
-        footnote_numbers.update(int(num) for num in re.findall(r"<sup\b[^>]*>\s*(\d{1,2})\s*</sup>", raw, re.IGNORECASE))
         footnote_numbers.update(
             int(num)
-            for num in re.findall(r"(?<!\d)(\d{1,2})(?=(?:\s+https?://|\s+www\.|https?://|www\.))", visible_text(raw), re.IGNORECASE)
+            for num in re.findall(
+                r"<sup\b[^>]*>\s*(\d{1,2})\s*</sup>", raw, re.IGNORECASE
+            )
+        )
+        footnote_numbers.update(
+            int(num)
+            for num in re.findall(
+                r"(?<!\d)(\d{1,2})(?=(?:\s+https?://|\s+www\.|https?://|www\.))",
+                visible_text(raw),
+                re.IGNORECASE,
+            )
         )
         leading_number = leading_footnote_number(raw)
         if leading_number is not None:
@@ -559,20 +633,27 @@ def repair_page_footnote_ref_links(html: str) -> str:
 
         def replace_anchor(anchor_match: re.Match[str]) -> str:
             attrs = anchor_match.group("attrs")
-            target_match = re.search(r'\bhref\s*=\s*(["\'])#(?P<target>page-[^"\']+)\1', attrs, re.IGNORECASE)
-            if target_match is None or target_match.group("target") not in footnote_page_ids:
+            target_match = re.search(
+                r'\bhref\s*=\s*(["\'])#(?P<target>page-[^"\']+)\1', attrs, re.IGNORECASE
+            )
+            if (
+                target_match is None
+                or target_match.group("target") not in footnote_page_ids
+            ):
                 return anchor_match.group(0)
             label = visible_text(anchor_match.group("body")).strip()
-            label_match = re.fullmatch(r"(?P<prefix>[A-Za-z]?)(?P<num>\d{1,2})(?P<trail>[\)\]\.,;:]*)", label)
+            label_match = re.fullmatch(
+                r"(?P<prefix>[A-Za-z]?)(?P<num>\d{1,2})(?P<trail>[\)\]\.,;:]*)", label
+            )
             if label_match is None:
                 return anchor_match.group(0)
             number = int(label_match.group("num"))
             if number not in footnote_numbers:
                 return anchor_match.group(0)
             return (
-                f'{label_match.group("prefix")}'
+                f"{label_match.group('prefix')}"
                 f'<sup class="z2m-footnote-ref">{number}</sup>'
-                f'{label_match.group("trail")}'
+                f"{label_match.group('trail')}"
             )
 
         body = PAGE_ANCHOR_PATTERN.sub(replace_anchor, match.group("body"))
@@ -594,9 +675,17 @@ def split_url_footnote_prose_tails(html: str) -> str:
     def is_leading_url_footnote_anchor(anchor_match: re.Match[str]) -> bool:
         attrs = anchor_match.group("attrs")
         visible = visible_text(anchor_match.group("body")).strip()
-        href_is_url = re.search(r'\bhref\s*=\s*(["\'])(?:https?://|www\.)', attrs, re.IGNORECASE) is not None
-        visible_has_url = re.search(r"(?:https?://|www\.)", visible, re.IGNORECASE) is not None
-        has_number = re.match(r"^\d{1,2}(?=\s|https?://|www\.)", visible, re.IGNORECASE) is not None
+        href_is_url = (
+            re.search(r'\bhref\s*=\s*(["\'])(?:https?://|www\.)', attrs, re.IGNORECASE)
+            is not None
+        )
+        visible_has_url = (
+            re.search(r"(?:https?://|www\.)", visible, re.IGNORECASE) is not None
+        )
+        has_number = (
+            re.match(r"^\d{1,2}(?=\s|https?://|www\.)", visible, re.IGNORECASE)
+            is not None
+        )
         return has_number and (href_is_url or visible_has_url)
 
     def split(match: re.Match[str]) -> str:
@@ -647,9 +736,13 @@ def repair_front_matter_marker_ocr(
                 body,
                 looks_like_ocr_split_word_join=looks_like_ocr_split_word_join,
             )
-        if node_has_class(raw, "z2m-front-matter") and looks_author_marker_ocr_candidate(raw):
+        if node_has_class(
+            raw, "z2m-front-matter"
+        ) and looks_author_marker_ocr_candidate(raw):
             body = repair_author_marker_ocr_body(body)
-        if node_has_class(raw, "z2m-front-matter") and looks_affiliation_label_body(body):
+        if node_has_class(raw, "z2m-front-matter") and looks_affiliation_label_body(
+            body
+        ):
             body = repair_affiliation_label_ocr_body(body)
         if node_has_class(raw, "z2m-affiliations"):
             body = repair_affiliation_label_ocr_body(body)
@@ -690,18 +783,25 @@ def repair_turkish_urology_byline(body: str) -> str:
     return body
 
 
-def repair_confirmed_front_matter_email_artifacts_body(body: str, visible: str | None = None) -> str:
+def repair_confirmed_front_matter_email_artifacts_body(
+    body: str, visible: str | None = None
+) -> str:
     visible = visible_text(body) if visible is None else visible
     if "Me-mail:" in visible:
         body = FRONT_MATTER_MEMAIL_PREFIX_PATTERN.sub("", body)
 
-    if "@unfi.it" in visible.lower() and FRONT_MATTER_UNIFI_CONTEXT_PATTERN.search(visible) is not None:
+    if (
+        "@unfi.it" in visible.lower()
+        and FRONT_MATTER_UNIFI_CONTEXT_PATTERN.search(visible) is not None
+    ):
         body = FRONT_MATTER_UNFI_EMAIL_PATTERN.sub("@unifi.it", body)
 
     return body
 
 
-def repair_xue_byline_abstract_split(open_tag: str, close_tag: str, body: str) -> str | None:
+def repair_xue_byline_abstract_split(
+    open_tag: str, close_tag: str, body: str
+) -> str | None:
     xue_match = XUE_BYLINE_ABSTRACT_PATTERN.match(visible_text(body))
     if xue_match is None:
         return None
@@ -770,7 +870,9 @@ def mark_front_matter_paragraphs(
         nonlocal block_index
         block_index += 1
         open_tag = match.group("open")
-        open_match = re.match(r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>", open_tag, re.IGNORECASE)
+        open_match = re.match(
+            r"<(?P<tag>p|h[1-6])\b(?P<attrs>[^>]*)>", open_tag, re.IGNORECASE
+        )
         if open_match is None:
             return match.group(0)
         tag_name = open_match.group("tag")

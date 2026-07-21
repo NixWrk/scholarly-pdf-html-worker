@@ -63,5 +63,6 @@ ignore_missing_imports = true
 # downstream scripts. Some bootstrap the local src tree before importing it.
 "scripts/audit_en_polish.py" = ["E402", "F401"]
 "scripts/audit_en_raw.py" = ["F401"]
+"scripts/audit_repolish_delta.py" = ["E402"]
 "scripts/audit_source_language.py" = ["E402"]
 "scripts/llm_quality_loop.py" = ["F401"]

@@ -83,6 +83,28 @@ def test_unlinked_sup_numeric_range_ignores_measurement_unit_suffix() -> None:
     assert has_unlinked_sup_numeric_range(block) is False
 
 
+
+def test_unlinked_sup_numeric_range_ignores_decimal_comma_units() -> None:
+    micrograms = _block(
+        "The serum value was 1,9 \u03bcg/l.",
+        raw="<p>The serum value was <sup>1,9</sup> \u03bcg/l.</p>",
+    )
+    megahertz = _block(
+        "The citation [7] used a 7,5-MHz probe.",
+        raw=(
+            '<p>The citation <a href="#ref-7" class="z2m-ref-link">[7]</a> '
+            "used a <sup>7,5</sup>-MHz probe.</p>"
+        ),
+    )
+
+    assert has_unlinked_sup_numeric_range(micrograms) is False
+    assert has_unlinked_sup_numeric_range(megahertz) is False
+    assert unlinked_citation_range_kind(
+        megahertz,
+        looks_like_float_or_caption=lambda _block: False,
+        block_looks_like_frontmatter_affiliation_table=lambda _block: False,
+    ) == ""
+
 def test_unlinked_sup_numeric_range_ignores_project_identifier() -> None:
     block = _block(
         "This work used Project Number 24,5 .022.",

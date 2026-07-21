@@ -5,117 +5,178 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..html_references import NOTES_AND_REFERENCES_HEADING_PATTERN, REFERENCES_HEADING_PATTERN
+from ..author_year_patterns import AUTHOR_NAME_TOKEN, AUTHOR_YEAR_CITATION_PATTERN
+from ..html_references import (
+    NOTES_AND_REFERENCES_HEADING_PATTERN,
+    REFERENCES_HEADING_PATTERN,
+)
 from .html_fragments import visible_text
 
 
 LI_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])ref-(\d+)["\']', re.IGNORECASE)
 LI_BLOCK_PATTERN = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.IGNORECASE | re.DOTALL)
-REFERENCE_PAGE_ID_PATTERN = re.compile(r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE)
+REFERENCE_PAGE_ID_PATTERN = re.compile(
+    r'\bid\s*=\s*(["\'])(page-[^"\']+)\1', re.IGNORECASE
+)
 PAGE_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#page-[^"\']+["\'][^>]*)>'
-    r'(?P<body>[\s\S]*?)</a>',
+    r"(?P<body>[\s\S]*?)</a>",
     re.IGNORECASE,
 )
 SEMANTIC_INTERNAL_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*(?P<quote>["\'])#'
     r'(?P<target>(?:table|page)-[^"\']+)(?P=quote)[^>]*)>'
-    r'(?P<body>[\s\S]*?)</a>',
+    r"(?P<body>[\s\S]*?)</a>",
     re.IGNORECASE,
 )
 REF_ANCHOR_PATTERN = re.compile(
     r'<a\b(?P<attrs>[^>]*\bhref\s*=\s*["\']#ref-(?P<num>\d+)["\'][^>]*)>'
-    r'(?P<body>[\s\S]*?)</a>',
+    r"(?P<body>[\s\S]*?)</a>",
     re.IGNORECASE,
 )
-AUTHOR_YEAR_CITATION_TEXT_PATTERN = re.compile(
-    r"\b"
-    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
-    r"(?:\s+(?:et\s+al\.?|and\s+[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+|&\s*[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+))?"
-    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
-    re.IGNORECASE,
-)
+AUTHOR_YEAR_CITATION_TEXT_PATTERN = AUTHOR_YEAR_CITATION_PATTERN
 P_BLOCK_PATTERN = re.compile(
-    r'(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)',
+    r"(?P<open><p\b[^>]*>)(?P<body>[\s\S]*?)(?P<close></p>)",
     re.IGNORECASE,
 )
 REFERENCE_LEADING_PAGE_NUM_ANCHOR_PATTERN = re.compile(
     r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
-    r'(?:(?:<(?:b|strong|i|em)\b[^>]*>\s*)*)?)'
+    r"(?:(?:<(?:b|strong|i|em)\b[^>]*>\s*)*)?)"
     r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
-    r'(?P<body>\s*(?:<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*)?\d{1,4}\.?\s*(?:</span>)?\s*)'
-    r'</a>',
+    r"(?P<body>\s*(?:<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*)?\d{1,4}\.?\s*(?:</span>)?\s*)"
+    r"</a>",
     re.IGNORECASE,
 )
 REFERENCE_DUPLICATE_PAGE_NUM_ANCHOR_PATTERN = re.compile(
     r'(?P<open><li\b[^>]*\bid\s*=\s*(["\'])ref-(?P<num>\d+)\2[^>]*>\s*'
-    r'<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*\d{1,4}\.?\s*</span>\s*)'
+    r"<span\b[^>]*\bz2m-ref-num\b[^>]*>\s*\d{1,4}\.?\s*</span>\s*)"
     r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\4[^>]*>'
-    r'(?P<body>\s*\d{1,4}\.?\s*)'
-    r'</a>\s*',
+    r"(?P<body>\s*\d{1,4}\.?\s*)"
+    r"</a>\s*",
     re.IGNORECASE,
 )
 PAGE_ANCHOR_BRACKET_REF_NUM_STRIP_PATTERN = re.compile(
     r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)*'
-    r'(?:'
+    r"(?:"
     r'\[\s*<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\2[^>]*>\s*\d{1,4}\s*\]?\s*</a>'
-    r'|'
+    r"|"
     r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\3[^>]*>\s*\[\s*\d{1,4}\s*\]?\s*</a>\s*\]?'
-    r')\s*',
+    r")\s*",
     re.IGNORECASE,
 )
 PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN = re.compile(
     r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)*'
     r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\2[^>]*>'
-    r'\s*\[\s*\d{1,4}\s*\]\s*(?P<initial>[A-Z])\s*</a>\s*(?P<dot>\.)\s*',
+    r"\s*\[\s*\d{1,4}\s*\]\s*(?P<initial>[A-Z])\s*</a>\s*(?P<dot>\.)\s*",
     re.IGNORECASE,
 )
 PAGE_ANCHOR_BRACKET_REF_TRAILING_PUNCT_PATTERN = re.compile(
     r'^\s*(?:<span\b[^>]*\bid\s*=\s*(["\'])page-[^"\']+\1[^>]*>\s*</span>\s*)*'
     r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\2[^>]*>'
-    r'\s*\[\s*\d{1,4}\s*\]\s*(?P<trailing>[(])\s*</a>\s*',
+    r"\s*\[\s*\d{1,4}\s*\]\s*(?P<trailing>[(])\s*</a>\s*",
     re.IGNORECASE,
 )
 VISIBLE_REF_NUM_PATTERN = re.compile(
-    r'^\s*(?:(?!</?sup\b)<[^>]+>\s*)*'
-    r'(?:'
-    r'<sup\b[^>]*>\s*(?P<sup>\d{1,4})\s*</sup>'
-    r'|\[(?P<bracket>\d{1,4})\]'
-    r'|(?P<dot>\d{1,4})\.'
-    r'|(?P<glued>\d{1,4})(?=[A-Z]\.)'
-    r'|(?P<gluedword>\d{1,4})(?=[A-Z][A-Za-z])'
-    r'|(?P<spaced>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z]\.)'
-    r'|(?P<spacedword>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z][A-Za-z])'
-    r')\s*',
+    r"^\s*(?:(?!</?sup\b)<[^>]+>\s*)*"
+    r"(?:"
+    r"<sup\b[^>]*>\s*(?P<sup>\d{1,4})\s*</sup>"
+    r"|\[(?P<bracket>\d{1,4})\]"
+    r"|(?P<dot>\d{1,4})\."
+    r"|(?P<glued>\d{1,4})(?=[A-Z]\.)"
+    r"|(?P<gluedword>\d{1,4})(?=[A-Z][A-Za-z])"
+    r"|(?P<spaced>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z]\.)"
+    r"|(?P<spacedword>\d{1,4})(?=\s+(?:<[^>]+>\s*)*[A-Z][A-Za-z])"
+    r")\s*",
     re.IGNORECASE,
 )
 LINE_PREFIXED_VISIBLE_REF_NUM_PATTERN = re.compile(
-    r'^\s*(?:<[^>]+>\s*)*'
-    r'(?P<line>\d{1,4})\.?(?:\s*</sup>)?\s+'
-    r'(?P<number>\d{1,4})\.?\s+'
-    r'(?=(?:<[^>]+>\s*)*[A-Z\u00c0-\u00de])',
+    r"^\s*(?:<[^>]+>\s*)*"
+    r"(?P<line>\d{1,4})\.?(?:\s*</sup>)?\s+"
+    r"(?P<number>\d{1,4})\.?\s+"
+    r"(?=(?:<[^>]+>\s*)*[A-Z\u00c0-\u00de])",
     re.IGNORECASE,
 )
 REFERENCE_LINE_PREFIX_ONLY_PATTERN = re.compile(
-    r'^(?P<prefix>\s*(?:<[^>]+>\s*)*)'
-    r'(?P<line>\d{3,4})\.?\s+'
-    r'(?=(?:<[^>]+>\s*)*\S)',
+    r"^(?P<prefix>\s*(?:<[^>]+>\s*)*)"
+    r"(?P<line>\d{3,4})\.?\s+"
+    r"(?=(?:<[^>]+>\s*)*\S)",
     re.IGNORECASE,
 )
 
 
-def references_heading_search(html: str, *, allow_notes_heading: bool = False) -> re.Match[str] | None:
-    matches = [match for match in (REFERENCES_HEADING_PATTERN.search(html),) if match is not None]
+def references_heading_search(
+    html: str, *, allow_notes_heading: bool = False
+) -> re.Match[str] | None:
+    matches = list(REFERENCES_HEADING_PATTERN.finditer(html))
     if allow_notes_heading:
-        notes_match = NOTES_AND_REFERENCES_HEADING_PATTERN.search(html)
-        if notes_match is not None:
-            matches.append(notes_match)
-    return min(matches, key=lambda match: match.start()) if matches else None
+        matches.extend(NOTES_AND_REFERENCES_HEADING_PATTERN.finditer(html))
+    matches = sorted(
+        {(match.start(), match.end()): match for match in matches}.values(),
+        key=lambda match: match.start(),
+    )
+    if not matches:
+        return None
+
+    def bibliography_evidence(match: re.Match[str], end: int) -> tuple[int, int, int]:
+        segment = html[match.end() : end]
+        list_items = list(LI_BLOCK_PATTERN.finditer(segment))
+        numbered_items = sum(
+            VISIBLE_REF_NUM_PATTERN.match(item.group(2) or "") is not None
+            for item in list_items
+        )
+        visible = visible_text(segment)
+        year_count = len(
+            re.findall(r"\b(?:18|19|20)\d{2}[a-z]?\b", visible, re.IGNORECASE)
+        )
+        bibliographic_tokens = len(
+            re.findall(
+                r"\b(?:doi|journal|vol(?:ume)?|pp?\.|press|proceedings)\b",
+                visible,
+                re.IGNORECASE,
+            )
+        )
+        strong_list = int(
+            numbered_items >= 1 or (len(list_items) >= 2 and year_count >= 2)
+        )
+        prose_bibliography = int(
+            not list_items and year_count >= 2 and bibliographic_tokens >= 1
+        )
+        return strong_list + prose_bibliography, numbered_items, len(list_items)
+
+    def looks_like_publication_metadata_heading(match: re.Match[str]) -> bool:
+        if match.start() > int(len(html) * 0.45):
+            return False
+        prefix = visible_text(html[max(0, match.start() - 2500) : match.start()])
+        has_publication_dates = re.search(
+            r"\b(?:received|accepted|published|eingereicht|akzeptiert|"
+            r"ver(?:\u00f6|oe|o)ffentlicht)\b",
+            prefix,
+            re.IGNORECASE,
+        )
+        has_doi = re.search(r"\bdoi\b|doi\.org/10\.", prefix, re.IGNORECASE)
+        return has_publication_dates is not None and has_doi is not None
+
+    ranked: list[tuple[tuple[int, int, int], int, re.Match[str]]] = []
+    for index, match in enumerate(matches):
+        boundary = matches[index + 1].start() if index + 1 < len(matches) else len(html)
+        ranked.append((bibliography_evidence(match, boundary), -match.start(), match))
+    best_evidence, _, best_match = max(ranked, key=lambda item: (item[0], item[1]))
+    if best_evidence > (0, 0, 0):
+        return best_match
+    for match in matches:
+        if not looks_like_publication_metadata_heading(match):
+            return match
+
+    return None
 
 
-def references_heading_match(html: str, *, allow_notes_heading: bool = False) -> re.Match[str] | None:
+def references_heading_match(
+    html: str, *, allow_notes_heading: bool = False
+) -> re.Match[str] | None:
     return REFERENCES_HEADING_PATTERN.match(html) or (
-        NOTES_AND_REFERENCES_HEADING_PATTERN.match(html) if allow_notes_heading else None
+        NOTES_AND_REFERENCES_HEADING_PATTERN.match(html)
+        if allow_notes_heading
+        else None
     )
 
 
@@ -178,7 +239,9 @@ def strip_page_anchor_bracket_ref_num_prefix(body: str) -> str:
     def keep_author_initial(match: re.Match[str]) -> str:
         return f"{match.group('initial')}{match.group('dot')} "
 
-    body = PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN.sub(keep_author_initial, body, count=1)
+    body = PAGE_ANCHOR_BRACKET_REF_INITIAL_PATTERN.sub(
+        keep_author_initial, body, count=1
+    )
     body = PAGE_ANCHOR_BRACKET_REF_TRAILING_PUNCT_PATTERN.sub(
         lambda match: match.group("trailing"),
         body,
@@ -234,18 +297,18 @@ def strip_leading_reference_line_number_before_expected_number(
         return f"{match.group('prefix')}{expected}. "
 
     fixed = re.sub(
-        rf'^(?P<prefix>\s*(?:(?!</?sup\b)<[^>]+>\s*)*)<sup\b[^>]*>\s*'
-        rf'(?P<line>\d{{1,4}})\.?\s*</sup>\s+(?P<number>{re.escape(expected)})\.?\s+'
-        r'(?=(?:<[^>]+>\s*)*[A-Z])',
+        rf"^(?P<prefix>\s*(?:(?!</?sup\b)<[^>]+>\s*)*)<sup\b[^>]*>\s*"
+        rf"(?P<line>\d{{1,4}})\.?\s*</sup>\s+(?P<number>{re.escape(expected)})\.?\s+"
+        r"(?=(?:<[^>]+>\s*)*[A-Z])",
         strip_start,
         body,
         count=1,
         flags=re.IGNORECASE,
     )
     fixed = re.sub(
-        rf'^(?P<prefix>\s*(?:<[^>]+>\s*)*)(?P<line>\d{{1,4}})\.?\s+'
-        rf'(?P<number>{re.escape(expected)})\.?\s+'
-        r'(?=(?:<[^>]+>\s*)*[A-Z])',
+        rf"^(?P<prefix>\s*(?:<[^>]+>\s*)*)(?P<line>\d{{1,4}})\.?\s+"
+        rf"(?P<number>{re.escape(expected)})\.?\s+"
+        r"(?=(?:<[^>]+>\s*)*[A-Z])",
         strip_start,
         fixed,
         count=1,
@@ -273,10 +336,10 @@ def strip_leading_reference_line_number_pair(body: str) -> str:
         return f"{match.group('prefix')}{ref_number}. "
 
     return re.sub(
-        r'^(?P<prefix>\s*(?:(?!</?(?:li|ul|ol)\b)<[^>]+>\s*)*)'
-        r'(?P<line>\d{1,4})\.?\s+'
-        r'(?P<number>\d{1,3})\.?\s+'
-        r'(?=(?:<[^>]+>\s*)*[A-Z\u00c0-\u00de])',
+        r"^(?P<prefix>\s*(?:(?!</?(?:li|ul|ol)\b)<[^>]+>\s*)*)"
+        r"(?P<line>\d{1,4})\.?\s+"
+        r"(?P<number>\d{1,3})\.?\s+"
+        r"(?=(?:<[^>]+>\s*)*[A-Z\u00c0-\u00de])",
         strip_start,
         body,
         count=1,
@@ -298,8 +361,8 @@ def strip_leading_reference_line_number_pairs_in_list_items(html: str) -> str:
 
 def strip_duplicate_reference_number_artifacts(body: str, number: str) -> str:
     fixed = re.sub(
-        rf'^(?P<prefix>\s*(?:<[^>]+>\s*)*){re.escape(number)}\.\s+'
-        rf'{re.escape(number)}(?=(?:<[^>]+>\s*)*[A-Z][A-Za-z])',
+        rf"^(?P<prefix>\s*(?:<[^>]+>\s*)*){re.escape(number)}\.\s+"
+        rf"{re.escape(number)}(?=(?:<[^>]+>\s*)*[A-Z][A-Za-z])",
         rf"\g<prefix>{number}. ",
         body,
         count=1,
@@ -307,16 +370,16 @@ def strip_duplicate_reference_number_artifacts(body: str, number: str) -> str:
     )
     fixed = re.sub(
         rf'(?P<prefix><span\b(?=[^>]*\bclass\s*=\s*["\'][^"\']*\bz2m-ref-num\b)'
-        rf'[^>]*>\s*{re.escape(number)}\.\s*</span>\s*)'
-        rf'{re.escape(number)}(?=(?:<[^>]+>\s*)*[A-Z][A-Za-z])',
+        rf"[^>]*>\s*{re.escape(number)}\.\s*</span>\s*)"
+        rf"{re.escape(number)}(?=(?:<[^>]+>\s*)*[A-Z][A-Za-z])",
         r"\g<prefix>",
         fixed,
         count=1,
         flags=re.IGNORECASE,
     )
     return re.sub(
-        rf'^(?P<prefix>\s*(?:<[^>]+>\s*)*){re.escape(number)}'
-        r'(?=(?:<[^>]+>\s*)*[A-Z][A-Za-z])',
+        rf"^(?P<prefix>\s*(?:<[^>]+>\s*)*){re.escape(number)}"
+        r"(?=(?:<[^>]+>\s*)*[A-Z][A-Za-z])",
         r"\g<prefix>",
         fixed,
         count=1,
@@ -326,8 +389,8 @@ def strip_duplicate_reference_number_artifacts(body: str, number: str) -> str:
 
 def strip_embedded_reference_number_artifacts(body: str) -> str:
     return re.sub(
-        r'(?<=[A-Za-z])\s+\d{1,3}\.\s+'
-        r'(?=(?:of|for|in|on|with|and|the|a|an|to)\b)',
+        r"(?<=[A-Za-z])\s+\d{1,3}\.\s+"
+        r"(?=(?:of|for|in|on|with|and|the|a|an|to)\b)",
         " ",
         body,
         count=1,
@@ -378,7 +441,7 @@ def unwrap_reference_list_page_links(html: str) -> str:
         open_tag = match.group("open")
         if LI_ID_PATTERN.search(open_tag) is None:
             return match.group(0)
-        return f'{open_tag}{unwrap_anchors(match.group("body"))}{match.group("close")}'
+        return f"{open_tag}{unwrap_anchors(match.group('body'))}{match.group('close')}"
 
     return P_BLOCK_PATTERN.sub(replace_p, repaired)
 
@@ -390,13 +453,15 @@ def repair_ref_links_with_leading_closing_punctuation(html: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = visible_text(match.group("body"))
-        label_match = re.fullmatch(r"(?P<lead>[\)\]])\s*(?P<num>\d{1,3})(?P<trail>[,.;:]*)", label)
+        label_match = re.fullmatch(
+            r"(?P<lead>[\)\]])\s*(?P<num>\d{1,3})(?P<trail>[,.;:]*)", label
+        )
         if label_match is None or label_match.group("num") != match.group("num"):
             return match.group(0)
         return (
-            f'{label_match.group("lead")}'
-            f'<a{match.group("attrs")}>{label_match.group("num")}</a>'
-            f'{label_match.group("trail")}'
+            f"{label_match.group('lead')}"
+            f"<a{match.group('attrs')}>{label_match.group('num')}</a>"
+            f"{label_match.group('trail')}"
         )
 
     return REF_ANCHOR_PATTERN.sub(replace, html)
@@ -410,7 +475,9 @@ def replace_href_and_link_class(attrs: str, href: str, class_name: str) -> str:
         count=1,
         flags=re.IGNORECASE,
     )
-    class_match = re.search(r'\bclass\s*=\s*(["\'])(.*?)\1', attrs, re.IGNORECASE | re.DOTALL)
+    class_match = re.search(
+        r'\bclass\s*=\s*(["\'])(.*?)\1', attrs, re.IGNORECASE | re.DOTALL
+    )
     if class_match is None:
         return f'{attrs} class="{class_name}"'
     classes = [
@@ -420,7 +487,9 @@ def replace_href_and_link_class(attrs: str, href: str, class_name: str) -> str:
     ]
     if class_name not in classes:
         classes.append(class_name)
-    return attrs[: class_match.start(2)] + " ".join(classes) + attrs[class_match.end(2) :]
+    return (
+        attrs[: class_match.start(2)] + " ".join(classes) + attrs[class_match.end(2) :]
+    )
 
 
 def retarget_mismatched_ref_link_labels(html: str) -> str:
@@ -437,10 +506,13 @@ def retarget_mismatched_ref_link_labels(html: str) -> str:
     def render_numeric_label(label: str) -> str | None:
         if re.search(r"[A-Za-z]", label):
             return None
-        if re.fullmatch(
-            r"[\s\(\[\]\),.;:\-\u2010\u2011\u2012\u2013\u2014\d]+",
-            label,
-        ) is None:
+        if (
+            re.fullmatch(
+                r"[\s\(\[\]\),.;:\-\u2010\u2011\u2012\u2013\u2014\d]+",
+                label,
+            )
+            is None
+        ):
             return None
         numbers = [int(value) for value in re.findall(r"\d{1,4}", label)]
         if not numbers or any(not is_valid_visible_ref(number) for number in numbers):
@@ -457,38 +529,50 @@ def retarget_mismatched_ref_link_labels(html: str) -> str:
 
     def looks_like_page_reference_label(label: str) -> bool:
         normalized = re.sub(r"\s+", " ", label).strip()
-        return re.search(
-            r"(?:"
-            r"\b(?:see|cf)\.?\s+(?:p|pp|page|pages)\.?\s*\d|"
-            r"\b(?:p|pp|page|pages)\.?\s*\d|"
-            r"\u0441\u043c\.?\s*\u0441\.?\s*\d"
-            r")",
-            normalized,
-            re.IGNORECASE,
-        ) is not None
+        return (
+            re.search(
+                r"(?:"
+                r"\b(?:see|cf)\.?\s+(?:p|pp|page|pages)\.?\s*\d|"
+                r"\b(?:p|pp|page|pages)\.?\s*\d|"
+                r"\u0441\u043c\.?\s*\u0441\.?\s*\d"
+                r")",
+                normalized,
+                re.IGNORECASE,
+            )
+            is not None
+        )
 
     def looks_like_author_year_context(label: str, left_text: str) -> bool:
-        label_for_pattern = re.sub(r"(\d{4}[a-z]?)[\),.;:]+$", r"\1", label.strip(), flags=re.IGNORECASE)
+        label_for_pattern = re.sub(
+            r"(\d{4}[a-z]?)[\),.;:]+$", r"\1", label.strip(), flags=re.IGNORECASE
+        )
         if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label_for_pattern):
             return True
-        if not re.fullmatch(r"\(?\d{4}[a-z]?\)?[\),.;:]*", label.strip(), re.IGNORECASE):
+        if not re.fullmatch(
+            r"\(?\d{4}[a-z]?\)?[\),.;:]*", label.strip(), re.IGNORECASE
+        ):
             return False
-        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(f"{left_text[-180:]} {label_for_pattern}"):
+        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(
+            f"{left_text[-180:]} {label_for_pattern}"
+        ):
             return True
         author_tail = re.compile(
-            r"(?:\(|;|,|\bby\s+)?\s*"
-            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
-            r"(?:\s+[a-z])?"
-            r"(?:\s+(?:et\s+al\.?|and|&)\s+"
-            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
-            r"(?:\s+[a-z])?|\s+et\s+al\.?)?"
-            r"(?:,|\.)?\s*$"
+            rf"(?:\(|;|,|\bby\s+)?\s*{AUTHOR_NAME_TOKEN}"
+            rf"(?:\s+[a-z\u0430-\u044f\u0451])?"
+            rf"(?:\s+(?:et\s+al\.?|\u0438\s+\u0434\u0440\.?|(?:and|\u0438|&)\s+"
+            rf"{AUTHOR_NAME_TOKEN}(?:\s+[a-z\u0430-\u044f\u0451])?))?"
+            r"(?:,|\.)?\s*$",
+            re.IGNORECASE,
         )
         return author_tail.search(left_text[-120:]) is not None
 
-    def should_preserve_invalid_single_label(match: re.Match[str], label: str, visible_number: int) -> bool:
-        left_text = visible_text(html[max(0, match.start() - 180): match.start()])
-        if 1800 <= visible_number <= 2099 and looks_like_author_year_context(label, left_text):
+    def should_preserve_invalid_single_label(
+        match: re.Match[str], label: str, visible_number: int
+    ) -> bool:
+        left_text = visible_text(html[max(0, match.start() - 180) : match.start()])
+        if 1800 <= visible_number <= 2099 and looks_like_author_year_context(
+            label, left_text
+        ):
             return True
         if looks_like_page_reference_label(label):
             return True
@@ -516,8 +600,10 @@ def retarget_mismatched_ref_link_labels(html: str) -> str:
             if should_preserve_invalid_single_label(match, label, visible_number):
                 return match.group(0)
             return match.group("body")
-        attrs = replace_href_and_link_class(match.group("attrs"), f"#ref-{visible_number}", "z2m-ref-link")
-        return f'<a{attrs}>{match.group("body")}</a>'
+        attrs = replace_href_and_link_class(
+            match.group("attrs"), f"#ref-{visible_number}", "z2m-ref-link"
+        )
+        return f"<a{attrs}>{match.group('body')}</a>"
 
     return REF_ANCHOR_PATTERN.sub(replace, html)
 
@@ -546,7 +632,11 @@ def repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
             return None
         if cite not in ref_numbers or 1800 <= cite <= 2099:
             return None
-        if target == cite or (allow_near_target and abs(target - cite) <= 1) or allow_wrong_target:
+        if (
+            target == cite
+            or (allow_near_target and abs(target - cite) <= 1)
+            or allow_wrong_target
+        ):
             return cite
         return None
 
@@ -585,7 +675,9 @@ def repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
             target_number = -1
         if full_number in ref_numbers and abs(target_number - full_number) <= 1:
             return match.group(0)
-        cite = valid_cite(match.group("cite"), match.group("target"), allow_near_target=True)
+        cite = valid_cite(
+            match.group("cite"), match.group("target"), allow_near_target=True
+        )
         if cite is None:
             cite = valid_cite(
                 match.group("cite"),
@@ -596,7 +688,9 @@ def repair_ref_links_absorbed_decimal_or_unit_text(html: str) -> str:
             return match.group(0)
         cite_anchor = anchor(match.group("attrs"), cite, str(cite))
         if match.group("sup_open") and match.group("sup_close"):
-            cite_anchor = f"{match.group('sup_open')}{cite_anchor}{match.group('sup_close')}"
+            cite_anchor = (
+                f"{match.group('sup_open')}{cite_anchor}{match.group('sup_close')}"
+            )
         return (
             f"{match.group('prefix')}{match.group('lead')}"
             f"{cite_anchor}{match.group('trail')}"
@@ -626,7 +720,7 @@ def unwrap_page_reference_ref_links(html: str, language_policy: Any) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = visible_text(match.group("body"))
-        left_text = visible_text(html[max(0, match.start() - 48): match.start()])
+        left_text = visible_text(html[max(0, match.start() - 48) : match.start()])
         if language_policy.looks_like_page_reference(label, left_text=left_text):
             return match.group("body")
         return match.group(0)
@@ -648,7 +742,7 @@ def unwrap_stale_numeric_page_links(html: str, language_policy: Any) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = visible_text(match.group("body"))
-        left_text = visible_text(html[max(0, match.start() - 80): match.start()])
+        left_text = visible_text(html[max(0, match.start() - 80) : match.start()])
         if language_policy.looks_like_page_reference(label, left_text=left_text):
             return match.group(0)
         if re.search(r"\b(?:pages?|pp?\.?|sheet|slide)\s*$", left_text, re.IGNORECASE):
@@ -666,8 +760,12 @@ def unwrap_plain_prose_page_links(html: str) -> str:
         return html
 
     semantic_label = re.compile(
-        r"^\s*(?:"
-        r"(?:Fig(?:s|ure)?|Figures?|Table|Tables|Box|Section|Appendix|Eq(?:n|uation)?\.?|Equation)"
+        r"^\s*(?:(?:see|cf|\u0441\u043c)\.?\s+)?(?:"
+        r"(?:Fig(?:s|ure)?|Figures?|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?|"
+        r"Table|Tables|\u0422\u0430\u0431\u043b(?:\u0438\u0446\u0430)?|Box|Section|"
+        r"\u0420\u0430\u0437\u0434\u0435\u043b|Appendix|\u041f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435|"
+        r"Eq(?:n|uation)?\.?|Equation|\u0424\u043e\u0440\u043c\u0443\u043b\u0430|"
+        r"\u0423\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435)"
         r"\.?\s+[A-Za-z0-9IVXLCM.\-вЂ“]+|"
         r"\[\s*\d|"
         r"\(?S?\d+(?:[-вЂ“]\s*S?\d+)?\s*(?:Tables?|Figures?|Files?|Data)?\)?"
@@ -677,21 +775,40 @@ def unwrap_plain_prose_page_links(html: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = visible_text(match.group("body"))
-        if re.fullmatch(r"[A-Z]{2,6}", label.strip()) is not None:
-            left_text = visible_text(html[max(0, match.start() - 48): match.start()])
-            if re.search(r"\b(?:page|pp?\.?|section|chapter)\s*$", left_text, re.IGNORECASE) is None:
+        stripped_label = label.strip()
+        acronym_parts = [
+            part.strip().strip("()[]{}.,;:")
+            for part in stripped_label.rstrip(",").split(",")
+            if part.strip()
+        ]
+        is_acronym_label = bool(acronym_parts) and all(
+            re.fullmatch(r"[A-Za-z0-9]{2,8}", part) is not None
+            and len(re.findall(r"[A-Z]", part)) >= 2
+            for part in acronym_parts
+        )
+        if is_acronym_label:
+            left_text = visible_text(html[max(0, match.start() - 48) : match.start()])
+            if (
+                re.search(
+                    r"\b(?:page|pp?\.?|section|chapter)\s*$", left_text, re.IGNORECASE
+                )
+                is None
+            ):
                 return match.group("body")
         if len(re.findall(r"[A-Za-z]{2,}", label)) < 3:
             return match.group(0)
         if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label) is not None:
             return match.group("body")
         if semantic_label.match(label):
-            if re.match(r"^\s*\d+(?:\.\d+){1,}\.?\s+[A-Z]", label) and len(
-                re.findall(r"[A-Za-z]{2,}", label)
-            ) >= 3:
+            if (
+                re.match(r"^\s*\d+(?:\.\d+){1,}\.?\s+[A-Z]", label)
+                and len(re.findall(r"[A-Za-z]{2,}", label)) >= 3
+            ):
                 return match.group("body")
             return match.group(0)
-        if re.search(r"\b(?:copyright|creative commons|doi|https?|www\.)\b", label, re.IGNORECASE):
+        if re.search(
+            r"\b(?:copyright|creative commons|doi|https?|www\.)\b", label, re.IGNORECASE
+        ):
             return match.group(0)
         return match.group("body")
 
@@ -705,7 +822,7 @@ def unwrap_page_reference_page_links(html: str, language_policy: Any) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = visible_text(match.group("body"))
-        left_text = visible_text(html[max(0, match.start() - 48): match.start()])
+        left_text = visible_text(html[max(0, match.start() - 48) : match.start()])
         if language_policy.looks_like_page_reference(label, left_text=left_text):
             return match.group("body")
         return match.group(0)
@@ -726,7 +843,9 @@ def unwrap_duplicate_see_page_anchor_tails(html: str) -> str:
         r"(?P<body>\s*(?:pages?|pp?\.?)?\s*\d{1,4}[\)\]\.,;:]*\s*)</a>",
         re.IGNORECASE,
     )
-    return pattern.sub(lambda match: f"{match.group('first')} {match.group('body').strip()}", html)
+    return pattern.sub(
+        lambda match: f"{match.group('first')} {match.group('body').strip()}", html
+    )
 
 
 def unwrap_broken_page_anchor_links(html: str) -> str:

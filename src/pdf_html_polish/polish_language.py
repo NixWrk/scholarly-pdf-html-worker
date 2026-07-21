@@ -21,7 +21,10 @@ class PolishLanguagePolicy:
     semantic_reference_lead_in_pattern: Pattern[str] | None = None
 
     def looks_like_page_reference(self, label: str, *, left_text: str = "") -> bool:
-        if self.page_reference_label_pattern is not None and self.page_reference_label_pattern.fullmatch(label):
+        if (
+            self.page_reference_label_pattern is not None
+            and self.page_reference_label_pattern.fullmatch(label)
+        ):
             return True
         return (
             self.page_reference_left_context_pattern is not None
@@ -72,6 +75,7 @@ class DocumentPolishLanguageDecision:
 
 
 EN_POLISH_POLICY = PolishLanguagePolicy(code="en")
+OTHER_POLISH_POLICY = PolishLanguagePolicy(code="other")
 
 RU_POLISH_POLICY = PolishLanguagePolicy(
     code="ru",
@@ -79,8 +83,12 @@ RU_POLISH_POLICY = PolishLanguagePolicy(
         r"^\s*(?:см\.?\s*)?(?:с|стр)\.?\s*\d{1,4}(?:\s*[-\u2010-\u2015]\s*\d{1,4})?[\)\]\.,;:]*\s*$",
         re.IGNORECASE,
     ),
-    page_reference_left_context_pattern=re.compile(r"(?:см\.?\s*)?(?:с|стр)\.?\s*$", re.IGNORECASE),
-    semantic_reference_lead_in_pattern=re.compile(r"^(\s*[\(\[]?\s*)(?:см\.?\s*)+", re.IGNORECASE),
+    page_reference_left_context_pattern=re.compile(
+        r"(?:см\.?\s*)?(?:с|стр)\.?\s*$", re.IGNORECASE
+    ),
+    semantic_reference_lead_in_pattern=re.compile(
+        r"^(\s*[\(\[]?\s*)(?:см\.?\s*)+", re.IGNORECASE
+    ),
 )
 
 
@@ -92,7 +100,9 @@ def resolve_polish_language_policy(
     language = (polish_language or table_caption_language or "en").strip().casefold()
     if language.startswith("ru"):
         return RU_POLISH_POLICY
-    return EN_POLISH_POLICY
+    if language.startswith("en"):
+        return EN_POLISH_POLICY
+    return OTHER_POLISH_POLICY
 
 
 def _normalize_requested_polish_language(
@@ -103,9 +113,12 @@ def _normalize_requested_polish_language(
     language = (polish_language or table_caption_language or "en").strip().casefold()
     if language == "auto":
         return "auto"
-    if normalize_language_code(language).startswith("ru"):
+    normalized = normalize_language_code(language)
+    if normalized.startswith("ru"):
         return "ru"
-    return "en"
+    if normalized.startswith("en"):
+        return "en"
+    return "other"
 
 
 def _select_polish_language_for_detection(
@@ -117,8 +130,13 @@ def _select_polish_language_for_detection(
     if requested_polish_language != "auto":
         return requested_polish_language
     detected = normalize_language_code(detection.detected_language)
-    if detected == "ru" and detection.confidence >= min_confidence:
-        return "ru"
+    if detection.confidence >= min_confidence:
+        if detected == "ru":
+            return "ru"
+        if detected == "en":
+            return "en"
+        if detected != "unknown":
+            return "other"
     return "en"
 
 

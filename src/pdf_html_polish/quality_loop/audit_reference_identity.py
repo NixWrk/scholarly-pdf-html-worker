@@ -12,7 +12,17 @@ from pdf_html_polish.quality_loop.audit_blocks import (
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 
 
-REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
+REFERENCES_HEADING_RE = re.compile(
+    r"^\s*(?:"
+    r"references|bibliography|works cited|"
+    r"referencias|références|bibliografie|bibliografía|"
+    r"literatur|literaturverzeichnis|referenzen|"
+    r"\u041b\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u0430|"
+    r"\u0421\u043f\u0438\u0441\u043e\u043a \u043b\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u044b|"
+    r"\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438"
+    r")\s*$",
+    re.IGNORECASE,
+)
 LOCAL_ABSTRACT_SECTION_HEADING_RE = re.compile(r"^\s*\d{1,3}\s*\|\s+\S")
 REF_ID_RE = re.compile(r"^ref-(\d+)$", re.IGNORECASE)
 VISIBLE_REF_NUM_RE = re.compile(r"^\s*(?:\[\s*(\d{1,4})\s*\]|(\d{1,4})[.)])")
@@ -38,6 +48,12 @@ DOI_ONLY_METADATA_RE = re.compile(
     r"^\s*(?:doi:\s*)?(?:https?://(?:dx\.)?doi\.org/)?10\.\d{4,9}/\S+\s*(?:DOI:)?\s*$",
     re.IGNORECASE,
 )
+AUTHOR_YEAR_REFERENCE_CLASS = "z2m-author-year-reference"
+
+
+def is_author_year_reference_target(block: Block) -> bool:
+    classes = str(block.attrs.get("class") or "").split()
+    return AUTHOR_YEAR_REFERENCE_CLASS in classes
 
 
 def is_references_block(block: Block, references_started: bool) -> bool:
@@ -183,7 +199,11 @@ def reference_identity_defects(
                 nested_seen_ids[id_number] = block
             else:
                 seen_ids[id_number] = block
-                if visible_number is None and not DOI_ONLY_METADATA_RE.match(block.text):
+                if (
+                    visible_number is None
+                    and not DOI_ONLY_METADATA_RE.match(block.text)
+                    and not is_author_year_reference_target(block)
+                ):
                     missing_visible_number.append((id_number, block))
         if is_nested_audit_ref:
             if visible_number is not None and visible_number not in seen_visible:

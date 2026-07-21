@@ -12,6 +12,7 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+import struct
 import urllib.parse
 from typing import Callable, Mapping
 
@@ -372,6 +373,68 @@ def decode_data_image_payload(src_value: str) -> tuple[str, bytes] | None:
         return mime, b""
 
 
+def image_pixel_size_from_bytes(data: bytes) -> tuple[int, int] | None:
+    """Read PNG/JPEG dimensions without fully decoding the image."""
+    if len(data) >= 24 and data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
+        width, height = struct.unpack(">II", data[16:24])
+        return int(width), int(height)
+    if len(data) >= 12 and data.startswith(b"\xff\xd8"):
+        index = 2
+        while index + 9 < len(data):
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            marker = data[index + 1]
+            index += 2
+            while marker == 0xFF and index < len(data):
+                marker = data[index]
+                index += 1
+            if marker in {0xD8, 0xD9}:
+                continue
+            if index + 2 > len(data):
+                break
+            segment_length = struct.unpack(">H", data[index : index + 2])[0]
+            if segment_length < 2 or index + segment_length > len(data):
+                break
+            if marker in {
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            }:
+                if segment_length >= 7:
+                    height, width = struct.unpack(">HH", data[index + 3 : index + 7])
+                    return int(width), int(height)
+                break
+            index += segment_length
+    return None
+
+
+def image_pixel_size(path: Path) -> tuple[int, int] | None:
+    try:
+        return image_pixel_size_from_bytes(path.read_bytes())
+    except OSError:
+        return None
+
+
+def image_is_horizontal_page_strip(size: tuple[int, int] | None) -> bool:
+    if size is None:
+        return False
+    width, height = size
+    if width <= 0 or height <= 0:
+        return False
+    return width >= 500 and height <= 96 and (float(width) / float(height)) >= 8.0
+
+
 _BASE64_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 _BASE64_EDGE_CHARS = 40
 
@@ -481,12 +544,13 @@ def data_image_src_looks_renderable(src_value: str) -> bool:
     if scanned is None:
         return False
     prefix, suffix, decoded_size = scanned
+    terminal_suffix = suffix.rstrip(b" \t\r\n")
     if mime == "image/jpeg":
-        return prefix.startswith(b"\xff\xd8") and suffix.endswith(b"\xff\xd9")
+        return prefix.startswith(b"\xff\xd8") and terminal_suffix.endswith(b"\xff\xd9")
     if mime == "image/png":
-        return prefix.startswith(b"\x89PNG\r\n\x1a\n") and suffix.endswith(b"IEND\xaeB`\x82")
+        return prefix.startswith(b"\x89PNG\r\n\x1a\n") and terminal_suffix.endswith(b"IEND\xaeB`\x82")
     if mime == "image/gif":
-        return prefix.startswith((b"GIF87a", b"GIF89a")) and suffix.endswith(b";")
+        return prefix.startswith((b"GIF87a", b"GIF89a")) and terminal_suffix.endswith(b";")
     if mime == "image/webp":
         return decoded_size >= 12 and prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP"
     if mime == "image/svg+xml":

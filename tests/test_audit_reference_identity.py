@@ -59,6 +59,16 @@ def test_reference_identity_reports_missing_visible_number() -> None:
     assert "P97" in defects
 
 
+def test_reference_identity_accepts_semantic_author_year_targets_without_numbers() -> None:
+    defects = _ids(
+        '<h2>References</h2>'
+        '<p id="ref-1" class="z2m-author-year-reference">Smith, J. (2020). Example.</p>'
+        '<p id="ref-2" class="z2m-author-year-reference">Jones, B. (2021). Example.</p>'
+    )
+
+    assert "P97" not in defects
+
+
 def test_reference_identity_reference_block_helpers() -> None:
     blocks = parse_blocks(
         '<p>12 | Local abstract heading</p>'
@@ -69,6 +79,13 @@ def test_reference_identity_reference_block_helpers() -> None:
     assert is_references_block(blocks[1], references_started=False)
     assert looks_like_local_abstract_reference_block(blocks, 2)
     assert numbered_reference_block_is_likely_non_bibliographic(parse_blocks("<p>1. Optional input.</p>")[0])
+
+
+def test_reference_identity_recognizes_multilingual_reference_headings() -> None:
+    for heading in ("Literatur", "Literaturverzeichnis", "Referenzen", "Литература"):
+        block = parse_blocks(f"<h4>{heading}</h4>")[0]
+
+        assert is_references_block(block, references_started=False)
 
 
 def test_audit_script_keeps_legacy_reference_identity_aliases() -> None:

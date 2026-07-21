@@ -7,12 +7,18 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from ..author_year_patterns import (
+    AUTHOR_NAME_TOKEN,
+    AUTHOR_YEAR_CITATION_PATTERN,
+    AUTHOR_YEAR_SUFFIX_TOKEN,
+)
 from .html_fragments import visible_text
 from .references_links import (
     AUTHOR_YEAR_CITATION_TEXT_PATTERN,
     LI_BLOCK_PATTERN,
     LI_ID_PATTERN,
     PAGE_ANCHOR_PATTERN,
+    P_BLOCK_PATTERN,
     REF_ANCHOR_PATTERN,
     references_heading_search,
     replace_href_and_link_class,
@@ -28,20 +34,12 @@ PROTECTED_AUTHOR_YEAR_LINKIFY_PATTERN = re.compile(
     r"<math\b[\s\S]*?</math>|<[^>]+>",
     re.IGNORECASE,
 )
-PLAIN_AUTHOR_YEAR_CITATION_PATTERN = re.compile(
-    r"\b"
-    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
-    r"(?:\s+(?:et\s+al\.?|and\s+"
-    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
-    r"|(?:&|&amp;)\s*"
-    r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
-    r"))?"
-    r"(?:,\s*|\s+)\(?\d{4}[a-z]?\)?",
-    re.IGNORECASE,
-)
+PLAIN_AUTHOR_YEAR_CITATION_PATTERN = AUTHOR_YEAR_CITATION_PATTERN
 
 
-def _default_pdf_annotation_reference_label_keys(citation_profile: Any | None) -> set[str]:
+def _default_pdf_annotation_reference_label_keys(
+    citation_profile: Any | None,
+) -> set[str]:
     return set()
 
 
@@ -51,39 +49,46 @@ def _default_normalize_pdf_annotation_label(value: str) -> str:
 
 def author_year_label_tokens_and_year(label: str) -> tuple[list[str], str]:
     text = html_lib.unescape(visible_text(label))
-    year_match = re.search(r"\b\d{4}[a-z]?\b", text, re.IGNORECASE)
+    year_match = re.search(rf"\b{AUTHOR_YEAR_SUFFIX_TOKEN}\b", text, re.IGNORECASE)
     year = year_match.group(0).casefold() if year_match is not None else ""
-    text = re.sub(r"\b\d{4}[a-z]?\b", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bet\s+al\.?", " ", text, flags=re.IGNORECASE)
+    text = re.sub(rf"\b{AUTHOR_YEAR_SUFFIX_TOKEN}\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(?:et\s+al\.?|\u0438\s+\u0434\u0440\.?)", " ", text, flags=re.IGNORECASE
+    )
     text = re.sub(r"[\(\)\[\],.;:]+|&", " ", text)
     tokens = [
         token.casefold().strip(".")
-        for token in re.findall(
-            r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+",
-            text,
-        )
-        if token.casefold().strip(".") not in {"and", "et", "al"}
+        for token in re.findall(AUTHOR_NAME_TOKEN, text)
+        if token.casefold().strip(".")
+        not in {"and", "et", "al", "\u0438", "\u0434\u0440"}
         and len(token.strip(". ")) > 1
     ]
     return list(dict.fromkeys(tokens)), year
 
 
-def reference_text_matches_author_year(ref_text: str, name_tokens: list[str], year: str) -> bool:
+def reference_text_matches_author_year(
+    ref_text: str, name_tokens: list[str], year: str
+) -> bool:
     if not name_tokens or not year:
         return False
     ref_lower = html_lib.unescape(ref_text).casefold()
     ref_years = {
         found.casefold()
-        for found in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)
+        for found in re.findall(
+            rf"\b{AUTHOR_YEAR_SUFFIX_TOKEN}\b", ref_text, re.IGNORECASE
+        )
     }
     if year.casefold() not in ref_years:
         return False
     for token in name_tokens:
-        if re.search(
-            rf"(?<![a-z\u00c0-\u00ff]){re.escape(token)}(?![a-z\u00c0-\u00ff])",
-            ref_lower,
-            re.IGNORECASE,
-        ) is None:
+        if (
+            re.search(
+                rf"(?<![a-z\u00c0-\u00ff\u0430-\u044f\u0451]){re.escape(token)}(?![a-z\u00c0-\u00ff\u0430-\u044f\u0451])",
+                ref_lower,
+                re.IGNORECASE,
+            )
+            is None
+        ):
             return False
     return True
 
@@ -96,6 +101,12 @@ def reference_text_by_number(html: str) -> dict[int, str]:
         if id_match is None:
             continue
         references[int(id_match.group(2))] = visible_text(li_match.group(2))
+    for paragraph_match in P_BLOCK_PATTERN.finditer(html):
+        open_tag = paragraph_match.group("open") or ""
+        id_match = LI_ID_PATTERN.search(open_tag)
+        if id_match is None:
+            continue
+        references[int(id_match.group(2))] = visible_text(paragraph_match.group("body"))
     return references
 
 
@@ -154,9 +165,12 @@ def unwrap_author_year_ref_links(
         return html
 
     pdf_annotation_reference_label_keys = (
-        pdf_annotation_reference_label_keys or _default_pdf_annotation_reference_label_keys
+        pdf_annotation_reference_label_keys
+        or _default_pdf_annotation_reference_label_keys
     )
-    normalize_pdf_annotation_label = normalize_pdf_annotation_label or _default_normalize_pdf_annotation_label
+    normalize_pdf_annotation_label = (
+        normalize_pdf_annotation_label or _default_normalize_pdf_annotation_label
+    )
     pdf_annotation_labels = pdf_annotation_reference_label_keys(citation_profile)
 
     year_continuation_pattern = re.compile(
@@ -182,7 +196,9 @@ def unwrap_author_year_ref_links(
             label.strip(),
             flags=re.IGNORECASE,
         )
-        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(f"{left_text[-180:]} {label_for_pattern}"):
+        if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(
+            f"{left_text[-180:]} {label_for_pattern}"
+        ):
             return True
         return author_tail_pattern.search(left_text[-140:]) is not None
 
@@ -205,7 +221,9 @@ def unwrap_author_year_ref_links(
         )
         return match.group(1).casefold() if match else ""
 
-    def looks_like_author_year_author_fragment(label: str, left_text: str, right_text: str) -> bool:
+    def looks_like_author_year_author_fragment(
+        label: str, left_text: str, right_text: str
+    ) -> bool:
         if not right_hand_year_label(right_text):
             return False
         cleaned = label.strip()
@@ -215,7 +233,9 @@ def unwrap_author_year_ref_links(
             r"(?:[A-Z]\.\s*)?"
             r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+"
         )
-        name_fragment = re.sub(r"\s+", " ", html_lib.unescape(cleaned.strip("([;, "))).strip()
+        name_fragment = re.sub(
+            r"\s+", " ", html_lib.unescape(cleaned.strip("([;, "))
+        ).strip()
         if re.fullmatch(
             rf"{name_token}(?:\s+(?:et\s+al\.?|&\s*{name_token}|and\s+{name_token}))?",
             name_fragment,
@@ -223,7 +243,10 @@ def unwrap_author_year_ref_links(
         ):
             return True
         if re.fullmatch(rf"(?:&|and)\s*{name_token}", name_fragment, re.IGNORECASE):
-            return author_tail_pattern.search(html_lib.unescape(left_text)[-140:]) is not None
+            return (
+                author_tail_pattern.search(html_lib.unescape(left_text)[-140:])
+                is not None
+            )
         if re.fullmatch(r"et\s+al\.?", name_fragment, re.IGNORECASE):
             return author_tail_pattern.search(left_text[-140:]) is not None
         return False
@@ -233,13 +256,17 @@ def unwrap_author_year_ref_links(
     year_labels_by_target: dict[int, set[str]] = {}
     for anchor_match in REF_ANCHOR_PATTERN.finditer(html):
         label = visible_text(anchor_match.group("body"))
-        left_text = visible_text(html[max(0, anchor_match.start() - 180): anchor_match.start()])
+        left_text = visible_text(
+            html[max(0, anchor_match.start() - 180) : anchor_match.start()]
+        )
         if not is_author_year_continuation(label, left_text):
             continue
         year = normalized_year_label(label)
         if not year:
             continue
-        year_labels_by_target.setdefault(int(anchor_match.group("num")), set()).add(year)
+        year_labels_by_target.setdefault(int(anchor_match.group("num")), set()).add(
+            year
+        )
     repeated_year_targets = {
         target for target, years in year_labels_by_target.items() if len(years) > 1
     }
@@ -258,7 +285,10 @@ def unwrap_author_year_ref_links(
                 return False
             return target not in repeated_year_targets
         ref_lower = ref_text.casefold()
-        ref_years = {year.casefold() for year in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)}
+        ref_years = {
+            year.casefold()
+            for year in re.findall(r"\b\d{4}[a-z]?\b", ref_text, re.IGNORECASE)
+        }
         label_year = normalized_year_label(label) or right_hand_year_label(right_text)
         if not ref_years:
             if require_reference_year:
@@ -279,7 +309,8 @@ def unwrap_author_year_ref_links(
                 r"[A-Z\u00c0-\u00de][A-Za-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff'\u2019.-]+",
                 author_tail,
             )
-            if surname.casefold() not in {"et", "al", "and"} and len(surname.strip(". ")) > 1
+            if surname.casefold() not in {"et", "al", "and"}
+            and len(surname.strip(". ")) > 1
         ]
         if not surnames:
             return target not in repeated_year_targets
@@ -301,8 +332,8 @@ def unwrap_author_year_ref_links(
         label = visible_text(match.group("body"))
         if normalize_pdf_annotation_label(label).casefold() in pdf_annotation_labels:
             return match.group(0)
-        left_text = visible_text(html[max(0, match.start() - 180): match.start()])
-        right_text = visible_text(html[match.end(): match.end() + 140])
+        left_text = visible_text(html[max(0, match.start() - 180) : match.start()])
+        right_text = visible_text(html[match.end() : match.end() + 140])
         is_year_continuation = is_author_year_continuation(label, left_text)
         if is_year_continuation and target_ref_matches_author_year(
             int(match.group("num")),
@@ -313,24 +344,31 @@ def unwrap_author_year_ref_links(
             return match.group(0)
         surname_fragment = (
             re.fullmatch(r"[A-Z][A-Za-z'вЂ™.-]{3,}", label) is not None
-            and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE) is not None
+            and re.match(
+                r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE
+            )
+            is not None
         ) or looks_like_author_year_author_fragment(label, left_text, right_text)
         single_surname_et_al_fragment = (
             re.fullmatch(r"[A-Z][A-Za-z'\u2019.-]{3,}", label) is not None
-            and re.match(r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE)
+            and re.match(
+                r"^\s*et\s+al\.?\s*\(?\d{4}[a-z]?\)?", right_text, re.IGNORECASE
+            )
             is not None
         )
         if single_surname_et_al_fragment:
             return match.group("body")
         if surname_fragment:
             matching_target = author_year_matching_ref_target(label, right_text)
-            if matching_target is not None and matching_target != int(match.group("num")):
+            if matching_target is not None and matching_target != int(
+                match.group("num")
+            ):
                 attrs = replace_href_and_link_class(
                     match.group("attrs"),
                     f"#ref-{matching_target}",
                     "z2m-ref-link",
                 )
-                return f'<a{attrs}>{match.group("body")}</a>'
+                return f"<a{attrs}>{match.group('body')}</a>"
         if surname_fragment and target_ref_matches_author_year(
             int(match.group("num")),
             label,
@@ -406,31 +444,46 @@ def unwrap_author_year_page_links(html: str) -> str:
         "table",
     }
 
-    def looks_like_author_year_page_fragment(label: str, left_text: str, right_text: str) -> bool:
+    def looks_like_author_year_page_fragment(
+        label: str, left_text: str, right_text: str
+    ) -> bool:
         cleaned = re.sub(r"\s+", " ", html_lib.unescape(label).strip("([;, ")).strip()
         if not cleaned or re.search(r"\d{4}", cleaned):
             return False
         if cleaned.casefold().rstrip(".") in blocked_fragments:
             return False
         right_context = re.sub(r"\s+", " ", html_lib.unescape(right_text)).strip()
-        if not right_context or re.match(r"^(?:of|for|in|to)\b", right_context, re.IGNORECASE):
+        if not right_context or re.match(
+            r"^(?:of|for|in|to)\b", right_context, re.IGNORECASE
+        ):
             return False
-        split_et_al_continuation = re.fullmatch(rf"{name_token}\s+et", cleaned, re.IGNORECASE) is not None and re.match(
-            r"^al\.?\s*\(?\d{4}[a-z]?\)?",
-            right_context,
-            re.IGNORECASE,
-        ) is not None
-        split_surname_continuation = re.fullmatch(r"\(?[A-Z][A-Za-z]{2,6}", cleaned) is not None and re.match(
-            r"^[a-z]{1,10}\s+et\s+al\.?\s*\(?\d{4}[a-z]?\)?",
-            right_context,
-            re.IGNORECASE,
-        ) is not None
+        split_et_al_continuation = (
+            re.fullmatch(rf"{name_token}\s+et", cleaned, re.IGNORECASE) is not None
+            and re.match(
+                r"^al\.?\s*\(?\d{4}[a-z]?\)?",
+                right_context,
+                re.IGNORECASE,
+            )
+            is not None
+        )
+        split_surname_continuation = (
+            re.fullmatch(r"\(?[A-Z][A-Za-z]{2,6}", cleaned) is not None
+            and re.match(
+                r"^[a-z]{1,10}\s+et\s+al\.?\s*\(?\d{4}[a-z]?\)?",
+                right_context,
+                re.IGNORECASE,
+            )
+            is not None
+        )
         citation_context = (
             re.search(r"[\(;]\s*$", html_lib.unescape(left_text)) is not None
-            or re.search(r"\bby\s*$", html_lib.unescape(left_text), re.IGNORECASE) is not None
+            or re.search(r"\bby\s*$", html_lib.unescape(left_text), re.IGNORECASE)
+            is not None
             or label.lstrip().startswith("(")
             or right_context.startswith((",", ";", ")", "&"))
-            or re.match(r"^(?:&|and|al\.?|et\s+al\.?|\(?\d{4})\b", right_context, re.IGNORECASE)
+            or re.match(
+                r"^(?:&|and|al\.?|et\s+al\.?|\(?\d{4})\b", right_context, re.IGNORECASE
+            )
             is not None
             or split_et_al_continuation
             or split_surname_continuation
@@ -448,33 +501,42 @@ def unwrap_author_year_page_links(html: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = visible_text(match.group("body"))
-        label_for_pattern = re.sub(r"(\d{4}[a-z]?)[\),.;:]+$", r"\1", label.strip(), flags=re.IGNORECASE)
+        label_for_pattern = re.sub(
+            r"(\d{4}[a-z]?)[\),.;:]+$", r"\1", label.strip(), flags=re.IGNORECASE
+        )
         if AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(label) is None:
-            left_text = visible_text(html[max(0, match.start() - 180): match.start()])
-            right_text = visible_text(html[match.end(): match.end() + 80])
+            left_text = visible_text(html[max(0, match.start() - 180) : match.start()])
+            right_text = visible_text(html[match.end() : match.end() + 80])
             if re.search(r"\d{4}", label) and AUTHOR_YEAR_CITATION_TEXT_PATTERN.search(
                 f"{left_text[-180:]} {label_for_pattern}"
             ):
                 return match.group("body")
-            flexible_year_continuation = (
-                re.search(
-                    r"\b[A-Z][A-Za-z'.-]+(?:\s+et\s+al\.?|\s*&\s*[A-Z][A-Za-z'.-]+)?"
-                    r"(?:,)?\s*(?:\d{4}[a-z]?\s*[,;]?\s*)?$",
-                    left_text,
-                )
-                is not None
-                and not re.match(r"^\s*(?:of|for|in|to)\b", right_text, re.IGNORECASE)
+            flexible_year_continuation = re.search(
+                r"\b[A-Z][A-Za-z'.-]+(?:\s+et\s+al\.?|\s*&\s*[A-Z][A-Za-z'.-]+)?"
+                r"(?:,)?\s*(?:\d{4}[a-z]?\s*[,;]?\s*)?$",
+                left_text,
+            ) is not None and not re.match(
+                r"^\s*(?:of|for|in|to)\b", right_text, re.IGNORECASE
             )
             year_continuation = (
-                re.fullmatch(r"\(?\d{4}[a-z]?\)?[\),.;:]*", label.strip(), re.IGNORECASE) is not None
+                re.fullmatch(
+                    r"\(?\d{4}[a-z]?\)?[\),.;:]*", label.strip(), re.IGNORECASE
+                )
+                is not None
                 and re.search(
                     r"\b[A-Z][A-Za-z'РІР‚в„ў.-]+(?:\s+et\s+al\.?)?,\s*(?:\d{4}[a-z]?\s*,?\s*)?$",
                     left_text,
                 )
                 is not None
             )
-            author_fragment_continuation = looks_like_author_year_page_fragment(label, left_text, right_text)
-            if not (year_continuation or flexible_year_continuation or author_fragment_continuation):
+            author_fragment_continuation = looks_like_author_year_page_fragment(
+                label, left_text, right_text
+            )
+            if not (
+                year_continuation
+                or flexible_year_continuation
+                or author_fragment_continuation
+            ):
                 return match.group(0)
         return match.group("body")
 
@@ -501,9 +563,9 @@ def recover_trailing_citation_after_author_year_ref(html: str) -> str:
         if re.search(r"\b\d{4}[a-z]?\)?\s*$", anchor_text) is None:
             return match.group(0)
         return (
-            f'{match.group("anchor")}<sup>'
+            f"{match.group('anchor')}<sup>"
             f'<a href="#ref-{number}" class="z2m-ref-link">{number}</a>'
-            f'</sup>{match.group("trail").lstrip()}'
+            f"</sup>{match.group('trail').lstrip()}"
         )
 
     return pattern.sub(replace, html)

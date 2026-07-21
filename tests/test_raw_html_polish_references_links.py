@@ -33,20 +33,40 @@ class _PageReferencePolicy:
     def looks_like_page_reference(self, label: str, *, left_text: str = "") -> bool:
         normalized = f"{left_text} {label}".strip()
         normalized_lower = normalized.lower()
-        return normalized_lower.endswith("см. с. 34") or normalized_lower.endswith("page 34")
+        return normalized_lower.endswith("см. с. 34") or normalized_lower.endswith(
+            "page 34"
+        )
 
 
 def test_references_heading_helpers_find_plain_and_notes_headings() -> None:
     assert references_heading_search("<p>Body</p><h2>References</h2>") is not None
     assert references_heading_match("<h2>References</h2>") is not None
-    assert references_heading_search("<h2>Notes and references</h2>", allow_notes_heading=True) is not None
+    assert (
+        references_heading_search(
+            "<h2>Notes and references</h2>", allow_notes_heading=True
+        )
+        is not None
+    )
     for heading in (
         "Bibliografie",
         "Bibliografía",
         "Références",
+        "Literatur",
         "Literaturverzeichnis",
     ):
         assert references_heading_search(f"<h2>{heading}</h2>") is not None
+
+
+def test_references_heading_search_prefers_real_last_heading_over_toc_entry() -> None:
+    html = (
+        "<h4>Bibliografie</h4><p>Table of contents entry.</p>"
+        "<p>Main article body.</p><h2>Bibliografie</h2><ol><li>1. Actual reference.</li></ol>"
+    )
+
+    match = references_heading_search(html)
+
+    assert match is not None
+    assert match.start() == html.rfind("<h2>Bibliografie</h2>")
 
 
 def test_reference_visible_number_handles_line_number_prefixes() -> None:
@@ -58,7 +78,10 @@ def test_reference_visible_number_handles_line_number_prefixes() -> None:
 
 def test_reference_visible_number_handles_spaced_author_and_sup_prefixes() -> None:
     assert reference_visible_number("2 Teasell R, Foley N. Journal 2002.") == 2
-    assert strip_reference_visible_number("2 Teasell R, Foley N. Journal 2002.") == "Teasell R, Foley N. Journal 2002."
+    assert (
+        strip_reference_visible_number("2 Teasell R, Foley N. Journal 2002.")
+        == "Teasell R, Foley N. Journal 2002."
+    )
 
     sup_body = "<sup>4</sup> I. A. Turygin, Applied Optics."
     assert reference_visible_number(sup_body) == 4
@@ -66,7 +89,9 @@ def test_reference_visible_number_handles_spaced_author_and_sup_prefixes() -> No
 
 
 def test_strip_leading_reference_line_number_pair() -> None:
-    assert strip_leading_reference_line_number_pair("899 1. Bourne A.") == "1. Bourne A."
+    assert (
+        strip_leading_reference_line_number_pair("899 1. Bourne A.") == "1. Bourne A."
+    )
 
 
 def test_strip_leading_reference_line_number_pairs_in_list_items() -> None:
@@ -77,7 +102,9 @@ def test_strip_leading_reference_line_number_pairs_in_list_items() -> None:
     )
 
 
-def test_normalize_standalone_reference_paragraph_prefix_preserves_author_initial() -> None:
+def test_normalize_standalone_reference_paragraph_prefix_preserves_author_initial() -> (
+    None
+):
     body = '<a href="#page-1">[3] A</a>. Smith'
 
     assert normalize_standalone_reference_paragraph_prefix(body, "3") == (
@@ -87,7 +114,10 @@ def test_normalize_standalone_reference_paragraph_prefix_preserves_author_initia
 
 def test_reference_number_artifact_stripping() -> None:
     assert strip_duplicate_reference_number_artifacts("1. 1Smith", "1") == "1. Smith"
-    assert strip_embedded_reference_number_artifacts("Journal 12. of tests") == "Journal of tests"
+    assert (
+        strip_embedded_reference_number_artifacts("Journal 12. of tests")
+        == "Journal of tests"
+    )
 
 
 def test_unwrap_reference_list_page_number_links_keeps_normalized_ref_number() -> None:
@@ -128,7 +158,9 @@ def test_unwrap_reference_list_page_links_only_changes_reference_nodes() -> None
     )
 
 
-def test_repair_ref_links_with_leading_closing_punctuation_moves_punctuation_out() -> None:
+def test_repair_ref_links_with_leading_closing_punctuation_moves_punctuation_out() -> (
+    None
+):
     html = '<p>(<a href="#ref-3" class="z2m-ref-link">)3,</a> 4)</p>'
 
     assert repair_ref_links_with_leading_closing_punctuation(html) == (
@@ -136,7 +168,9 @@ def test_repair_ref_links_with_leading_closing_punctuation_moves_punctuation_out
     )
 
 
-def test_retarget_mismatched_ref_link_labels_relinks_or_unwraps_numeric_labels() -> None:
+def test_retarget_mismatched_ref_link_labels_relinks_or_unwraps_numeric_labels() -> (
+    None
+):
     html = (
         '<p><a href="#ref-1">2</a> and <a href="#ref-3">1, 2</a> '
         'but Smith <a href="#ref-9">2019)</a> and orphan <a href="#ref-9">325</a>.</p>'
@@ -152,7 +186,9 @@ def test_retarget_mismatched_ref_link_labels_relinks_or_unwraps_numeric_labels()
     )
 
 
-def test_repair_ref_links_absorbed_decimal_or_unit_text_repairs_percent_and_unit() -> None:
+def test_repair_ref_links_absorbed_decimal_or_unit_text_repairs_percent_and_unit() -> (
+    None
+):
     html = (
         '<p>Success was 7 <a href="#ref-12" class="z2m-ref-link">%12</a> '
         'and flow mL/ <a href="#ref-7">s7</a>.</p>'
@@ -175,7 +211,9 @@ def test_unwrap_page_reference_ref_links_uses_language_policy() -> None:
 
 
 def test_unwrap_page_reference_page_links_uses_language_policy() -> None:
-    html = '<p>См. с. <a href="#page-34">34</a>; see <a href="#page-5">Figure 5</a>.</p>'
+    html = (
+        '<p>См. с. <a href="#page-34">34</a>; see <a href="#page-5">Figure 5</a>.</p>'
+    )
 
     assert unwrap_page_reference_page_links(html, _PageReferencePolicy()) == (
         '<p>См. с. 34; see <a href="#page-5">Figure 5</a>.</p>'
@@ -198,9 +236,9 @@ def test_unwrap_plain_prose_page_links_preserves_semantic_short_labels() -> None
     )
 
     assert unwrap_plain_prose_page_links(html) == (
-        '<p>ordinary prose fragments from article body '
+        "<p>ordinary prose fragments from article body "
         '<a href="#page-2">Figure 2</a> '
-        'Smith et al. 2020</p>'
+        "Smith et al. 2020</p>"
     )
 
 
@@ -233,11 +271,17 @@ def test_unwrap_broken_internal_semantic_links_preserves_page_number_labels() ->
 
 
 def test_single_file_html_keeps_legacy_private_reference_aliases() -> None:
-    assert single_file_html._AUTHOR_YEAR_CITATION_TEXT_PATTERN is AUTHOR_YEAR_CITATION_TEXT_PATTERN
+    assert (
+        single_file_html._AUTHOR_YEAR_CITATION_TEXT_PATTERN
+        is AUTHOR_YEAR_CITATION_TEXT_PATTERN
+    )
     assert single_file_html._PAGE_ANCHOR_PATTERN is PAGE_ANCHOR_PATTERN
     assert single_file_html._REFERENCE_PAGE_ID_PATTERN is REFERENCE_PAGE_ID_PATTERN
     assert single_file_html._REF_ANCHOR_PATTERN is REF_ANCHOR_PATTERN
-    assert single_file_html._SEMANTIC_INTERNAL_ANCHOR_PATTERN is SEMANTIC_INTERNAL_ANCHOR_PATTERN
+    assert (
+        single_file_html._SEMANTIC_INTERNAL_ANCHOR_PATTERN
+        is SEMANTIC_INTERNAL_ANCHOR_PATTERN
+    )
     assert single_file_html._reference_visible_number is reference_visible_number
     assert single_file_html._references_heading_search is references_heading_search
     assert (
@@ -248,13 +292,88 @@ def test_single_file_html_keeps_legacy_private_reference_aliases() -> None:
         single_file_html._repair_ref_links_with_leading_closing_punctuation
         is repair_ref_links_with_leading_closing_punctuation
     )
-    assert single_file_html._retarget_mismatched_ref_link_labels is retarget_mismatched_ref_link_labels
-    assert single_file_html._unwrap_broken_internal_semantic_links is unwrap_broken_internal_semantic_links
-    assert single_file_html._unwrap_broken_page_anchor_links is unwrap_broken_page_anchor_links
-    assert single_file_html._unwrap_duplicate_see_page_anchor_tails is unwrap_duplicate_see_page_anchor_tails
-    assert single_file_html._unwrap_page_reference_page_links is unwrap_page_reference_page_links
-    assert single_file_html._unwrap_page_reference_ref_links is unwrap_page_reference_ref_links
-    assert single_file_html._unwrap_plain_prose_page_links is unwrap_plain_prose_page_links
-    assert single_file_html._unwrap_reference_list_page_links is unwrap_reference_list_page_links
-    assert single_file_html._unwrap_reference_list_page_number_links is unwrap_reference_list_page_number_links
-    assert single_file_html._unwrap_stale_numeric_page_links is unwrap_stale_numeric_page_links
+    assert (
+        single_file_html._retarget_mismatched_ref_link_labels
+        is retarget_mismatched_ref_link_labels
+    )
+    assert (
+        single_file_html._unwrap_broken_internal_semantic_links
+        is unwrap_broken_internal_semantic_links
+    )
+    assert (
+        single_file_html._unwrap_broken_page_anchor_links
+        is unwrap_broken_page_anchor_links
+    )
+    assert (
+        single_file_html._unwrap_duplicate_see_page_anchor_tails
+        is unwrap_duplicate_see_page_anchor_tails
+    )
+    assert (
+        single_file_html._unwrap_page_reference_page_links
+        is unwrap_page_reference_page_links
+    )
+    assert (
+        single_file_html._unwrap_page_reference_ref_links
+        is unwrap_page_reference_ref_links
+    )
+    assert (
+        single_file_html._unwrap_plain_prose_page_links is unwrap_plain_prose_page_links
+    )
+    assert (
+        single_file_html._unwrap_reference_list_page_links
+        is unwrap_reference_list_page_links
+    )
+    assert (
+        single_file_html._unwrap_reference_list_page_number_links
+        is unwrap_reference_list_page_number_links
+    )
+    assert (
+        single_file_html._unwrap_stale_numeric_page_links
+        is unwrap_stale_numeric_page_links
+    )
+
+
+def test_references_heading_search_rejects_early_publication_metadata_heading() -> None:
+    html = (
+        "<p>Received: 12 November 2020. Accepted: 19 January 2021. "
+        "Published: 26 January 2021. DOI: 10.1000/example.</p>"
+        "<h4>Bibliografie</h4>"
+        + "".join(
+            f"<p>Main article discussion paragraph {index} without bibliography data.</p>"
+            for index in range(40)
+        )
+    )
+
+    assert references_heading_search(html) is None
+
+
+def test_references_heading_search_skips_metadata_heading_for_later_bibliography() -> (
+    None
+):
+    html = (
+        "<p>Eingereicht: 12 November 2020. Akzeptiert: 19 January 2021. "
+        "Veroeffentlicht: 26 January 2021. DOI: 10.1000/example.</p>"
+        "<h4>Bibliografie</h4>"
+        "<p>Main article discussion continues here.</p>"
+        "<h2>References</h2><ol>"
+        "<li>1. Smith A. Example Journal. 2020.</li>"
+        "<li>2. Jones B. Example Journal. 2021.</li>"
+        "</ol>"
+    )
+
+    match = references_heading_search(html)
+
+    assert match is not None
+    assert match.start() == html.index("<h2>References</h2>")
+
+
+def test_unwrap_plain_prose_page_links_unwraps_acronym_lists() -> None:
+    html = (
+        '<span id="page-0-0"></span>'
+        '<p class="z2m-figure-caption">Whereas '
+        '<a href="#page-0-0">HwE, HbE,</a> and ED form a transition chain; '
+        '<a href="#page-0-0">HwE</a> differs from '
+        '<a href="#page-0-0">(ED)</a>.</p>'
+    )
+
+    assert "#page-0-0\">" not in unwrap_plain_prose_page_links(html)

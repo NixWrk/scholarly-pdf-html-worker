@@ -26,6 +26,11 @@ from pdf_html_polish.html_stages import (
     require_current_raw_conversions,
 )
 from pdf_html_polish.raw_html_polish.references_links import references_heading_search
+from pdf_html_polish.raw_html_polish.references_links import (
+    LI_BLOCK_PATTERN,
+    P_BLOCK_PATTERN,
+    reference_visible_number,
+)
 
 from .run_utils import (
     article_dir_from_stage,
@@ -62,6 +67,24 @@ DATA_AVAILABILITY_CONTEXT_RE = re.compile(
     r"\b(?:data\s+availability|openly\s+available|available\s+in\s+the|repository|datasets?)\b",
     re.IGNORECASE,
 )
+NUMERIC_SUPERSCRIPT_LABEL_RE = re.compile(
+    r"^\s*[\[(]?\d{1,3}(?:\s*(?:[,;]|-|\u2013|\u2014)\s*\d{1,3}){0,12}[\])]?\s*[.,;]?\s*$"
+)
+PAGE_ANCHOR_RE = re.compile(
+    r'<a\b[^>]*\bhref\s*=\s*(["\'])#page-[^"\']+\1[^>]*>(?P<body>[\s\S]*?)</a>',
+    re.IGNORECASE,
+)
+EMBEDDED_NUMBERED_REFERENCE_RE = re.compile(
+    r"(?<!\d)(?P<number>[1-9]\d{0,2})[.)]\s+(?=[A-Z\u00c0-\u00de])"
+)
+UNHEADED_REFERENCE_LIST_BLOCK_RE = re.compile(
+    r"(?:<p\b[^>]*>\s*)?<[ou]l\b[\s\S]*?</[ou]l>(?:\s*</p>)?",
+    re.IGNORECASE,
+)
+FLATTENED_NUMERIC_CITATION_HINT_RE = re.compile(
+    r"\b(?:et\s+al\.?\s*|[A-Za-z]{5,}\.)(?P<number>\d{1,3})(?!\s*\d)(?=[\s,.;)])",
+    re.IGNORECASE,
+)
 
 
 def _html_plain_text_for_profile(html: str) -> str:
@@ -75,6 +98,72 @@ def visible_html_text(fragment: str) -> str:
     text = re.sub(r"(?i)<br\s*/?>", " ", fragment)
     text = TAG_RE.sub(" ", text)
     return unescape(re.sub(r"\s+", " ", text)).strip()
+
+
+def _numeric_superscript_hint_count(html: str) -> int:
+    normalized_html = unescape(html)
+    return sum(
+        NUMERIC_SUPERSCRIPT_LABEL_RE.fullmatch(visible_html_text(match.group(0))) is not None
+        for match in SUP_BLOCK_RE.finditer(normalized_html)
+    )
+
+
+def _flattened_numeric_citation_hint_count(html: str, max_reference: int) -> int:
+    if max_reference <= 0:
+        return 0
+    text = _html_plain_text_for_profile(html)
+    return sum(
+        1
+        for match in FLATTENED_NUMERIC_CITATION_HINT_RE.finditer(text)
+        if 1 <= int(match.group("number")) <= max_reference
+    )
+
+
+def _numeric_page_anchor_hint_count(html: str) -> int:
+    return sum(
+        NUMERIC_SUPERSCRIPT_LABEL_RE.fullmatch(visible_html_text(match.group("body"))) is not None
+        for match in PAGE_ANCHOR_RE.finditer(html)
+    )
+
+
+def _numbered_reference_hint_count(bibliography_html: str) -> int:
+    numbers: set[int] = set()
+    for match in LI_BLOCK_PATTERN.finditer(bibliography_html):
+        number = reference_visible_number(match.group(2) or "")
+        if number is not None:
+            numbers.add(number)
+    for match in P_BLOCK_PATTERN.finditer(bibliography_html):
+        number = reference_visible_number(match.group("body") or "")
+        if number is not None:
+            numbers.add(number)
+
+    bibliography_text = _html_plain_text_for_profile(bibliography_html)
+    embedded_numbers = {
+        int(match.group("number"))
+        for match in EMBEDDED_NUMBERED_REFERENCE_RE.finditer(bibliography_text)
+    }
+    return max(len(numbers), len(embedded_numbers))
+
+
+def _unheaded_numbered_reference_start(raw_html: str) -> int | None:
+    for match in UNHEADED_REFERENCE_LIST_BLOCK_RE.finditer(raw_html):
+        block = match.group(0)
+        numbers: list[int] = []
+        for li_match in LI_BLOCK_PATTERN.finditer(block):
+            number = reference_visible_number(li_match.group(2) or "")
+            if number is None:
+                break
+            numbers.append(number)
+            if len(numbers) >= 4:
+                break
+        if len(numbers) < 3 or numbers[:3] != [1, 2, 3]:
+            continue
+        left_text = visible_html_text(
+            raw_html[max(0, match.start() - 1800) : match.start()]
+        ).casefold()
+        if "acknowledg" in left_text or match.start() > int(len(raw_html) * 0.55):
+            return match.start()
+    return None
 
 
 def _is_data_availability_reference_number(ref_match: re.Match[str], html: str) -> bool:
@@ -138,11 +227,64 @@ def _is_bracket_ref_link_for_style(ref_match: re.Match[str], html: str) -> bool:
 
 def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, Any]:
     references_heading = references_heading_search(raw_html, allow_notes_heading=True)
-    profile_html = raw_html[: references_heading.start()] if references_heading is not None else raw_html
+    if references_heading is not None:
+        profile_html = raw_html[: references_heading.start()]
+        bibliography_html = raw_html[references_heading.end() :]
+    else:
+        unheaded_start = _unheaded_numbered_reference_start(raw_html)
+        if unheaded_start is None:
+            profile_html = raw_html
+            bibliography_html = raw_html[len(raw_html) // 2 :]
+        else:
+            profile_html = raw_html[:unheaded_start]
+            bibliography_html = raw_html[unheaded_start:]
     text = _html_plain_text_for_profile(profile_html)
-    inferred_style, inferred_confidence, paren_count, bracket_count = infer_citation_style_from_text(text)
-    usable_inferred_style = inferred_confidence == "high" or (
-        inferred_style == "author_year" and inferred_confidence == "medium"
+    numbered_reference_hints = _numbered_reference_hint_count(bibliography_html)
+    tagged_superscript_hints = _numeric_superscript_hint_count(profile_html)
+    flattened_superscript_hints = _flattened_numeric_citation_hint_count(
+        profile_html, numbered_reference_hints
+    )
+    superscript_hints = (
+        tagged_superscript_hints + flattened_superscript_hints
+        if numbered_reference_hints >= 5 else 0
+    )
+    numeric_page_anchor_hints = _numeric_page_anchor_hint_count(profile_html)
+    numeric_structure_hints = max(numbered_reference_hints, numeric_page_anchor_hints)
+    inferred_style, inferred_confidence, paren_count, bracket_count = infer_citation_style_from_text(
+        text,
+        superscript_hint_count=superscript_hints,
+        numeric_structure_hint_count=numeric_structure_hints,
+        numbered_reference_hint_count=numbered_reference_hints,
+    )
+    body_only_style, body_only_confidence, _, _ = infer_citation_style_from_text(
+        text,
+        superscript_hint_count=superscript_hints,
+        numeric_structure_hint_count=numeric_page_anchor_hints,
+        numbered_reference_hint_count=0,
+    )
+    initial_numeric_style_is_usable = (
+        inferred_confidence == "high"
+        or (
+            inferred_confidence == "medium"
+            and inferred_style in {"bracket_numeric", "superscript_numeric"}
+            and numbered_reference_hints >= 5
+        )
+    )
+    if (
+        not initial_numeric_style_is_usable
+        and inferred_style != "author_year"
+        and body_only_style == "author_year"
+    ):
+        inferred_style, inferred_confidence = body_only_style, body_only_confidence
+    evidence_backed_medium_numeric = (
+        inferred_confidence == "medium"
+        and inferred_style in {"bracket_numeric", "superscript_numeric"}
+        and numbered_reference_hints >= 5
+    )
+    usable_inferred_style = (
+        inferred_confidence == "high"
+        or (inferred_style == "author_year" and inferred_confidence == "medium")
+        or evidence_backed_medium_numeric
     )
     style = inferred_style if usable_inferred_style else "unknown"
     confidence = inferred_confidence if usable_inferred_style else "low"
@@ -151,12 +293,18 @@ def _converted_raw_citation_profile(raw_html: str, raw_path: Path) -> dict[str, 
         "style": style,
         "confidence": confidence,
         "source": "converted_raw_html",
-        "source_policy": "use_high_confidence_or_medium_author_year_inferred_style",
+        "source_policy": "use_high_confidence_or_evidence_backed_medium_inferred_style",
         "inferred_style": inferred_style,
         "inferred_confidence": inferred_confidence,
+        "body_only_inferred_style": body_only_style,
+        "body_only_inferred_confidence": body_only_confidence,
         "source_raw_stage_path": str(raw_path),
         "paren_numeric_count": paren_count,
         "bracket_numeric_count": bracket_count,
+        "numeric_superscript_hint_count": tagged_superscript_hints,
+        "flattened_numeric_citation_hint_count": flattened_superscript_hints,
+        "numeric_page_anchor_hint_count": numeric_page_anchor_hints,
+        "numbered_reference_hint_count": numbered_reference_hints,
     }
 
 

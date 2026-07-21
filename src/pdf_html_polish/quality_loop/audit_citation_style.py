@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Iterable
 
-from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, normalize_ws, strip_tags
+from pdf_html_polish.citation_profile import PAREN_NUMERIC_CITATION_RE
+from pdf_html_polish.quality_loop.audit_blocks import (
+    Block,
+    Defect,
+    normalize_ws,
+    strip_tags,
+)
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 
 
@@ -14,7 +20,9 @@ REF_ANCHOR_BODY_RE = re.compile(
     r"(?P<body>.*?)</a>",
     re.IGNORECASE | re.DOTALL,
 )
-REF_LINK_RE = re.compile(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE)
+REF_LINK_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-(\d+)['\"][^>]*>", re.IGNORECASE
+)
 REF_ID_RE = re.compile(r"\bid\s*=\s*['\"]ref-\d+['\"]", re.IGNORECASE)
 AUTHOR_YEAR_STYLE_TEXT_RE = re.compile(
     r"\b"
@@ -31,7 +39,9 @@ NONCITATION_CONTEXT_RE = re.compile(
     r"\b(?:u|µ|μ)m\s*(?:1|2)\b",
     re.IGNORECASE,
 )
-ML_PER_SECOND_CONTEXT_RE = re.compile(r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+\b", re.IGNORECASE)
+ML_PER_SECOND_CONTEXT_RE = re.compile(
+    r"\bmL\s*[:/]\s*s\s*\{?\s*[-\u2212]?\s*\d+\b", re.IGNORECASE
+)
 
 
 def has_noncitation_context(text: str) -> bool:
@@ -58,7 +68,9 @@ def ref_anchor_visible_number(label: str) -> int | None:
 
 
 def ref_match_inside_bracketed_numeric_citation(raw: str, start: int, end: int) -> bool:
-    ref_anchor = re.search(r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE)
+    ref_anchor = re.search(
+        r"<a\b[^>]*\bhref\s*=\s*['\"]#ref-\d+", raw[start:end], re.IGNORECASE
+    )
     anchor_start = start + ref_anchor.start() if ref_anchor is not None else start
     anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
     if anchor_end >= 0:
@@ -98,7 +110,9 @@ def ref_match_inside_sentence_final_superscript(raw: str, start: int, end: int) 
     sup_body = raw[sup_open : sup_close + len("</sup>")]
     if not re.search(r'\bhref\s*=\s*["\']#ref-\d+["\']', sup_body, re.IGNORECASE):
         return False
-    after_text = strip_tags(raw[sup_close + len("</sup>") : sup_close + len("</sup>") + 96]).lstrip()
+    after_text = strip_tags(
+        raw[sup_close + len("</sup>") : sup_close + len("</sup>") + 96]
+    ).lstrip()
     return not after_text or bool(re.match(r"(?:[A-Z]|\(|\[|,|;|:)", after_text))
 
 
@@ -124,6 +138,14 @@ def ref_match_inside_author_et_al_citation(raw: str, start: int, end: int) -> bo
     return re.search(r"\bet\s+al\.?\s*$", left_text, re.IGNORECASE) is not None
 
 
+def ref_match_is_full_author_year_anchor(raw: str, start: int, end: int) -> bool:
+    anchor_end = raw.find("</a>", end, min(len(raw), end + 240))
+    if anchor_end < 0:
+        return False
+    label = normalize_ws(strip_tags(raw[start : anchor_end + len("</a>")]))
+    return AUTHOR_YEAR_STYLE_TEXT_RE.fullmatch(label) is not None
+
+
 def ref_match_is_parenthetical_tail_citation(raw: str, start: int, end: int) -> bool:
     anchor_end = raw.find("</a>", end, min(len(raw), end + 160))
     if anchor_end < 0:
@@ -131,7 +153,9 @@ def ref_match_is_parenthetical_tail_citation(raw: str, start: int, end: int) -> 
     anchor_visible = normalize_ws(strip_tags(raw[start : anchor_end + len("</a>")]))
     if re.fullmatch(r"\)\s*\d{1,4}\s*\.?", anchor_visible) is None:
         return False
-    right_text = strip_tags(raw[anchor_end + len("</a>") : anchor_end + len("</a>") + 32]).lstrip()
+    right_text = strip_tags(
+        raw[anchor_end + len("</a>") : anchor_end + len("</a>") + 32]
+    ).lstrip()
     return not right_text or right_text[0] in ".,;)]"
 
 
@@ -139,12 +163,16 @@ def block_looks_like_author_affiliation_byline(block: Block) -> bool:
     text = normalize_ws(block.text)
     if len(text) > 1200:
         return False
-    degree_hits = len(re.findall(r"\b(?:M\.D|Ph\.?D|F\.R\.C\.S|B\.Sc|M\.Sc)\.?", text, re.IGNORECASE))
+    degree_hits = len(
+        re.findall(r"\b(?:M\.D|Ph\.?D|F\.R\.C\.S|B\.Sc|M\.Sc)\.?", text, re.IGNORECASE)
+    )
     short_ref_hits = len(re.findall(r"(?:^|[\s,])\d{1,2}(?=\s|,|$)", text))
     return degree_hits >= 4 and short_ref_hits >= 4
 
 
-def ref_visible_number_from_anchor(raw: str, start: int, end: int) -> tuple[int | None, int]:
+def ref_visible_number_from_anchor(
+    raw: str, start: int, end: int
+) -> tuple[int | None, int]:
     anchor_end = raw.find("</a>", end, min(len(raw), end + 200))
     if anchor_end < 0:
         return None, end
@@ -164,7 +192,9 @@ def ref_match_is_month_word_citation(raw: str, start: int, end: int) -> bool:
     )
 
 
-def ref_match_is_measurement_parenthetical_citation(raw: str, start: int, end: int) -> bool:
+def ref_match_is_measurement_parenthetical_citation(
+    raw: str, start: int, end: int
+) -> bool:
     number, anchor_end = ref_visible_number_from_anchor(raw, start, end)
     if number is None:
         return False
@@ -177,10 +207,18 @@ def ref_match_is_measurement_parenthetical_citation(raw: str, start: int, end: i
     if left_paren < 0 or right_paren > left_paren:
         return False
     parenthetical = left_text[left_paren:]
-    return bool(re.search(r"(?:%|mL\s*/\s*s|mL\s+s|mmHg|cmH2O|L\s*/\s*s)", parenthetical, re.IGNORECASE))
+    return bool(
+        re.search(
+            r"(?:%|mL\s*/\s*s|mL\s+s|mmHg|cmH2O|L\s*/\s*s)",
+            parenthetical,
+            re.IGNORECASE,
+        )
+    )
 
 
-def ref_match_follows_figure_or_unit_parenthetical_citation(raw: str, start: int, end: int) -> bool:
+def ref_match_follows_figure_or_unit_parenthetical_citation(
+    raw: str, start: int, end: int
+) -> bool:
     number, anchor_end = ref_visible_number_from_anchor(raw, start, end)
     if number is None:
         return False
@@ -206,8 +244,12 @@ def ref_match_follows_figure_or_unit_parenthetical_citation(raw: str, start: int
     )
 
 
-def ref_match_inside_animal_human_study_citation(raw: str, start: int, end: int) -> bool:
-    window = normalize_ws(strip_tags(raw[max(0, start - 320) : min(len(raw), end + 320)]))
+def ref_match_inside_animal_human_study_citation(
+    raw: str, start: int, end: int
+) -> bool:
+    window = normalize_ws(
+        strip_tags(raw[max(0, start - 320) : min(len(raw), end + 320)])
+    )
     return bool(
         re.search(
             r"\banimal\s*\d{1,3}\s+and\s+human\s+studies\s+of\s+retinal\s*\d{1,3}"
@@ -223,30 +265,52 @@ def linked_ref_near_non_citation_context(block: Block) -> bool:
     if block_looks_like_author_affiliation_byline(block):
         return False
     for match in REF_LINK_RE.finditer(block.raw):
-        if ref_match_inside_bracketed_numeric_citation(block.raw, match.start(), match.end()):
+        if ref_match_inside_bracketed_numeric_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
-        if ref_match_inside_clean_superscript_citation(block.raw, match.start(), match.end()):
+        if ref_match_inside_clean_superscript_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
-        if ref_match_inside_sentence_final_superscript(block.raw, match.start(), match.end()):
+        if ref_match_inside_sentence_final_superscript(
+            block.raw, match.start(), match.end()
+        ):
             continue
-        if ref_match_inside_author_et_al_citation(block.raw, match.start(), match.end()):
+        if ref_match_inside_author_et_al_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
-        if ref_match_is_parenthetical_tail_citation(block.raw, match.start(), match.end()):
+        if ref_match_is_full_author_year_anchor(block.raw, match.start(), match.end()):
+            continue
+        if ref_match_is_parenthetical_tail_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
         if ref_match_is_month_word_citation(block.raw, match.start(), match.end()):
             continue
-        if ref_match_is_measurement_parenthetical_citation(block.raw, match.start(), match.end()):
+        if ref_match_is_measurement_parenthetical_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
-        if ref_match_follows_figure_or_unit_parenthetical_citation(block.raw, match.start(), match.end()):
+        if ref_match_follows_figure_or_unit_parenthetical_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
-        if ref_match_inside_animal_human_study_citation(block.raw, match.start(), match.end()):
+        if ref_match_inside_animal_human_study_citation(
+            block.raw, match.start(), match.end()
+        ):
             continue
         window_raw = block.raw[max(0, match.start() - 48) : match.end() + 80]
         window_text = strip_tags(window_raw)
-        context_text = re.sub(r"\bD\d-type\b", "D-type", window_text, flags=re.IGNORECASE)
+        context_text = re.sub(
+            r"\bD\d-type\b", "D-type", window_text, flags=re.IGNORECASE
+        )
         if re.search(r"\b[A-Za-z0-9]+-D\d+\s+\d{1,3}\b", context_text):
             continue
-        if has_noncitation_context(context_text) or ML_PER_SECOND_CONTEXT_RE.search(context_text):
+        if has_noncitation_context(context_text) or ML_PER_SECOND_CONTEXT_RE.search(
+            context_text
+        ):
             return True
     return False
 
@@ -270,14 +334,19 @@ def looks_like_sample_size_value_ref(
     *,
     ref_anchor_body_re: re.Pattern[str] = REF_ANCHOR_BODY_RE,
 ) -> bool:
-    anchor_start, anchor_end = anchor_span_inside_match(raw, match, ref_anchor_body_re=ref_anchor_body_re)
+    anchor_start, anchor_end = anchor_span_inside_match(
+        raw, match, ref_anchor_body_re=ref_anchor_body_re
+    )
     left_text = strip_tags(raw[max(0, anchor_start - 240) : anchor_start])
     right_text = strip_tags(raw[anchor_end : anchor_end + 100]).lstrip()
-    if re.search(
-        r"\bsample\s+size\b[^.;:]{0,160}\b(?:was|were|is|=|:)\s*$",
-        left_text,
-        re.IGNORECASE,
-    ) is None:
+    if (
+        re.search(
+            r"\bsample\s+size\b[^.;:]{0,160}\b(?:was|were|is|=|:)\s*$",
+            left_text,
+            re.IGNORECASE,
+        )
+        is None
+    ):
         return False
     return (
         not right_text
@@ -292,22 +361,28 @@ def looks_like_sample_size_value_ref(
 
 def looks_like_comma_decimal_stat_ref(raw: str, match: re.Match[str]) -> bool:
     left_text = strip_tags(raw[max(0, match.start() - 240) : match.start()])
-    return re.search(
-        r"(?:"
-        r"\beffect\s+size\b[^.;:]{0,140}\b(?:was|were|is|of|=|:)\s*|"
-        r"\ballocation\s+ratio\b[^.;:]{0,180}\b(?:was|were|is|of|=|:|G\*Power)\s*|"
-        r"\bG\*Power\s*|"
-        r"\bCohen(?:'s)?\s*d\s*=?\s*|"
-        r"\blogMAR\s*|"
-        r"\b(?:SD|SEM)\s*=?\s*"
-        r")$",
-        left_text,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"(?:"
+            r"\beffect\s+size\b[^.;:]{0,140}\b(?:was|were|is|of|=|:)\s*|"
+            r"\ballocation\s+ratio\b[^.;:]{0,180}\b(?:was|were|is|of|=|:|G\*Power)\s*|"
+            r"\bG\*Power\s*|"
+            r"\bCohen(?:'s)?\s*d\s*=?\s*|"
+            r"\blogMAR\s*|"
+            r"\b(?:SD|SEM)\s*=?\s*"
+            r")$",
+            left_text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def flattened_sup_match_is_joined_figure_label(match: re.Match[str]) -> bool:
-    return re.match(r"\b[A-Za-z]*(?:fig|figure)\.\d{1,3}\b", match.group(0), re.IGNORECASE) is not None
+    return (
+        re.match(r"\b[A-Za-z]*(?:fig|figure)\.\d{1,3}\b", match.group(0), re.IGNORECASE)
+        is not None
+    )
 
 
 def flattened_sup_match_is_doi_or_url_fragment(text: str, match: re.Match[str]) -> bool:
@@ -331,18 +406,23 @@ def paren_numeric_ref_link_count(
             label = strip_tags(match.group("body")).strip()
             if not numeric_ref_label_numbers(label):
                 continue
-            left_text = strip_tags(block.raw[max(0, match.start() - 40) : match.start()])
+            left_text = strip_tags(
+                block.raw[max(0, match.start() - 40) : match.start()]
+            )
             right_text = strip_tags(block.raw[match.end() : match.end() + 80])
             if (
                 re.search(r"\(\s*$", left_text) is not None
                 or label.startswith("(")
-                or re.match(r"^\s*(?:[,;\-\u2010-\u2014]\s*\d|\))", right_text) is not None
+                or re.match(r"^\s*(?:[,;\-\u2010-\u2014]\s*\d|\))", right_text)
+                is not None
             ):
                 count += 1
     return count
 
 
-def ref_anchor_is_bracketed_numeric_citation(block_raw: str, match: re.Match[str]) -> bool:
+def ref_anchor_is_bracketed_numeric_citation(
+    block_raw: str, match: re.Match[str]
+) -> bool:
     label = strip_tags(match.group("body")).strip()
     if not numeric_ref_label_numbers(label):
         return False
@@ -371,19 +451,87 @@ def citation_style_consistency_defects(
     body_blocks = list(non_reference_body_blocks(polish_blocks))
     body_text = " ".join(block.text for block in body_blocks)
     html_author_year_count = len(author_year_style_text_re.findall(body_text))
-    pdf_author_year_count = len(author_year_style_text_re.findall(pdf_text)) if pdf_text else 0
+    pdf_author_year_count = (
+        len(author_year_style_text_re.findall(pdf_text)) if pdf_text else 0
+    )
     pdf_link_summary = pdf_link_summary or {}
     pdf_citation_dest_links = int(pdf_link_summary.get("pdf_citation_dest_links") or 0)
-    pdf_author_year_link_labels = int(pdf_link_summary.get("pdf_author_year_link_labels") or 0)
-    pdf_author_year_evidence = pdf_citation_dest_links >= 5 and pdf_author_year_link_labels >= 2
+    pdf_author_year_link_labels = int(
+        pdf_link_summary.get("pdf_author_year_link_labels") or 0
+    )
+    pdf_author_year_evidence = (
+        pdf_citation_dest_links >= 5 and pdf_author_year_link_labels >= 2
+    )
     html_author_year_evidence = html_author_year_count >= 6
     if not (pdf_author_year_evidence or html_author_year_evidence):
         return []
 
     ref_id_count = len(REF_ID_RE.findall(polish_html))
     ref_link_count = len(REF_LINK_RE.findall(polish_html))
+    ref_target_numbers = {
+        int(value)
+        for value in re.findall(
+            r"\bid\s*=\s*['\"]ref-(\d+)['\"]", polish_html, re.IGNORECASE
+        )
+    }
+    numbered_reference_count = len(
+        re.findall(
+            r"\bclass\s*=\s*['\"][^'\"]*\bz2m-ref-num\b", polish_html, re.IGNORECASE
+        )
+    )
+    numeric_sup_ref_link_count = sum(
+        1
+        for block in body_blocks
+        for match in ref_anchor_body_re.finditer(block.raw)
+        if numeric_ref_label_numbers(strip_tags(match.group("body")))
+        and "<sup" in block.raw[max(0, match.start() - 40) : match.start()].lower()
+    )
+    flattened_numeric_numbers: set[int] = set()
+    for block in body_blocks:
+        text = normalize_ws(block.text)
+        for match in re.finditer(
+            r"\b(?P<word>[a-z][a-z'\u2019-]{4,})(?P<glued>\d{1,3})\b|"
+            r"[.!?]\s+(?P<sentence>\d{1,3})(?=\s+[A-Z])",
+            text,
+            re.IGNORECASE,
+        ):
+            value = match.group("glued") or match.group("sentence")
+            if value is not None and int(value) in ref_target_numbers:
+                flattened_numeric_numbers.add(int(value))
+    numbered_numeric_evidence = numbered_reference_count >= 3 and (
+        numeric_sup_ref_link_count >= 2
+        or (numeric_sup_ref_link_count >= 1 and len(flattened_numeric_numbers) >= 1)
+        or len(flattened_numeric_numbers) >= 2
+    )
+    if numbered_numeric_evidence and not pdf_author_year_evidence:
+        return []
+    bracket_citation_count = len(re.findall(r"\[\s*\d", body_text))
+    plain_paren_matches = list(PAREN_NUMERIC_CITATION_RE.finditer(body_text))
+    valid_plain_paren_numbers = [
+        [int(value) for value in re.findall(r"\d+", match.group(0))]
+        for match in plain_paren_matches
+    ]
+    valid_plain_paren_numbers = [
+        numbers
+        for numbers in valid_plain_paren_numbers
+        if numbers and all(number in ref_target_numbers for number in numbers)
+    ]
+    distinct_plain_paren_numbers = {
+        number for numbers in valid_plain_paren_numbers for number in numbers
+    }
+    unlinked_numeric_citation_dominant = bracket_citation_count >= 4 or (
+        len(valid_plain_paren_numbers) >= 5 and len(distinct_plain_paren_numbers) >= 5
+    )
+    if unlinked_numeric_citation_dominant and not pdf_author_year_evidence:
+        return []
     if ref_id_count >= 3 and ref_link_count == 0:
-        first_body_block = body_blocks[0] if body_blocks else polish_blocks[0] if polish_blocks else None
+        first_body_block = (
+            body_blocks[0]
+            if body_blocks
+            else polish_blocks[0]
+            if polish_blocks
+            else None
+        )
         return [
             make_defect(
                 defect_id="P99",
@@ -391,7 +539,9 @@ def citation_style_consistency_defects(
                 check="Author-year article has bibliography targets but no body reference links",
                 severity="error",
                 block=first_body_block,
-                snippet=first_body_block.text if first_body_block is not None else body_text[:240],
+                snippet=first_body_block.text
+                if first_body_block is not None
+                else body_text[:240],
                 stage=stage,
                 hypothesis="Article-level citation style evidence was author-year, but bibliography link recovery produced no #ref links.",
                 proposed_fix_layer="Converted raw citation-profile fallback and author-year bibliography link recovery",
@@ -403,31 +553,28 @@ def citation_style_consistency_defects(
                     "pdf_author_year_count": pdf_author_year_count,
                     "pdf_citation_dest_links": pdf_citation_dest_links,
                     "pdf_author_year_link_labels": pdf_author_year_link_labels,
+                    "bracket_citation_count": bracket_citation_count,
+                    "valid_plain_paren_citation_count": len(valid_plain_paren_numbers),
+                    "distinct_plain_paren_ref_count": len(distinct_plain_paren_numbers),
                 },
             )
         ]
 
-    bracket_citation_count = len(re.findall(r"\[\s*\d", body_text))
     numeric_ref_link_count = sum(
         1
         for block in body_blocks
         for match in ref_anchor_body_re.finditer(block.raw)
         if numeric_ref_label_numbers(strip_tags(match.group("body")))
     )
-    numeric_sup_ref_link_count = sum(
-        1
-        for block in body_blocks
-        for match in ref_anchor_body_re.finditer(block.raw)
-        if numeric_ref_label_numbers(strip_tags(match.group("body")))
-        and "<sup" in block.raw[max(0, match.start() - 40) : match.start()].lower()
-    )
     numeric_citation_dominant = (
         numeric_ref_link_count >= 5 and numeric_sup_ref_link_count >= 5
-    ) or (
-        numeric_ref_link_count >= 10 and numeric_sup_ref_link_count >= 3
+    ) or (numeric_ref_link_count >= 10 and numeric_sup_ref_link_count >= 3)
+    paren_numeric_count = paren_numeric_ref_link_count(
+        body_blocks, ref_anchor_body_re=ref_anchor_body_re
     )
-    paren_numeric_count = paren_numeric_ref_link_count(body_blocks, ref_anchor_body_re=ref_anchor_body_re)
-    if (numeric_citation_dominant or paren_numeric_count >= 5) and not pdf_author_year_evidence:
+    if (
+        numeric_citation_dominant or paren_numeric_count >= 5
+    ) and not pdf_author_year_evidence:
         return []
     if bracket_citation_count >= 4 and not pdf_author_year_evidence:
         return []
@@ -442,8 +589,14 @@ def citation_style_consistency_defects(
                 continue
             if ref_anchor_is_bracketed_numeric_citation(block.raw, match):
                 continue
-            text_window = strip_tags(block.raw[max(0, match.start() - 180) : match.end() + 180])
-            if re.search(r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b", text_window, re.IGNORECASE):
+            text_window = strip_tags(
+                block.raw[max(0, match.start() - 180) : match.end() + 180]
+            )
+            if re.search(
+                r"\b(?:Fig\.?|Figs\.?|Figure|Table|Eqn?\.?|Equation)\b",
+                text_window,
+                re.IGNORECASE,
+            ):
                 continue
             return [
                 make_defect(

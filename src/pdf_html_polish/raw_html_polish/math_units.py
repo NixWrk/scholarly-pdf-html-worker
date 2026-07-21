@@ -12,25 +12,30 @@ MATH_TAG_PATTERN = re.compile(r"<math(\b[^>]*)>(.*?)</math>", re.IGNORECASE | re
 # Marker sometimes emits citation superscripts as MathJax inline math:
 # \(^{157}\) or \(^{153-156}\) instead of <sup>157</sup>.
 LATEX_SUP_CITATION_PATTERN = re.compile(
-    r'\\\(\^\{([\d,\s\-\u2013\u2014]+)\}\\\)',
+    r"\\\(\^\{([\d,\s\-\u2013\u2014]+)\}\\\)",
 )
 LATEX_SUP_CITATION_BARE_PATTERN = re.compile(
-    r'\\\(\^([\d,\s\-\u2013\u2014]+)\\\)',
+    r"\\\(\^([\d,\s\-\u2013\u2014]+)\\\)",
 )
-INLINE_TEX_PATTERN = re.compile(r'\\\((.*?)\\\)', re.DOTALL)
+INLINE_TEX_PATTERN = re.compile(r"\\\((.*?)\\\)", re.DOTALL)
 INLINE_TEX_TRAILING_BRACKET_CITATION_PATTERN = re.compile(
     r"(?P<core>[\s\S]*?)\s*(?P<cite>\[\s*\d{1,3}(?:\s*(?:,|[-\u2013\u2014])\s*\d{1,3})*\s*\])\s*$"
+)
+INLINE_TEX_TRAILING_SUP_BRACKET_CITATION_PATTERN = re.compile(
+    r"(?P<core>[\s\S]*?)\s*\^\{\s*"
+    r"(?P<cite>\[\s*\d{1,3}(?:\s*(?:,|[-\u2013\u2014])\s*\d{1,3})*\s*\])"
+    r"\s*\}\s*$"
 )
 OMEGA_ZERO_RATIO_OCR_PATTERN = re.compile(r"\\frac\{\\omega\}\{2m\}(?=\s*=\s*1)")
 
 # Quick-scan trigger: only run the subscript-spill fix when this substring exists.
-SUBSCRIPT_OPEN = re.compile(r'[_^]\{')
+SUBSCRIPT_OPEN = re.compile(r"[_^]\{")
 # Detect an = followed immediately by a "large" LaTeX command inside a subscript/
 # superscript brace. This is the Marker OCR artefact where the equation
 # continuation was accidentally included in the sub/superscript.
 SUBSCRIPT_SPILL_RE = re.compile(
-    r'=\s*\\(?:frac|sqrt|sum|int|oint|prod|lim|sup|inf|max|min|sin|cos|tan|'
-    r'exp|log|ln|left|right|bigl|bigr|Big|Bigl|Bigr|begin|end)\b'
+    r"=\s*\\(?:frac|sqrt|sum|int|oint|prod|lim|sup|inf|max|min|sin|cos|tan|"
+    r"exp|log|ln|left|right|bigl|bigr|Big|Bigl|Bigr|begin|end)\b"
 )
 
 LATEX_LABEL_PATTERN = re.compile(r"\\label\{[^{}]*\}")
@@ -97,15 +102,24 @@ def fix_latex_text_commands(html: str) -> str:
     html = LATEX_ITALIC_PATTERN.sub(r"<em>\1</em>", html)
     html = LATEX_TEXTRM_PATTERN.sub(r"\1", html)
     html = LATEX_TEXT_PATTERN.sub(r"\1", html)
-    html = re.sub(r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*\.\s*</i>", r"\1 µm.", html, flags=re.IGNORECASE)
-    html = re.sub(r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*</i>", r"\1 µm", html, flags=re.IGNORECASE)
+    html = re.sub(
+        r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*\.\s*</i>",
+        r"\1 µm.",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"(\b\d+(?:\.\d+)?)\s*<i>\s*\\\\m\s*</i>", r"\1 µm", html, flags=re.IGNORECASE
+    )
     return html
 
 
 def move_trailing_bracket_citations_out_of_inline_tex(html: str) -> str:
     def replace(match: re.Match[str]) -> str:
         expr = match.group(1)
-        cite_match = INLINE_TEX_TRAILING_BRACKET_CITATION_PATTERN.match(expr)
+        cite_match = INLINE_TEX_TRAILING_SUP_BRACKET_CITATION_PATTERN.match(expr)
+        if cite_match is None:
+            cite_match = INLINE_TEX_TRAILING_BRACKET_CITATION_PATTERN.match(expr)
         if cite_match is None:
             return match.group(0)
         core = cite_match.group("core").rstrip()
@@ -220,7 +234,10 @@ def repair_sqrt_subscript_brace_spill(tex: str) -> str:
         if subscript_end < 0:
             break
         subscript_body = tex[subscript_open + 1 : subscript_end]
-        if not re.fullmatch(r"[A-Za-z0-9,\s]+", subscript_body) or len(subscript_body) > 24:
+        if (
+            not re.fullmatch(r"[A-Za-z0-9,\s]+", subscript_body)
+            or len(subscript_body) > 24
+        ):
             search_from = subscript_end + 1
             continue
 
@@ -230,7 +247,9 @@ def repair_sqrt_subscript_brace_spill(tex: str) -> str:
             continue
 
         sqrt_body = tex[sqrt_group_open + 1 : sqrt_group_end]
-        replacement = r"{\sqrt{\frac{" + sqrt_body + "}{" + subscript_body.strip() + r"}}}"
+        replacement = (
+            r"{\sqrt{\frac{" + sqrt_body + "}{" + subscript_body.strip() + r"}}}"
+        )
         replacements.append((denom_open, delayed_denom_close + 1, replacement))
         search_from = delayed_denom_close + 1
 

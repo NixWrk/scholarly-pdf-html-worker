@@ -4,7 +4,12 @@ from html import unescape
 import re
 
 from pdf_html_polish.html_stages import POLISH_STAGE_NAME, RAW_STAGE_NAME
-from pdf_html_polish.quality_loop.audit_blocks import Block, Defect, snippet, unit_diagnostic_texts
+from pdf_html_polish.quality_loop.audit_blocks import (
+    Block,
+    Defect,
+    snippet,
+    unit_diagnostic_texts,
+)
 from pdf_html_polish.quality_loop.audit_diagnostics import make_defect
 
 
@@ -38,12 +43,16 @@ JOINED_PROSE_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 INLINE_TEX_RE = re.compile(r"\\\(([\s\S]{0,800}?)\\\)")
-MATH_TAG_WITH_CITATION_RE = re.compile(r"<math\b[\s\S]{0,800}?\[\d+\][\s\S]{0,800}?</math>", re.IGNORECASE)
+MATH_TAG_WITH_CITATION_RE = re.compile(
+    r"<math\b[\s\S]{0,800}?\[\d+\][\s\S]{0,800}?</math>", re.IGNORECASE
+)
 EQUATION_ABSORB_RE = re.compile(
     r"\(\d{1,3}\)\s+(?:To make|As shown|where\b|Fig\.|Figure|Equation)",
     re.IGNORECASE,
 )
-DISPLAY_MATH_OCR_RE = re.compile(r"(?:\\omega\s*}\s*\{\s*2m|omega\s*/\s*2m|\\frac\{\\omega\}\{2m\})")
+DISPLAY_MATH_OCR_RE = re.compile(
+    r"(?:\\omega\s*}\s*\{\s*2m|omega\s*/\s*2m|\\frac\{\\omega\}\{2m\})"
+)
 
 
 def inline_tex_contains_citation_bracket(tex: str) -> bool:
@@ -66,10 +75,16 @@ def unit_match_is_repaired_in_raw(match_text: str, raw: str) -> bool:
             )
             or (
                 "data-z2m-tex" in raw_unescaped
-                and re.search(r"(?-i:(?:u|\u00b5|\u03bc)m)\s*\^\{?\s*[23]\s*\}?", raw_unescaped)
+                and re.search(
+                    r"(?-i:(?:u|\u00b5|\u03bc)m)\s*\^\{?\s*[23]\s*\}?", raw_unescaped
+                )
             )
         )
-    if re.search(r"\b\d+(?:\.\d+)?\s*(?-i:(?:u|\u00b5|\u03bc)?m)\s*[23]\b", match_text, re.IGNORECASE):
+    if re.search(
+        r"\b\d+(?:\.\d+)?\s*(?-i:(?:u|\u00b5|\u03bc)?m)\s*[23]\b",
+        match_text,
+        re.IGNORECASE,
+    ):
         return bool(
             re.search(
                 r"(?-i:(?:u|\u00b5|\u03bc)?m)\s*<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*[23]\s*</sup>",
@@ -78,11 +93,23 @@ def unit_match_is_repaired_in_raw(match_text: str, raw: str) -> bool:
             )
             or (
                 "data-z2m-tex" in raw_unescaped
-                and re.search(r"(?-i:(?:u|\u00b5|\u03bc)?m)\s*\^\{?\s*[23]\s*\}?", raw_unescaped)
+                and re.search(
+                    r"(?-i:(?:u|\u00b5|\u03bc)?m)\s*\^\{?\s*[23]\s*\}?", raw_unescaped
+                )
             )
         )
-    if re.search(r"\b(?:mC\s*cm|cd\s*m|kg\s*h|mg\s*kg\s*h)\s*[-\u2212]\s*\d+\b", match_text, re.IGNORECASE):
-        return bool(re.search(r"<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*-\d+\s*</sup>", raw_unescaped, re.IGNORECASE))
+    if re.search(
+        r"\b(?:mC\s*cm|cd\s*m|kg\s*h|mg\s*kg\s*h)\s*[-\u2212]\s*\d+\b",
+        match_text,
+        re.IGNORECASE,
+    ):
+        return bool(
+            re.search(
+                r"<sup\b[^>]*\bz2m-unit-exp\b[^>]*>\s*-\d+\s*</sup>",
+                raw_unescaped,
+                re.IGNORECASE,
+            )
+        )
     return False
 
 
@@ -97,13 +124,20 @@ def unit_math_defects(
     for block in polish_blocks:
         for diagnostic_text in unit_diagnostic_texts(block):
             unit_match = UNIT_FLATTEN_RE.search(diagnostic_text)
-            if unit_match is not None and unit_match_is_repaired_in_raw(unit_match.group(0), block.raw):
+            if unit_match is not None and unit_match_is_repaired_in_raw(
+                unit_match.group(0), block.raw
+            ):
                 unit_match = None
             linked_unit_match = LINKED_UNIT_EXP_DEFECT_RE.search(diagnostic_text)
             if linked_unit_match is not None and "z2m-unit-exp" in block.raw:
                 linked_unit_match = None
             joined_match = JOINED_PROSE_TOKEN_RE.search(diagnostic_text)
-            match = unit_match or DEGREE_DEFECT_RE.search(diagnostic_text) or linked_unit_match or joined_match
+            match = (
+                unit_match
+                or DEGREE_DEFECT_RE.search(diagnostic_text)
+                or linked_unit_match
+                or joined_match
+            )
             if match:
                 defects.append(
                     make_defect(
@@ -124,7 +158,10 @@ def unit_math_defects(
             break
 
     for block in polish_blocks:
-        if RESIDUAL_UNIT_TEX_RE.search(block.raw):
+        if any(
+            RESIDUAL_UNIT_TEX_RE.search(diagnostic_text)
+            for diagnostic_text in unit_diagnostic_texts(block)
+        ):
             defects.append(
                 make_defect(
                     defect_id="P23",
@@ -189,7 +226,9 @@ def equation_table_defects(
 ) -> list[Defect]:
     defects: list[Defect] = []
     for block in polish_blocks:
-        if block.block_type.lower() == "equation" and EQUATION_ABSORB_RE.search(block.text):
+        if block.block_type.lower() == "equation" and EQUATION_ABSORB_RE.search(
+            block.text
+        ):
             defects.append(
                 make_defect(
                     defect_id="P09",
@@ -207,7 +246,9 @@ def equation_table_defects(
             break
 
     for block in polish_blocks:
-        if block.block_type.lower() == "equation" and re.match(r"^\s*(?:Fig\.?|Figure)\s+\d+\s+shows\b", block.text, re.IGNORECASE):
+        if block.block_type.lower() == "equation" and re.match(
+            r"^\s*(?:Fig\.?|Figure)\s+\d+\s+shows\b", block.text, re.IGNORECASE
+        ):
             defects.append(
                 make_defect(
                     defect_id="P10",
@@ -228,7 +269,9 @@ def equation_table_defects(
         if not re.fullmatch(r"\(\d{1,3}\)", block.text):
             continue
         previous = polish_blocks[max(0, index - 4) : index]
-        if any(prev.tag == "table" or prev.id.startswith("table-") for prev in previous):
+        if any(
+            prev.tag == "table" or prev.id.startswith("table-") for prev in previous
+        ):
             defects.append(
                 make_defect(
                     defect_id="P11",

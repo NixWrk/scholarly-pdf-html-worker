@@ -24,11 +24,11 @@ SUP_NUMERIC_RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 SUP_MEASUREMENT_UNIT_RIGHT_RE = re.compile(
-    r"^\s*(?:[.)]\s*)?"
+    r"^\s*(?:[.)]\s*)?(?:[-\u2013\u2014]\s*)?"
     r"(?:"
-    r"(?:l|L|ml|mL|min|s|sec|kg|g|mg|m|cm|mm|um|A|V|Hz|bpm|mmHg)"
+    r"(?:l|L|ml|mL|min|s|sec|kg|g|mg|m|cm|mm|um|A|V|[kMGT]?Hz|bpm|mmHg)"
     r"(?:\b|[\s.\u00b7*/^-])|"
-    r"(?:[munp\u00b5\u03bc]?m|[munp\u00b5\u03bc]?A|[munp\u00b5\u03bc]?V)\b"
+    r"(?:[munp\u00b5\u03bc]?g|[munp\u00b5\u03bc]?m|[munp\u00b5\u03bc]?A|[munp\u00b5\u03bc]?V)\b"
     r")",
     re.IGNORECASE,
 )
@@ -48,8 +48,8 @@ SUP_DIMENSION_UNIT_LEFT_RE = re.compile(
     re.IGNORECASE,
 )
 SUP_COUNT_OR_OPTION_CONTEXT_RE = re.compile(
-    r"\b(?:chair|chairs|choice|choices|item|items|option|options|question|questions|"
-    r"response|responses|target|targets)\b",
+    r"\b(?:chair|chairs|choice|choices|integer|integers|item|items|label|labels|"
+    r"number|numbers|option|options|question|questions|response|responses|target|targets|value|values)\b",
     re.IGNORECASE,
 )
 SUP_TEMPORAL_OR_COUNT_UNIT_RIGHT_RE = re.compile(
@@ -101,7 +101,11 @@ def looks_like_numeric_vector(text: str, match: re.Match[str]) -> bool:
     right = text[match.end() : match.end() + 40]
     if re.search(r"[A-Za-z]\s*$", left_raw) and re.match(r"^[\s\u200b]*=", right):
         return True
-    if len(numbers) == 2 and numbers[0] > numbers[1] and re.match(r"^[\s\u200b]*=", right):
+    if (
+        len(numbers) == 2
+        and numbers[0] > numbers[1]
+        and re.match(r"^[\s\u200b]*=", right)
+    ):
         return True
     left = left_raw.lower()
     return bool(
@@ -124,7 +128,9 @@ def looks_like_math_or_measurement_range(text: str, match: re.Match[str]) -> boo
     return MATH_OR_MEASUREMENT_RANGE_CONTEXT_RE.search(window) is not None
 
 
-def plain_bracket_range_is_likely_non_citation_math_or_measurement(text: str, match: re.Match[str]) -> bool:
+def plain_bracket_range_is_likely_non_citation_math_or_measurement(
+    text: str, match: re.Match[str]
+) -> bool:
     body = match.group(0)
     numbers = [int(value) for value in re.findall(r"\d+", body)]
     if not numbers:
@@ -147,20 +153,29 @@ def plain_bracket_range_is_likely_non_citation_math_or_measurement(text: str, ma
         return True
     if len(numbers) >= 3 and NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(window):
         return True
-    return (
-        NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(window) is not None
-        and looks_like_math_or_measurement_range(text, match)
-    )
+    return NON_CITATION_BRACKET_RANGE_CONTEXT_RE.search(
+        window
+    ) is not None and looks_like_math_or_measurement_range(text, match)
 
 
-def plain_bracket_range_is_likely_non_citation_table_text(text: str, match: re.Match[str]) -> bool:
+def plain_bracket_range_is_likely_non_citation_table_text(
+    text: str, match: re.Match[str]
+) -> bool:
     body = match.group(0)
-    if re.fullmatch(r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body):
+    if re.fullmatch(
+        r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body
+    ):
         return True
     window = text[max(0, match.start() - 220) : min(len(text), match.end() + 220)]
     return bool(
-        re.search(r"\b(?:search\s+statement|set\s+number|concept|ti,\s*ab|exp\s+OR)\b", window, re.IGNORECASE)
-        and re.search(r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body)
+        re.search(
+            r"\b(?:search\s+statement|set\s+number|concept|ti,\s*ab|exp\s+OR)\b",
+            window,
+            re.IGNORECASE,
+        )
+        and re.search(
+            r"\[\s*(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(?:19|20)\d{2}\s*\]", body
+        )
     )
 
 
@@ -176,13 +191,16 @@ def block_looks_like_math_or_measurement_range_context(block: Block) -> bool:
 def looks_like_table_flattened_citation_context(text: str) -> bool:
     if len(re.findall(r"\bet\s+al\.?\s*\d{1,3}\b", text, re.IGNORECASE)) < 2:
         return False
-    return re.search(
-        r"\b(?:algorithm|category|curve|descriptors|efficiency|flow\s+rate|"
-        r"indicator|normal|compressive|constrictive|precision|recall|"
-        r"roc|score|smooth|tower-shaped)\b",
-        text,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"\b(?:algorithm|category|curve|descriptors|efficiency|flow\s+rate|"
+            r"indicator|normal|compressive|constrictive|precision|recall|"
+            r"roc|score|smooth|tower-shaped)\b",
+            text,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def looks_like_software_version_context(text: str, start: int) -> bool:
@@ -218,6 +236,12 @@ def sup_numeric_range_is_measurement_value(block: Block, match: re.Match[str]) -
     right_text = strip_tags(block.raw[match.end() : match.end() + 260])
     if SUP_MEASUREMENT_UNIT_RIGHT_RE.match(right_text) is None:
         return False
+    body = match.group("body")
+    if (
+        re.fullmatch(r"\s*\d{1,3}\s*,\s*\d{1,3}\s*", strip_tags(body))
+        is not None
+    ):
+        return True
     left_text = strip_tags(block.raw[max(0, match.start() - 220) : match.start()])
     if SUP_DIMENSION_UNIT_LEFT_RE.search(left_text):
         return True
@@ -233,7 +257,9 @@ DECIMAL_COMMA_VALUE_CONTEXT_RE = re.compile(
 )
 
 
-def sup_numeric_range_is_decimal_comma_value(block: Block, match: re.Match[str]) -> bool:
+def sup_numeric_range_is_decimal_comma_value(
+    block: Block, match: re.Match[str]
+) -> bool:
     body = match.group("body")
     if re.search(r"[-\u2013\u2014;]", body):
         return False
@@ -251,40 +277,58 @@ def sup_numeric_range_is_decimal_comma_value(block: Block, match: re.Match[str])
     return False
 
 
-def sup_numeric_range_is_count_or_option_value(block: Block, match: re.Match[str]) -> bool:
+def sup_numeric_range_is_count_or_option_value(
+    block: Block, match: re.Match[str]
+) -> bool:
     left_text = strip_tags(block.raw[max(0, match.start() - 220) : match.start()])
     right_text = strip_tags(block.raw[match.end() : match.end() + 120])
     near_text = f"{left_text} {right_text}"
+    body = match.group("body")
     if SUP_COUNT_OR_OPTION_CONTEXT_RE.search(near_text) is None:
         return False
     if re.match(
-        r"^\s*(?:or\s+\d+\s+)?(?:chair|chairs|choice|choices|item|items|option|options|"
-        r"question|questions|response|responses|target|targets)\b",
+        r"^\s*(?:or\s+\d+\s+)?(?:chair|chairs|choice|choices|integer|integers|item|items|"
+        r"label|labels|number|numbers|option|options|question|questions|response|responses|target|targets|value|values)\b",
         right_text,
         re.IGNORECASE,
     ):
         return True
+    if re.search(r"[-\u2013\u2014]", body):
+        return bool(
+            re.search(
+                r"\b(?:number\s+of|contained?|total|varied|conditional)\b",
+                near_text,
+                re.IGNORECASE,
+            )
+        )
     return bool(
         re.search(
-            r"\b(?:number\s+of|contained?|total|varied|conditional)\b",
+            r"\b(?:integers?|labels?|numbers?|values?|number\s+of|contained?|total|varied|conditional)\b",
             near_text,
             re.IGNORECASE,
         )
     )
 
 
-def sup_numeric_range_is_temporal_or_count_value(block: Block, match: re.Match[str]) -> bool:
+def sup_numeric_range_is_temporal_or_count_value(
+    block: Block, match: re.Match[str]
+) -> bool:
     left_text = strip_tags(block.raw[max(0, match.start() - 180) : match.start()])
     right_text = strip_tags(block.raw[match.end() : match.end() + 120])
     right_match = SUP_TEMPORAL_OR_COUNT_UNIT_RIGHT_RE.match(right_text)
     if right_match is None:
         return False
-    if right_match.group("trailing_value") and SUP_TEMPORAL_LIST_LEFT_RE.search(left_text) is None:
+    if (
+        right_match.group("trailing_value")
+        and SUP_TEMPORAL_LIST_LEFT_RE.search(left_text) is None
+    ):
         return False
     return True
 
 
-def sup_numeric_range_is_low_number_table_layout_marker(block: Block, match: re.Match[str]) -> bool:
+def sup_numeric_range_is_low_number_table_layout_marker(
+    block: Block, match: re.Match[str]
+) -> bool:
     if block.tag != "table" and not re.search(r"<t[dh]\b", block.raw, re.IGNORECASE):
         return False
     body = match.group("body")
@@ -296,16 +340,24 @@ def sup_numeric_range_is_low_number_table_layout_marker(block: Block, match: re.
     left_text = strip_tags(block.raw[max(0, match.start() - 140) : match.start()])
     right_text = strip_tags(block.raw[match.end() : match.end() + 140])
     return bool(
-        re.search(r"\b(?:distance|head|height|sound|pattern|transl\.?|user)\b", f"{left_text} {right_text}", re.IGNORECASE)
+        re.search(
+            r"\b(?:distance|head|height|sound|pattern|transl\.?|user)\b",
+            f"{left_text} {right_text}",
+            re.IGNORECASE,
+        )
     )
 
 
-def sup_numeric_range_is_project_or_grant_number(block: Block, match: re.Match[str]) -> bool:
+def sup_numeric_range_is_project_or_grant_number(
+    block: Block, match: re.Match[str]
+) -> bool:
     left_text = strip_tags(block.raw[max(0, match.start() - 180) : match.start()])
     return SUP_PROJECT_OR_GRANT_CONTEXT_RE.search(left_text) is not None
 
 
-def unlinked_sup_numeric_range_matches_footnote_targets(block: Block, footnote_numbers: set[int]) -> bool:
+def unlinked_sup_numeric_range_matches_footnote_targets(
+    block: Block, footnote_numbers: set[int]
+) -> bool:
     if not footnote_numbers:
         return False
     for match in SUP_NUMERIC_RANGE_RE.finditer(block.raw):
@@ -369,7 +421,12 @@ def unlinked_citation_range_kind(
     has_plain_range = has_unlinked_plain_match and not has_vector_range
     has_tagged_range = has_unlinked_tagged_citation_range(block)
     has_sup_range = has_unlinked_sup_numeric_range(block)
-    if not has_plain_range and not has_vector_range and not has_tagged_range and not has_sup_range:
+    if (
+        not has_plain_range
+        and not has_vector_range
+        and not has_tagged_range
+        and not has_sup_range
+    ):
         return ""
     if (
         (block.block_type.lower() == "equation" or "z2m-equation-row" in block.classes)
@@ -380,7 +437,10 @@ def unlinked_citation_range_kind(
     if (
         has_unlinked_plain_match
         and match is not None
-        and ("z2m-equation-row" in block.classes or block.block_type.lower() == "equation")
+        and (
+            "z2m-equation-row" in block.classes
+            or block.block_type.lower() == "equation"
+        )
         and looks_like_numeric_vector(block.text, match)
         and not has_sup_range
     ):
@@ -389,7 +449,9 @@ def unlinked_citation_range_kind(
         has_unlinked_plain_match
         and not has_sup_range
         and match is not None
-        and plain_bracket_range_is_likely_non_citation_math_or_measurement(block.text, match)
+        and plain_bracket_range_is_likely_non_citation_math_or_measurement(
+            block.text, match
+        )
     ):
         return ""
     if looks_like_float_or_caption(block):
@@ -405,7 +467,10 @@ def unlinked_citation_range_kind(
         return "float"
     if (
         has_vector_range
-        or (match is not None and looks_like_math_or_measurement_range(block.text, match))
+        or (
+            match is not None
+            and looks_like_math_or_measurement_range(block.text, match)
+        )
         or block_looks_like_math_or_measurement_range_context(block)
     ):
         return "math"
@@ -448,6 +513,8 @@ def reference_numbers_from_blocks(blocks: list[Block]) -> set[int]:
         id_match = re.match(r"^ref-(\d+)$", block.id, re.IGNORECASE)
         if id_match is not None:
             numbers.add(int(id_match.group(1)))
-        for raw_match in re.finditer(r"\bid\s*=\s*['\"]ref-(\d+)['\"]", block.raw, re.IGNORECASE):
+        for raw_match in re.finditer(
+            r"\bid\s*=\s*['\"]ref-(\d+)['\"]", block.raw, re.IGNORECASE
+        ):
             numbers.add(int(raw_match.group(1)))
     return numbers

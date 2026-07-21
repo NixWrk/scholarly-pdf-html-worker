@@ -64,7 +64,6 @@ DIAGNOSTIC_SPECS: dict[str, DiagnosticSpec] = {
         summary="Unicode replacement character remains visible.",
         audit_signal="Searches polish HTML for U+FFFD and records PDF text-layer evidence when source noise explains it.",
         repair_hint="Raw symbol diagnostics, OCR/text-layer triage, or EN polish table-symbol repair.",
-        quality_counted_by_default=False,
     ),
     "P45M": DiagnosticSpec(
         id="P45M",
@@ -120,7 +119,6 @@ DIAGNOSTIC_SPECS: dict[str, DiagnosticSpec] = {
         summary="Known OCR token or phrase remains in polish text.",
         audit_signal="Searches final polish plain text for curated manual-review OCR residue tokens and PDF-layer evidence.",
         repair_hint="Targeted OCR cleanup rule or accepted telemetry classification when the source PDF layer already contains it.",
-        quality_counted_by_default=False,
     ),
 }
 
@@ -143,6 +141,10 @@ def make_defect(
     regression_test: str,
     extra: dict[str, Any] | None = None,
 ) -> Defect:
+    defect_extra = dict(extra or {})
+    spec = diagnostic_spec(defect_id)
+    if spec is not None and not spec.quality_counted_by_default:
+        defect_extra.setdefault("quality_counted", False)
     return Defect(
         id=defect_id,
         cc_class=cc_class,
@@ -154,5 +156,5 @@ def make_defect(
         hypothesis=hypothesis,
         proposed_fix_layer=proposed_fix_layer,
         regression_test=regression_test,
-        extra=extra or {},
+        extra=defect_extra,
     )

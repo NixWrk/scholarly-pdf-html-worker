@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-import struct
 from typing import Any, Callable
 
 from pdf_html_polish.atomic_io import write_text_atomic
+from pdf_html_polish.html_images import image_is_horizontal_page_strip, image_pixel_size
 
 from .p62_html import (
     P62_LOW_FIDELITY_RECOVERY_SOURCES,
@@ -30,72 +30,20 @@ DataUrlFromImage = Callable[[Path], str | None]
 Slug = Callable[..., str]
 
 
-def _image_pixel_size(path: Path) -> tuple[int, int] | None:
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return None
-    if len(data) >= 24 and data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
-        width, height = struct.unpack(">II", data[16:24])
-        return int(width), int(height)
-    if len(data) >= 12 and data.startswith(b"\xff\xd8"):
-        index = 2
-        while index + 9 < len(data):
-            if data[index] != 0xFF:
-                index += 1
-                continue
-            marker = data[index + 1]
-            index += 2
-            while marker == 0xFF and index < len(data):
-                marker = data[index]
-                index += 1
-            if marker in {0xD8, 0xD9}:
-                continue
-            if index + 2 > len(data):
-                break
-            segment_length = struct.unpack(">H", data[index : index + 2])[0]
-            if segment_length < 2 or index + segment_length > len(data):
-                break
-            if marker in {
-                0xC0,
-                0xC1,
-                0xC2,
-                0xC3,
-                0xC5,
-                0xC6,
-                0xC7,
-                0xC9,
-                0xCA,
-                0xCB,
-                0xCD,
-                0xCE,
-                0xCF,
-            }:
-                if segment_length >= 7:
-                    height, width = struct.unpack(">HH", data[index + 3 : index + 7])
-                    return int(width), int(height)
-                break
-            index += segment_length
-    return None
-
-
 def _pdf_region_asset_looks_like_page_strip(asset: dict[str, Any], asset_path: Path) -> dict[str, Any] | None:
     if str(asset.get("source") or "") not in P62_REGION_REPAIR_SOURCES:
         return None
-    size = _image_pixel_size(asset_path)
-    if size is None:
+    size = image_pixel_size(asset_path)
+    if not image_is_horizontal_page_strip(size):
         return None
+    assert size is not None
     width, height = size
-    if width <= 0 or height <= 0:
-        return None
     aspect_ratio = float(width) / float(height)
-    if width >= 500 and height <= 96 and aspect_ratio >= 8.0:
-        return {
-            "width": width,
-            "height": height,
-            "aspect_ratio": round(aspect_ratio, 4),
-        }
-    return None
+    return {
+        "width": width,
+        "height": height,
+        "aspect_ratio": round(aspect_ratio, 4),
+    }
 
 
 def repair_duplicate_figure_images(

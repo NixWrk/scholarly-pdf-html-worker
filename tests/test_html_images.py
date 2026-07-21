@@ -52,6 +52,14 @@ def test_data_image_src_renderability_detects_truncated_known_images() -> None:
     assert not data_image_src_looks_renderable(_data_url("image/svg+xml", b"not-svg"))
 
 
+def test_data_image_src_renderability_accepts_ascii_whitespace_after_end_marker() -> None:
+    adobe_jpeg = b"\xff\xd8\xff\xee\x00\x0eAdobe\x00payload\xff\xd9\n"
+
+    assert data_image_src_looks_renderable(_data_url("image/jpeg", adobe_jpeg))
+    assert html_node_has_renderable_image(f'<img src="{_data_url("image/jpeg", adobe_jpeg)}">')
+    assert not html_node_has_broken_data_image(f'<img src="{_data_url("image/jpeg", adobe_jpeg)}">')
+
+
 def test_inline_image_integrity_counts_only_live_unresolved_images() -> None:
     valid_png = _data_url("image/png", _valid_png_blob())
     broken_png = "data:image/png;base64,AAAA"

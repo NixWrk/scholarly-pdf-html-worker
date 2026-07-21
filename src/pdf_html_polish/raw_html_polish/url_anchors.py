@@ -88,10 +88,10 @@ URL_FRAGMENT_ANCHOR_CHUNK_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 SPLIT_SAME_HREF_DOI_ANCHOR_TEXT_PATTERN = re.compile(
-    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://(?:dx\.)?doi\.org/)[^>]*)>'
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=\s*["\']?(?:https?://(?:dx\.)?doi\.org/)?10\.)[^>]*)>'
     r'(?P<body>(?:(?!</a>)[\s\S]){0,260}?)</a>'
-    r'(?P<mid>\s*[A-Za-z0-9][A-Za-z0-9._-]{0,24}\s*)'
-    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']"?https?://(?:dx\.)?doi\.org/)[^>]*)>'
+    r'(?P<mid>\s*(?:[A-Za-z0-9][A-Za-z0-9._-]{0,24})?\s*)'
+    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=\s*["\']?(?:https?://(?:dx\.)?doi\.org/)?10\.)[^>]*)>'
     r'(?P<next_body>(?:(?!</a>)[\s\S]){0,260}?)</a>',
     re.IGNORECASE,
 )
@@ -123,6 +123,14 @@ ADJACENT_IDENTICAL_HREF_URL_ANCHOR_PATTERN = re.compile(
     r'(?P<body>[\s\S]{0,260}?)</a>\s+'
     r'<a\b(?P<next_attrs>[^>]*\bhref\s*=\s*["\'](?P=href)["\'][^>]*)>'
     r'(?P<next_body>[\s\S]{0,260}?)</a>',
+    re.IGNORECASE,
+)
+SAME_HREF_REFERENCE_TEXT_GAP_PATTERN = re.compile(
+    r'<a\b(?P<attrs>(?=[^>]*\bhref\s*=)[^>]*)>'
+    r'(?P<body>(?:(?!</a>)[\s\S]){0,1200}?)</a>'
+    r'(?P<middle>[^<]{1,320})'
+    r'<a\b(?P<next_attrs>(?=[^>]*\bhref\s*=)[^>]*)>'
+    r'(?P<next_body>(?:(?!</a>)[\s\S]){0,1200}?)</a>',
     re.IGNORECASE,
 )
 IDENTICAL_HREF_PROTOCOL_PREFIX_ANCHOR_PATTERN = re.compile(
@@ -485,7 +493,7 @@ def repair_split_scheme_url_anchor_fragments(html: str) -> str:
 
 def _doi_core_from_href(href: str) -> str | None:
     href = strip_wrapping_url_quotes(href)
-    match = re.match(r"https?://(?:dx\.)?doi\.org/(?P<doi>10\..+)$", href, re.IGNORECASE)
+    match = re.match(r"(?:https?://(?:dx\.)?doi\.org/)?(?P<doi>10\..+)$", href, re.IGNORECASE)
     return match.group("doi") if match is not None else None
 
 
@@ -513,17 +521,29 @@ def merge_split_same_href_doi_anchors(html: str) -> str:
 
         body_text = visible_text(match.group("body"))
         visible_label = f"{body_text}{visible_text(match.group('mid'))}{visible_text(match.group('next_body'))}"
-        if _doi_label_core(visible_label).lower() != href_core.rstrip(".,;:").lower():
-            return match.group(0)
+        normalized_core = href_core.rstrip(".,;:")
+        if _doi_label_core(visible_label).lower() != normalized_core.lower():
+            trailing_doi = re.search(
+                r"\bdoi\s*:?\s*(?P<label>10\.\S+)\s*$",
+                visible_label,
+                re.IGNORECASE,
+            )
+            if (
+                trailing_doi is None
+                or _doi_label_core(trailing_doi.group("label")).lower()
+                != normalized_core.lower()
+            ):
+                return match.group(0)
+
+        normalized_href = f"https://doi.org/{normalized_core}"
+        attrs = replace_href_attr_literal(match.group("attrs"), normalized_href)
 
         if re.match(r"\s*https?://(?:dx\.)?doi\.org/", visible_label, re.IGNORECASE):
-            label = _escape_html_text(strip_wrapping_url_quotes(href).rstrip(".,;:"))
-            return f'<a{match.group("attrs")}>{label}</a>'
+            return f'<a{attrs}>{_escape_html_text(normalized_href)}</a>'
 
         prefix_match = re.match(r"(?P<prefix>[\s\S]*?\bdoi\s*:)\s*", body_text, re.IGNORECASE)
         prefix = f"{prefix_match.group('prefix')} " if prefix_match is not None else ""
-        label = _escape_html_text(href_core.rstrip(".,;:"))
-        return f'{prefix}<a{match.group("attrs")}>{label}</a>'
+        return f'{prefix}<a{attrs}>{_escape_html_text(normalized_core)}</a>'
 
     previous = None
     current = html
@@ -701,6 +721,34 @@ def merge_adjacent_same_href_url_anchors(html: str) -> str:
     return current
 
 
+def merge_same_href_reference_anchor_runs(html: str) -> str:
+    """Merge refhub reference anchors separated by a short plain-text fragment."""
+
+    def replace(match: re.Match[str]) -> str:
+        href = href_attr_literal(match.group("attrs"))
+        next_href = href_attr_literal(match.group("next_attrs"))
+        if href is None or next_href is None:
+            return match.group(0)
+        href = strip_wrapping_url_quotes(href)
+        next_href = strip_wrapping_url_quotes(next_href)
+        if href != next_href or "refhub." not in href.lower():
+            return match.group(0)
+        middle = match.group("middle")
+        if re.search(r"[A-Za-z]", visible_text(middle)) is None:
+            return match.group(0)
+        merged_body = f"{match.group('body')}{middle}{match.group('next_body')}"
+        merged_body = re.sub(r"\baccu\s+racy\b", "accuracy", merged_body, flags=re.IGNORECASE)
+        merged_body = re.sub(r"\bfl\s+uoroscopic\b", "fluoroscopic", merged_body, flags=re.IGNORECASE)
+        return f'<a{match.group("attrs")}>{merged_body}</a>'
+
+    previous = None
+    current = html
+    while previous != current:
+        previous = current
+        current = SAME_HREF_REFERENCE_TEXT_GAP_PATTERN.sub(replace, current)
+    return current
+
+
 def normalize_mailto_address(address: str) -> str:
     normalized = html_lib.unescape(address).strip()
     normalized = normalized.replace("\\protect _", "_").replace("\\_", "_")
@@ -826,6 +874,7 @@ __all__ = [
     "SPLIT_DOI_HEAD_TAIL_ANCHOR_PATTERN",
     "SPLIT_DOI_URL_ANCHOR_PATH_TAIL_PATTERN",
     "SPLIT_SAME_HREF_DOI_ANCHOR_TEXT_PATTERN",
+    "merge_same_href_reference_anchor_runs",
     "SPLIT_WWW_DOMAIN_NOISY_HREF_PATTERN",
     "SPLIT_VISIBLE_URL_ANCHOR_PATTERN",
     "SPLIT_URL_ANCHOR_BLOCK_TAIL_PATTERN",
