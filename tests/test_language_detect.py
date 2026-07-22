@@ -2,10 +2,12 @@ from pathlib import Path
 
 from pdf_html_polish.clean_pipeline import source_language_payload
 from pdf_html_polish.language_detect import (
+    LanguageDetection,
+    _combine_document_detection,
+    _sample_pdf_page_indexes,
     detect_language_from_html,
     detect_language_from_pdf,
     language_gate_decision,
-    _sample_pdf_page_indexes,
     visible_text_from_html,
 )
 
@@ -129,6 +131,69 @@ def test_russian_body_with_english_references_is_gated_before_translation() -> N
 
     assert detection.detected_language == "ru"
     assert decision.should_skip
+
+
+def test_dominant_russian_document_is_not_mixed_by_english_sections() -> None:
+    aggregate = LanguageDetection(
+        detected_language="ru",
+        confidence=0.99,
+        reason="cyrillic_majority",
+        text_chars=238170,
+        word_count=5817,
+        latin_chars=7111,
+        cyrillic_chars=25909,
+        latin_ratio=0.215,
+        cyrillic_ratio=0.785,
+        english_stopword_hits=97,
+        russian_stopword_hits=521,
+    )
+
+    def window(language: str) -> LanguageDetection:
+        return LanguageDetection(
+            detected_language=language,
+            confidence=0.9,
+            reason="test_window",
+            text_chars=4500,
+            word_count=500,
+            latin_chars=0,
+            cyrillic_chars=0,
+            latin_ratio=0.0,
+            cyrillic_ratio=0.0,
+            english_stopword_hits=0,
+            russian_stopword_hits=0,
+        )
+
+    detection = _combine_document_detection(
+        aggregate,
+        [
+            window("ru"),
+            window("en"),
+            window("mixed"),
+            window("ru"),
+            window("ru"),
+        ],
+    )
+    payload = source_language_payload(
+        "<html><body>" + RU_PARAGRAPH * 80 + "</body></html>"
+    )
+
+    assert detection.detected_language == "ru"
+    assert detection.reason == "document_dominant_russian"
+    assert detection.window_language_counts == {"en": 1, "mixed": 1, "ru": 3}
+    assert payload["source_language_code"] == "ru"
+    assert payload["gate"] == {"should_skip": True, "reason": "already_russian"}
+
+
+def test_substantial_bilingual_document_remains_mixed() -> None:
+    html = (
+        "<html><body>"
+        + RU_PARAGRAPH * 80
+        + EN_PARAGRAPH * 40
+        + RU_PARAGRAPH * 80
+        + "</body></html>"
+    )
+
+    assert detect_language_from_html(html).detected_language == "mixed"
 
 
 def test_german_body_with_english_abstract_is_gated_before_english_run() -> None:

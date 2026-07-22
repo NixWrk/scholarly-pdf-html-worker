@@ -607,6 +607,25 @@ def _combine_document_detection(
     top_lang, top_count = counts.most_common(1)[0]
     aggregate_count = counts.get(aggregate_lang, 0)
 
+    if (
+        aggregate_lang == "ru"
+        and aggregate.cyrillic_ratio >= 0.65
+        and aggregate.russian_stopword_hits
+        >= max(20, aggregate.english_stopword_hits * 2)
+        and counts.get("ru", 0) >= 2
+        and counts.get("ru", 0) > counts.get("en", 0)
+    ):
+        return _with_window_summary(
+            _replace_detection(
+                aggregate,
+                "ru",
+                counts["ru"],
+                "document_dominant_russian",
+            ),
+            windows,
+            summary_counts,
+        )
+
     if len(concrete_languages) >= 2 and aggregate_count < max(2, len(reliable) - 1):
         return _with_window_summary(
             LanguageDetection(
