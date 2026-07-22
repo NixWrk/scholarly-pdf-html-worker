@@ -16,6 +16,37 @@ def test_frontmatter_defects_reports_raw_marker_ocr() -> None:
     assert [defect.id for defect in defects] == ["P01"]
 
 
+def test_frontmatter_defects_ignore_numbered_cyrillic_legal_prose() -> None:
+    raw_blocks = parse_blocks(
+        "<p>В соответствии с частью 3 статьи 38 Федерального закона и "
+        "подпунктом 5.2.192 пункта 5 Положения о Министерстве здравоохранения "
+        "Российской Федерации утверждается настоящий порядок.</p>"
+    )
+
+    defects = frontmatter_defects(raw_blocks, [])
+
+    assert "P01" not in {defect.id for defect in defects}
+
+
+def test_frontmatter_defects_ignore_software_version_in_body_prose() -> None:
+    raw_blocks = parse_blocks(
+        "<p>Data were collected at seven time points after catheter placement. "
+        "Data analysis will be conducted using R (V.4.3.2).</p>"
+    )
+
+    defects = frontmatter_defects(raw_blocks, [])
+
+    assert "P01" not in {defect.id for defect in defects}
+
+
+def test_frontmatter_defects_keep_dotted_author_markers() -> None:
+    raw_blocks = parse_blocks("<p>Daniel Shu Wei Ting 1.2.5</p>")
+
+    defects = frontmatter_defects(raw_blocks, [])
+
+    assert [defect.id for defect in defects] == ["P01"]
+
+
 def test_frontmatter_defects_reports_affiliation_ref_links_and_author_line_links() -> None:
     polish_blocks = parse_blocks(
         '<p class="z2m-affiliations"><a href="#ref-1">1</a> Department.</p>'

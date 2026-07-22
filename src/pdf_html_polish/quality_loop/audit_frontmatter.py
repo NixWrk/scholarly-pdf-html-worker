@@ -14,8 +14,17 @@ REF_LINK_BODY_RE = re.compile(
 )
 REFERENCES_HEADING_RE = re.compile(r"^\s*(?:references|bibliography|works cited)\s*$", re.IGNORECASE)
 FRONTMATTER_OCR_RE = re.compile(
-    r"(?:\u00a9\s*\d|(?:\b[A-Z][A-Za-z.-]+\s+){1,3}\d+\s+\d+\b|\b\d+\.\d+\.\d+\b)"
+    r"(?:\u00a9\s*\d|(?:\b[A-Z][A-Za-z.-]+\s+){1,3}"
+    r"(?:\d+\s+\d+|\d+(?:\.\d+){2})\b)"
 )
+
+
+def _is_predominantly_cyrillic(text: str) -> bool:
+    letters = [char for char in text if char.isalpha()]
+    if len(letters) < 40:
+        return False
+    cyrillic_count = sum("\u0400" <= char <= "\u04ff" for char in letters)
+    return cyrillic_count / len(letters) >= 0.7
 
 
 def _numeric_marker_ref_link_count(raw: str) -> int:
@@ -408,6 +417,8 @@ def frontmatter_defects(
     raw_early = raw_blocks[:20]
     for block in raw_early:
         if block.text.lower().startswith("to cite this article:"):
+            continue
+        if _is_predominantly_cyrillic(block.text):
             continue
         if FRONTMATTER_OCR_RE.search(block.text):
             if looks_like_copyright_notice(block.text):
