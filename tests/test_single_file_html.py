@@ -10236,6 +10236,24 @@ def test_polish_html_document_repairs_common_scientific_word_glue() -> None:
     assert "non-invasively aforementioned standardization subcommittee note" in polished
 
 
+def test_polish_repairs_split_in_only_before_cross_references() -> None:
+    html = (
+        "<html><body>"
+        '<p>The stray capacitance <i>Cstray</i> i n '
+        '<a href="#page-83-1">Figure 3.1b</a> can be omitted.</p>'
+        "<p>The result is also i n Table 2.</p>"
+        "<p>Variables i n remain separate here.</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "<i>Cstray</i> in " in polished
+    assert ">Figure 3.1b</a>" in polished
+    assert "also in Table 2" in polished
+    assert "Variables i n remain separate" in polished
+
+
 def test_final_repairs_process_visible_text_in_large_html() -> None:
     large_style = "x" * 500_001
     html = f"<html><head><style>{large_style}</style></head><body><p>Biobeha v. Rev.</p></body></html>"

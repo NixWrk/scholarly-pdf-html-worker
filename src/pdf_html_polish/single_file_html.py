@@ -1508,6 +1508,11 @@ _INLINE_CHRONOLOGICALLY_SPLIT_PATTERN = re.compile(
     r"(?P<close>\s*</(?:i|em|b|strong|span)>)\s*y\b",
     re.IGNORECASE,
 )
+_INLINE_SPLIT_IN_CROSS_REFERENCE_PATTERN = re.compile(
+    r"\bi\s+n\b(?P<link>\s*<a\b[^>]*>\s*)"
+    r"(?=(?:Fig(?:ure)?\.?|Table|Section|Appendix|Equation|Formula)\b)",
+    re.IGNORECASE,
+)
 _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\b(\d+)year-old\b", re.IGNORECASE), r"\1-year-old"),
     (re.compile(r"\b(\d+)\s+year-old\b", re.IGNORECASE), r"\1-year-old"),
@@ -1518,6 +1523,13 @@ _KNOWN_WORD_GLUE_REPAIRS = (
     (re.compile(r"\bKomogortse\s+v\b"), "Komogortsev"),
     (re.compile(r"\bRaza\s+vi\b"), "Razavi"),
     (re.compile(r"\baccu\s+racy\b", re.IGNORECASE), "accuracy"),
+    (
+        re.compile(
+            r"\bi\s+n\b(?=\s+(?:Fig(?:ure)?\.?|Table|Section|Appendix|Equation|Formula)\b)",
+            re.IGNORECASE,
+        ),
+        "in",
+    ),
     (re.compile(r"\bfl\s+uoroscopic\b", re.IGNORECASE), "fluoroscopic"),
     (re.compile(r"\bAlessentially\b"), "AI essentially"),
     (
@@ -5094,7 +5106,8 @@ def _repair_known_word_glue_inline_html(html: str) -> str:
         )
         return f"{match.group('open')}{replacement}{match.group('close')}"
 
-    return _INLINE_CHRONOLOGICALLY_SPLIT_PATTERN.sub(_repair_chronologically, html)
+    html = _INLINE_CHRONOLOGICALLY_SPLIT_PATTERN.sub(_repair_chronologically, html)
+    return _INLINE_SPLIT_IN_CROSS_REFERENCE_PATTERN.sub(r"in\g<link>", html)
 
 
 def _repair_known_word_glue(html: str, *, allow_large_html: bool = False) -> str:
