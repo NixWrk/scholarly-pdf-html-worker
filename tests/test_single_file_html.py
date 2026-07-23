@@ -4541,6 +4541,77 @@ def test_polish_html_document_normalizes_ru_figure_caption_lexemes() -> None:
     assert "Рисунок 3. Third caption." in polished
 
 
+def test_polish_html_document_drops_adjacent_english_figure_caption_in_ru() -> None:
+    html = (
+        "<html><body>"
+        '<div id="fig-2" class="z2m-float-unit z2m-figure-unit">'
+        '<p class="z2m-figure-caption">'
+        "\u0420\u0438\u0441\u0443\u043d\u043e\u043a 2. "
+        "\u0421\u0440\u0430\u0432\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0430\u044f \u0434\u0438\u043d\u0430\u043c\u0438\u043a\u0430 \u043e\u0431\u044a\u0435\u043c\u0430 \u043f\u0440\u043e\u0441\u0442\u0430\u0442\u044b."
+        "</p>"
+        '<p block-type="Text" class="z2m-figure-caption">'
+        "Figure 2. Comparative dynamics of the prostate volume during the study."
+        "</p>"
+        '<p class="z2m-figure-target"><img src="figure-2.png"/></p>'
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html, table_caption_language="ru", enable_citation_linkify=False
+    )
+
+    assert "Comparative dynamics of the prostate" not in polished
+    assert "\u0421\u0440\u0430\u0432\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0430\u044f \u0434\u0438\u043d\u0430\u043c\u0438\u043a\u0430 \u043e\u0431\u044a\u0435\u043c\u0430 \u043f\u0440\u043e\u0441\u0442\u0430\u0442\u044b" in polished
+
+
+def test_polish_html_document_drops_nested_english_table_caption_in_ru() -> None:
+    html = (
+        "<html><body>"
+        '<div id="table-2" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">'
+        "\u0422\u0430\u0431\u043b\u0438\u0446\u0430 2. "
+        "\u0421\u0440\u0430\u0432\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0430\u044f \u0434\u0438\u043d\u0430\u043c\u0438\u043a\u0430 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432 \u0442\u0435\u0440\u0430\u043f\u0438\u0438."
+        "</p>"
+        '<div id="table-2" class="z2m-float-unit z2m-table-unit">'
+        '<p class="z2m-table-caption">'
+        "TABLE 2. Comparative dynamics of therapy results in both groups."
+        "</p>"
+        "<table><tbody><tr><td>1</td></tr></tbody></table>"
+        "</div></div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html, table_caption_language="ru", enable_citation_linkify=False
+    )
+
+    assert "Comparative dynamics of therapy" not in polished
+    assert "\u0421\u0440\u0430\u0432\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0430\u044f \u0434\u0438\u043d\u0430\u043c\u0438\u043a\u0430 \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u043e\u0432 \u0442\u0435\u0440\u0430\u043f\u0438\u0438" in polished
+    assert "<table" in polished
+
+
+def test_polish_html_document_keeps_nonadjacent_bilingual_ru_captions() -> None:
+    html = (
+        "<html><body>"
+        '<p class="z2m-figure-caption">'
+        "\u0420\u0438\u0441\u0443\u043d\u043e\u043a 2. "
+        "\u0420\u0443\u0441\u0441\u043a\u0430\u044f \u043f\u043e\u0434\u043f\u0438\u0441\u044c \u043a \u043f\u0435\u0440\u0432\u043e\u043c\u0443 \u0440\u0438\u0441\u0443\u043d\u043a\u0443."
+        "</p>"
+        "<p>\u042d\u0442\u043e \u0441\u043e\u0434\u0435\u0440\u0436\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u043c\u0435\u0436\u0434\u0443 \u0434\u0432\u0443\u043c\u044f \u043e\u0431\u044a\u0435\u043a\u0442\u0430\u043c\u0438.</p>"
+        '<p class="z2m-figure-caption">'
+        "Figure 2. A distinct English caption elsewhere in the document."
+        "</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html, table_caption_language="ru", enable_citation_linkify=False
+    )
+
+    assert "A distinct English caption elsewhere" in polished
+
+
 def test_polish_html_document_normalizes_english_ru_figure_caption_label() -> None:
     html = "<html><body><p>Figure 5 | caption text</p></body></html>"
     polished = polish_html_document(
@@ -8677,6 +8748,69 @@ def test_polish_html_document_marks_existing_unit_with_broken_data_image_as_miss
     assert "Figure 5 image was not extracted" in polished
     assert "z2m-missing-figure-unit" in polished
     assert "data:image/jpeg;base64" not in polished
+
+
+def test_polish_html_document_localizes_broken_image_warning_in_russian() -> None:
+    broken_jpeg = (
+        base64.b64encode(b"\xff\xd8\xff\xe0truncated").decode("ascii").rstrip("=")
+    )
+    html = (
+        "<html><body>"
+        '<div id="fig-5" class="z2m-float-unit z2m-figure-unit">'
+        f'<p class="z2m-figure-target"><img src="data:image/jpeg;base64,{broken_jpeg}"/></p>'
+        '<p class="z2m-figure-caption">'
+        "\u0420\u0438\u0441\u0443\u043d\u043e\u043a 5. "
+        "\u041f\u043e\u0434\u043f\u0438\u0441\u044c "
+        "\u0441\u043e\u0445\u0440\u0430\u043d\u0438\u043b\u0430\u0441\u044c."
+        "</p>"
+        "</div>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="ru")
+
+    assert (
+        "\u0420\u0438\u0441\u0443\u043d\u043e\u043a 5 "
+        "\u043d\u0435 \u0431\u044b\u043b "
+        "\u0438\u0437\u0432\u043b\u0435\u0447\u0435\u043d "
+        "\u0432 \u044d\u0442\u043e\u0442 HTML"
+    ) in polished
+    assert "image was not extracted" not in polished
+    assert "Please check the original PDF" not in polished
+
+
+def test_polish_html_document_repairs_mixed_russian_missing_image_warning() -> None:
+    html = (
+        "<html><body>"
+        "<p>"
+        "\u042d\u0442\u043e \u0440\u0443\u0441\u0441\u043a\u0438\u0439 "
+        "\u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442 "
+        "\u0441 \u043f\u043e\u0434\u0440\u043e\u0431\u043d\u044b\u043c "
+        "\u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435\u043c."
+        "</p>"
+        '<p class="z2m-missing-figure-warning" role="note">'
+        "\u0420\u0438\u0441\u0443\u043d\u043e\u043a 1-1 "
+        "image was not extracted into this HTML. "
+        "Please check the original PDF for the missing visual content."
+        "</p>"
+        "</body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="ru",
+        polish_language="ru",
+    )
+
+    assert re.search(
+        "\u0420\u0438\u0441\u0443\u043d\u043e\u043a 1[.\\-]\\s*1 "
+        "\u043d\u0435 \u0431\u044b\u043b "
+        "\u0438\u0437\u0432\u043b\u0435\u0447\u0435\u043d "
+        "\u0432 \u044d\u0442\u043e\u0442 HTML",
+        polished,
+    )
+    assert "image was not extracted" not in polished
+    assert "Please check the original PDF" not in polished
 
 
 def test_polish_html_document_bracket_citations_not_linked_inside_references() -> None:

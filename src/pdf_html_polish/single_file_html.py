@@ -820,7 +820,8 @@ _RU_STANDALONE_ENGLISH_HEADING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _RU_ENGLISH_MISSING_FIGURE_WARNING_PATTERN = re.compile(
-    r"\bFigure\s+(?P<number>[A-Za-z]?\d+(?:[.\-]\d+)*)\s+"
+    r"\b(?:Figure|\u0420\u0438\u0441\u0443\u043d\u043e\u043a)\s+"
+    r"(?P<number>[A-Za-z]?\d+(?:\s*[.\-]\s*\d+)*)\s+"
     r"image was not extracted into this HTML\."
     r"(?:\s+Please check the original PDF for the missing visual content\.)?",
     re.IGNORECASE,
@@ -12312,7 +12313,9 @@ def _current_figure_target_keys(html: str) -> set[str]:
     return {match.group("key") for match in _FIG_ID_ATTR_PATTERN.finditer(html)}
 
 
-def _late_recover_orphan_figure_anchors_and_links(html: str) -> str:
+def _late_recover_orphan_figure_anchors_and_links(
+    html: str, *, figure_caption_language: str = "en"
+) -> str:
     current_figures = _current_figure_target_keys(html)
     if not current_figures:
         return html
@@ -12322,7 +12325,10 @@ def _late_recover_orphan_figure_anchors_and_links(html: str) -> str:
     if not recovered_figures:
         return html
     recovered_html = _wrap_float_units(recovered_html)
-    recovered_html = _mark_missing_figure_units(recovered_html)
+    recovered_html = _mark_missing_figure_units(
+        recovered_html,
+        figure_caption_language=figure_caption_language,
+    )
     recovered_html = _link_figure_refs(recovered_html, recovered_figures)
     recovered_html = _unwrap_nested_same_href_internal_links(recovered_html)
     return _normalize_spacing_after_z2m_links(recovered_html)
@@ -14537,6 +14543,76 @@ def _normalize_figure_caption_style(
         return f"{p_open}{leading_inline}{label} {number}.{p_close}"
 
     return _FIGURE_CAPTION_STYLE_PATTERN.sub(_normalize, html)
+
+
+def _drop_adjacent_bilingual_caption_duplicates_in_ru(html: str) -> str:
+    """Keep the Russian half of adjacent bilingual float captions."""
+
+    def _caption_info(match: re.Match[str]) -> tuple[str, str, bool, bool] | None:
+        open_tag = match.group("open")
+        if _node_has_class(open_tag, "z2m-figure-caption"):
+            kind = "figure"
+            key_from_visible = _figure_caption_num_from_visible
+            prefix = (
+                rf"^\s*(?:Figure|Fig(?:ure)?|\u0420\u0438\u0441(?:\u0443\u043d\u043e\u043a)?)"
+                rf"\.?\s*{_FIG_RELAXED_KEY_TOKEN}\s*[.:|\-]?\s*"
+            )
+        elif _node_has_class(open_tag, "z2m-table-caption"):
+            kind = "table"
+            key_from_visible = _table_caption_key_from_visible
+            prefix = (
+                rf"^\s*(?:TABLE|Table|\u0422\u0430\u0431\u043b\u0438\u0446\u0430)"
+                rf"\.?\s+{_TABLE_KEY_TOKEN}\s*[.:|\-]?\s*"
+            )
+        else:
+            return None
+        visible = _visible_text(match.group(0))
+        key = key_from_visible(visible)
+        if key is None:
+            return None
+
+        tail = re.sub(prefix, "", visible, count=1, flags=re.IGNORECASE)
+        cyrillic = len(re.findall(r"[\u0410-\u044f\u0401\u0451]", tail))
+        latin = len(re.findall(r"[A-Za-z]", tail))
+        russian = cyrillic >= 12 and cyrillic >= latin * 2
+        english = latin >= 12 and latin >= max(cyrillic, 1) * 2
+        return kind, key, russian, english
+
+    drops: list[tuple[int, int]] = []
+    previous: tuple[re.Match[str], str, str, bool, bool] | None = None
+    for match in _P_OR_H_BLOCK_PATTERN.finditer(html):
+        info = _caption_info(match)
+        if info is None:
+            previous = None
+            continue
+
+        kind, key, russian, english = info
+        if previous is not None:
+            previous_match, previous_kind, previous_key, previous_ru, previous_en = (
+                previous
+            )
+            gap = html[previous_match.end() : match.start()]
+            adjacent = len(gap) <= 2048 and not _visible_text(gap).strip()
+            same_float = kind == previous_kind and key == previous_key
+            if adjacent and same_float and previous_ru and english:
+                drops.append((match.start(), match.end()))
+                continue
+            if adjacent and same_float and previous_en and russian:
+                drops.append((previous_match.start(), previous_match.end()))
+
+        previous = (match, kind, key, russian, english)
+
+    if not drops:
+        return html
+    out: list[str] = []
+    cursor = 0
+    for start, end in sorted(set(drops)):
+        if start < cursor:
+            continue
+        out.append(html[cursor:start])
+        cursor = end
+    out.append(html[cursor:])
+    return "".join(out)
 
 
 _CAPTION_LEADING_PAGE_ANCHOR_PATTERN = re.compile(
@@ -21050,7 +21126,9 @@ def _absorb_external_figure_captions_into_units(html: str) -> str:
     return "".join(out_parts)
 
 
-def _mark_missing_figure_units(html: str) -> str:
+def _mark_missing_figure_units(
+    html: str, *, figure_caption_language: str = "en"
+) -> str:
     def _replace(match: re.Match[str]) -> str:
         raw = match.group(0)
         if "z2m-figure-unit" not in raw:
@@ -21071,7 +21149,10 @@ def _mark_missing_figure_units(html: str) -> str:
             if fig_match is None:
                 return raw
             warning_html = _strip_node_id_and_add_class(
-                _missing_figure_warning_html(fig_match.group(1)),
+                _missing_figure_warning_html(
+                    fig_match.group(1),
+                    figure_caption_language=figure_caption_language,
+                ),
                 "z2m-figure-target",
             )
             replaced = re.sub(
@@ -24201,6 +24282,8 @@ def _polish_phase_float_units(
     ru_caption_context = table_caption_language == "ru" and (
         not context.enable_citation_linkify or _looks_like_ru_html_content(polished)
     )
+    if ru_caption_context:
+        polished = _drop_adjacent_bilingual_caption_duplicates_in_ru(polished)
     polished, _ = _insert_missing_figure_warnings(
         polished,
         figure_caption_language=("ru" if ru_caption_context else "en"),
@@ -24225,7 +24308,10 @@ def _polish_phase_float_units(
         figure_caption_language=("ru" if ru_caption_context else "en"),
     )
     polished = _drop_unbacked_foreign_figure_aliases(polished)
-    polished = _mark_missing_figure_units(polished)
+    polished = _mark_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     polished = _repair_remaining_table_caption_units(polished)
     polished = _split_table_units_before_section_headings(polished)
     polished = _collapse_duplicate_nested_float_units(polished)
@@ -24257,7 +24343,10 @@ def _polish_phase_float_units(
     polished = _wrap_standalone_caption_before_image_units(polished)
     polished = _wrap_figure_table_surrogate_units(polished)
     polished = _wrap_float_units(polished)
-    polished = _mark_missing_figure_units(polished)
+    polished = _mark_missing_figure_units(
+        polished,
+        figure_caption_language=("ru" if ru_caption_context else "en"),
+    )
     polished = _collapse_duplicate_nested_float_units(polished)
     polished = _split_figure_caption_internal_body_tails(polished)
     polished = _split_figure_units_at_body_tail(polished)
@@ -24446,7 +24535,10 @@ def _polish_phase_katex_and_final_repairs(
         polished = _repair_ocr_letter_glued_ref_links(polished, max(ref_ids))
     polished = _normalize_double_escaped_url_anchor_text(polished)
     if context.enable_citation_linkify:
-        polished = _late_recover_orphan_figure_anchors_and_links(polished)
+        polished = _late_recover_orphan_figure_anchors_and_links(
+            polished,
+            figure_caption_language=("ru" if language_policy.code == "ru" else "en"),
+        )
         current_figures = _current_figure_target_keys(polished)
         if current_figures:
             polished = _link_spaced_multipanel_figure_refs(polished, current_figures)
