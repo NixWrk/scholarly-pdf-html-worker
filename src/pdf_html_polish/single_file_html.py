@@ -272,6 +272,9 @@ from .raw_html_polish.presentation import (
     restore_abbreviations as _restore_abbreviations,
     wrap_body_in_container as _wrap_body_in_container,
 )
+from .raw_html_polish.table_header_repair import (
+    repair_repeated_fragmented_table_headers as _repair_repeated_fragmented_table_headers,
+)
 from .raw_html_polish.pre_cleanup import (
     AUX_PROTOCOL_SENTINEL_LEAK_PATTERN as _AUX_PROTOCOL_SENTINEL_LEAK_PATTERN,
     BACKSLASH_BEFORE_QUOTE_PATTERN as _BACKSLASH_BEFORE_QUOTE_PATTERN,
@@ -23951,6 +23954,7 @@ def _polish_phase_pre_cleanup(
     polished = _repair_false_roman_suffix_splits(polished)
     polished = _repair_variable_table_fn_splits(polished)
     polished = _normalize_table_cell_soft_breaks(polished)
+    polished = _repair_repeated_fragmented_table_headers(polished)
     polished = _repair_table_significance_markers(polished)
     polished = _repair_known_replacement_char_symbols(polished)
     polished = _fix_latex_text_commands(polished)

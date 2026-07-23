@@ -16,6 +16,9 @@ from pdf_html_polish.raw_html_polish import (
     url_text_repair,
 )
 from pdf_html_polish.raw_html_polish import frontmatter_footnotes
+from pdf_html_polish.raw_html_polish.table_header_repair import (
+    repair_repeated_fragmented_table_headers,
+)
 from pdf_html_polish.polish_language import EN_POLISH_POLICY
 from pdf_html_polish.raw_html_polish.phases import RawPolishContext, RawPolishState
 from pdf_html_polish.single_file_html import (
@@ -14823,6 +14826,68 @@ def test_polish_html_document_repairs_table_word_splits_without_losing_roman_tex
     assert "Freedom PNS System/Curonix" in polished
     assert "mult<sup" not in polished
     assert "Comple<sup" not in polished
+
+
+def test_polish_html_document_restores_fragmented_repeated_table_headers() -> None:
+    html = (
+        "<html><body><table><tbody>"
+        "<tr><th>COMPARISONS</th><th></th><th></th>"
+        '<th colspan="4">Fixed Amplitude 55</th>'
+        '<th colspan="6">Variable Amplitude</th></tr>'
+        "<tr><th>OF BLIND PEOPLE</th><th>Simi</th><th>lar Struct</th><th>tures</th>"
+        "<th>Dissin</th><th>nilar Stru</th><th>ctures</th>"
+        '<th colspan="2">Correct Answers</th>'
+        '<th colspan="2">Similar Structures</th>'
+        '<th colspan="3">Dissimilar Structures</th></tr>'
+        "<tr><th>Subject ID</th><th>N-N</th><th>E-E</th><th>T-T</th>"
+        '<th colspan="2">by Subject</th></tr>'
+        "<tr><td>D1</td><td>0</td><td>1</td><td>2</td><td>50%</td></tr>"
+        "<tr><th>COMPARISONS</th><th></th><th></th><th></th>"
+        "<th>ixed Am</th><th>plitude 5</th><th>3</th><th></th><th></th>"
+        "<th>Va</th><th>riable Amp</th><th>olitude</th><th></th><th></th></tr>"
+        "<tr><th>OF SIGHTED PEOPLE</th><th>Sim</th><th>ilar Struct</th>"
+        "<th></th><th></th><th>nilar Stru</th><th></th>"
+        "<th>Correct</th><th>Answers</th><th>Sim</th><th>ilar Struct</th>"
+        "<th></th><th>nilar Struc</th><th>tures</th></tr>"
+        "<tr><th>Subject ID</th><th>N-N</th><th>E-E</th><th>T-T</th>"
+        "<th>by</th><th>Subject</th><th></th><th></th></tr>"
+        "<tr><td>V1</td><td>2</td><td>1</td><td>0</td><td>75%</td></tr>"
+        "</tbody></table></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert polished.count("Fixed Amplitude 55") == 2
+    assert polished.count("Variable Amplitude") == 2
+    assert polished.count("Similar Structures") == 4
+    assert polished.count("Dissimilar Structures") == 4
+    assert "OF BLIND PEOPLE" in polished
+    assert "OF SIGHTED PEOPLE" in polished
+    compact = polished.replace(" ", "")
+    assert ">V1<" in compact
+    assert ">riableAmp<" not in compact
+    assert ">nilarStru<" not in compact
+    assert repair_repeated_fragmented_table_headers(polished) == polished
+
+
+def test_polish_html_document_keeps_valid_repeated_table_headers_distinct() -> None:
+    html = (
+        "<html><body><table>"
+        "<tr><th>MEASURE</th><th>Phase A</th><th>Score</th></tr>"
+        "<tr><th>Subject</th><th>Group</th><th>Value</th></tr>"
+        "<tr><td>A1</td><td>1</td><td>2</td><td>3</td></tr>"
+        "<tr><th>MEASURE</th><th>Phase B</th><th>Adjusted score</th></tr>"
+        "<tr><th>Subject</th><th>Cohort</th><th>Value</th></tr>"
+        "<tr><td>B1</td><td>4</td><td>5</td><td>6</td></tr>"
+        "</table></body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert "Phase A" in polished
+    assert "Phase B" in polished
+    assert "Adjusted score" in polished
+    assert "Cohort" in polished
 
 
 def test_polish_html_document_does_not_link_chi_square_exponent() -> None:
