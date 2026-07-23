@@ -78,13 +78,20 @@ INLINE_SKIP_METADATA_PATTERN = re.compile(
 DEFAULT_INLINE_IMAGE_MAX_BYTES = 0
 DEFAULT_INLINE_IMAGE_TOTAL_MAX_BYTES = 0
 DEFAULT_INLINE_IMAGE_DOWNSCALE_BYTES = 8 * 1024 * 1024
+DEFAULT_INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES = 48 * 1024 * 1024
 DEFAULT_INLINE_IMAGE_HARD_MAX_BYTES = 64 * 1024 * 1024
 INLINE_IMAGE_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_MAX_BYTES"
 INLINE_IMAGE_TOTAL_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_TOTAL_MAX_BYTES"
 INLINE_IMAGE_DOWNSCALE_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_DOWNSCALE_BYTES"
+INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES_ENV = (
+    "PDF_HTML_INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES"
+)
 INLINE_IMAGE_HARD_MAX_BYTES_ENV = "PDF_HTML_INLINE_IMAGE_HARD_MAX_BYTES"
 DOWNSCALE_MAX_EDGE = 2000
 DOWNSCALE_JPEG_QUALITY = 85
+DOWNSCALE_MIN_JPEG_QUALITY = 55
+DOWNSCALE_MIN_EDGE = 320
+DOWNSCALE_MAX_ATTEMPTS = 8
 DOWNSCALE_SOURCE_MAX_PIXELS = 50_000_000
 
 
@@ -285,22 +292,45 @@ def downscale_image_for_inline(
             has_alpha = image.mode in {"RGBA", "LA"} or (
                 image.mode == "P" and "transparency" in image.info
             )
-            output = BytesIO()
             if detected_mime == "image/png" and has_alpha:
                 if image.mode not in {"RGBA", "LA"}:
                     image = image.convert("RGBA")
                 output_mime = "image/png"
-                image.save(output, format="PNG", optimize=True)
             else:
                 output_mime = "image/jpeg"
                 if image.mode != "RGB":
                     image = image.convert("RGB")
-                image.save(
-                    output,
-                    format="JPEG",
-                    quality=DOWNSCALE_JPEG_QUALITY,
-                    optimize=True,
+            quality = DOWNSCALE_JPEG_QUALITY
+            blob = b""
+            for _attempt in range(DOWNSCALE_MAX_ATTEMPTS):
+                output = BytesIO()
+                if output_mime == "image/png":
+                    image.save(output, format="PNG", optimize=True)
+                else:
+                    image.save(
+                        output,
+                        format="JPEG",
+                        quality=quality,
+                        optimize=True,
+                    )
+                blob = output.getvalue()
+                if len(blob) <= max_bytes:
+                    break
+
+                current_width, current_height = image.size
+                current_edge = max(current_width, current_height)
+                if current_edge <= DOWNSCALE_MIN_EDGE:
+                    break
+                estimated_scale = (max_bytes / len(blob)) ** 0.5 * 0.9
+                scale = max(0.55, min(0.85, estimated_scale))
+                resized_to = (
+                    max(1, int(current_width * scale)),
+                    max(1, int(current_height * scale)),
                 )
+                if resized_to == image.size:
+                    break
+                image = image.resize(resized_to, Image.Resampling.LANCZOS)
+                quality = max(DOWNSCALE_MIN_JPEG_QUALITY, quality - 5)
     except (OSError, UnidentifiedImageError, ValueError) as exc:
         if log_func:
             log_func(f"[DIAG] Image downscale fail: {file_path.name}: {exc}")
@@ -755,6 +785,7 @@ def inline_images_from_html_text(
     max_image_bytes: int | None = None,
     max_total_bytes: int | None = None,
     downscale_bytes: int | None = None,
+    document_downscale_bytes: int | None = None,
     hard_max_image_bytes: int | None = None,
 ) -> tuple[InlineHtmlResult, dict[str, str]]:
     inlined_count = 0
@@ -773,6 +804,11 @@ def inline_images_from_html_text(
         downscale_bytes,
         env_name=INLINE_IMAGE_DOWNSCALE_BYTES_ENV,
         default=DEFAULT_INLINE_IMAGE_DOWNSCALE_BYTES,
+    )
+    document_downscale_bytes = _effective_inline_limit(
+        document_downscale_bytes,
+        env_name=INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES_ENV,
+        default=DEFAULT_INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES,
     )
     hard_max_image_bytes = _effective_inline_limit(
         hard_max_image_bytes,
@@ -849,6 +885,38 @@ def inline_images_from_html_text(
         except OSError:
             return None
 
+    candidate_sizes: list[int] = []
+    for image_match in IMG_SRC_PATTERN.finditer(text):
+        image_prefix = image_match.group(1)
+        image_src = image_match.group(3).strip()
+        image_hint_match = re.search(
+            r'\bdata-z2m-src\s*=\s*(["\'])([^"\']+)\1',
+            image_prefix,
+            re.IGNORECASE,
+        )
+        image_hint = image_hint_match.group(2).strip() if image_hint_match else ""
+        candidate: Path | None = None
+        if image_src.lower().startswith("data:") and image_hint:
+            candidate = resolve_candidate(image_hint)
+        elif image_src and not is_inline_or_remote(image_src):
+            candidate = resolve_candidate(image_src)
+        if candidate is None:
+            continue
+        size = candidate_size(candidate)
+        if size is not None:
+            candidate_sizes.append(size)
+
+    aggregate_downscale_limit: int | None = None
+    if (
+        document_downscale_bytes is not None
+        and candidate_sizes
+        and sum(candidate_sizes) > document_downscale_bytes
+    ):
+        aggregate_downscale_limit = max(
+            64 * 1024,
+            document_downscale_bytes // len(candidate_sizes),
+        )
+
     def inline_budget_skip(size: int) -> tuple[str, int, int] | None:
         if max_image_bytes is not None and size > max_image_bytes:
             return "image_too_large", size, max_image_bytes
@@ -858,7 +926,7 @@ def inline_images_from_html_text(
             return "image_hard_limit_exceeded", size, hard_max_image_bytes
         return None
 
-    def remaining_inline_limit() -> int | None:
+    def remaining_inline_limit(*, include_soft_target: bool = False) -> int | None:
         limits: list[int] = []
         if max_image_bytes is not None:
             limits.append(max_image_bytes)
@@ -866,6 +934,8 @@ def inline_images_from_html_text(
             limits.append(max_total_bytes - inlined_bytes)
         if hard_max_image_bytes is not None:
             limits.append(hard_max_image_bytes)
+        if include_soft_target and aggregate_downscale_limit is not None:
+            limits.append(aggregate_downscale_limit)
         if not limits:
             return None
         return min(limits)
@@ -917,11 +987,14 @@ def inline_images_from_html_text(
         budget_skip = inline_budget_skip(candidate_bytes)
         should_downscale = budget_skip is not None or (
             downscale_bytes is not None and candidate_bytes > downscale_bytes
+        ) or (
+            aggregate_downscale_limit is not None
+            and candidate_bytes > aggregate_downscale_limit
         )
         if should_downscale:
             downscaled = downscale_image_for_inline(
                 candidate,
-                max_bytes=remaining_inline_limit(),
+                max_bytes=remaining_inline_limit(include_soft_target=True),
                 detect_by_signature=True,
                 log_func=None,
             )

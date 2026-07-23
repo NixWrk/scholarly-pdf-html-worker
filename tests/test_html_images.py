@@ -278,6 +278,58 @@ def test_inline_images_from_html_text_downscales_above_default_style_threshold(t
     assert len(decoded[1]) < image_path.stat().st_size
 
 
+def test_inline_images_downscales_all_images_above_document_soft_budget(tmp_path) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image_paths = [tmp_path / f"figure-{index}.bmp" for index in range(3)]
+    for index, image_path in enumerate(image_paths):
+        Image.new("RGB", (600, 600), (70 + index, 100, 130)).save(
+            image_path,
+            format="BMP",
+        )
+    html = "<html><body>" + "".join(
+        f'<img alt="Figure" src="{image_path.name}">' for image_path in image_paths
+    ) + "</body></html>"
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        document_downscale_bytes=300_000,
+    )
+
+    decoded = [decode_data_image_payload(value) for value in image_cache.values()]
+    assert result.inlined_images == 3
+    assert len(decoded) == 3
+    assert all(item is not None for item in decoded)
+    assert sum(len(item[1]) for item in decoded if item is not None) <= 300_000
+    assert all(
+        len(item[1]) < image_path.stat().st_size
+        for item, image_path in zip(decoded, image_paths)
+        if item is not None
+    )
+    assert result.html.count("data:image/jpeg;base64") == 3
+    assert "data-z2m-inline-skip" not in result.html
+
+
+def test_document_soft_budget_never_drops_an_image_when_downscale_fails(tmp_path) -> None:
+    image_path = tmp_path / "unusual.jpg"
+    image_path.write_bytes(b"\xff\xd8\xff" + (b"x" * 80_000) + b"\xff\xd9")
+    html = '<html><body><img alt="Unusual" src="unusual.jpg"></body></html>'
+
+    result, image_cache = inline_images_from_html_text(
+        html,
+        tmp_path,
+        document_downscale_bytes=10_000,
+        hard_max_image_bytes=1_000_000,
+    )
+
+    assert result.inlined_images == 1
+    assert len(image_cache) == 1
+    assert 'src="data:image/jpeg;base64,' in result.html
+    assert "data-z2m-inline-skip" not in result.html
+
+
 def test_polish_and_inline_preserves_downscaled_payload(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
