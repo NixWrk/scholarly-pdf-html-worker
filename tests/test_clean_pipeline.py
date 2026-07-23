@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -1863,3 +1864,17 @@ def test_run_observe_command_stops_process_when_log_callback_fails(
     while spawned[0].poll() is None and time.monotonic() < deadline:
         time.sleep(0.05)
     assert spawned[0].poll() is not None
+
+def test_clean_cli_log_escapes_characters_unsupported_by_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = io.BytesIO()
+    stream = io.TextIOWrapper(output, encoding="ascii")
+    monkeypatch.setattr(clean_convert_module.sys, "stdout", stream)
+
+    clean_convert_module._log("Marker готов ✓")
+
+    stream.flush()
+    assert output.getvalue().decode("ascii").splitlines() == [
+        r"Marker \u0433\u043e\u0442\u043e\u0432 \u2713"
+    ]

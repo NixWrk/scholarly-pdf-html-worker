@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+import sys
 
 from pdf_html_polish.clean_pipeline import (
     CleanPipelineOptions,
@@ -15,7 +16,11 @@ from pdf_html_polish.stage_contract import PUBLISH_REPORT_NAME
 
 
 def _log(message: str) -> None:
-    print(message, flush=True)
+    stream = sys.stdout
+    encoding = getattr(stream, "encoding", None)
+    if encoding:
+        message = message.encode(encoding, errors="backslashreplace").decode(encoding)
+    print(message, file=stream, flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -175,36 +180,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         runner.cleanup_spawned_processes(_log)
 
-    print("", flush=True)
+    _log("")
     if args.raw_only:
-        print(f"conversion_output_dir={raw_summary.output_dir}", flush=True)
-        print("raw_only=true", flush=True)
-        print(f"converted={raw_summary.converted_total}", flush=True)
-        print(f"failed={raw_summary.failed_total}", flush=True)
+        _log(f"conversion_output_dir={raw_summary.output_dir}")
+        _log("raw_only=true")
+        _log(f"converted={raw_summary.converted_total}")
+        _log(f"failed={raw_summary.failed_total}")
         return 1 if raw_summary.failed_total else 0
 
-    print(f"conversion_output_dir={summary.conversion_summary.output_dir}", flush=True)
-    print(f"quality_output_dir={summary.quality_output_dir}", flush=True)
-    print(f"run_id={summary.run_id}", flush=True)
-    print(f"converted={summary.conversion_summary.converted_total}", flush=True)
-    print(f"failed={summary.conversion_summary.failed_total}", flush=True)
-    print(f"observe_exit_code={summary.observe_exit_code}", flush=True)
+    _log(f"conversion_output_dir={summary.conversion_summary.output_dir}")
+    _log(f"quality_output_dir={summary.quality_output_dir}")
+    _log(f"run_id={summary.run_id}")
+    _log(f"converted={summary.conversion_summary.converted_total}")
+    _log(f"failed={summary.conversion_summary.failed_total}")
+    _log(f"observe_exit_code={summary.observe_exit_code}")
     if summary.converted_stage_publish_report is not None:
         publish_report = summary.converted_stage_publish_report
-        print(
+        _log(
             "converted_stage_publish="
             f"published:{publish_report.get('published_count')} "
             f"removed_extra_html:{publish_report.get('removed_extra_html_count')} "
-            f"contract:{publish_report.get('stage_contract_status')}",
-            flush=True,
+            f"contract:{publish_report.get('stage_contract_status')}"
         )
-        print(
-            f"converted_stage_publish_report={summary.quality_output_dir / PUBLISH_REPORT_NAME}",
-            flush=True,
+        _log(
+            f"converted_stage_publish_report={summary.quality_output_dir / PUBLISH_REPORT_NAME}"
         )
-    print(f"final_html_dir={summary.final_html.final_html_dir}", flush=True)
-    print(f"final_html_count={len(summary.final_html.artifacts)}", flush=True)
-    print(f"final_html_manifest={summary.final_html.manifest_path}", flush=True)
+    _log(f"final_html_dir={summary.final_html.final_html_dir}")
+    _log(f"final_html_count={len(summary.final_html.artifacts)}")
+    _log(f"final_html_manifest={summary.final_html.manifest_path}")
     return 0
 
 
