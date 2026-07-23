@@ -50,6 +50,42 @@ def _safe_image_relative_path(value: str) -> Path | None:
     return path
 
 
+def _attempt_sidecar_source(raw_path: Path, relative: Path) -> Path | None:
+    if raw_path.parent.name not in {"_pdf_html_polish_stages", "_z2m_stages"}:
+        return None
+    article_root = raw_path.parent.parent
+    attempts_roots = [
+        root
+        for root in (article_root / "_attempts", article_root.parent / "_attempts")
+        if root.is_dir()
+    ]
+    if not attempts_roots:
+        return None
+
+    matches: list[Path] = []
+    for attempts_root in attempts_roots:
+        matches.extend(
+            candidate
+            for candidate in attempts_root.rglob(relative.name)
+            if candidate.is_file()
+            and candidate.relative_to(attempts_root).parts[-len(relative.parts) :]
+            == relative.parts
+        )
+    if not matches:
+        return None
+
+    by_digest: dict[str, list[Path]] = {}
+    for candidate in matches:
+        digest = hashlib.sha256()
+        with candidate.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        by_digest.setdefault(digest.hexdigest(), []).append(candidate)
+    if len(by_digest) != 1:
+        return None
+    return sorted(matches)[0]
+
+
 def stage_raw_with_sidecars(raw_path: Path, staging_root: Path) -> Path:
     staging_root.mkdir(parents=True, exist_ok=True)
     staged_raw = staging_root / raw_path.name
@@ -67,6 +103,8 @@ def stage_raw_with_sidecars(raw_path: Path, staging_root: Path) -> Path:
             (root / relative for root in source_roots if (root / relative).is_file()),
             None,
         )
+        if source is None:
+            source = _attempt_sidecar_source(raw_path, relative)
         if source is None:
             continue
         target = staging_root / relative

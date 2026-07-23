@@ -282,6 +282,46 @@ def test_stage_raw_with_sidecars_finds_images_above_stage_directory(
     assert (staged.parent / sidecar.name).read_bytes() == sidecar.read_bytes()
 
 
+def test_stage_raw_with_sidecars_recovers_unique_attempt_image(
+    tmp_path: Path,
+) -> None:
+    audit = _load_module()
+    signature_dir = tmp_path / "signature"
+    article_dir = signature_dir / "article"
+    stage_dir = article_dir / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw = stage_dir / "01.en.raw.html"
+    image_name = "_page_4_Figure_1.jpeg"
+    raw.write_text(f'<img src="{image_name}">', encoding="utf-8")
+    attempt_image = signature_dir / "_attempts" / "attempt-a" / "chunk" / image_name
+    attempt_image.parent.mkdir(parents=True)
+    attempt_image.write_bytes(b"unique-attempt-image")
+
+    staged = audit.stage_raw_with_sidecars(raw, tmp_path / "staged")
+
+    assert (staged.parent / image_name).read_bytes() == b"unique-attempt-image"
+
+
+def test_stage_raw_with_sidecars_rejects_conflicting_attempt_images(
+    tmp_path: Path,
+) -> None:
+    audit = _load_module()
+    article_dir = tmp_path / "article"
+    stage_dir = article_dir / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    raw = stage_dir / "01.en.raw.html"
+    image_name = "_page_4_Figure_1.jpeg"
+    raw.write_text(f'<img src="{image_name}">', encoding="utf-8")
+    for attempt, content in (("attempt-a", b"first"), ("attempt-b", b"second")):
+        image = article_dir / "_attempts" / attempt / image_name
+        image.parent.mkdir(parents=True)
+        image.write_bytes(content)
+
+    staged = audit.stage_raw_with_sidecars(raw, tmp_path / "staged")
+
+    assert not (staged.parent / image_name).exists()
+
+
 def test_inferred_citation_profile_preserves_medium_author_year_evidence(
     tmp_path: Path,
 ) -> None:
