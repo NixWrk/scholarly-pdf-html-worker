@@ -43,6 +43,13 @@ MATHJAX_CONFIG_TAG_PATTERN = re.compile(
     r"<script\b[^>]*>[\s\S]*?\bMathJax\s*=[\s\S]*?</script>",
     re.IGNORECASE,
 )
+TEXT_HEAVY_TEX_COMMAND_PATTERN = re.compile(
+    r"^\s*\\(?:mbox|text|textrm|textnormal)\s*\{(?P<body>[^{}]+)\}\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+NUMERIC_DOLLAR_DELIMITER_PATTERN = re.compile(
+    r"(?<!\\)\$\s*(?P<number>[+-]?\d+(?:[.,]\d+)?)\s*(?<!\\)\$"
+)
 
 
 @functools.lru_cache(maxsize=1)
@@ -125,6 +132,21 @@ def inject_katex_css(html: str, *, ensure_head: Callable[[str], str]) -> str:
     return HEAD_CLOSE_PATTERN.sub(lambda _: f"{style}\n</head>", html, count=1)
 
 
+def text_heavy_tex_fallback(tex: str) -> str | None:
+    command = TEXT_HEAVY_TEX_COMMAND_PATTERN.fullmatch(tex)
+    if command is None:
+        return None
+    plain = re.sub(r"\s+", " ", command.group("body")).strip()
+    words = re.findall(r"[^\W\d_]{2,}", plain, flags=re.UNICODE)
+    if len(words) < 4 or sum(character.isalpha() for character in plain) < 20:
+        return None
+    plain = NUMERIC_DOLLAR_DELIMITER_PATTERN.sub(
+        lambda item: item.group("number"),
+        plain,
+    )
+    return html_lib.escape(plain, quote=False)
+
+
 def render_katex_html(html: str, *, ensure_head: Callable[[str], str]) -> str:
     r"""Replace ``\(...\)`` / ``\[...\]`` TeX with static KaTeX HTML."""
 
@@ -134,10 +156,17 @@ def render_katex_html(html: str, *, ensure_head: Callable[[str], str]) -> str:
         return html
 
     jobs: list[tuple[str, bool]] = []
+    text_fallback_applied = False
 
     def mask_segment(text: str) -> str:
         def collect(match: re.Match[str], display: bool) -> str:
-            jobs.append((html_lib.unescape(match.group("body")), display))
+            nonlocal text_fallback_applied
+            tex = html_lib.unescape(match.group("body"))
+            fallback = text_heavy_tex_fallback(tex)
+            if fallback is not None:
+                text_fallback_applied = True
+                return fallback
+            jobs.append((tex, display))
             return f"\ue000Z2MK{len(jobs) - 1}\ue001"
 
         text = STATIC_DISPLAY_TEX_PATTERN.sub(lambda m: collect(m, True), text)
@@ -157,7 +186,7 @@ def render_katex_html(html: str, *, ensure_head: Callable[[str], str]) -> str:
             parts[idx] = mask_segment(part)
 
     if not jobs:
-        return original
+        return "".join(parts) if text_fallback_applied else original
 
     try:
         with KATEX_CONTEXT_LOCK:
