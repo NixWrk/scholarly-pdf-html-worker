@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import unescape
+import os
 from pathlib import Path
 from typing import Any, Callable, Iterable
 import re
@@ -11,7 +12,10 @@ import urllib.parse
 from pdf_html_polish.artifact_integrity import read_bytes_with_fingerprint
 from pdf_html_polish.atomic_io import write_text_atomic
 from pdf_html_polish.html_images import (
+    DEFAULT_INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES,
+    INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES_ENV,
     data_image_src_looks_renderable,
+    downscale_image_for_inline,
     inspect_inline_image_integrity,
     to_data_url,
     validate_data_url,
@@ -279,6 +283,7 @@ def cached_sidecar_image_cache(
     existing: dict[str, str],
     *,
     snapshot_file: SnapshotFile,
+    document_downscale_bytes: int | None = None,
 ) -> tuple[dict[str, str], str | None, str | None]:
     search_dirs = article_source_image_dirs(source_run_dir, article)
     if not search_dirs:
@@ -287,27 +292,66 @@ def cached_sidecar_image_cache(
     source_files: set[str] = set()
     source_dirs: set[str] = set()
     raw_local_srcs = [src for src in img_srcs(raw_html) if not is_inline_or_remote_src(src)]
+    selected: list[tuple[str, Path, Path]] = []
+    selected_srcs: set[str] = set()
     for src in raw_local_srcs:
-        if src in existing:
+        if src in existing or src in selected_srcs:
             continue
         for candidate in local_image_candidates_from_dirs(src, search_dirs):
             if not candidate.is_file():
                 continue
             snapshotted = snapshot_file(candidate, "image_sidecar")
-            data_url = to_data_url(snapshotted, detect_by_signature=True, log_func=None)
-            if (
-                data_url is None
-                or not data_image_src_looks_renderable(data_url)
-                or not validate_data_url(data_url, snapshotted)
-            ):
-                continue
-            image_cache[src] = data_url
-            source_files.add(str(snapshotted))
-            source_dirs.add(str(candidate.parent.resolve(strict=False)))
+            selected.append((src, snapshotted, candidate))
+            selected_srcs.add(src)
             break
+
+    soft_budget = _effective_document_downscale_bytes(document_downscale_bytes)
+    total_bytes = sum(path.stat().st_size for _src, path, _origin in selected)
+    per_image_target = (
+        max(64 * 1024, soft_budget // len(selected))
+        if soft_budget is not None and selected and total_bytes > soft_budget
+        else None
+    )
+    for src, snapshotted, candidate in selected:
+        downscaled = (
+            downscale_image_for_inline(
+                snapshotted,
+                max_bytes=per_image_target,
+                detect_by_signature=True,
+                log_func=None,
+            )
+            if per_image_target is not None
+            and snapshotted.stat().st_size > per_image_target
+            else None
+        )
+        data_url = (
+            downscaled[0]
+            if downscaled is not None
+            else to_data_url(snapshotted, detect_by_signature=True, log_func=None)
+        )
+        if data_url is None or not data_image_src_looks_renderable(data_url):
+            continue
+        if downscaled is None and not validate_data_url(data_url, snapshotted):
+            continue
+        image_cache[src] = data_url
+        source_files.add(str(snapshotted))
+        source_dirs.add(str(candidate.parent.resolve(strict=False)))
     if not image_cache:
         return {}, None, None
     return image_cache, "; ".join(sorted(source_files)), "; ".join(sorted(source_dirs))
+
+
+def _effective_document_downscale_bytes(value: int | None) -> int | None:
+    raw: int | str | None = value
+    if raw is None:
+        raw = os.environ.get(INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES_ENV)
+    if raw is None:
+        raw = DEFAULT_INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        parsed = DEFAULT_INLINE_IMAGE_DOCUMENT_DOWNSCALE_BYTES
+    return parsed if parsed > 0 else None
 
 
 def cached_data_image_cache(
@@ -316,12 +360,26 @@ def cached_data_image_cache(
     raw_html: str,
     *,
     snapshot_file: SnapshotFile,
+    document_downscale_bytes: int | None = None,
 ) -> tuple[dict[str, str], str | None, str | None]:
     raw_local_srcs = [src for src in img_srcs(raw_html) if not is_inline_or_remote_src(src)]
     expected_count = len(set(raw_local_srcs))
-    collected: dict[str, str] = {}
+    collected, sidecar_source, sidecar_origin_source = cached_sidecar_image_cache(
+        source_run_dir,
+        article,
+        raw_html,
+        {},
+        snapshot_file=snapshot_file,
+        document_downscale_bytes=document_downscale_bytes,
+    )
     sources: list[str] = []
     origin_sources: list[str] = []
+    if sidecar_source:
+        sources.append(sidecar_source)
+    if sidecar_origin_source:
+        origin_sources.append(sidecar_origin_source)
+    if len(collected) >= expected_count:
+        return collected, "; ".join(sources), "; ".join(origin_sources)
     for candidate in previous_polish_candidates(source_run_dir, article):
         if not candidate.is_file():
             continue
@@ -335,24 +393,15 @@ def cached_data_image_cache(
             raise ValueError(f"Snapshotted previous polish is not UTF-8: {snapshotted}") from exc
         image_cache = ordered_data_image_cache(raw_html, previous_html)
         if image_cache:
-            collected.update(image_cache)
+            collected.update(
+                (src, data_url)
+                for src, data_url in image_cache.items()
+                if src not in collected
+            )
             sources.append(str(snapshotted))
             origin_sources.append(str(candidate.resolve(strict=False)))
             if len(collected) >= expected_count:
                 return collected, "; ".join(sources), "; ".join(origin_sources)
-    sidecar_cache, sidecar_source, sidecar_origin_source = cached_sidecar_image_cache(
-        source_run_dir,
-        article,
-        raw_html,
-        collected,
-        snapshot_file=snapshot_file,
-    )
-    if sidecar_cache:
-        collected.update(sidecar_cache)
-        if sidecar_source:
-            sources.append(sidecar_source)
-        if sidecar_origin_source:
-            origin_sources.append(sidecar_origin_source)
     return (
         collected,
         "; ".join(sources) if sources else None,

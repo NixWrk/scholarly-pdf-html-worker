@@ -106,6 +106,62 @@ def test_cached_data_image_cache_reads_audit_tree_review_copy(tmp_path: Path) ->
     assert origin_path == str(previous_polish)
 
 
+def test_cached_data_image_cache_prefers_budgeted_sidecars(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    source = tmp_path / "source"
+    article_dir = source / "converted" / "doc"
+    stage_dir = article_dir / "_z2m_stages"
+    stage_dir.mkdir(parents=True)
+    image_names = [f"figure-{index}.bmp" for index in range(3)]
+    for index, image_name in enumerate(image_names):
+        Image.new("RGB", (600, 600), (70 + index, 100, 130)).save(
+            article_dir / image_name,
+            format="BMP",
+        )
+    raw_html = "<html><body>" + "".join(
+        f'<img alt="Figure" src="{image_name}">' for image_name in image_names
+    ) + "</body></html>"
+    raw_stage = stage_dir / "01.en.raw.html"
+    raw_stage.write_text(raw_html, encoding="utf-8")
+    write_json(
+        source / "manifest.json",
+        {
+            "articles": [
+                {
+                    "article": "doc",
+                    "raw_stage_path": str(raw_stage),
+                }
+            ]
+        },
+    )
+
+    cache, source_path, origin_path = cached_data_image_cache(
+        source,
+        "doc",
+        raw_html,
+        snapshot_file=lambda path, _purpose: path,
+        document_downscale_bytes=300_000,
+    )
+
+    decoded = [
+        base64.b64decode(data_url.split(",", 1)[1])
+        for data_url in cache.values()
+    ]
+    assert set(cache) == set(image_names)
+    assert sum(map(len, decoded)) <= 300_000
+    assert all(
+        data_url.startswith("data:image/jpeg;base64,")
+        for data_url in cache.values()
+    )
+    assert source_path is not None
+    assert all(image_name in source_path for image_name in image_names)
+    assert origin_path == str(article_dir)
+
+
 def test_cached_data_image_cache_rejects_non_utf8_previous_polish(
     tmp_path: Path,
 ) -> None:
