@@ -7488,10 +7488,12 @@ def _split_implicit_unnumbered_reference_list_items(html: str) -> str:
     return "".join(out)
 
 
-def _add_reference_ids_to_list_items(html: str) -> tuple[str, int]:
-    ref_index = 0
-    max_ref_id = 0
-    used_ids: set[int] = set()
+def _add_reference_ids_to_list_items(
+    html: str, *, start_index: int = 0
+) -> tuple[str, int]:
+    ref_index = max(0, start_index)
+    max_ref_id = ref_index
+    used_ids = set(range(1, ref_index + 1))
     started_references = False
 
     def _next_unused_id(preferred: int | None = None) -> int:
@@ -7712,6 +7714,7 @@ def _add_reference_ids_to_author_year_entries(html: str) -> tuple[str, int]:
     bibliography = html[:boundary_at]
     suffix = html[boundary_at:]
 
+    list_bibliography = ""
     list_boundary = re.search(r"<(?:ul|ol|li)\b", bibliography, re.IGNORECASE)
     if list_boundary is not None:
         paragraph_prefix = bibliography[: list_boundary.start()]
@@ -7726,7 +7729,21 @@ def _add_reference_ids_to_author_year_entries(html: str) -> tuple[str, int]:
             for match in _P_BLOCK_PATTERN.finditer(paragraph_prefix)
         )
         if has_reference_paragraph:
-            suffix = bibliography[list_boundary.start() :] + suffix
+            candidate_list = bibliography[list_boundary.start() :]
+            has_reference_list_item = any(
+                _looks_like_standalone_reference_paragraph_body(match.group(2) or "")
+                and re.search(
+                    r"\b(?:18|19|20)\d{2}[a-z]?\b",
+                    _visible_text(match.group(2) or ""),
+                    re.IGNORECASE,
+                )
+                is not None
+                for match in _LI_BLOCK_PATTERN.finditer(candidate_list)
+            )
+            if has_reference_list_item:
+                list_bibliography = candidate_list
+            else:
+                suffix = candidate_list + suffix
             bibliography = paragraph_prefix
         elif "<li" in bibliography.lower():
             bibliography, max_ref_id = _add_reference_ids_to_list_items(bibliography)
@@ -7760,6 +7777,13 @@ def _add_reference_ids_to_author_year_entries(html: str) -> tuple[str, int]:
         )
 
     bibliography = _P_BLOCK_PATTERN.sub(replace, bibliography)
+    if list_bibliography:
+        list_bibliography, list_ref_index = _add_reference_ids_to_list_items(
+            list_bibliography,
+            start_index=max_ref_id,
+        )
+        max_ref_id = max(max_ref_id, list_ref_index)
+        bibliography += list_bibliography
     bibliography = _mark_author_year_reference_targets(bibliography)
     return bibliography + suffix, max_ref_id
 
@@ -24394,6 +24418,7 @@ def _polish_phase_katex_and_final_repairs(
         polished = _merge_same_href_reference_anchor_runs(polished)
         polished = _repair_known_word_glue(polished, allow_large_html=True)
         polished = _repair_english_ocr_text_artifacts(polished, allow_large_html=True)
+    polished = _split_doi_metadata_body_paragraphs(polished)
     polished = _repair_second_echelon_ocr_residue_html(polished)
     polished = _repair_confirmed_front_matter_artifacts(polished)
     ref_ids = [

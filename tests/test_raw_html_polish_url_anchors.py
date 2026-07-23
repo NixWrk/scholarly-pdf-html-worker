@@ -217,6 +217,21 @@ def test_normalize_same_href_text_anchor_label_repairs_supplemental_split() -> N
     assert not looks_like_split_same_href_text_label("https://example.org/supplemental")
 
 
+def test_merge_adjacent_same_href_url_anchors_repairs_split_license_label() -> None:
+    url = "https://creativecommons.org/licenses/by-nd/4.0"
+    html = (
+        f'<p><a href="{url}">This work is licensed under a Creative Commons '
+        f'Attribution-NoDerivatives 4.0 Inter </a> <a href="{url}">national License.</a></p>'
+    )
+
+    repaired = merge_adjacent_same_href_url_anchors(html)
+
+    assert repaired == (
+        f'<p><a href="{url}">This work is licensed under a Creative Commons '
+        "Attribution-NoDerivatives 4.0 International License.</a></p>"
+    )
+
+
 def test_merge_adjacent_same_href_url_anchors_repairs_protocol_prefix_split() -> None:
     url = "https://example.org/path"
     html = f'<p><a href="{url}">https:</a> // <a href="{url}">example.org/path</a>.</p>'

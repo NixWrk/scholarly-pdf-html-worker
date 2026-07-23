@@ -9,6 +9,7 @@ REFERENCES_HEADING_PATTERN = re.compile(
     r"<h([1-6])\b[^>]*>\s*(?:<[^>]+>\s*)*"
     r"(?:(?:[IVXLCM]+|\d+)\.?\s*)?(?:<[^>]+>\s*)*"
     r"(?:"
+    r"Literature\s+Cited|Works\s+Cited|"
     r"References|Referencias|Références|"
     r"Bibliography|Bibliografie|Bibliografía|Literatur|Literaturverzeichnis|"
     r"\u041b\u0438\u0442\u0435\u0440\u0430\u0442\u0443\u0440\u0430|"

@@ -15,3 +15,18 @@ def test_repair_split_visible_emails_joins_domain_spaces() -> None:
     assert repair_split_visible_emails("Reach margaret.tarampi@psych .utah.edu") == (
         "Reach margaret.tarampi@psych.utah.edu"
     )
+
+
+def test_repair_split_visible_emails_joins_named_local_dot() -> None:
+    text = (
+        "Rachel Blue: University of Pennsylvania, Philadelphia, PA. "
+        "rachel. blue@pennmedicine.upenn.edu."
+    )
+
+    assert "rachel.blue@pennmedicine.upenn.edu" in repair_split_visible_emails(text)
+
+
+def test_repair_split_visible_emails_keeps_sentence_boundary() -> None:
+    text = "Correspondence should be addressed. jamesbarresemd@gmail.com."
+
+    assert repair_split_visible_emails(text) == text

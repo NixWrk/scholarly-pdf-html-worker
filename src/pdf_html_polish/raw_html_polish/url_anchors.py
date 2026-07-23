@@ -617,7 +617,17 @@ def repair_split_doi_url_anchor_path_tails(html: str) -> str:
 
 def normalize_same_href_text_anchor_label(label: str) -> str:
     normalized = re.sub(r"\s+", " ", label).strip()
-    return re.sub(r"\bsupple\s+mental\b", "supplemental", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"\bsupple\s+mental\b", "supplemental", normalized, flags=re.IGNORECASE
+    )
+    return re.sub(
+        r"\binter\s+national\b",
+        lambda match: "International"
+        if match.group(0)[:1].isupper()
+        else "international",
+        normalized,
+        flags=re.IGNORECASE,
+    )
 
 
 def looks_like_split_same_href_text_label(label: str) -> bool:
@@ -627,7 +637,8 @@ def looks_like_split_same_href_text_label(label: str) -> bool:
         return False
     return bool(
         re.search(
-            r"\b(?:online|supplemental|supplementary|material|table|figure|appendix|data)\b",
+            r"\b(?:online|supplemental|supplementary|material|table|figure|appendix|data|"
+            r"license|licensed|international)\b",
             label,
             re.IGNORECASE,
         )

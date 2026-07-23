@@ -259,6 +259,59 @@ def test_final_phase_retargets_caption_id_created_after_float_grouping() -> None
     )
 
 
+def test_final_phase_keeps_publication_doi_separate_from_body_after_float_repair() -> None:
+    html = (
+        '<p>Received for publication November 11, 2019. Revised and accepted April 30, 2020. '
+        'doi:<a href="https://doi.org/10.1536/jbi.19-620">10.1536/jbi.19-620</a></p>'
+        '<p>doi:<a href="https://doi.org/10.1536/ihj.19-620">10.1536/ihj.19-620</a></p>'
+        '<div class="z2m-float-unit z2m-table-unit"><table><tr><td>AVD</td></tr></table></div>'
+        '<p>The AVD was adjusted starting from 100 milliseconds and shortened stepwise '
+        "during simultaneous biventricular pacing in this representative case.</p>"
+    )
+    context = RawPolishContext(
+        table_caption_language="en",
+        enable_citation_linkify=False,
+        language_policy=EN_POLISH_POLICY,
+    )
+
+    repaired = _polish_phase_katex_and_final_repairs(
+        RawPolishState(html=html),
+        context,
+    ).html
+
+    assert re.search(
+        r"19-620</a>\s*</p>\s*<p>The AVD was adjusted",
+        repaired,
+    )
+
+
+def test_polish_html_document_links_mixed_literature_cited_entries() -> None:
+    html = (
+        "<html><body><p>Prior work (Afraz et al. 2006; Bosking et al. 2017) supports this.</p>"
+        "<h4>SUMMARY POINTS</h4><ul><li>First summary point.</li><li>Second summary point.</li></ul>"
+        "<h4>LITERATURE CITED</h4>"
+        '<p block-type="Text">Afraz SR, Kiani R, Esteky H. 2006. Microstimulation study.</p>'
+        '<p block-type="ListGroup"><ul><li>Bosking WH, Sun P, Ozker M, et al. 2017. '
+        "Saturation in phosphene size.</li></ul></p></body></html>"
+    )
+
+    polished = polish_html_document(
+        html,
+        table_caption_language="en",
+        citation_profile={"style": "author_year", "confidence": "medium"},
+    )
+    before_bibliography = polished[: polished.index("LITERATURE CITED")]
+
+    assert 'id="ref-1"' not in before_bibliography
+    assert re.search(r'<p(?=[^>]*id="ref-1")[^>]*>Afraz SR', polished)
+    assert re.search(
+        r'<li(?=[^>]*id="ref-2")[^>]*>[\s\S]{0,80}Bosking WH', polished
+    )
+    assert '<a href="#ref-1" class="z2m-ref-link">Afraz et al. 2006</a>' in polished
+    assert 'href="#ref-2"' in before_bibliography
+    assert "Bosking et al. 2017" in before_bibliography
+
+
 def test_partial_table_link_expands_to_the_whole_label() -> None:
     html = (
         "<html><body><p>Results are summarized in "

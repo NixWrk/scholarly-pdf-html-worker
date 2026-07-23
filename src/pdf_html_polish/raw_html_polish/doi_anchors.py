@@ -15,7 +15,7 @@ DOI_METADATA_BODY_BOUNDARY_PATTERN = re.compile(
     r"|10\.\d{4,9}/[^\s<]+"
     r"))"
     r"(?P<space>\s+)"
-    r"(?P<tail>(?:</?(?:span|em|i|b|strong)\b[^>]*>\s*)*"
+    r"(?P<tail>(?:</?(?:span|em|i|b|strong)\b[^>]*>\s*|<a\b[^>]*>\s*)*"
     r"(?:the|this|we|in|as|or|depicted|generated|lines)\b[\s\S]{20,})",
     re.IGNORECASE,
 )
