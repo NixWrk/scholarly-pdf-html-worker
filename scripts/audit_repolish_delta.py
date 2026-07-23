@@ -339,10 +339,10 @@ def assemble_report(
     status: str,
 ) -> dict[str, Any]:
     classifications = Counter(result["classification"] for result in results)
-    before_counts = Counter()
-    after_counts = Counter()
-    fixed_counts = Counter()
-    new_counts = Counter()
+    before_counts: Counter[str] = Counter()
+    after_counts: Counter[str] = Counter()
+    fixed_counts: Counter[str] = Counter()
+    new_counts: Counter[str] = Counter()
     for result in results:
         before_counts.update(result["before_defect_counts"])
         after_counts.update(result["after_defect_counts"])
