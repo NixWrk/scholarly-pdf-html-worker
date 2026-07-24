@@ -89,9 +89,9 @@ def frontmatter_ocr_repaired_by_polish(raw_text: str, polish_blocks: list[Block]
         for block in relevant_blocks
     ):
         return False
-    relevant_text = normalize_ws(" ".join(block.text for block in relevant_blocks))
-    if FRONTMATTER_OCR_RE.search(relevant_text):
+    if any(FRONTMATTER_OCR_RE.search(block.text) for block in relevant_blocks):
         return False
+    relevant_text = normalize_ws(" ".join(block.text for block in relevant_blocks))
     hit_count = sum(1 for name_key in name_keys if name_key in relevant_text.lower())
     return hit_count >= min(2, len(name_keys))
 

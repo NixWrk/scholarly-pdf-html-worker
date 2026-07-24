@@ -24,6 +24,7 @@ ROMAN_WORD_SPLIT_FALSE_PREFIXES = {
     "numbered",
     "panel",
     "reference",
+    "sample",
     "section",
     "table",
     "type",

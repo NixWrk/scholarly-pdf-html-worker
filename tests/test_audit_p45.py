@@ -46,6 +46,12 @@ def test_roman_word_split_defects_reports_plain_split_word() -> None:
     assert defects[0].extra == {"match": "Belyae v"}
 
 
+def test_roman_word_split_defects_ignores_sample_index() -> None:
+    defects = _defects(_block("Sample i uses the first prompt configuration."))
+
+    assert defects == []
+
+
 def test_roman_word_split_defects_classifies_superscript_marker_telemetry() -> None:
     block = _block("The author Teixeira i remains visible.", raw="<p>The author Teixeira<sup>i</sup> remains visible.</p>")
     defects = _defects(block)

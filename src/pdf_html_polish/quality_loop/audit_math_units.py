@@ -43,6 +43,7 @@ JOINED_PROSE_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 INLINE_TEX_RE = re.compile(r"\\\(([\s\S]{0,800}?)\\\)")
+MATH_TAG_RE = re.compile(r"<math\b[^>]*>([\s\S]{0,800}?)</math>", re.IGNORECASE)
 MATH_TAG_WITH_CITATION_RE = re.compile(
     r"<math\b[\s\S]{0,800}?\[\d+\][\s\S]{0,800}?</math>", re.IGNORECASE
 )
@@ -58,10 +59,15 @@ DISPLAY_MATH_OCR_RE = re.compile(
 def inline_tex_contains_citation_bracket(tex: str) -> bool:
     for match in re.finditer(r"\[\s*\d{1,4}\s*\]", tex):
         prefix = tex[: match.start()]
-        if re.search(r"\\[A-Za-z]+\*?\s*$", prefix):
+        if re.search(r"(?:\\[A-Za-z]+\*?|[A-Za-z0-9_}\]])$", prefix):
             continue
         return True
     return False
+
+
+def math_tag_contains_citation_bracket(math_body: str) -> bool:
+    visible = unescape(re.sub(r"<[^>]+>", "", math_body))
+    return inline_tex_contains_citation_bracket(visible)
 
 
 def unit_match_is_repaired_in_raw(match_text: str, raw: str) -> bool:
@@ -179,7 +185,10 @@ def unit_math_defects(
             break
 
     for block in polish_blocks:
-        if MATH_TAG_WITH_CITATION_RE.search(block.raw) or any(
+        if any(
+            math_tag_contains_citation_bracket(match.group(1))
+            for match in MATH_TAG_RE.finditer(block.raw)
+        ) or any(
             inline_tex_contains_citation_bracket(match.group(1))
             for match in INLINE_TEX_RE.finditer(block.raw)
         ):

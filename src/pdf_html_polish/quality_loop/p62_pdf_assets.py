@@ -22,6 +22,10 @@ P62_UNRECOVERABLE_FALSE_MATCH_HINTS = {
     "backmatter_or_reference_text",
     "prose_parenthetical_reference",
 }
+FIGURE_CAPTION_BOUNDARY_RE = re.compile(
+    r"^\s*(?:fig(?:ure)?\.?)\s*[A-Z]?\d+(?:[-.]\d+)*\s*[.:|]\s+",
+    re.IGNORECASE,
+)
 
 
 def render_fallback_page_number(
@@ -271,9 +275,16 @@ def recover_pdf_figure_asset(
                 }
             caption_rect = fitz_union_rect(caption_rects) if caption_rects else None
             graphics = page_graphic_rects(page)
+            text_region = text_figure_region_for_caption(page, caption_rect)
             selected = select_graphic_rects_for_caption(page.rect, graphics, caption_rect)
+            if selected_graphics_should_defer_to_text_region(
+                page.rect,
+                selected,
+                caption_rect,
+                text_region,
+            ):
+                selected = []
             if not selected:
-                text_region = text_figure_region_for_caption(page, caption_rect)
                 if text_region is not None:
                     text_region = expand_rect(
                         text_region,
@@ -704,6 +715,28 @@ def select_graphic_rects_for_caption(
     return selected
 
 
+def selected_graphics_should_defer_to_text_region(
+    page_rect: Any,
+    selected: list[dict[str, Any]],
+    caption_rect: Any | None,
+    text_region: Any | None,
+) -> bool:
+    if not selected or caption_rect is None or text_region is None:
+        return False
+    selected_region = fitz_union_rect([item["rect"] for item in selected])
+    page_height = max(1.0, float(page_rect.height))
+    page_area = max(1.0, float(page_rect.width) * page_height)
+    text_gap = max(0.0, float(caption_rect.y0) - float(text_region.y1))
+    below_gap = max(0.0, float(selected_region.y0) - float(caption_rect.y1))
+    return (
+        float(selected_region.y0) >= float(caption_rect.y1) - 3.0
+        and float(text_region.y1) <= float(caption_rect.y0) + 3.0
+        and fitz_rect_area(text_region) >= page_area * 0.01
+        and text_gap <= page_height * 0.05
+        and below_gap > max(page_height * 0.04, text_gap + page_height * 0.02)
+    )
+
+
 def text_figure_region_for_caption(page: Any, caption_rect: Any | None) -> Any | None:
     if caption_rect is None:
         return None
@@ -716,6 +749,24 @@ def text_figure_region_for_caption(page: Any, caption_rect: Any | None) -> Any |
     page_height = max(1.0, float(page.rect.height))
     page_width = max(1.0, float(page.rect.width))
     min_y = max(0.0, float(caption_rect.y0) - page_height * 0.48)
+    previous_caption_bottoms: list[float] = []
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines") or []:
+            text = "".join(span.get("text", "") for span in line.get("spans") or [])
+            bbox = line.get("bbox") or block.get("bbox")
+            if not bbox or not FIGURE_CAPTION_BOUNDARY_RE.search(text):
+                continue
+            try:
+                line_rect = fitz.Rect(bbox)
+            except Exception:
+                continue
+            if line_rect.y1 < caption_rect.y0 - 1.0:
+                previous_caption_bottoms.append(float(line_rect.y1))
+    if previous_caption_bottoms:
+        min_y = max(min_y, max(previous_caption_bottoms) + page_height * 0.004)
+
     candidates: list[Any] = []
     for block in blocks:
         if block.get("type") != 0 or not block.get("bbox"):
@@ -729,6 +780,16 @@ def text_figure_region_for_caption(page: Any, caption_rect: Any | None) -> Any |
         if rect.y1 > caption_rect.y0 + 3:
             continue
         if rect.y1 < min_y:
+            continue
+        block_text = "\n".join(
+            "".join(span.get("text", "") for span in line.get("spans") or [])
+            for line in block.get("lines") or []
+        ).strip()
+        if (
+            rect.y1 <= float(page.rect.y0) + page_height * 0.075
+            and rect.height <= page_height * 0.04
+            and len(block_text) <= 200
+        ):
             continue
         if rect.width < page_width * 0.18 or rect.height < 5:
             continue

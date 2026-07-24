@@ -5,6 +5,7 @@ from pdf_html_polish.quality_loop.audit_manual_patterns import (
     bibliography_numbering_residue_is_clean_reference_boundary,
     ends_like_sentence_fragment,
     find_split_dot_email_match,
+    joined_word_match_is_non_prose,
     joined_word_match_is_url_slug,
     looks_like_affiliation_label_roman_boundary,
     page_link_semantic_kind,
@@ -64,6 +65,18 @@ def test_joined_word_match_is_url_slug_only_inside_url_left_context() -> None:
 
     assert joined_word_match_is_url_slug(url_text, url_match)
     assert not joined_word_match_is_url_slug(prose_text, prose_match)
+
+
+def test_joined_word_match_is_non_prose_accepts_ground_truth_call_only() -> None:
+    call_text = "The evaluator calls GroundTruth () before comparison."
+    prose_text = "The groundtruth label is still joined in prose."
+    call_match = re.search("GroundTruth", call_text)
+    prose_match = re.search("groundtruth", prose_text)
+    assert call_match is not None
+    assert prose_match is not None
+
+    assert joined_word_match_is_non_prose(call_text, call_match)
+    assert not joined_word_match_is_non_prose(prose_text, prose_match)
 
 
 def test_find_split_dot_email_match_ignores_sentence_boundary_before_email() -> None:

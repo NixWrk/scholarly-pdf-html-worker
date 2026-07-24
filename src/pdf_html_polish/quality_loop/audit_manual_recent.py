@@ -37,7 +37,7 @@ from pdf_html_polish.quality_loop.audit_figure_caption_ux import (
 from pdf_html_polish.quality_loop.audit_manual_patterns import (
     bibliography_numbering_residue_is_clean_reference_boundary,
     find_split_dot_email_match,
-    joined_word_match_is_url_slug,
+    joined_word_match_is_non_prose,
     looks_like_affiliation_label_roman_boundary,
     page_link_semantic_kind,
 )
@@ -760,7 +760,7 @@ class MeineRecentTextDeps:
     affiliation_marker_residue_re: re.Pattern[str]
     pdf_line_number_residue_re: re.Pattern[str]
     non_reference_body_blocks: Callable[[list[Block]], Iterable[Block]]
-    joined_word_match_is_url_slug: Callable[[str, re.Match[str]], bool]
+    joined_word_match_is_non_prose: Callable[[str, re.Match[str]], bool]
     known_ocr_token_defects: KnownOcrTokenDefects
     find_split_dot_email_match: Callable[[str], re.Match[str] | None]
     bibliography_numbering_residue_is_clean_reference_boundary: Callable[[str, str], bool]
@@ -852,7 +852,7 @@ def build_meine_recent_text_deps() -> MeineRecentTextDeps:
         affiliation_marker_residue_re=AFFILIATION_MARKER_RESIDUE_RE,
         pdf_line_number_residue_re=PDF_LINE_NUMBER_RESIDUE_RE,
         non_reference_body_blocks=non_reference_body_blocks,
-        joined_word_match_is_url_slug=joined_word_match_is_url_slug,
+        joined_word_match_is_non_prose=joined_word_match_is_non_prose,
         known_ocr_token_defects=known_ocr_token_defects,
         find_split_dot_email_match=find_split_dot_email_match,
         bibliography_numbering_residue_is_clean_reference_boundary=(
@@ -1743,7 +1743,7 @@ def meine_recent_text_ocr_defects(
     _defect = make_defect
     _snippet = snippet
     _strip_tags = strip_tags
-    _joined_word_match_is_url_slug = deps.joined_word_match_is_url_slug
+    _joined_word_match_is_non_prose = deps.joined_word_match_is_non_prose
     _known_ocr_token_defects = deps.known_ocr_token_defects
     _find_split_dot_email_match = deps.find_split_dot_email_match
     _bibliography_numbering_residue_is_clean_reference_boundary = deps.bibliography_numbering_residue_is_clean_reference_boundary
@@ -1837,7 +1837,7 @@ def meine_recent_text_ocr_defects(
         (
             match
             for match in KNOWN_JOINED_WORD_RE.finditer(plain)
-            if not _joined_word_match_is_url_slug(plain, match)
+            if not _joined_word_match_is_non_prose(plain, match)
         ),
         None,
     )

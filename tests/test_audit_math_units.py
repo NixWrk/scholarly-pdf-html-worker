@@ -2,6 +2,7 @@ from pdf_html_polish.quality_loop.audit_blocks import parse_blocks
 from pdf_html_polish.quality_loop.audit_math_units import (
     equation_table_defects,
     inline_tex_contains_citation_bracket,
+    math_tag_contains_citation_bracket,
     unit_math_defects,
 )
 
@@ -41,7 +42,13 @@ def test_equation_table_defects_reports_absorbed_prose() -> None:
 
 def test_inline_tex_citation_bracket_ignores_latex_optional_args() -> None:
     assert not inline_tex_contains_citation_bracket(r"\sqrt[2]{x}")
+    assert not inline_tex_contains_citation_bracket(r"x[1] + y[2]")
     assert inline_tex_contains_citation_bracket(r"x + y [12]")
+
+
+def test_math_tag_citation_bracket_distinguishes_index_from_citation() -> None:
+    assert not math_tag_contains_citation_bracket("<mi>x</mi>[1]")
+    assert math_tag_contains_citation_bracket("<mi>x</mi> + <mi>y</mi> [17]")
 
 
 def test_audit_script_keeps_legacy_math_unit_aliases() -> None:

@@ -575,6 +575,21 @@ _PAGE_LINKED_SECTION_REF_PATTERN = re.compile(
     r"\s*(?P<num>[IVX]{1,6}|\d{1,2}(?:\.\d{1,2})*)(?P<trail>[\.)]?)\s*</a>",
     re.IGNORECASE | re.DOTALL,
 )
+_PAGE_LINKED_SPLIT_SECTION_LABEL_PATTERN = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*)>"
+    r"\s*(?P<open>[\(\[]?)\s*(?P<label_head>sec(?:t)?)\s*</a>\s*"
+    r"(?P<label_tail>tion|ion)\s+"
+    r"(?P<num>[IVX]{1,6}|\d{1,2}(?:\.\d{1,2})*)(?P<trail>[\)\]\.,;:]*)",
+    re.IGNORECASE | re.DOTALL,
+)
+_PAGE_LINKED_DUAL_SPLIT_SECTION_LABEL_PATTERN = re.compile(
+    r"<a\b(?P<attrs>[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*)>"
+    r"\s*(?P<open>[\(\[]?)\s*(?P<label_head>sec(?:t)?)\s*</a>\s*"
+    r"<a\b[^>]*\bhref\s*=\s*['\"]#page-[^'\"]+['\"][^>]*>\s*"
+    r"(?P<label_tail>tion|ion)\s+"
+    r"(?P<num>[IVX]{1,6}|\d{1,2}(?:\.\d{1,2})*)(?P<trail>[\)\]\.,;:]*)\s*</a>",
+    re.IGNORECASE | re.DOTALL,
+)
 _APPENDIX_REF_PATTERN = re.compile(
     rf"\b(Appendix|{_RU_APPENDIX_LABEL_TOKEN})\s+([A-Z\u0410-\u042f])\b",
     re.IGNORECASE,
@@ -11977,6 +11992,26 @@ def _link_section_refs(html: str, found_sections: set[str]) -> str:
         )
         return f"<a{attrs}>{m.group('label')}\xa0{m.group('num').strip().strip('.')}</a>{m.group('trail')}"
 
+    def _replace_split_page_linked(m: re.Match[str]) -> str:
+        label = f"{m.group('label_head')}{m.group('label_tail')}"
+        if label.lower() != "section":
+            return m.group(0)
+        key = _section_key(m.group("num"))
+        if key not in found_sections:
+            return m.group(0)
+        attrs = _replace_anchor_href_and_class(
+            m.group("attrs"), f"#section-{key}", "z2m-section-link"
+        )
+        visible_label = "Section" if label[0].isupper() else "section"
+        return (
+            f"{m.group('open')}<a{attrs}>{visible_label}\xa0{m.group('num')}</a>"
+            f"{m.group('trail')}"
+        )
+
+    html = _PAGE_LINKED_DUAL_SPLIT_SECTION_LABEL_PATTERN.sub(
+        _replace_split_page_linked, html
+    )
+    html = _PAGE_LINKED_SPLIT_SECTION_LABEL_PATTERN.sub(_replace_split_page_linked, html)
     html = _PAGE_LINKED_SECTION_REF_PATTERN.sub(_replace_page_linked, html)
 
     def _replace_page_linked_appendix(m: re.Match[str]) -> str:

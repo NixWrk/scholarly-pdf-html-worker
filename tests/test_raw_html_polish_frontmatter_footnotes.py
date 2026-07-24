@@ -51,6 +51,12 @@ def test_looks_author_byline_front_matter_rejects_body_sentence() -> None:
     assert not looks_author_byline_front_matter(raw, visible)
 
 
+def test_looks_author_byline_front_matter_rejects_publication_date() -> None:
+    raw = "<p>Received June 23, 2006.</p>"
+
+    assert not looks_author_byline_front_matter(raw, "Received June 23, 2006.")
+
+
 def test_looks_author_marker_ocr_candidate_detects_glued_front_matter_markers() -> None:
     raw = "<p>Alice Smith1, Bob Jones2, Carol Roe3</p>"
 
@@ -259,6 +265,26 @@ def test_repair_front_matter_marker_ocr_repairs_author_and_affiliation_blocks() 
 
     assert "Alice Smith<sup>1</sup>, Bob Jones<sup>2</sup>, Carol Roe<sup>3</sup>" in repaired
     assert "<sup>1</sup>Department of A. <sup>2</sup>University of B" in repaired
+
+
+def test_repair_front_matter_marker_ocr_repairs_unseparated_author_byline() -> None:
+    html = (
+        '<p class="z2m-front-matter">'
+        "Luyu Gao * 1 Aman Madaan * 1 Shuyan Zhou * 1 "
+        "Uri Alon <sup>1</sup> Pengfei Liu 1 2 Yiming Yang <sup>1</sup> "
+        "Jamie Callan <sup>1</sup> Graham Neubig 1 2"
+        "</p>"
+    )
+
+    repaired = repair_front_matter_marker_ocr(
+        html,
+        looks_like_ocr_split_word_join=lambda _word, _letter: False,
+    )
+
+    assert "Luyu Gao<sup>*1</sup> Aman Madaan<sup>*1</sup>" in repaired
+    assert "Shuyan Zhou<sup>*1</sup> Uri Alon<sup>1</sup>" in repaired
+    assert "Pengfei Liu<sup>1,2</sup> Yiming Yang<sup>1</sup>" in repaired
+    assert "Graham Neubig<sup>1,2</sup>" in repaired
 
 
 def test_repair_front_matter_marker_ocr_repairs_affiliation_list_items() -> None:

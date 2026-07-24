@@ -47,6 +47,18 @@ def test_frontmatter_defects_keep_dotted_author_markers() -> None:
     assert [defect.id for defect in defects] == ["P01"]
 
 
+def test_frontmatter_repair_check_does_not_join_markers_across_blocks() -> None:
+    raw_text = "Andy Zhou 1 2 Kai Yan 1 Yu-Xiong Wang 1"
+    polish_blocks = parse_blocks(
+        '<p class="z2m-front-matter">Andy Zhou<sup>1,2</sup> '
+        'Kai Yan<sup>1</sup> Yu-Xiong Wang<sup>1</sup></p>'
+        '<p class="z2m-front-matter z2m-affiliations"><sup>1</sup> '
+        "University. Correspondence to Andy Zhou.</p>"
+    )
+
+    assert frontmatter_ocr_repaired_by_polish(raw_text, polish_blocks)
+
+
 def test_frontmatter_defects_reports_affiliation_ref_links_and_author_line_links() -> None:
     polish_blocks = parse_blocks(
         '<p class="z2m-affiliations"><a href="#ref-1">1</a> Department.</p>'

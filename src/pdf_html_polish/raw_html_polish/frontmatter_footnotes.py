@@ -40,6 +40,12 @@ AUTHOR_MARKER_NUMBER_RUN_PATTERN = re.compile(
     r"(?P<marker>[\*\u2020\u2021\u22a0\u2709]?)"
     r"(?=\s*(?:,|&amp;|&|</p>|$))"
 )
+AUTHOR_PLAIN_MARKER_NUMBER_RUN_PATTERN = re.compile(
+    r"(?P<name>\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,6})\s*"
+    r"(?P<marker>[\*\u2020\u2021\u22a0\u2709]?)\s*"
+    r"(?P<nums>\d{1,2}(?:(?:\s+|[,.])\d{1,2}){0,5})"
+    r"(?=\s*(?:,|&amp;|&|$|[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,5}(?:\s|<)))"
+)
 AUTHOR_EXISTING_SUP_SPACE_PATTERN = re.compile(
     r"\s+(?=<sup\b[^>]*>\s*[\d,\s]+\s*</sup>)",
     re.IGNORECASE | re.DOTALL,
@@ -212,7 +218,10 @@ def looks_author_byline_front_matter(raw: str, visible: str) -> bool:
         return False
     lower = visible.lower()
     marker_visible = visible.translate(SUPERSCRIPT_DIGIT_TRANSLATION)
-    if re.match(r"^\s*(?:abstract|introduction|references|bibliography)\b", lower):
+    if re.match(
+        r"^\s*(?:abstract|introduction|references|bibliography|received|accepted|published)\b",
+        lower,
+    ):
         return False
     if len(re.findall(r"[.!?](?:\s|$)", visible)) >= 2:
         return False
@@ -736,9 +745,10 @@ def repair_front_matter_marker_ocr(
                 body,
                 looks_like_ocr_split_word_join=looks_like_ocr_split_word_join,
             )
-        if node_has_class(
-            raw, "z2m-front-matter"
-        ) and looks_author_marker_ocr_candidate(raw):
+        if node_has_class(raw, "z2m-front-matter") and (
+            looks_author_marker_ocr_candidate(raw)
+            or looks_author_byline_front_matter(raw, visible_text(raw))
+        ):
             body = repair_author_marker_ocr_body(body)
         if node_has_class(raw, "z2m-front-matter") and looks_affiliation_label_body(
             body
@@ -969,6 +979,15 @@ def repair_author_marker_ocr_body(body: str) -> str:
     body = AUTHOR_EXISTING_SUP_SPACE_PATTERN.sub("", body)
     body = re.sub(r"(?<=\d)\s*([,.])\s*(?=\d{1,2}\b)", r"\1", body)
 
+    def replace_plain_marker(match: re.Match[str]) -> str:
+        numbers = normalize_front_matter_marker_numbers(match.group("nums"))
+        if not numbers:
+            return match.group(0)
+        marker = match.group("marker") or ""
+        return f"{match.group('name')}<sup>{marker}{numbers}</sup>"
+
+    body = AUTHOR_PLAIN_MARKER_NUMBER_RUN_PATTERN.sub(replace_plain_marker, body)
+
     def replace_marker(match: re.Match[str]) -> str:
         numbers = normalize_front_matter_marker_numbers(match.group("nums"))
         if not numbers:
@@ -999,6 +1018,7 @@ __all__ = [
     "AUTHOR_EXISTING_SUP_SPACE_PATTERN",
     "AUTHOR_MARKER_NUMBER_RUN_PATTERN",
     "AUTHOR_MARKER_OCR_SYMBOL_PATTERN",
+    "AUTHOR_PLAIN_MARKER_NUMBER_RUN_PATTERN",
     "FOOTNOTE_P_NODE_PATTERN",
     "LEADING_PAGE_SPAN_PATTERN",
     "LEADING_URL_FOOTNOTE_ANCHOR_PATTERN",

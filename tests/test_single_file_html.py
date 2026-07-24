@@ -14514,6 +14514,43 @@ def test_polish_html_document_retargets_numeric_page_link_section_ref() -> None:
     assert 'href="#page-3-1"' not in polished
 
 
+def test_polish_html_document_repairs_section_label_split_across_page_link() -> None:
+    html = (
+        "<html><body>"
+        '<p>The limitation section <a href="#page-8-2"> (sec </a>  tion 9) remains.</p>'
+        '<h2><span id="page-8-2"></span>9 Limitations</h2>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert (
+        '(<a href="#section-9" class="z2m-section-link">section\xa09</a>)'
+        in polished
+    )
+    assert 'href="#page-8-2"' not in polished
+    assert "sec </a>" not in polished
+
+
+def test_polish_html_document_repairs_section_label_split_across_two_page_links() -> None:
+    html = (
+        "<html><body>"
+        '<p>The limitation section <a href="#page-8-2"> (sec </a> '
+        '<a href="#page-8-2"> tion 9) </a>.</p>'
+        '<h2><span id="page-8-2"></span>9 Limitations</h2>'
+        "</body></html>"
+    )
+
+    polished = polish_html_document(html, table_caption_language="en")
+
+    assert (
+        '(<a href="#section-9" class="z2m-section-link">section\xa09</a>)'
+        in polished
+    )
+    assert 'href="#page-8-2"' not in polished
+    assert "sec </a>" not in polished
+
+
 def test_polish_html_document_unwraps_unresolved_section_appendix_equation_page_refs() -> (
     None
 ):

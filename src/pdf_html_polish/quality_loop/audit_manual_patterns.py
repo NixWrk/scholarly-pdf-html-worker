@@ -87,6 +87,13 @@ def joined_word_match_is_url_slug(text: str, match: re.Match[str]) -> bool:
     return bool(re.search(r"(?:https?://|www\.)[^\s<>()\[\]]*$", left, re.IGNORECASE))
 
 
+def joined_word_match_is_non_prose(text: str, match: re.Match[str]) -> bool:
+    if joined_word_match_is_url_slug(text, match):
+        return True
+    right = text[match.end() : match.end() + 16]
+    return match.group(0) == "GroundTruth" and bool(re.match(r"\s*\(", right))
+
+
 def split_dot_email_is_sentence_boundary(match: re.Match[str]) -> bool:
     matched = match.group(0)
     dot_pos = matched.find(".")
