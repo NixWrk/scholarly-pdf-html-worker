@@ -9133,6 +9133,13 @@ def _inline_math_is_open(text: str, position: int) -> bool:
 def _has_non_citation_numeric_left_context(left_visible: str) -> bool:
     for match in _NONCITATION_NUMERIC_CONTEXT_PATTERN.finditer(left_visible):
         if (
+            match.start() >= 2
+            and left_visible[match.start()] in {"A", "V"}
+            and left_visible[match.start() - 1] in _NUMERIC_SUPERSCRIPT_DASH_CHARS
+            and left_visible[match.start() - 2].isalpha()
+        ):
+            continue
+        if (
             match.start() > 0
             and left_visible[match.start() - 1] == "."
             and left_visible[match.start()].lower() in {"a", "v"}

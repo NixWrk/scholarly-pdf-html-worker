@@ -141,11 +141,17 @@ def looks_like_frontmatter_metadata_notice(text: str) -> bool:
         and re.search(r"\b(?:address|suite|street|avenue|road|doi)\b", lowered)
     ):
         return True
-    if len(normalized) <= 90 and re.fullmatch(
-        r"\d{4}\s+[A-Z][A-Za-z. ]{2,45}\s+\d{1,4}\s+\d{4,8}",
-        normalized,
-    ):
-        return True
+    if len(normalized) <= 90:
+        journal_line = re.fullmatch(
+            r"\d{4}\s+(?P<journal>[A-Z][A-Za-z. ]{2,45})\s+"
+            r"\d{1,4}\s+(?P<locator>\d{1,8})",
+            normalized,
+        )
+        if journal_line is not None and (
+            "." in journal_line.group("journal")
+            or len(journal_line.group("locator")) >= 4
+        ):
+            return True
     if re.match(
         r"^(?:"
         r"Academic\s+Editors?\s*:|"

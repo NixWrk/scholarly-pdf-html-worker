@@ -3501,6 +3501,20 @@ def test_late_unlinked_superscript_relink_links_range_at_end_of_block() -> None:
     assert '<a href="#ref-22" class="z2m-ref-link">22</a>' in body
 
 
+def test_late_unlinked_superscript_relink_ignores_hyphenated_pv_abbreviation() -> None:
+    html = (
+        '<html><body><p>So-called "P-V" curves <sup>50,51</sup> are plotted.</p>'
+        '<h4>References</h4><ol><li id="ref-50">Reference 50.</li>'
+        '<li id="ref-51">Reference 51.</li></ol></body></html>'
+    )
+
+    fixed = _link_unlinked_numeric_superscripts_to_existing_refs(html)
+    body = fixed[: fixed.index("References")]
+
+    assert '<a href="#ref-50" class="z2m-ref-link">50</a>' in body
+    assert '<a href="#ref-51" class="z2m-ref-link">51</a>' in body
+
+
 def test_late_unlinked_superscript_relink_preserves_math_before_operator() -> None:
     html = (
         "<html><body><p>The expression x<sup>2,3</sup>=20 remains symbolic.</p>"

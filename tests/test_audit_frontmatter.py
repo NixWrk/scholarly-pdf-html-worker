@@ -124,8 +124,10 @@ def test_frontmatter_metadata_and_toc_guards() -> None:
         "eingereicht 17.4.2008 akzeptiert 16.6.2008",
         "Humboldt-Universit\u00e4t Fakult\u00e4t Institut Abteilung Berlin Tel.: 030 2093 4409 Fax: 030 2093 4222",
         "PD Dr. Rainer Schalnus Klinik fr Augenheilkunde, Klinikum der Johann-Wolfgang-Goethe-Universitt Theodor-Stern-Kai 7 60590 Frankfurt",
+        "2008 Phys. Med. Biol. 53 305",
     ):
         assert looks_like_frontmatter_metadata_notice(notice)
+    assert not looks_like_frontmatter_metadata_notice("2024 Alice Smith 1 2")
     assert looks_like_table_of_contents_block(
         "1. Introduction 1 2. Methods 3 3. Results 5 4. Discussion 7 List of Figures"
     )
